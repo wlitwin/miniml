@@ -1,0 +1,33 @@
+instance Show ('a list) where Show 'a =
+  let show xs = match xs with
+    | [] -> "[]"
+    | _ -> "[" ^ fold (fn acc x ->
+        if acc = "" do show x else acc ^ "; " ^ show x
+      ) "" xs ^ "]"
+end
+
+instance Show ('a array) where Show 'a =
+  let show arr =
+    if array_length arr = 0 do "#[]"
+    else "#[" ^ fold (fn acc x ->
+      if acc = "" do show x else acc ^ "; " ^ show x
+    ) "" arr ^ "]"
+end
+
+instance Show ('a option) where Show 'a =
+  let show opt = match opt with
+    | None -> "None"
+    | Some x -> "Some " ^ show x
+end
+
+instance Show ('a * 'b) where Show 'a, Show 'b =
+  let show p =
+    let (a, b) = p in
+    "(" ^ show a ^ ", " ^ show b ^ ")"
+end
+
+instance Show ('a * 'b * 'c) where Show 'a, Show 'b, Show 'c =
+  let show p =
+    let (a, b, c) = p in
+    "(" ^ show a ^ ", " ^ show b ^ ", " ^ show c ^ ")"
+end

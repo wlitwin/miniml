@@ -1,0 +1,51 @@
+(library
+ (name interpreter)
+ (libraries unix))
+
+(rule
+ (target stdlib_sources.ml)
+ (deps
+  ../tools/gen_stdlib_sources.ml
+  ../stdlib/byte.mml
+  ../stdlib/rune.mml
+  ../stdlib/math.mml
+  ../stdlib/list.mml
+  ../stdlib/array_extra.mml
+  ../stdlib/result.mml
+  ../stdlib/option.mml
+  ../stdlib/buffer.mml
+  ../stdlib/fmt.mml
+  ../stdlib/hash.mml
+  ../stdlib/hashtbl.mml
+  ../stdlib/ref.mml
+  ../stdlib/dynarray.mml
+  ../stdlib/set.mml
+  ../stdlib/enum.mml
+  ../stdlib/seq.mml
+  ../stdlib/iter.mml
+  ../stdlib/show.mml
+  ../stdlib/iter_map.mml
+  ../stdlib/compat.mml)
+ (action
+  (with-stdout-to %{target}
+   (run ocaml ../tools/gen_stdlib_sources.ml
+    ../stdlib/byte.mml
+    ../stdlib/rune.mml
+    ../stdlib/math.mml
+    ../stdlib/list.mml
+    ../stdlib/array_extra.mml
+    ../stdlib/result.mml
+    ../stdlib/option.mml
+    ../stdlib/buffer.mml
+    ../stdlib/fmt.mml
+    ../stdlib/hash.mml
+    ../stdlib/hashtbl.mml
+    ../stdlib/ref.mml
+    ../stdlib/dynarray.mml
+    ../stdlib/set.mml
+    ../stdlib/enum.mml
+    ../stdlib/seq.mml
+    ../stdlib/iter.mml
+    ../stdlib/show.mml
+    ../stdlib/iter_map.mml
+    ../stdlib/compat.mml))))

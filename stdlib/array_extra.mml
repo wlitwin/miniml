@@ -1,0 +1,49 @@
+module Array =
+  pub let init n f =
+    if n <= 0 do #[]
+    else
+      let arr = Array.make n (f 0) in
+      let rec go i =
+        if i >= n do arr
+        else (Array.set arr i (f i); go (i + 1))
+      in go 1
+
+  pub let map f arr =
+    let n = Array.length arr in
+    if n = 0 do #[]
+    else
+      let result = Array.make n (f (Array.get arr 0)) in
+      let rec go i =
+        if i >= n do result
+        else (Array.set result i (f (Array.get arr i)); go (i + 1))
+      in go 1
+
+  pub let iter f arr =
+    let n = Array.length arr in
+    let rec go i =
+      if i >= n do ()
+      else (f (Array.get arr i); go (i + 1))
+    in go 0
+
+  pub let iteri f arr =
+    let n = Array.length arr in
+    let rec go i =
+      if i >= n do ()
+      else (f i (Array.get arr i); go (i + 1))
+    in go 0
+
+  pub let forall f arr =
+    let n = Array.length arr in
+    let rec go i =
+      if i >= n do true
+      else if f (Array.get arr i) do go (i + 1)
+      else false
+    in go 0
+
+  pub let fold f acc arr =
+    let n = Array.length arr in
+    let rec go i a =
+      if i >= n do a
+      else go (i + 1) (f a (Array.get arr i))
+    in go 0 acc
+end

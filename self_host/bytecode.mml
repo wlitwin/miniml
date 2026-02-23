@@ -1,0 +1,340 @@
+module Bytecode =
+  pub type capture =
+    | CaptureLocal of int
+    | CaptureUpvalue of int
+
+
+  pub type opcode =
+    | CONST of int
+    | POP
+    | DUP
+    | GET_LOCAL of int
+    | SET_LOCAL of int
+    | GET_UPVALUE of int
+    | SET_UPVALUE of int
+    | MAKE_REF
+    | DEREF
+    | SET_REF
+    | GET_GLOBAL of int
+    | SET_GLOBAL of int
+    | DEF_GLOBAL of int
+    | ADD
+    | SUB
+    | MUL
+    | DIV
+    | MOD
+    | NEG
+    | FADD
+    | FSUB
+    | FMUL
+    | FDIV
+    | FNEG
+    | EQ
+    | NEQ
+    | LT
+    | GT
+    | LE
+    | GE
+    | NOT
+    | BAND
+    | BOR
+    | BXOR
+    | BNOT
+    | BSHL
+    | BSHR
+    | JUMP of int
+    | JUMP_IF_FALSE of int
+    | JUMP_IF_TRUE of int
+    | CLOSURE of int * capture list
+    | CLOSURE_REC of int * capture list * int
+    | CALL of int
+    | TAIL_CALL of int
+    | RETURN
+    | FUNC_RETURN
+    | ENTER_FUNC
+    | EXIT_FUNC
+    | MAKE_TUPLE of int
+    | TUPLE_GET of int
+    | MAKE_RECORD of string list
+    | FIELD of string
+    | SET_FIELD of string
+    | RECORD_UPDATE of string list
+    | RECORD_UPDATE_DYN of int
+    | MAKE_VARIANT of int * string * bool
+    | CONS
+    | NIL
+    | TAG_EQ of int
+    | IS_NIL
+    | IS_CONS
+    | HEAD
+    | TAIL
+    | VARIANT_PAYLOAD
+    | MATCH_FAIL of string
+    | PERFORM of string
+    | HANDLE of int
+    | RESUME
+    | ENTER_LOOP of int
+    | EXIT_LOOP
+    | LOOP_BREAK
+    | LOOP_CONTINUE of int
+    | FOLD_CONTINUE of int
+    | MAKE_MAP of int
+    | MAKE_ARRAY of int
+    | INDEX
+    | HALT
+    | GET_LOCAL_CALL of int * int
+    | GET_LOCAL_TUPLE_GET of int * int
+    | GET_LOCAL_FIELD of int * string
+    | JUMP_TABLE of int * int array * int
+
+
+  pub type record_shape = {
+    rs_fields: string array;
+    rs_index: (string, int) Hashtbl.t
+  }
+
+  pub type value =
+    | VInt of int
+    | VFloat of float
+    | VBool of bool
+    | VString of string
+    | VByte of int
+    | VRune of int
+    | VUnit
+    | VTuple of value array
+    | VList of value list
+    | VRecord of record_shape * value array
+    | VVariant of int * string * value option
+    | VClosure of closure
+    | VProto of prototype
+    | VExternal of external_fn
+    | VContinuation of continuation_data
+    | VRef of value Ref.t
+    | VMap of (value * value) list
+    | VArray of value array
+
+  and closure = {
+    fn_proto: prototype;
+    upvalues: value array
+  }
+  and prototype = {
+    name: string;
+    arity: int;
+    num_locals: int;
+    code: opcode array;
+    constants: value array;
+    line_table: int array
+  }
+  and external_fn = {
+    ext_name: string;
+    ext_arity: int;
+    ext_fn: value list -> value;
+    ext_args: value list
+  }
+  and call_frame = {
+    frame_closure: closure;
+    mut frame_ip: int;
+    frame_locals: value array;
+    frame_base_sp: int
+  }
+  and fiber = {
+    fiber_stack: value array;
+    mut fiber_sp: int;
+    mut fiber_frames: call_frame list
+  }
+  and continuation_data = {
+    cd_fiber: fiber;
+    cd_return_handler: value;
+    cd_op_handlers: (string * value) list;
+    mut cd_used: bool
+  }
+
+  pub type compiled_program = {
+    main: prototype;
+    global_names: string array
+  }
+
+  pub let make_record_shape (field_names : string list) : record_shape =
+    let fields = Array.of_list field_names in
+    let index = Hashtbl.create (Array.length fields) in
+    Array.iteri (fn i name -> Hashtbl.set index name i) fields;
+    {rs_fields = fields; rs_index = index}
+
+  pub let make_record (field_names : string list) (values : value array) : value =
+    let shape = make_record_shape field_names in
+    VRecord (shape, values)
+
+  pub let rec pp_value =
+    fn
+      | VInt n -> string_of_int n
+      | VFloat f -> 
+        let s = $"{f:g}" in
+        if (String.contains s ".") || (String.contains s "e") do
+          s
+        else
+          s ^ "."
+      | VBool true -> "true"
+      | VBool false -> "false"
+      | VString s -> s
+      | VByte n -> $"#{n:02x}"
+      | VRune cp -> 
+        if cp < 0x80 do
+          $"'{Byte.of_int cp:c}'"
+        else do
+          let buf = Buffer.create 6 in
+          Buffer.add_byte buf #27;
+          if cp < 0x800 do
+            Buffer.add_byte buf (Byte.of_int (0xC0 lor (cp lsr 6)));
+            Buffer.add_byte buf (Byte.of_int (0x80 lor (cp land 0x3F)))
+          else if cp < 0x10000 do
+            Buffer.add_byte buf (Byte.of_int (0xE0 lor (cp lsr 12)));
+            Buffer.add_byte buf (Byte.of_int (0x80 lor ((cp lsr 6) land 0x3F)));
+            Buffer.add_byte buf (Byte.of_int (0x80 lor (cp land 0x3F)))
+          else do
+            Buffer.add_byte buf (Byte.of_int (0xF0 lor (cp lsr 18)));
+            Buffer.add_byte buf (Byte.of_int (0x80 lor ((cp lsr 12) land 0x3F)));
+            Buffer.add_byte buf (Byte.of_int (0x80 lor ((cp lsr 6) land 0x3F)));
+            Buffer.add_byte buf (Byte.of_int (0x80 lor (cp land 0x3F)))
+          end;
+          Buffer.add_byte buf #27;
+          Buffer.contents buf
+        end
+      | VUnit -> "()"
+      | VTuple vs -> "(" ^ ((String.concat ", " (Array.to_list (Array.map pp_value vs))) ^ ")")
+      | VList vs -> "[" ^ ((String.concat "; " (List.map pp_value vs)) ^ "]")
+      | VRecord ((shape, values)) -> "{ " ^ ((String.concat "; " (List.init (Array.length shape.rs_fields) (fn i -> (Array.get shape.rs_fields i) ^ (" = " ^ (pp_value (Array.get values i)))))) ^ " }")
+      | VVariant ((_, name, None)) -> name
+      | VVariant ((_, name, Some v)) -> name ^ (" " ^ (match v with
+      | VTuple _ | VVariant ((_, _, Some _)) -> "(" ^ ((pp_value v) ^ ")")
+      | _ -> pp_value v
+      ))
+      | VClosure _ -> "<fun>"
+      | VExternal ext -> 
+        if ext.ext_args = [] do
+          $"<external:{ext.ext_name}>"
+        else
+          "<fun>"
+      | VProto p -> $"<proto:{p.name}>"
+      | VContinuation _ -> "<continuation>"
+      | VRef r -> $"ref({pp_value (Ref.get r)})"
+      | VMap pairs -> 
+        let is_set = List.forall (fn (_, v) -> v = VUnit) pairs in
+        if is_set do
+          "#{" ^ ((String.concat "; " (List.map (fn (k, _) -> pp_value k) pairs)) ^ "}")
+        else
+          "#{" ^ ((String.concat "; " (List.map (fn (k, v) -> (pp_value k) ^ (": " ^ (pp_value v))) pairs)) ^ "}")
+      | VArray arr -> "#[" ^ ((String.concat "; " (Array.to_list (Array.map pp_value arr))) ^ "]")
+
+
+  pub let pp_capture =
+    fn
+      | CaptureLocal i -> $"local({i})"
+      | CaptureUpvalue i -> $"upvalue({i})"
+
+
+  pub let pp_opcode =
+    fn
+      | CONST i -> $"CONST {i}"
+      | POP -> "POP"
+      | DUP -> "DUP"
+      | GET_LOCAL i -> $"GET_LOCAL {i}"
+      | SET_LOCAL i -> $"SET_LOCAL {i}"
+      | GET_UPVALUE i -> $"GET_UPVALUE {i}"
+      | SET_UPVALUE i -> $"SET_UPVALUE {i}"
+      | MAKE_REF -> "MAKE_REF"
+      | DEREF -> "DEREF"
+      | SET_REF -> "SET_REF"
+      | GET_GLOBAL i -> $"GET_GLOBAL {i}"
+      | SET_GLOBAL i -> $"SET_GLOBAL {i}"
+      | DEF_GLOBAL i -> $"DEF_GLOBAL {i}"
+      | ADD -> "ADD"
+      | SUB -> "SUB"
+      | MUL -> "MUL"
+      | DIV -> "DIV"
+      | MOD -> "MOD"
+      | NEG -> "NEG"
+      | FADD -> "FADD"
+      | FSUB -> "FSUB"
+      | FMUL -> "FMUL"
+      | FDIV -> "FDIV"
+      | FNEG -> "FNEG"
+      | EQ -> "EQ"
+      | NEQ -> "NEQ"
+      | LT -> "LT"
+      | GT -> "GT"
+      | LE -> "LE"
+      | GE -> "GE"
+      | NOT -> "NOT"
+      | BAND -> "BAND"
+      | BOR -> "BOR"
+      | BXOR -> "BXOR"
+      | BNOT -> "BNOT"
+      | BSHL -> "BSHL"
+      | BSHR -> "BSHR"
+      | JUMP off -> $"JUMP {off}"
+      | JUMP_IF_FALSE off -> $"JUMP_IF_FALSE {off}"
+      | JUMP_IF_TRUE off -> $"JUMP_IF_TRUE {off}"
+      | CLOSURE ((i, caps)) -> $"CLOSURE {i} [{String.concat ", " (List.map pp_capture caps)}]"
+      | CLOSURE_REC ((i, caps, self)) -> $"CLOSURE_REC {i} [{String.concat ", " (List.map pp_capture caps)}] self={self}"
+      | CALL n -> $"CALL {n}"
+      | TAIL_CALL n -> $"TAIL_CALL {n}"
+      | RETURN -> "RETURN"
+      | FUNC_RETURN -> "FUNC_RETURN"
+      | ENTER_FUNC -> "ENTER_FUNC"
+      | EXIT_FUNC -> "EXIT_FUNC"
+      | MAKE_TUPLE n -> $"MAKE_TUPLE {n}"
+      | TUPLE_GET i -> $"TUPLE_GET {i}"
+      | MAKE_RECORD fields -> $"MAKE_RECORD [{String.concat ", " fields}]"
+      | FIELD name -> $"FIELD {name}"
+      | SET_FIELD name -> $"SET_FIELD {name}"
+      | RECORD_UPDATE fields -> $"RECORD_UPDATE [{String.concat ", " fields}]"
+      | RECORD_UPDATE_DYN n -> $"RECORD_UPDATE_DYN {n}"
+      | MAKE_VARIANT ((tag, name, has_payload)) -> $"MAKE_VARIANT {tag} {name} {has_payload}"
+      | CONS -> "CONS"
+      | NIL -> "NIL"
+      | TAG_EQ tag -> $"TAG_EQ {tag}"
+      | IS_NIL -> "IS_NIL"
+      | IS_CONS -> "IS_CONS"
+      | HEAD -> "HEAD"
+      | TAIL -> "TAIL"
+      | VARIANT_PAYLOAD -> "VARIANT_PAYLOAD"
+      | MATCH_FAIL loc -> $"MATCH_FAIL {loc}"
+      | PERFORM op -> $"PERFORM {op}"
+      | HANDLE n -> $"HANDLE {n}"
+      | RESUME -> "RESUME"
+      | ENTER_LOOP n -> $"ENTER_LOOP {n}"
+      | EXIT_LOOP -> "EXIT_LOOP"
+      | LOOP_BREAK -> "LOOP_BREAK"
+      | LOOP_CONTINUE n -> $"LOOP_CONTINUE {n}"
+      | FOLD_CONTINUE n -> $"FOLD_CONTINUE {n}"
+      | MAKE_MAP n -> $"MAKE_MAP {n}"
+      | MAKE_ARRAY n -> $"MAKE_ARRAY {n}"
+      | INDEX -> "INDEX"
+      | HALT -> "HALT"
+      | GET_LOCAL_CALL ((slot, arity)) -> $"GET_LOCAL_CALL {slot} {arity}"
+      | GET_LOCAL_TUPLE_GET ((slot, idx)) -> $"GET_LOCAL_TUPLE_GET {slot} {idx}"
+      | GET_LOCAL_FIELD ((slot, name)) -> $"GET_LOCAL_FIELD {slot} {name}"
+      | JUMP_TABLE ((min_tag, targets, default)) -> $"JUMP_TABLE min={min_tag} [{String.concat "," (Array.to_list (Array.map string_of_int targets))}] default={default}"
+
+
+  pub let disassemble proto =
+    let buf = Buffer.create 256 in
+    Buffer.add_string buf ($"=== {proto.name} (arity={proto.arity}, locals={proto.num_locals}) ===
+");
+    let prev_line = Ref.create 0 in
+    Array.iteri (fn i op -> let line =
+      if i < (Array.length proto.line_table) do
+        Array.get proto.line_table i
+      else
+        0 in
+    let line_str =
+      if (line > 0) && (line <> (Ref.get prev_line)) do
+        Ref.set prev_line line;
+        $"{line:4d}"
+      else
+        "   |" in
+    Buffer.add_string buf ($"{line_str} {i:04d}  {pp_opcode op}
+")) proto.code;
+    Buffer.contents buf
+
+end

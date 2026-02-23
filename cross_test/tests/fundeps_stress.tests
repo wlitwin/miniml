@@ -1,0 +1,594 @@
+=== Fundep Type Resolution Tests ===
+
+--- test: map index resolves int value type
+let m = #{1: 42} in m.[1]
+--- expect: 42
+
+--- test: map index resolves string value type
+let m = #{"key": "val"} in m.["key"]
+--- expect: val
+
+--- test: map index inline
+#{"x": 99}.["x"]
+--- expect: 99
+
+--- test: map index int key int value inline
+#{10: 20}.[10]
+--- expect: 20
+
+--- test: map index result used in arithmetic
+let m = #{"a": 10; "b": 20} in m.["a"] + m.["b"]
+--- expect: 30
+
+--- test: map index result used in string concat
+let m = #{1: "hello"; 2: "world"} in m.[1] ^ " " ^ m.[2]
+--- expect: hello world
+
+--- test: map index result in comparison
+let m = #{"x": 5} in m.["x"] > 3
+--- expect: true
+
+--- test: map index result as function argument
+let m = #{"n": 7} in string_of_int m.["n"]
+--- expect: 7
+
+--- test: map index result in show
+let m = #{"a": 42} in show m.["a"]
+--- expect: 42
+
+--- test: nested map index
+let m = #{"inner": #{"val": 100}} in m.["inner"].["val"]
+--- expect: 100
+
+--- test: chained map operations and index
+let m = #{"a": 1; "b": 2} in
+let m2 = set "c" 3 m in
+m2.["c"]
+--- expect: 3
+
+--- test: map update then index
+let m = #{"a": 1} in
+let m2 = #{ m with "a": 99 } in
+m2.["a"]
+--- expect: 99
+
+--- test: array index resolves element type
+let arr = #[10; 20; 30] in arr.[1] + 5
+--- expect: 25
+
+--- test: string index resolves byte type
+Byte.to_int ("hello".[0])
+--- expect: 104
+
+=== Map Class Fundep Tests ===
+
+--- test: get resolves value type for int map
+let m = #{1: 100; 2: 200} in
+match get 1 m with
+| Some v -> v + 1
+| None -> 0
+--- expect: 101
+
+--- test: get resolves value type for string map
+let m = #{"x": "hello"} in
+match get "x" m with
+| Some v -> v ^ "!"
+| None -> "none"
+--- expect: hello!
+
+--- test: keys resolves key type
+let m = #{"a": 1; "b": 2; "c": 3} in
+List.length (keys m)
+--- expect: 3
+
+--- test: values resolves value type
+let m = #{1: 10; 2: 20} in
+fold (+) 0 (values m)
+--- expect: 30
+
+--- test: to_list resolves pair type
+let m = #{"only": 42} in
+match to_list m with
+| [(k, v)] -> k ^ "=" ^ show v
+| _ -> "wrong"
+--- expect: only=42
+
+--- test: size works through fundep
+let m = #{"a": 1; "b": 2; "c": 3} in
+size m
+--- expect: 3
+
+--- test: has works through fundep
+let m = #{1: "one"; 2: "two"} in
+has 1 m && has 2 m && not (has 3 m)
+--- expect: true
+
+--- test: remove preserves fundep resolution
+let m = #{"a": 1; "b": 2; "c": 3} in
+size (remove "b" m)
+--- expect: 2
+
+--- test: of_list resolves map type
+let m = of_list [("x", 1); ("y", 2)] in
+match get "x" m with
+| Some v -> v
+| None -> 0
+--- expect: 1
+
+--- test: map operations chained
+let m = of_list [(1, "a"); (2, "b")] in
+let m2 = set 3 "c" m in
+let m3 = remove 1 m2 in
+size m3
+--- expect: 2
+
+=== Iter Class Fundep Tests ===
+
+--- test: fold over list resolves element type
+fold (+) 0 [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: fold over array resolves element type
+fold (+) 0 #[10; 20; 30]
+--- expect: 60
+
+--- test: fold over map resolves pair element type
+let m = #{"a": 1; "b": 2} in
+fold (fn acc (_, v) -> acc + v) 0 m
+--- expect: 3
+
+--- test: fold list to string
+fold (fn acc x -> acc ^ show x) "" [1; 2; 3]
+--- expect: 123
+
+--- test: fold array to string
+fold (fn acc x -> acc ^ show x ^ ",") "" #[10; 20; 30]
+--- expect: 10,20,30,
+
+--- test: fold with complex accumulator
+fold (fn (sum, count) x -> (sum + x, count + 1)) (0, 0) [10; 20; 30]
+--- expect: (60, 3)
+
+--- test: fold nested with explicit inner sum
+let xss = [[1; 2]; [3; 4]; [5]] in
+let sum_list (xs: int list) : int = fold (+) 0 xs in
+fold (fn acc xs -> acc + sum_list xs) 0 xss
+--- expect: 15
+
+=== Index + Show Interaction Tests ===
+
+--- test: show of map indexed value
+let m = #{1: true; 2: false} in
+show m.[1]
+--- expect: true
+
+--- test: show of array indexed value
+show #[100; 200; 300].[0]
+--- expect: 100
+
+--- test: show list of map indexed values
+let m = #{"a": 1; "b": 2; "c": 3} in
+show [m.["a"]; m.["b"]; m.["c"]]
+--- expect: [1; 2; 3]
+
+--- test: show tuple with map index
+let m = #{"x": 10} in
+show (m.["x"], m.["x"] + 1)
+--- expect: (10, 11)
+
+=== Index + Eq Interaction Tests ===
+
+--- test: compare map indexed values
+let m = #{1: 42; 2: 42} in
+m.[1] = m.[2]
+--- expect: true
+
+--- test: compare map indexed values not equal
+let m = #{"a": 1; "b": 2} in
+m.["a"] <> m.["b"]
+--- expect: true
+
+--- test: array indexed equality
+#[1; 2; 3].[0] = #[1; 2; 3].[0]
+--- expect: true
+
+=== Index + Num Interaction Tests ===
+
+--- test: arithmetic on map indexed values
+let m = #{"x": 10; "y": 20} in
+m.["x"] * m.["y"]
+--- expect: 200
+
+--- test: arithmetic on array indexed values
+let a = #[3; 4; 5] in
+a.[0] + a.[1] + a.[2]
+--- expect: 12
+
+--- test: map index in complex expression
+let m = #{1: 5; 2: 10; 3: 15} in
+m.[1] * m.[2] + m.[3]
+--- expect: 65
+
+=== Fundep + Pattern Matching Tests ===
+
+--- test: match on map indexed value
+let m = #{"status": "ok"} in
+match m.["status"] with
+| "ok" -> 1
+| "err" -> 2
+| _ -> 0
+--- expect: 1
+
+--- test: match on get result
+let m = #{1: 42} in
+match get 1 m with
+| Some 42 -> "found"
+| Some _ -> "wrong"
+| None -> "missing"
+--- expect: found
+
+--- test: match on fold result
+let result = fold (+) 0 [1; 2; 3] in
+match result with
+| 6 -> "correct"
+| _ -> "wrong"
+--- expect: correct
+
+=== Fundep + Let Binding Tests ===
+
+--- test: let bind map index result
+let m = #{1: 2} in
+let v = m.[1] in
+v + v
+--- expect: 4
+
+--- test: let bind chain of map ops
+let m = #{"a": 10} in
+let v = m.["a"] in
+let s = show v in
+s ^ "!"
+--- expect: 10!
+
+--- test: let bind fold result in further computation
+let total = fold (+) 0 [1; 2; 3; 4] in
+let avg = total / 4 in
+avg
+--- expect: 2
+
+--- test: multiple let binds from same map
+let m = #{"x": 3; "y": 4} in
+let x = m.["x"] in
+let y = m.["y"] in
+x * x + y * y
+--- expect: 25
+
+=== Fundep + Higher-Order Function Tests ===
+
+--- test: at as argument to map
+List.map (at 0) [#[1; 2]; #[3; 4]; #[5; 6]]
+--- expect: [1; 3; 5]
+
+--- test: fold with at
+let arrs = [#[10]; #[20]; #[30]] in
+fold (fn acc a -> acc + at 0 a) 0 arrs
+--- expect: 60
+
+--- test: get as argument
+let maps = [#{"v": 1}; #{"v": 2}; #{"v": 3}] in
+List.map (fn m -> match get "v" m with Some x -> x | None -> 0) maps
+--- expect: [1; 2; 3]
+
+=== Fundep + Polymorphic Variant Tests ===
+
+--- test: poly variant in map value
+let m = #{1: `Ok 42; 2: `Err "bad"} in
+match m.[1] with
+| `Ok n -> n
+| `Err _ -> 0
+--- expect: 42
+
+--- test: poly variant in map key position via get
+let m = #{1: `A; 2: `B} in
+match get 1 m with
+| Some `A -> "got A"
+| Some `B -> "got B"
+| _ -> "none"
+--- expect: got A
+
+--- test: fold over list of poly variants
+fold (fn acc x -> match x with `Val n -> acc + n | _ -> acc) 0 [`Val 1; `Skip; `Val 2; `Val 3]
+--- expect: 6
+
+=== Fundep + Tuple/Record Tests ===
+
+--- test: map with tuple values
+let m = #{"p": (1, 2)} in
+let (x, y) = m.["p"] in
+x + y
+--- expect: 3
+
+--- test: map of maps
+let outer = #{"a": #{"x": 1}; "b": #{"x": 2}} in
+outer.["a"].["x"] + outer.["b"].["x"]
+--- expect: 3
+
+--- test: array of maps
+let arr = #[#{"v": 10}; #{"v": 20}] in
+arr.[0].["v"] + arr.[1].["v"]
+--- expect: 30
+
+--- test: map to array to element
+let m = #{"nums": #[100; 200; 300]} in
+m.["nums"].[2]
+--- expect: 300
+
+=== Fundep + Conditional Tests ===
+
+--- test: map index in if condition
+let m = #{"flag": true} in
+if m.["flag"] do "yes" else "no"
+--- expect: yes
+
+--- test: map index in if branches
+let m = #{1: 10; 2: 20} in
+if true do m.[1] else m.[2]
+--- expect: 10
+
+--- test: conditional fold
+let xs = [1; 2; 3; 4; 5] in
+let total = fold (+) 0 xs in
+if total > 10 do "big" else "small"
+--- expect: big
+
+=== Fundep + Pin Pattern Tests ===
+
+--- test: pin map indexed value in match
+let m = #{"target": 42} in
+let target = m.["target"] in
+match 42 with
+| ^target -> "matched"
+| _ -> "no match"
+--- expect: matched
+
+=== Custom Multi-Param Class with Fundep Tests ===
+
+--- test: custom class with fundep basic
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+instance Convertible int string =
+  let convert x = string_of_int x
+end
+instance Convertible bool string =
+  let convert b = if b do "yes" else "no"
+end
+;;
+convert 42 ^ " " ^ convert true
+--- expect: 42 yes
+
+--- test: custom class fundep determines return type
+class Extract 'c 'v where 'c -> 'v =
+  extract : 'c -> 'v
+end
+instance Extract (int list) int =
+  let extract xs = match xs with
+    | x :: _ -> x
+    | [] -> 0
+end
+instance Extract (string list) string =
+  let extract xs = match xs with
+    | x :: _ -> x
+    | [] -> ""
+end
+;;
+extract [10; 20; 30] + 1
+--- expect: 11
+
+--- test: custom class fundep string result
+class Extract 'c 'v where 'c -> 'v =
+  extract : 'c -> 'v
+end
+instance Extract (int list) int =
+  let extract xs = match xs with
+    | x :: _ -> x
+    | [] -> 0
+end
+instance Extract (string list) string =
+  let extract xs = match xs with
+    | x :: _ -> x
+    | [] -> ""
+end
+;;
+extract ["hello"; "world"] ^ "!"
+--- expect: hello!
+
+--- test: custom fundep with multiple methods
+class Collection 'c 'e where 'c -> 'e =
+  first : 'c -> 'e
+  rest : 'c -> 'c
+  is_empty : 'c -> bool
+end
+instance Collection (int list) int =
+  let first xs = match xs with x :: _ -> x | [] -> 0
+  let rest xs = match xs with _ :: t -> t | [] -> []
+  let is_empty xs = match xs with [] -> true | _ -> false
+end
+;;
+let xs = [10; 20; 30] in
+first xs + first (rest xs) + first (rest (rest xs))
+--- expect: 60
+
+=== Fundep Stress: Deep Nesting Tests ===
+
+--- test: triple nested map index
+let m = #{"a": #{"b": #{"c": 42}}} in
+m.["a"].["b"].["c"]
+--- expect: 42
+
+--- test: array of array of array index
+let a = #[#[#[1; 2]; #[3; 4]]; #[#[5; 6]; #[7; 8]]] in
+a.[1].[0].[1]
+--- expect: 6
+
+--- test: map index then fold
+let m = #{"nums": [1; 2; 3; 4; 5]} in
+fold (+) 0 m.["nums"]
+--- expect: 15
+
+--- test: fold result into map index
+let m = #{15: "fifteen"} in
+let key = fold (+) 0 [1; 2; 3; 4; 5] in
+m.[key]
+--- expect: fifteen
+
+--- test: nested operations chain
+let data = #{"scores": #[95; 87; 92; 88]} in
+let arr = data.["scores"] in
+let best = arr.[0] in
+let worst = arr.[1] in
+best - worst
+--- expect: 8
+
+=== Multiple Typeclasses on Same Value Tests ===
+
+--- test: show and eq on same type
+let x = 42 in
+if x = 42 do show x else "no"
+--- expect: 42
+
+--- test: show eq and ord together
+let x = 10 in
+let y = 20 in
+if x < y do show x ^ " < " ^ show y else show x ^ " >= " ^ show y
+--- expect: 10 < 20
+
+--- test: num and show together
+let x = 3 in
+let y = 4 in
+show (x + y) ^ " = " ^ show x ^ " + " ^ show y
+--- expect: 7 = 3 + 4
+
+--- test: fold then show result
+show (fold (+) 0 [1; 2; 3])
+--- expect: 6
+
+--- test: map operations then show
+let m = #{"a": 1; "b": 2} in
+show (size m) ^ " entries"
+--- expect: 2 entries
+
+=== Fundep + Mutation Tests ===
+
+--- test: mutable variable with map index
+let m = #{1: 10; 2: 20} in
+let mut total = 0 in
+total := total + m.[1];
+total := total + m.[2];
+total
+--- expect: 30
+
+--- test: mutable accumulator with fold
+let mut result = "" in
+fold (fn () x -> result := result ^ show x; ()) () [1; 2; 3];
+result
+--- expect: 123
+
+=== Fundep + Loop Tests ===
+
+--- test: for loop over map values via fold
+let m = #{"a": 1; "b": 2; "c": 3} in
+fold (fn acc (_, v) -> acc + v) 0 (to_list m)
+--- expect: 6
+
+--- test: for loop with array index
+let arr = #[10; 20; 30] in
+let mut sum = 0 in
+for i in [0; 1; 2] do
+  sum := sum + arr.[i]
+end;
+sum
+--- expect: 60
+
+=== Constrained Functions with Fundep Classes Tests ===
+
+--- test: function using map get
+let lookup (m: (string, int) map) (k: string) : int =
+  match get k m with
+  | Some v -> v
+  | None -> 0
+;;
+lookup #{"x": 42} "x"
+--- expect: 42
+
+--- test: function using index
+let f (arr: int array) (i: int) : int = arr.[i] + 1
+;;
+f #[10; 20; 30] 1
+--- expect: 21
+
+--- test: concrete function over Iter list
+let sum_list (xs: int list) : int = fold (+) 0 xs
+;;
+sum_list [1; 2; 3]
+--- expect: 6
+
+--- test: concrete function over Iter array
+let sum_arr (xs: int array) : int = fold (+) 0 xs
+;;
+sum_arr #[10; 20; 30]
+--- expect: 60
+
+=== Edge Cases Tests ===
+
+--- test: empty map operations
+let m = (#{}  : (string, int) map) in
+size m
+--- expect: 0
+
+--- test: single element array index
+#[42].[0]
+--- expect: 42
+
+--- test: map index with computed key
+let key = "a" ^ "b" in
+let m = #{"ab": 99} in
+m.[key]
+--- expect: 99
+
+--- test: map index with let-bound key
+let m = #{"x": 1; "y": 2} in
+let k = "y" in
+m.[k]
+--- expect: 2
+
+--- test: index with negative after subtraction
+let arr = #[10; 20; 30] in
+arr.[3 - 1]
+--- expect: 30
+
+--- test: bool map values
+let m = #{"flag": true} in
+not (m.["flag"])
+--- expect: false
+
+--- test: fold empty list
+fold (+) 0 []
+--- expect: 0
+
+--- test: fold empty array
+fold (+) 0 (#[] : int array)
+--- expect: 0
+
+--- test: fold single element
+fold (+) 0 [42]
+--- expect: 42
+
+--- test: map with many operations
+let m = of_list [(1, "a"); (2, "b"); (3, "c"); (4, "d"); (5, "e")] in
+let m2 = set 6 "f" m in
+let m3 = remove 1 m2 in
+let m4 = set 2 "B" m3 in
+match get 2 m4 with
+| Some v -> v
+| None -> "missing"
+--- expect: B

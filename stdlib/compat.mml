@@ -1,0 +1,27 @@
+let compare a b =
+  if a < b do -1
+  else if a > b do 1
+  else 0
+
+let int_of_string s =
+  match String.to_int s with
+  | Some n -> n
+  | None -> failwith $"int_of_string: invalid argument \"{s}\""
+
+let float_of_string s =
+  match String.to_float s with
+  | Some f -> f
+  | None -> failwith $"float_of_string: invalid argument \"{s}\""
+
+let max (a : int) (b : int) : int = if a > b do a else b
+
+let min (a : int) (b : int) : int = if a < b do a else b
+
+let fst (a, _) = a
+
+let snd (_, b) = b
+
+let list_find f xs =
+  match List.find f xs with
+  | Some x -> x
+  | None -> failwith "list_find: not found"

@@ -1,0 +1,219 @@
+=== let mut type annotations ===
+
+--- test: let mut int annotation
+let mut x : int = 10 in x
+--- expect: 10
+
+--- test: let mut string annotation
+let mut s : string = "hello" in s
+--- expect: hello
+
+--- test: let mut float annotation
+let mut f : float = 3.14 in f
+--- expect: 3.14
+
+--- test: let mut bool annotation
+let mut b : bool = true in b
+--- expect: true
+
+--- test: let mut list annotation
+let mut xs : int list = [1; 2; 3] in xs
+--- expect: [1; 2; 3]
+
+--- test: let mut tuple annotation
+let mut t : (int * string) = (42, "hi") in t
+--- expect: (42, hi)
+
+--- test: let mut option annotation
+let mut x : int option = Some 5 in x
+--- expect: Some 5
+
+--- test: let mut annotation with assignment
+let mut x : int = 0 in
+x := 42;
+x
+--- expect: 42
+
+--- test: let mut annotation with multiple assignments
+let mut s : string = "" in
+s := s ^ "a";
+s := s ^ "b";
+s := s ^ "c";
+s
+--- expect: abc
+
+--- test: let mut annotation mismatch int vs string
+let mut x : string = 10 in x
+--- expect-type-error
+
+--- test: let mut annotation mismatch string vs int
+let mut x : int = "hello" in x
+--- expect-type-error
+
+--- test: let mut annotation mismatch list element
+let mut xs : string list = [1; 2; 3] in xs
+--- expect-type-error
+
+--- test: let mut annotation mismatch tuple
+let mut t : (int * int) = (1, "two") in t
+--- expect-type-error
+
+--- test: let mut annotation mismatch assignment
+let mut x : int = 0 in
+x := "oops";
+x
+--- expect-type-error
+
+--- test: top-level let mut int annotation
+let mut x : int = 100;;
+x := x + 1;;
+x
+--- expect: 101
+
+--- test: top-level let mut string annotation
+let mut s : string = "hi";;
+s := s ^ " world";;
+s
+--- expect: hi world
+
+--- test: top-level let mut list annotation
+let mut xs : int list = [];;
+xs := 1 :: xs;;
+xs := 2 :: xs;;
+xs
+--- expect: [2; 1]
+
+--- test: top-level let mut annotation mismatch
+let mut x : bool = 42;;
+x
+--- expect-type-error
+
+--- test: let mut annotation in nested let
+let a = 10 in
+let mut x : int = a in
+x := x * 2;
+x
+--- expect: 20
+
+--- test: let mut annotation with closure read
+let mut x : int = 5 in
+let f () = x in
+x := 10;
+f ()
+--- expect: 10
+
+--- test: let mut annotation in sequence with non-mut let
+let y = "prefix" in
+let mut s : string = y in
+s := s ^ "-suffix";
+s
+--- expect: prefix-suffix
+
+--- test: let mut annotation array
+let mut arr : int array = #[1; 2; 3] in
+arr
+--- expect: #[1; 2; 3]
+
+--- test: let mut annotation map
+let mut m : (string, int) map = #{"a": 1} in
+m
+--- expect: #{a: 1}
+
+--- test: let mut annotation with user type
+type color = Red | Green | Blue;;
+let mut c : color = Red in
+c := Blue;
+c
+--- expect: Blue
+
+--- test: let mut annotation with record type
+type point = { x: int; y: int };;
+let mut p : point = { x = 0; y = 0 } in
+p := { x = 3; y = 4 };
+p.x + p.y
+--- expect: 7
+
+--- test: let mut annotation unit
+let mut u : unit = () in
+u := ();
+u
+--- expect: ()
+
+--- test: two annotated muts independent
+let mut a : int = 1 in
+let mut b : string = "x" in
+a := a + 1;
+b := b ^ "y";
+show a ^ b
+--- expect: 2xy
+
+--- test: let mut annotation in match arm
+let flag = true in
+match flag with
+| true ->
+  let mut x : int = 10 in
+  x := x + 5;
+  x
+| false -> 0
+--- expect: 15
+
+--- test: let mut annotation in match with assignment
+let mut x : int = 0 in
+(match true with
+| true -> x := 1
+| false -> x := 2);
+x
+--- expect: 1
+
+--- test: let mut annotation with loop
+let mut sum : int = 0 in
+let mut i : int = 1 in
+for i <= 5 do
+  sum := sum + i;
+  i := i + 1
+end;
+sum
+--- expect: 15
+
+--- test: top-level let mut annotation then expression let mut annotation
+let mut x : int = 0;;
+let mut y : int = x + 1 in
+x := y * 10;
+x
+--- expect: 10
+
+--- test: let mut annotation constrains later assignments
+let mut x : int = 0 in
+x := 42;
+x
+--- expect: 42
+
+--- test: let mut annotation with function type
+let mut f : int -> int = fn x -> x + 1 in
+let a = f 10 in
+f := (fn x -> x * 2);
+let b = f 10 in
+a + b
+--- expect: 31
+
+--- test: top-level let mut annotation with reassign different value
+let mut x : float = 1.0;;
+x := 2.5;;
+x
+--- expect: 2.5
+
+--- test: let mut annotation with parameterized type
+let mut xs : int option list = [Some 1; None; Some 3] in
+xs := Some 4 :: xs;
+xs
+--- expect: [Some 4; Some 1; None; Some 3]
+
+--- test: top-level let mut annotation mismatch on reassign
+let mut x : int = 0;;
+x := "hello"
+--- expect-type-error
+
+--- test: let mut annotation nested tuple
+let mut t : (int * (string * bool)) = (1, ("hi", true)) in
+t
+--- expect: (1, (hi, true))

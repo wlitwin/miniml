@@ -1,0 +1,55 @@
+--- test: map update single key
+let m = #{"a": 1; "b": 2}
+in get "a" #{ m with "a": 10 }
+--- expect: Some 10
+
+--- test: map update preserves other key
+let m = #{"a": 1; "b": 2}
+in get "b" #{ m with "a": 10 }
+--- expect: Some 2
+
+--- test: map update multiple keys
+let m = #{"x": 1; "y": 2; "z": 3}
+let m2 = #{ m with "x": 10; "z": 30 }
+in (get "x" m2, get "y" m2, get "z" m2)
+--- expect: (Some 10, Some 2, Some 30)
+
+--- test: map update add new key
+let m = #{"a": 1}
+let m2 = #{ m with "b": 2 }
+in (get "a" m2, get "b" m2)
+--- expect: (Some 1, Some 2)
+
+--- test: map update int keys
+let m = #{1: "one"; 2: "two"}
+let m2 = #{ m with 2: "TWO"; 3: "three" }
+in (get 2 m2, get 3 m2)
+--- expect: (Some TWO, Some three)
+
+--- test: map update with expression values
+let m = #{"x": 0}
+in get "x" #{ m with "x": 3 + 4 }
+--- expect: Some 7
+
+--- test: map update chained
+let m = #{"a": 1}
+let m2 = #{ m with "b": 2 }
+let m3 = #{ m2 with "c": 3 }
+in (get "a" m3, get "b" m3, get "c" m3)
+--- expect: (Some 1, Some 2, Some 3)
+
+--- test: map update size
+let m = #{"a": 1; "b": 2}
+in size #{ m with "c": 3 }
+--- expect: 3
+
+--- test: map update overwrite size unchanged
+let m = #{"a": 1; "b": 2}
+in size #{ m with "a": 10 }
+--- expect: 2
+
+--- test: map update original unchanged
+let m = #{"a": 1; "b": 2}
+let _ = #{ m with "a": 10 }
+in get "a" m
+--- expect: Some 1

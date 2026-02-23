@@ -1,0 +1,211 @@
+=== Fundep resolution at call sites of constrained functions ===
+These tests verify that functional dependencies resolve type variables
+when constrained functions (not just raw class methods) are called.
+The core issue: when a module function or user function wraps a class
+method, fundep-determined type vars must still be resolved at the call site.
+
+=== Module functions wrapping Map class methods ===
+
+--- test: show Set.to_list result
+let xs = Set.to_list (Set.of_list [3; 1; 4]) in
+show xs
+--- expect: [4; 1; 3]
+
+--- test: print show Set.to_list result
+print (show (Set.to_list (Set.of_list [3; 1; 4])))
+--- expect: [4; 1; 3]
+
+--- test: Set.to_list result in fold
+let xs = Set.to_list (Set.of_list [1; 2; 3]) in
+fold (+) 0 xs
+--- expect: 6
+
+--- test: Set.to_list result in List.map
+let xs = Set.to_list (Set.of_list [1; 2; 3]) in
+List.map (fn x -> x * 2) xs
+--- expect: [6; 4; 2]
+
+--- test: Set.to_list then hd
+let xs = Set.to_list (Set.of_list [42]) in
+List.hd xs
+--- expect: 42
+
+=== User functions wrapping class methods ===
+
+--- test: user function wrapping Map.keys then show
+let my_keys m = Map.keys m in
+let m = #{"a": 1; "b": 2} in
+show (my_keys m)
+--- expect: [a; b]
+
+--- test: user function wrapping Map.values then show
+let my_values m = Map.values m in
+let m = #{"a": 1; "b": 2} in
+show (my_values m)
+--- expect: [1; 2]
+
+--- test: user function wrapping Map.to_list then show
+let my_to_list m = Map.to_list m in
+let m = #{"x": 10} in
+show (my_to_list m)
+--- expect: [(x, 10)]
+
+--- test: user function wrapping fold
+let sum xs = fold (+) 0 xs in
+show (sum [1; 2; 3])
+--- expect: 6
+
+--- test: user function wrapping fold on array
+let sum xs = fold (+) 0 xs in
+show (sum #[10; 20; 30])
+--- expect: 60
+
+=== Constrained function return types ===
+
+--- test: constrained function returns list from map
+let get_keys (m : ('k, 'v) map) : 'k list = keys m
+;;
+show (get_keys #{"a": 1; "b": 2})
+--- expect: [a; b]
+
+--- test: constrained function with show on result
+let show_keys (m : ('k, 'v) map) : string where Show 'k = show (keys m)
+;;
+show_keys #{"x": 1; "y": 2}
+--- expect: [x; y]
+
+=== Chained constrained function calls ===
+
+--- test: Set.to_list through multiple let bindings
+let s = Set.of_list [5; 3; 1] in
+let xs = Set.to_list s in
+let result = show xs in
+result
+--- expect: [1; 3; 5]
+
+--- test: Map.of_list then Map.values then fold
+let m = Map.of_list [(1, 10); (2, 20); (3, 30)] in
+let vs = Map.values m in
+fold (+) 0 vs
+--- expect: 60
+
+=== Module functions in expressions (no let binding) ===
+
+--- test: show of Set.to_list inline
+show (Set.to_list (Set.of_list [1; 2]))
+--- expect: [2; 1]
+
+--- test: fold over Set.to_list inline
+fold (+) 0 (Set.to_list (Set.of_list [1; 2; 3]))
+--- expect: 6
+
+=== Fundep propagation through multiple function layers ===
+
+--- test: generic identity preserves fundep type
+let id x = x in
+let xs = id (Set.to_list (Set.of_list [1; 2])) in
+show xs
+--- expect: [2; 1]
+
+=== Set operations returning collections ===
+
+--- test: Set.union result show
+let s1 = Set.of_list [1; 2] in
+let s2 = Set.of_list [3; 4] in
+let u = Set.union s1 s2 in
+show (Set.to_list u)
+--- expect: [1; 2; 4; 3]
+
+--- test: Set.inter result show
+let s1 = Set.of_list [1; 2; 3] in
+let s2 = Set.of_list [2; 3; 4] in
+show (Set.to_list (Set.inter s1 s2))
+--- expect: [2; 3]
+
+--- test: Set.diff result show
+let s1 = Set.of_list [1; 2; 3] in
+let s2 = Set.of_list [2] in
+show (Set.to_list (Set.diff s1 s2))
+--- expect: [1; 3]
+
+=== Hashtbl operations ===
+
+--- test: Hashtbl.values then fold
+let tbl = Hashtbl.create 4 in
+Hashtbl.set tbl "a" 10;
+Hashtbl.set tbl "b" 20;
+fold (+) 0 (Hashtbl.values tbl)
+--- expect: 30
+
+=== Custom user class with fundep, wrapping in function ===
+
+--- test: custom fundep class wrapped in function
+class Container 'c 'e where 'c -> 'e =
+  elements : 'c -> 'e list
+end
+instance Container (int list) int =
+  let elements xs = xs
+end
+;;
+let get_elems c = elements c in
+show (get_elems [1; 2; 3])
+--- expect: [1; 2; 3]
+
+--- test: custom fundep class double wrapped
+class Container 'c 'e where 'c -> 'e =
+  elements : 'c -> 'e list
+end
+instance Container (int list) int =
+  let elements xs = xs
+end
+;;
+let get_elems c = elements c in
+let show_elems c = show (get_elems c) in
+show_elems [1; 2; 3]
+--- expect: [1; 2; 3]
+
+--- test: custom fundep class result in arithmetic
+class Container 'c 'e where 'c -> 'e =
+  first_elem : 'c -> 'e
+end
+instance Container (int list) int =
+  let first_elem xs = match xs with x :: _ -> x | [] -> 0
+end
+;;
+let get_first c = first_elem c in
+get_first [10; 20; 30] + 1
+--- expect: 11
+
+=== Type annotations should still work (regression guard) ===
+
+--- test: explicit annotation on Set.to_list still works
+let xs : int list = Set.to_list (Set.of_list [1; 2; 3]) in
+show xs
+--- expect: [3; 2; 1]
+
+--- test: explicit annotation on Map.keys still works
+let ks : string list = Map.keys #{"a": 1; "b": 2} in
+show ks
+--- expect: [a; b]
+
+--- test: explicit annotation on Map.of_list still works
+let m : (string, int) map = Map.of_list [("x", 1)] in
+show m
+--- expect: #{x: 1}
+
+=== User wrapping with unqualified method names ===
+
+--- test: user function wrapping unqualified keys
+let my_keys m = keys m in
+show (my_keys #{"x": 1; "y": 2})
+--- expect: [x; y]
+
+--- test: user function wrapping unqualified values
+let my_vals m = values m in
+show (my_vals #{"a": 10})
+--- expect: [10]
+
+--- test: user function wrapping unqualified to_list
+let my_pairs m = to_list m in
+show (my_pairs #{"k": 99})
+--- expect: [(k, 99)]

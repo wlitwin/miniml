@@ -1,0 +1,58 @@
+module Dynarray =
+  pub type 'a t = { mut arr: 'a array; mut count: int }
+
+  pub let create n default =
+    { arr = Array.make (if n < 16 do 16 else n) default; count = 0 }
+
+  pub let length d = d.count
+
+  pub let get d i =
+    if i < 0 || i >= d.count do failwith "Dynarray.get: index out of bounds"
+    else Array.get d.arr i
+
+  pub let set d i v =
+    if i < 0 || i >= d.count do failwith "Dynarray.set: index out of bounds"
+    else Array.set d.arr i v
+
+  pub let grow d needed default =
+    let cap = Array.length d.arr in
+    if d.count + needed > cap do
+      let new_cap = Math.max (cap * 2) (d.count + needed) in
+      let new_arr = Array.make new_cap default in
+      let rec copy i =
+        if i < d.count do
+          Array.set new_arr i (Array.get d.arr i);
+          copy (i + 1)
+        else ()
+      in
+      copy 0;
+      d.arr := new_arr
+    else ()
+
+  pub let empty () =
+    { arr = #[]; count = 0 }
+
+  pub let push d v =
+    Dynarray.grow d 1 v;
+    Array.set d.arr d.count v;
+    d.count := d.count + 1
+
+  pub let pop d =
+    if d.count = 0 do failwith "Dynarray.pop: empty"
+    else
+      d.count := d.count - 1;
+      Array.get d.arr d.count
+
+  pub let clear d =
+    d.count := 0
+
+  pub let to_list d =
+    let rec collect i acc =
+      if i < 0 do acc
+      else collect (i - 1) (Dynarray.get d i :: acc)
+    in
+    collect (d.count - 1) []
+
+  pub let to_array d =
+    Array.sub d.arr 0 d.count
+end

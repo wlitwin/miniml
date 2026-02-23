@@ -1,0 +1,2570 @@
+module Parser =
+  open Token
+  effect Parse_errorExn =
+    parse_error : string * Token.loc -> 'a
+  end
+
+  pub type t = {
+    tokens: Token.token array;
+    mut pos: int
+  }
+
+  pub let create tokens = {tokens = Array.of_list tokens; pos = 0}
+
+  pub let peek p = Array.get p.tokens p.pos
+
+  pub let peek_kind p = (peek p).kind
+
+  pub let peek_kind_at p offset =
+    let idx = p.pos + offset in
+    if idx < (Array.length p.tokens) do
+      (Array.get p.tokens idx).kind
+    else
+      Token.EOF
+
+  pub let advance p =
+    let tok = Array.get p.tokens p.pos in
+    if tok.kind <> Token.EOF do
+      p.pos := p.pos + 1
+    end;
+    tok
+
+  pub let error p msg =
+    let tok = peek p in
+    perform parse_error (msg, tok.loc)
+
+  pub let expect p kind =
+    let tok = peek p in
+    if tok.kind = kind do
+      (advance p; ())
+    else
+      error p ($"expected {Token.pp_token_kind kind}, got {Token.pp_token_kind tok.kind}")
+
+  pub let expect_ident p =
+    match (peek p).kind with
+    | Token.IDENT s -> 
+      (advance p; ());
+      s
+    | Token.UNDERSCORE -> 
+      (advance p; ());
+      "_"
+    | _ -> error p "expected identifier"
+
+
+  pub let expect_uident p =
+    match (peek p).kind with
+    | Token.UIDENT s -> 
+      (advance p; ());
+      s
+    | _ -> error p "expected constructor name"
+
+
+  pub let keyword_as_ident =
+    fn
+      | Token.MOD -> Some "mod"
+      | Token.NOT -> Some "not"
+      | Token.LAND -> Some "land"
+      | Token.LOR -> Some "lor"
+      | Token.LXOR -> Some "lxor"
+      | Token.LNOT -> Some "lnot"
+      | Token.LSL -> Some "lsl"
+      | Token.LSR -> Some "lsr"
+      | _ -> None
+
+
+  pub let token_to_op_name =
+    fn
+      | Token.PLUS -> Some "+"
+      | Token.MINUS -> Some "-"
+      | Token.STAR -> Some "*"
+      | Token.SLASH -> Some "/"
+      | Token.MOD -> Some "mod"
+      | Token.CARET -> Some "^"
+      | Token.AMPAMP -> Some "&&"
+      | Token.PIPEPIPE -> Some "||"
+      | Token.NOT -> Some "not"
+      | Token.LT -> Some "<"
+      | Token.GT -> Some ">"
+      | Token.LE -> Some "<="
+      | Token.GE -> Some ">="
+      | Token.EQ -> Some "="
+      | Token.NEQ -> Some "<>"
+      | Token.LAND -> Some "land"
+      | Token.LOR -> Some "lor"
+      | Token.LXOR -> Some "lxor"
+      | Token.LNOT -> Some "lnot"
+      | Token.LSL -> Some "lsl"
+      | Token.LSR -> Some "lsr"
+      | _ -> None
+
+
+  pub let read_qualified_path p (first_uident : string) =
+    let path = Ref.create (first_uident :: []) in
+    let result = Ref.create None in
+    let continue_ = Ref.create true in
+    for Ref.get continue_ do
+      if (peek_kind p) = Token.DOT do
+        do
+          let next = peek_kind_at p 1 in
+          match next with
+          | Token.IDENT s -> 
+            (advance p; ());
+            (advance p; ());
+            let qualified = (String.concat "." (List.rev (Ref.get path))) ^ ("." ^ s) in
+            Ref.set result (Some (`Var qualified));
+            Ref.set continue_ false
+          | Token.UIDENT s -> 
+            (advance p; ());
+            (advance p; ());
+            Ref.set path (s :: Ref.get path)
+          | Token.LPAREN -> 
+            do
+              match token_to_op_name (peek_kind_at p 2) with
+              | Some op when (peek_kind_at p 3) = Token.RPAREN -> 
+                (advance p; ());
+                (advance p; ());
+                (advance p; ());
+                (advance p; ());
+                let qualified = (String.concat "." (List.rev (Ref.get path))) ^ ("." ^ op) in
+                Ref.set result (Some (`Var qualified));
+                Ref.set continue_ false
+              | _ -> 
+                (advance p; ());
+                let mod_path = String.concat "." (List.rev (Ref.get path)) in
+                Ref.set result (Some (`LocalOpen mod_path));
+                Ref.set continue_ false
+
+            end
+          | kw -> 
+            do
+              match keyword_as_ident kw with
+              | Some s -> 
+                (advance p; ());
+                (advance p; ());
+                let qualified = (String.concat "." (List.rev (Ref.get path))) ^ ("." ^ s) in
+                Ref.set result (Some (`Var qualified));
+                Ref.set continue_ false
+              | None -> Ref.set continue_ false
+
+            end
+
+        end
+      else
+        Ref.set continue_ false
+    end;
+    match Ref.get result with
+    | Some r -> r
+    | None -> 
+      do
+        match Ref.get path with
+        | single :: [] -> `Constructor single
+        | _ -> 
+          let rev = List.rev (Ref.get path) in
+          let last = List.hd (List.rev rev) in
+          let prefix = List.rev (List.tl (List.rev rev)) in
+          let qualified = (String.concat "." prefix) ^ ("." ^ last) in
+          `Constructor qualified
+
+      end
+
+
+  pub let at_expr_start p =
+    match peek_kind p with
+    | Token.INT _ | Token.FLOAT _ | Token.STRING _ | Token.INTERP_STRING _ | Token.BYTE _ | Token.RUNE _ | Token.TRUE | Token.FALSE | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.FN | Token.IF | Token.LET | Token.MATCH | Token.MINUS | Token.NOT | Token.LNOT | Token.PERFORM | Token.HANDLE | Token.TRY | Token.RESUME | Token.FOR | Token.BREAK | Token.CONTINUE | Token.RETURN | Token.HASH | Token.DO | Token.POLYTAG _ -> true
+    | _ -> false
+
+
+  pub let rec parse_ty_atom p =
+    match peek_kind p with
+    | Token.IDENT "int" -> 
+      (advance p; ());
+      Ast.TyName "int"
+    | Token.IDENT "bool" -> 
+      (advance p; ());
+      Ast.TyName "bool"
+    | Token.IDENT "string" -> 
+      (advance p; ());
+      Ast.TyName "string"
+    | Token.IDENT "unit" -> 
+      (advance p; ());
+      Ast.TyName "unit"
+    | Token.IDENT s -> 
+      (advance p; ());
+      Ast.TyName s
+    | Token.UIDENT s -> 
+      do
+        (advance p; ());
+        let mod_parts = Ref.create (s :: []) in
+        let final_name = Ref.create None in
+        let continue_reading = Ref.create true in
+        for Ref.get continue_reading do
+          if (peek_kind p) = Token.DOT do
+            do
+              match peek_kind_at p 1 with
+              | Token.UIDENT s2 -> 
+                (advance p; ());
+                (advance p; ());
+                Ref.set mod_parts (s2 :: Ref.get mod_parts)
+              | Token.IDENT s2 -> 
+                (advance p; ());
+                (advance p; ());
+                Ref.set final_name (Some s2);
+                Ref.set continue_reading false
+              | _ -> Ref.set continue_reading false
+
+            end
+          else
+            Ref.set continue_reading false
+        end;
+        match Ref.get final_name with
+        | Some name -> Ast.TyQualified (List.rev (Ref.get mod_parts), name)
+        | None -> Ast.TyName s
+
+      end
+    | Token.TYVAR s -> 
+      (advance p; ());
+      Ast.TyVar s
+    | Token.LPAREN -> 
+      (advance p; ());
+      let ty = parse_ty p in
+      if (peek_kind p) = Token.COMMA do
+        let parts = Ref.create (ty :: []) in
+        for (peek_kind p) = Token.COMMA do
+          (advance p; ());
+          Ref.set parts (parse_ty p :: Ref.get parts)
+        end;
+        expect p Token.RPAREN;
+        Ast.TyTuple (List.rev (Ref.get parts))
+      else do
+        expect p Token.RPAREN;
+        ty
+      end
+    | Token.LBRACE -> 
+      (advance p; ());
+      let (fields, is_open) = parse_ty_record_fields p in
+      expect p Token.RBRACE;
+      Ast.TyRecord (List.map (fn (_, n, t) -> (n, t)) fields, is_open)
+    | Token.LBRACKET -> 
+      (advance p; ());
+      let kind =
+        match peek_kind p with
+        | Token.GT -> 
+          (advance p; ());
+          Ast.PVLower
+        | Token.LT -> 
+          (advance p; ());
+          Ast.PVUpper
+        | _ -> Ast.PVExact
+       in
+      if (peek_kind p) = Token.PIPE do
+        (advance p; ())
+      end;
+      let tags = Ref.create [] in
+      for match peek_kind p with
+      | Token.POLYTAG _ -> true
+      | _ -> false
+       do
+        let tag =
+          match (advance p).kind with
+          | Token.POLYTAG s -> s
+          | _ -> failwith "assert false"
+         in
+        let payload =
+          if (peek_kind p) = Token.OF do
+            (advance p; ());
+            Some (parse_ty p)
+          else
+            None in
+        Ref.set tags ((tag, payload) :: Ref.get tags);
+        if (peek_kind p) = Token.PIPE do
+          (advance p; ())
+        end
+      end;
+      expect p Token.RBRACKET;
+      Ast.TyPolyVariant (kind, List.rev (Ref.get tags))
+    | _ -> error p "expected type"
+
+  and parse_ty_postfix p =
+    let ty = parse_ty_atom p in
+    let rec loop ty =
+      match peek_kind p with
+      | Token.IDENT "list" -> 
+        (advance p; ());
+        loop (Ast.TyList ty)
+      | Token.IDENT "array" -> 
+        (advance p; ());
+        loop (Ast.TyArray ty)
+      | Token.IDENT "map" -> 
+        do
+          (advance p; ());
+          match ty with
+          | Ast.TyTuple (k :: v :: []) -> loop (Ast.TyMap (k, v))
+          | _ -> error p "map type requires two type arguments: (k, v) map"
+
+        end
+      | Token.IDENT name when (peek_kind_at p 1) <> Token.COLON -> 
+        (advance p; ());
+        let args =
+          match ty with
+          | Ast.TyTuple parts -> parts
+          | _ -> ty :: []
+         in
+        loop (Ast.TyApp (args, name))
+      | Token.UIDENT _ when (peek_kind_at p 1) = Token.DOT -> 
+        let mod_parts = Ref.create [] in
+        let first_mod =
+          match (advance p).kind with
+          | Token.UIDENT s -> s
+          | _ -> failwith "assert false"
+         in
+        Ref.set mod_parts (first_mod :: []);
+        let final_name = Ref.create "" in
+        let continue_reading = Ref.create true in
+        for Ref.get continue_reading do
+          if (peek_kind p) = Token.DOT do
+            do
+              match peek_kind_at p 1 with
+              | Token.UIDENT s2 -> 
+                (advance p; ());
+                (advance p; ());
+                Ref.set mod_parts (s2 :: Ref.get mod_parts)
+              | Token.IDENT s2 -> 
+                (advance p; ());
+                (advance p; ());
+                Ref.set final_name s2;
+                Ref.set continue_reading false
+              | _ -> Ref.set continue_reading false
+
+            end
+          else
+            Ref.set continue_reading false
+        end;
+        if (Ref.get final_name) = "" do
+          error p "expected Module.typename in type annotation"
+        else do
+          let qualified = (String.concat "." (List.rev (Ref.get mod_parts))) ^ ("." ^ (Ref.get final_name)) in
+          let args =
+            match ty with
+            | Ast.TyTuple parts -> parts
+            | _ -> ty :: []
+           in
+          loop (Ast.TyApp (args, qualified))
+        end
+      | _ -> ty
+     in
+    loop ty
+  and parse_ty_tuple p =
+    let first = parse_ty_postfix p in
+    match peek_kind p with
+    | Token.STAR -> 
+      let parts = Ref.create (first :: []) in
+      for (peek_kind p) = Token.STAR do
+        (advance p; ());
+        Ref.set parts (parse_ty_postfix p :: Ref.get parts)
+      end;
+      Ast.TyTuple (List.rev (Ref.get parts))
+    | _ -> first
+
+  and parse_ty p =
+    let left = parse_ty_tuple p in
+    match peek_kind p with
+    | Token.ARROW -> 
+      (advance p; ());
+      let right = parse_ty p in
+      let eff =
+        if (peek_kind p) = Token.SLASH do
+          (advance p; ());
+          if (peek_kind p) = (Token.IDENT "pure") do
+            (advance p; ());
+            Some Ast.EffAnnotPure
+          else
+            Some (Ast.EffAnnotRow (parse_eff_items p))
+        else
+          None in
+      Ast.TyArrow (left, right, eff)
+    | _ -> left
+
+  and is_eff_param_start =
+    fn
+      | Token.IDENT _ | Token.TYVAR _ | Token.LPAREN | Token.LBRACE -> true
+      | _ -> false
+
+  and parse_eff_type_params p =
+    let params = Ref.create [] in
+    for is_eff_param_start (peek_kind p) do
+      Ref.set params (parse_ty_atom p :: Ref.get params)
+    end;
+    List.rev (Ref.get params)
+  and parse_eff_items p =
+    let items = Ref.create [] in
+    let continue_parsing = Ref.create true in
+    for Ref.get continue_parsing do
+      match peek_kind p with
+      | Token.UIDENT _ -> 
+        let name = expect_uident p in
+        let params = parse_eff_type_params p in
+        Ref.set items (Ast.EffLabel (name, params) :: Ref.get items);
+        if (peek_kind p) = Token.COMMA do
+          (advance p; ())
+        else
+          Ref.set continue_parsing false
+      | Token.TYVAR s -> 
+        (advance p; ());
+        Ref.set items (Ast.EffVar s :: Ref.get items);
+        if (peek_kind p) = Token.COMMA do
+          (advance p; ())
+        else
+          Ref.set continue_parsing false
+      | _ -> Ref.set continue_parsing false
+
+    end;
+    List.rev (Ref.get items)
+  and parse_ty_record_fields p =
+    let fields = Ref.create [] in
+    let is_open = Ref.create false in
+    let first = Ref.create true in
+    for (peek_kind p) <> Token.RBRACE do
+      if not (Ref.get first) do
+        expect p Token.SEMICOLON
+      end;
+      if (peek_kind p) = Token.RBRACE do
+        ()
+      else if (peek_kind p) = Token.DOTDOT do
+        (advance p; ());
+        Ref.set is_open true
+      else do
+        Ref.set first false;
+        let is_mut = (peek_kind p) = Token.MUT in
+        if is_mut do
+          (advance p; ())
+        end;
+        let name = expect_ident p in
+        expect p Token.COLON;
+        let ty = parse_ty p in
+        Ref.set fields ((is_mut, name, ty) :: Ref.get fields)
+      end
+    end;
+    (List.rev (Ref.get fields), Ref.get is_open)
+
+  pub let rec parse_pattern_atom p =
+    match peek_kind p with
+    | Token.UNDERSCORE -> 
+      (advance p; ());
+      Ast.PatWild
+    | Token.INT n -> 
+      (advance p; ());
+      Ast.PatInt n
+    | Token.FLOAT f -> 
+      (advance p; ());
+      Ast.PatFloat f
+    | Token.TRUE -> 
+      (advance p; ());
+      Ast.PatBool true
+    | Token.FALSE -> 
+      (advance p; ());
+      Ast.PatBool false
+    | Token.STRING s -> 
+      (advance p; ());
+      Ast.PatString s
+    | Token.IDENT s -> 
+      (advance p; ());
+      Ast.PatVar s
+    | Token.UIDENT s -> 
+      (advance p; ());
+      let ctor_name =
+        let path = Ref.create (s :: []) in
+        let continue_reading = Ref.create true in
+        for Ref.get continue_reading do
+          if (peek_kind p) = Token.DOT do
+            do
+              match peek_kind_at p 1 with
+              | Token.UIDENT s2 -> 
+                (advance p; ());
+                (advance p; ());
+                Ref.set path (s2 :: Ref.get path)
+              | _ -> Ref.set continue_reading false
+
+            end
+          else
+            Ref.set continue_reading false
+        end;
+        match Ref.get path with
+        | single :: [] -> single
+        | rev_path -> 
+          let parts = List.rev rev_path in
+          String.concat "." parts
+       in
+      let arg =
+        if at_pattern_arg_start p do
+          Some (parse_pattern_atom p)
+        else
+          None in
+      Ast.PatConstruct (ctor_name, arg)
+    | Token.LBRACKET -> 
+      (advance p; ());
+      if (peek_kind p) = Token.RBRACKET do
+        (advance p; ());
+        Ast.PatNil
+      else do
+        let pats = parse_pattern_list_elems p in
+        expect p Token.RBRACKET;
+        List.fold_right (fn pat acc -> Ast.PatCons (pat, acc)) pats Ast.PatNil
+      end
+    | Token.LPAREN -> 
+      do
+        (advance p; ());
+        if (peek_kind p) = Token.RPAREN do
+          (advance p; ());
+          Ast.PatUnit
+        else do
+          let pat = parse_pattern p in
+          match peek_kind p with
+          | Token.COMMA -> 
+            let pats = Ref.create (pat :: []) in
+            for (peek_kind p) = Token.COMMA do
+              (advance p; ());
+              Ref.set pats (parse_pattern p :: Ref.get pats)
+            end;
+            expect p Token.RPAREN;
+            Ast.PatTuple (List.rev (Ref.get pats))
+          | Token.COLON -> 
+            (advance p; ());
+            let ty = parse_ty p in
+            expect p Token.RPAREN;
+            Ast.PatAnnot (pat, ty)
+          | _ -> 
+            expect p Token.RPAREN;
+            pat
+
+        end
+      end
+    | Token.LBRACE -> 
+      (advance p; ());
+      let fields = parse_pattern_record_fields p in
+      expect p Token.RBRACE;
+      Ast.PatRecord fields
+    | Token.POLYTAG tag -> 
+      (advance p; ());
+      if at_pattern_arg_start p do
+        Ast.PatPolyVariant (tag, Some (parse_pattern_atom p))
+      else
+        Ast.PatPolyVariant (tag, None)
+    | Token.CARET -> 
+      (advance p; ());
+      let name = expect_ident p in
+      Ast.PatPin name
+    | Token.HASH -> 
+      do
+        (advance p; ());
+        match peek_kind p with
+        | Token.LBRACKET -> 
+          (advance p; ());
+          if (peek_kind p) = Token.RBRACKET do
+            (advance p; ());
+            Ast.PatArray []
+          else do
+            let pats = parse_pattern_list_elems p in
+            expect p Token.RBRACKET;
+            Ast.PatArray pats
+          end
+        | Token.LBRACE -> 
+          (advance p; ());
+          if (peek_kind p) = Token.RBRACE do
+            (advance p; ());
+            Ast.PatMap []
+          else do
+            let entries = parse_pattern_map_entries p in
+            expect p Token.RBRACE;
+            Ast.PatMap entries
+          end
+        | _ -> error p "expected '[' or '{' after '#' in pattern"
+
+      end
+    | _ -> error p "expected pattern"
+
+  and parse_pattern_cons p =
+    let pat = parse_pattern_atom p in
+    match peek_kind p with
+    | Token.COLONCOLON -> 
+      (advance p; ());
+      let rest = parse_pattern_cons p in
+      Ast.PatCons (pat, rest)
+    | _ -> pat
+
+  and parse_pattern_as p =
+    let pat = parse_pattern_cons p in
+    match peek_kind p with
+    | Token.IDENT "as" -> 
+      (advance p; ());
+      let name = expect_ident p in
+      Ast.PatAs (pat, name)
+    | _ -> pat
+
+  and parse_pattern p =
+    let pat = Ref.create (parse_pattern_as p) in
+    for (peek_kind p) = Token.PIPE do
+      (advance p; ());
+      let next_pat = parse_pattern_as p in
+      Ref.set pat (Ast.PatOr (Ref.get pat, next_pat))
+    end;
+    Ref.get pat
+  and at_pattern_arg_start p =
+    match peek_kind p with
+    | Token.IDENT "as" -> false
+    | Token.INT _ | Token.TRUE | Token.FALSE | Token.STRING _ | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACKET | Token.LBRACE | Token.UNDERSCORE | Token.HASH | Token.POLYTAG _ | Token.CARET -> true
+    | _ -> false
+
+  and parse_pattern_list_elems p =
+    let first = parse_pattern p in
+    let pats = Ref.create (first :: []) in
+    for (peek_kind p) = Token.SEMICOLON do
+      (advance p; ());
+      if (peek_kind p) <> Token.RBRACKET do
+        Ref.set pats (parse_pattern p :: Ref.get pats)
+      end
+    end;
+    List.rev (Ref.get pats)
+  and parse_pattern_record_fields p =
+    let fields = Ref.create [] in
+    let first = Ref.create true in
+    for (peek_kind p) <> Token.RBRACE do
+      if not (Ref.get first) do
+        expect p Token.SEMICOLON
+      end;
+      if (peek_kind p) = Token.RBRACE do
+        ()
+      else do
+        Ref.set first false;
+        if (peek_kind p) = Token.UNDERSCORE do
+          (advance p; ())
+        else do
+          let name = expect_ident p in
+          let pat =
+            if (peek_kind p) = Token.EQ do
+              (advance p; ());
+              parse_pattern p
+            else
+              Ast.PatVar name in
+          Ref.set fields ((name, pat) :: Ref.get fields)
+        end
+      end
+    end;
+    List.rev (Ref.get fields)
+  and parse_pattern_map_entries p =
+    let entries = Ref.create [] in
+    let first = Ref.create true in
+    for (peek_kind p) <> Token.RBRACE do
+      if not (Ref.get first) do
+        expect p Token.SEMICOLON
+      end;
+      if (peek_kind p) = Token.RBRACE do
+        ()
+      else do
+        Ref.set first false;
+        let key = parse_pattern_atom p in
+        expect p Token.COLON;
+        let value = parse_pattern p in
+        Ref.set entries ((key, value) :: Ref.get entries)
+      end
+    end;
+    List.rev (Ref.get entries)
+
+  pub let bp_of_binop =
+    fn
+      | Token.PIPEARROW -> (1, 2)
+      | Token.PIPEPIPE -> (2, 3)
+      | Token.AMPAMP -> (4, 5)
+      | Token.EQ | Token.NEQ | Token.LT | Token.GT | Token.LE | Token.GE -> (6, 7)
+      | Token.COLONCOLON -> (9, 8)
+      | Token.PLUS | Token.MINUS -> (10, 11)
+      | Token.CARET -> (10, 11)
+      | Token.STAR | Token.SLASH | Token.MOD -> (12, 13)
+      | Token.LOR | Token.LXOR -> (10, 11)
+      | Token.LAND | Token.LSL | Token.LSR -> (12, 13)
+      | _ -> ((-1), (-1))
+
+
+  pub let is_binop =
+    fn
+      | Token.PLUS | Token.MINUS | Token.STAR | Token.SLASH | Token.MOD | Token.EQ | Token.NEQ | Token.LT | Token.GT | Token.LE | Token.GE | Token.AMPAMP | Token.PIPEPIPE | Token.CARET | Token.COLONCOLON | Token.LAND | Token.LOR | Token.LXOR | Token.LSL | Token.LSR | Token.PIPEARROW -> true
+      | _ -> false
+
+
+  pub let binop_of_token =
+    fn
+      | Token.PLUS -> Ast.Add
+      | Token.MINUS -> Ast.Sub
+      | Token.STAR -> Ast.Mul
+      | Token.SLASH -> Ast.Div
+      | Token.MOD -> Ast.Mod
+      | Token.EQ -> Ast.Eq
+      | Token.NEQ -> Ast.Neq
+      | Token.LT -> Ast.Lt
+      | Token.GT -> Ast.Gt
+      | Token.LE -> Ast.Le
+      | Token.GE -> Ast.Ge
+      | Token.AMPAMP -> Ast.And
+      | Token.PIPEPIPE -> Ast.Or
+      | Token.CARET -> Ast.Concat
+      | Token.LAND -> Ast.Land
+      | Token.LOR -> Ast.Lor
+      | Token.LXOR -> Ast.Lxor
+      | Token.LSL -> Ast.Lsl
+      | Token.LSR -> Ast.Lsr
+      | Token.PIPEARROW -> Ast.Pipe
+      | _ -> failwith "assert false"
+
+
+  pub type fun_param =
+    | FPParam of Ast.param
+    | FPPat of string * Ast.pattern * Ast.ty_annot option
+
+
+  pub let resolve_fun_params (fun_params : fun_param list) (body : Ast.expr) : Ast.param list * Ast.expr =
+    let body = List.fold (fn body fp ->
+      do
+        match fp with
+        | FPParam _ -> body
+        | FPPat ((name, pat, _)) -> Ast.EMatch (Ast.EVar name, (pat, None, body) :: [], true)
+
+      end) body fun_params in
+    let params = List.map (fn fp ->
+      do
+        match fp with
+        | FPParam param -> param
+        | FPPat ((name, _, annot)) -> {name; annot; is_generated = true}
+
+      end) fun_params in
+    (params, body)
+
+  pub let fresh_param_counter = Ref.create 0
+
+  pub let fresh_param_name () =
+    Ref.set fresh_param_counter (Ref.get fresh_param_counter + 1);
+    $"__p{Ref.get fresh_param_counter}"
+
+  pub let parse_format_spec spec expr =
+    let len = String.length spec in
+    let i = Ref.create 0 in
+    let align =
+      if ((Ref.get i) < len) && (((String.get spec (Ref.get i)) = #3c) || ((String.get spec (Ref.get i)) = #3e)) do
+        let a = String.get spec (Ref.get i) in
+        Ref.set i (Ref.get i + 1);
+        Some a
+      else
+        None in
+    let zero_pad =
+      if ((Ref.get i) < len) && (((String.get spec (Ref.get i)) = #30) && ((((Ref.get i) + 1) < len) && (((String.get spec ((Ref.get i) + 1)) >= #31) && ((String.get spec ((Ref.get i) + 1)) <= #39)))) do
+        Ref.set i (Ref.get i + 1);
+        true
+      else
+        false in
+    let width_start = Ref.get i in
+    for ((Ref.get i) < len) && (((String.get spec (Ref.get i)) >= #30) && ((String.get spec (Ref.get i)) <= #39)) do
+      Ref.set i (Ref.get i + 1)
+    end;
+    let width =
+      if (Ref.get i) > width_start do
+        Some (int_of_string (String.sub spec width_start ((Ref.get i) - width_start)))
+      else
+        None in
+    let float_prec =
+      if ((Ref.get i) < len) && ((String.get spec (Ref.get i)) = #2e) do
+        Ref.set i (Ref.get i + 1);
+        let ps = Ref.get i in
+        for ((Ref.get i) < len) && (((String.get spec (Ref.get i)) >= #30) && ((String.get spec (Ref.get i)) <= #39)) do
+          Ref.set i (Ref.get i + 1)
+        end;
+        let n =
+          if (Ref.get i) > ps do
+            int_of_string (String.sub spec ps ((Ref.get i) - ps))
+          else
+            0 in
+        if ((Ref.get i) < len) && ((String.get spec (Ref.get i)) = #66) do
+          Ref.set i (Ref.get i + 1);
+          Some n
+        else
+          None
+      else
+        None in
+    let type_spec =
+      if (Ref.get i) < len do
+        do
+          match String.get spec (Ref.get i) with
+          | _c when _c = #78 -> 
+            Ref.set i (Ref.get i + 1);
+            Some #78
+          | _c when _c = #58 -> 
+            Ref.set i (Ref.get i + 1);
+            Some #58
+          | _c when _c = #6f -> 
+            Ref.set i (Ref.get i + 1);
+            Some #6f
+          | _c when _c = #62 -> 
+            Ref.set i (Ref.get i + 1);
+            Some #62
+          | _ -> None
+
+        end
+      else
+        None in
+    let inner =
+      match float_prec with
+      | Some n -> Ast.EApp (Ast.EApp (Ast.EVar "__fmt_float", Ast.EInt n), expr)
+      | None -> 
+        do
+          match type_spec with
+          | Some _c when _c = #78 -> Ast.EApp (Ast.EVar "__fmt_hex", expr)
+          | Some _c when _c = #58 -> Ast.EApp (Ast.EVar "__fmt_hex_upper", expr)
+          | Some _c when _c = #6f -> Ast.EApp (Ast.EVar "__fmt_oct", expr)
+          | Some _c when _c = #62 -> Ast.EApp (Ast.EVar "__fmt_bin", expr)
+          | _ -> Ast.EApp (Ast.EVar "show", expr)
+
+        end
+     in
+    let inner =
+      if zero_pad do
+        do
+          match width with
+          | Some w -> Ast.EApp (Ast.EApp (Ast.EVar "__fmt_zero_pad", Ast.EInt w), inner)
+          | None -> inner
+
+        end
+      else
+        inner in
+    let inner =
+      if not zero_pad do
+        do
+          match (align, width) with
+          | (Some _c, Some w) when _c = #3e -> Ast.EApp (Ast.EApp (Ast.EVar "__fmt_pad_left", Ast.EInt w), inner)
+          | (Some _c, Some w) when _c = #3c -> Ast.EApp (Ast.EApp (Ast.EVar "__fmt_pad_right", Ast.EInt w), inner)
+          | _ -> inner
+
+        end
+      else
+        inner in
+    inner
+
+  pub let rec parse_atom p =
+    let loc = (peek p).loc in
+    let expr = parse_atom_inner p in
+    Ast.ELoc (loc, expr)
+  and parse_atom_inner p =
+    match peek_kind p with
+    | Token.INT n -> 
+      (advance p; ());
+      Ast.EInt n
+    | Token.FLOAT f -> 
+      (advance p; ());
+      Ast.EFloat f
+    | Token.STRING s -> 
+      (advance p; ());
+      Ast.EString s
+    | Token.INTERP_STRING parts -> 
+      do
+        (advance p; ());
+        let exprs = List.map (fn (part : Token.interp_part) ->
+          do
+            match part with
+            | Token.IPLit s -> Ast.EString s
+            | Token.IPExpr ((src, fmt)) -> 
+              do
+                let tokens = Lexer.tokenize src in
+                let inner_p = create tokens in
+                let inner_expr = parse_expr inner_p in
+                match fmt with
+                | None -> Ast.EApp (Ast.EVar "show", inner_expr)
+                | Some spec -> parse_format_spec spec inner_expr
+
+              end
+
+          end) parts in
+        match exprs with
+        | [] -> Ast.EString ""
+        | e :: [] -> e
+        | first :: rest -> List.fold (fn acc e -> Ast.EBinop (Ast.Concat, acc, e)) first rest
+
+      end
+    | Token.TRUE -> 
+      (advance p; ());
+      Ast.EBool true
+    | Token.FALSE -> 
+      (advance p; ());
+      Ast.EBool false
+    | Token.BYTE n -> 
+      (advance p; ());
+      Ast.EByte n
+    | Token.RUNE n -> 
+      (advance p; ());
+      Ast.ERune n
+    | Token.IDENT s -> 
+      (advance p; ());
+      Ast.EVar s
+    | Token.UIDENT s -> 
+      do
+        (advance p; ());
+        match read_qualified_path p s with
+        | `Var qualified -> Ast.EVar qualified
+        | `Constructor qualified -> Ast.EConstruct (qualified, None)
+        | `LocalOpen mod_path -> 
+          (advance p; ());
+          let inner = parse_expr p in
+          expect p Token.RPAREN;
+          Ast.ELocalOpen (mod_path, inner)
+
+      end
+    | Token.LPAREN -> 
+      do
+        (advance p; ());
+        let op_name = token_to_op_name (peek_kind p) in
+        match op_name with
+        | Some name when (peek_kind_at p 1) = Token.RPAREN -> 
+          (advance p; ());
+          (advance p; ());
+          Ast.EVar name
+        | _ -> 
+          do
+            if (peek_kind p) = Token.RPAREN do
+              (advance p; ());
+              Ast.EUnit
+            else do
+              let expr = parse_expr p in
+              match peek_kind p with
+              | Token.COMMA -> 
+                let exprs = Ref.create (expr :: []) in
+                for (peek_kind p) = Token.COMMA do
+                  (advance p; ());
+                  Ref.set exprs (parse_expr p :: Ref.get exprs)
+                end;
+                expect p Token.RPAREN;
+                Ast.ETuple (List.rev (Ref.get exprs))
+              | Token.COLON -> 
+                (advance p; ());
+                let ty = parse_ty p in
+                expect p Token.RPAREN;
+                Ast.EAnnot (expr, ty)
+              | Token.COLONGT -> 
+                (advance p; ());
+                let ty = parse_ty p in
+                expect p Token.RPAREN;
+                Ast.ECoerce (expr, ty)
+              | _ -> 
+                expect p Token.RPAREN;
+                expr
+
+            end
+          end
+
+      end
+    | Token.LBRACE -> 
+      (advance p; ());
+      if (peek_kind p) = Token.RBRACE do
+        (advance p; ());
+        Ast.ERecord []
+      else if match peek_kind p with
+      | Token.IDENT _ -> 
+        let next = peek_kind_at p 1 in
+        (next = Token.EQ) || ((next = Token.SEMICOLON) || (next = Token.RBRACE))
+      | _ -> false
+       do
+        let fields = parse_record_fields p in
+        expect p Token.RBRACE;
+        Ast.ERecord fields
+      else do
+        let base = parse_expr p in
+        expect p Token.WITH;
+        let fields = parse_record_fields p in
+        expect p Token.RBRACE;
+        Ast.ERecordUpdate (base, fields)
+      end
+    | Token.LBRACKET -> 
+      (advance p; ());
+      if (peek_kind p) = Token.RBRACKET do
+        (advance p; ());
+        Ast.ENil
+      else do
+        let elems = parse_list_elems p in
+        expect p Token.RBRACKET;
+        Ast.EList elems
+      end
+    | Token.HASH -> 
+      do
+        (advance p; ());
+        match peek_kind p with
+        | Token.LBRACE -> 
+          do
+            (advance p; ());
+            match parse_set_or_map p with
+            | `Map pairs -> 
+              expect p Token.RBRACE;
+              Ast.EMap pairs
+            | `Set elems -> 
+              expect p Token.RBRACE;
+              Ast.ESet elems
+            | `Update expr -> 
+              expect p Token.RBRACE;
+              expr
+
+          end
+        | Token.LBRACKET -> 
+          (advance p; ());
+          if (peek_kind p) = Token.RBRACKET do
+            (advance p; ());
+            Ast.EArray []
+          else do
+            let elems = parse_list_elems p in
+            expect p Token.RBRACKET;
+            Ast.EArray elems
+          end
+        | Token.UIDENT name | Token.IDENT name -> 
+          do
+            (advance p; ());
+            match peek_kind p with
+            | Token.LBRACE -> 
+              do
+                (advance p; ());
+                match parse_set_or_map p with
+                | `Map pairs -> 
+                  expect p Token.RBRACE;
+                  Ast.EMapTyped (name, pairs)
+                | `Set elems -> 
+                  expect p Token.RBRACE;
+                  Ast.ECollTyped (name, elems)
+                | `Update expr -> 
+                  expect p Token.RBRACE;
+                  expr
+
+              end
+            | Token.LBRACKET -> 
+              (advance p; ());
+              if (peek_kind p) = Token.RBRACKET do
+                (advance p; ());
+                Ast.ECollTyped (name, [])
+              else do
+                let elems = parse_list_elems p in
+                expect p Token.RBRACKET;
+                Ast.ECollTyped (name, elems)
+              end
+            | _ -> error p "expected '{' or '[' after type name"
+
+          end
+        | _ -> error p "expected '{', '[', or type name after '#'"
+
+      end
+    | Token.POLYTAG tag -> 
+      (advance p; ());
+      if (at_atom_start p) && (not (is_keyword_expr_start p)) do
+        Ast.EPolyVariant (tag, Some (parse_postfix p))
+      else
+        Ast.EPolyVariant (tag, None)
+    | Token.DO -> 
+      (advance p; ());
+      let e = parse_expr p in
+      expect p Token.END;
+      e
+    | Token.FN -> parse_fun p
+    | Token.IF -> parse_if p
+    | Token.LET -> parse_let_expr p
+    | Token.MATCH -> parse_match p false
+    | Token.PARTIAL -> 
+      (advance p; ());
+      parse_match p true
+    | Token.MINUS -> 
+      (advance p; ());
+      let expr = parse_postfix p in
+      Ast.EUnop (Ast.Neg, expr)
+    | Token.NOT -> 
+      (advance p; ());
+      let expr = parse_postfix p in
+      Ast.EUnop (Ast.Not, expr)
+    | Token.LNOT -> 
+      (advance p; ());
+      let expr = parse_postfix p in
+      Ast.EUnop (Ast.Lnot, expr)
+    | Token.PERFORM -> 
+      (advance p; ());
+      let op_name = expect_ident p in
+      let arg = parse_postfix p in
+      Ast.EPerform (op_name, arg)
+    | Token.HANDLE -> parse_handle_expr p
+    | Token.TRY -> parse_try_expr p
+    | Token.RESUME -> 
+      (advance p; ());
+      let k = parse_atom p in
+      let v = parse_atom p in
+      Ast.EResume (k, v)
+    | Token.FOR -> parse_for_expr p
+    | Token.BREAK -> 
+      (advance p; ());
+      if at_atom_start p do
+        Ast.EBreak (Some (parse_atom p))
+      else
+        Ast.EBreak None
+    | Token.CONTINUE -> 
+      (advance p; ());
+      Ast.EContinueLoop
+    | Token.RETURN -> 
+      (advance p; ());
+      Ast.EReturn (parse_expr_bp p 0)
+    | Token.DOT -> 
+      (advance p; ());
+      let field = expect_ident p in
+      let r = {name = "__r"; annot = None; is_generated = false} in
+      Ast.EFun (r, Ast.EField (Ast.EVar "__r", field))
+    | _ -> error p "expected expression"
+
+  and at_atom_start p =
+    match peek_kind p with
+    | Token.INT _ | Token.FLOAT _ | Token.STRING _ | Token.INTERP_STRING _ | Token.BYTE _ | Token.RUNE _ | Token.TRUE | Token.FALSE | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.HASH | Token.DOT | Token.POLYTAG _ -> true
+    | _ -> false
+
+  and is_adjacent p = (p.pos > 0) && (let prev = Array.get p.tokens (p.pos - 1) in
+  let cur = peek p in
+  prev.end_offset = cur.loc.offset)
+  and parse_postfix p =
+    let expr = parse_atom p in
+    let rec loop expr =
+      match peek_kind p with
+      | Token.DOT when is_adjacent p -> 
+        (advance p; ());
+        if (peek_kind p) = Token.LBRACKET do
+          (advance p; ());
+          let idx = parse_expr p in
+          expect p Token.RBRACKET;
+          loop (Ast.EIndex (expr, idx))
+        else do
+          let field = expect_ident p in
+          loop (Ast.EField (expr, field))
+        end
+      | _ -> expr
+     in
+    loop expr
+  and parse_app p =
+    let fn_ = parse_postfix p in
+    let rec loop expr =
+      match peek_kind p with
+      | _ when (at_atom_start p) && (not (is_keyword_expr_start p)) -> 
+        do
+          let arg = parse_postfix p in
+          match expr with
+          | Ast.EConstruct ((name, None)) | Ast.ELoc ((_, Ast.EConstruct ((name, None)))) -> loop (Ast.EConstruct (name, Some arg))
+          | _ -> loop (Ast.EApp (expr, arg))
+
+        end
+      | _ -> expr
+     in
+    loop fn_
+  and is_keyword_expr_start p =
+    match peek_kind p with
+    | Token.FN | Token.IF | Token.LET | Token.MATCH | Token.PERFORM | Token.HANDLE | Token.TRY | Token.RESUME | Token.FOR | Token.BREAK | Token.CONTINUE | Token.RETURN -> true
+    | _ -> false
+
+  and parse_expr_bp p min_bp =
+    let lhs = parse_app p in
+    let rec loop lhs =
+      let kind = peek_kind p in
+      if is_binop kind do
+        let (l_bp, r_bp) = bp_of_binop kind in
+        if l_bp < min_bp do
+          lhs
+        else do
+          (advance p; ());
+          if kind = Token.COLONCOLON do
+            let rhs = parse_expr_bp p r_bp in
+            loop (Ast.ECons (lhs, rhs))
+          else do
+            let rhs = parse_expr_bp p r_bp in
+            loop (Ast.EBinop (binop_of_token kind, lhs, rhs))
+          end
+        end
+      else
+        lhs in
+    loop lhs
+  and parse_expr_no_seq p =
+    let e = parse_expr_bp p 0 in
+    match peek_kind p with
+    | Token.COLONEQUAL -> 
+      do
+        (advance p; ());
+        let rhs = parse_expr_bp p 0 in
+        let e_inner =
+          match e with
+          | Ast.ELoc ((_, inner)) -> inner
+          | e -> e
+         in
+        match e_inner with
+        | Ast.EVar name -> Ast.EAssign (name, rhs)
+        | Ast.EField ((obj, field)) -> Ast.EFieldAssign (obj, field, rhs)
+        | _ -> error p "left side of := must be a variable or field access"
+
+      end
+    | _ -> e
+
+  and parse_expr p =
+    let e = parse_expr_bp p 0 in
+    match peek_kind p with
+    | Token.COLONEQUAL -> 
+      do
+        (advance p; ());
+        let rhs = parse_expr_bp p 0 in
+        let e_inner =
+          match e with
+          | Ast.ELoc ((_, inner)) -> inner
+          | e -> e
+         in
+        let assign =
+          match e_inner with
+          | Ast.EVar name -> Ast.EAssign (name, rhs)
+          | Ast.EField ((obj, field)) -> Ast.EFieldAssign (obj, field, rhs)
+          | _ -> error p "left side of := must be a variable or field access"
+         in
+        match peek_kind p with
+        | Token.SEMICOLON when (peek_next_kind p) <> (Some Token.SEMICOLON) -> 
+          (advance p; ());
+          if at_expr_start p do
+            Ast.ESeq (assign, parse_expr p)
+          else
+            assign
+        | _ -> assign
+
+      end
+    | Token.SEMICOLON when (peek_next_kind p) <> (Some Token.SEMICOLON) -> 
+      (advance p; ());
+      if at_expr_start p do
+        let e2 = parse_expr p in
+        Ast.ESeq (e, e2)
+      else
+        e
+    | _ -> e
+
+  and peek_next_kind p =
+    if (p.pos + 1) < (Array.length p.tokens) do
+      Some ((Array.get p.tokens (p.pos + 1)).kind)
+    else
+      None
+  and parse_fun_param p =
+    match peek_kind p with
+    | Token.LPAREN -> 
+      do
+        (advance p; ());
+        if (peek_kind p) = Token.RPAREN do
+          (advance p; ());
+          FPParam ({name = "_"; annot = Some (Ast.TyName "unit"); is_generated = false})
+        else do
+          let pat = parse_pattern p in
+          let pat =
+            if (peek_kind p) = Token.COMMA do
+              let pats = Ref.create (pat :: []) in
+              for (peek_kind p) = Token.COMMA do
+                (advance p; ());
+                Ref.set pats (parse_pattern p :: Ref.get pats)
+              end;
+              Ast.PatTuple (List.rev (Ref.get pats))
+            else
+              pat in
+          let annot =
+            if (peek_kind p) = Token.COLON do
+              (advance p; ());
+              Some (parse_ty p)
+            else
+              None in
+          expect p Token.RPAREN;
+          match (pat, annot) with
+          | (Ast.PatVar name, _) -> FPParam ({name; annot; is_generated = false})
+          | (_, _) -> 
+            let pname = fresh_param_name () in
+            FPPat (pname, pat, annot)
+
+        end
+      end
+    | Token.LBRACE -> 
+      let pat = parse_pattern_atom p in
+      let pname = fresh_param_name () in
+      FPPat (pname, pat, None)
+    | Token.IDENT s -> 
+      (advance p; ());
+      FPParam ({name = s; annot = None; is_generated = false})
+    | Token.UNDERSCORE -> 
+      (advance p; ());
+      FPParam ({name = "_"; annot = None; is_generated = false})
+    | _ -> error p "expected parameter"
+
+  and parse_fun p =
+    expect p Token.FN;
+    if (peek_kind p) = Token.PIPE do
+      (advance p; ());
+      let arms = Ref.create [] in
+      let continue_ = Ref.create true in
+      for Ref.get continue_ do
+        let pat = parse_pattern p in
+        let guard =
+          if (peek_kind p) = Token.WHEN do
+            (advance p; ());
+            Some (parse_expr p)
+          else
+            None in
+        expect p Token.ARROW;
+        let body = parse_expr p in
+        Ref.set arms ((pat, guard, body) :: Ref.get arms);
+        if (peek_kind p) = Token.PIPE do
+          (advance p; ())
+        else
+          Ref.set continue_ false
+      end;
+      let param = {name = "__x"; annot = None; is_generated = false} in
+      Ast.EFun (param, Ast.EMatch (Ast.EVar "__x", List.rev (Ref.get arms), false))
+    else do
+      let fun_params = Ref.create [] in
+      for (peek_kind p) <> Token.ARROW do
+        Ref.set fun_params (parse_fun_param p :: Ref.get fun_params)
+      end;
+      if (Ref.get fun_params) = [] do
+        Ref.set fun_params (FPParam ({name = "_"; annot = Some (Ast.TyName "unit"); is_generated = false}) :: [])
+      end;
+      expect p Token.ARROW;
+      let body = parse_expr p in
+      let body = List.fold (fn body fp ->
+        do
+          match fp with
+          | FPParam _ -> body
+          | FPPat ((name, pat, _)) -> Ast.EMatch (Ast.EVar name, (pat, None, body) :: [], true)
+
+        end) body (Ref.get fun_params) in
+      let params = List.map (fn fp ->
+        do
+          match fp with
+          | FPParam param -> param
+          | FPPat ((name, _, annot)) -> {name; annot; is_generated = false}
+
+        end) (Ref.get fun_params) in
+      List.fold (fn body param -> Ast.EFun (param, body)) body params
+    end
+  and parse_param p = parse_fun_param p
+  and parse_if p =
+    expect p Token.IF;
+    let cond = parse_expr p in
+    expect p Token.DO;
+    let then_e = parse_expr p in
+    match peek_kind p with
+    | Token.ELSE -> 
+      (advance p; ());
+      let else_e = parse_expr_no_seq p in
+      Ast.EIf (cond, then_e, else_e)
+    | Token.END -> 
+      (advance p; ());
+      Ast.EIf (cond, then_e, Ast.EUnit)
+    | _ -> error p "expected 'else' or 'end' after if body"
+
+  and parse_type_params p =
+    if ((peek_kind p) = Token.LPAREN) && ((peek_kind_at p 1) = Token.TYPE) do
+      (advance p; ());
+      (advance p; ());
+      let tyvars = Ref.create [] in
+      for match peek_kind p with
+      | Token.TYVAR _ -> true
+      | _ -> false
+       do
+        match advance p with
+        | {kind = Token.TYVAR s; _} -> Ref.set tyvars (s :: Ref.get tyvars)
+        | _ -> ()
+
+      end;
+      if (Ref.get tyvars) = [] do
+        error p "expected type variable after 'type'"
+      end;
+      expect p Token.RPAREN;
+      List.rev (Ref.get tyvars)
+    else
+      []
+  and parse_let_expr p =
+    expect p Token.LET;
+    let is_rec = (peek_kind p) = Token.REC in
+    if is_rec do
+      (advance p; ())
+    end;
+    let is_mut = (peek_kind p) = Token.MUT in
+    if is_mut do
+      (advance p; ())
+    end;
+    if is_rec && is_mut do
+      error p "let rec mut is not supported"
+    end;
+    if (not is_rec) && ((not is_mut) && (is_destruct_start p)) do
+      let pat = parse_pattern p in
+      expect p Token.EQ;
+      let e1 = parse_expr p in
+      expect p Token.IN;
+      let e2 = parse_expr p in
+      Ast.EMatch (e1, (pat, None, e2) :: [], true)
+    else do
+      let type_params =
+        if is_rec do
+          parse_type_params p
+        else
+          [] in
+      let name = expect_ident p in
+      if is_mut do
+        let annot =
+          if (peek_kind p) = Token.COLON do
+            (advance p; ());
+            Some (parse_ty p)
+          else
+            None in
+        expect p Token.EQ;
+        let body = parse_expr p in
+        let body =
+          match annot with
+          | Some ty -> Ast.EAnnot (body, ty)
+          | None -> body
+         in
+        expect p Token.IN;
+        let rest = parse_expr p in
+        Ast.ELetMut (name, body, rest)
+      else do
+        let params = Ref.create [] in
+        for ((peek_kind p) <> Token.EQ) && ((peek_kind p) <> Token.COLON) do
+          Ref.set params (parse_param p :: Ref.get params)
+        end;
+        let ret_annot =
+          if (peek_kind p) = Token.COLON do
+            (advance p; ());
+            let ty = parse_ty p in
+            if (peek_kind p) = Token.SLASH do
+              (advance p; ());
+              let eff =
+                if (peek_kind p) = (Token.IDENT "pure") do
+                  (advance p; ());
+                  Ast.EffAnnotPure
+                else
+                  Ast.EffAnnotRow (parse_eff_items p) in
+              Some (Ast.TyWithEffect (ty, eff))
+            else
+              Some ty
+          else
+            None in
+        expect p Token.EQ;
+        let body = parse_expr p in
+        let full_body = wrap_params_expr (List.rev (Ref.get params)) ret_annot body in
+        if is_rec && ((peek_kind p) = Token.AND) do
+          let bindings = Ref.create ((name, type_params, full_body) :: []) in
+          for (peek_kind p) = Token.AND do
+            (advance p; ());
+            let and_name = expect_ident p in
+            let and_type_params = parse_type_params p in
+            let and_params = Ref.create [] in
+            for ((peek_kind p) <> Token.EQ) && ((peek_kind p) <> Token.COLON) do
+              Ref.set and_params (parse_param p :: Ref.get and_params)
+            end;
+            let and_ret_annot =
+              if (peek_kind p) = Token.COLON do
+                (advance p; ());
+                let ty = parse_ty p in
+                if (peek_kind p) = Token.SLASH do
+                  (advance p; ());
+                  let eff =
+                    if (peek_kind p) = (Token.IDENT "pure") do
+                      (advance p; ());
+                      Ast.EffAnnotPure
+                    else
+                      Ast.EffAnnotRow (parse_eff_items p) in
+                  Some (Ast.TyWithEffect (ty, eff))
+                else
+                  Some ty
+              else
+                None in
+            expect p Token.EQ;
+            let and_body = parse_expr p in
+            let and_full_body = wrap_params_expr (List.rev (Ref.get and_params)) and_ret_annot and_body in
+            Ref.set bindings ((and_name, and_type_params, and_full_body) :: Ref.get bindings)
+          end;
+          expect p Token.IN;
+          let rest = parse_expr p in
+          Ast.ELetRecAnd (List.rev (Ref.get bindings), rest)
+        else do
+          expect p Token.IN;
+          let rest = parse_expr p in
+          if is_rec do
+            Ast.ELetRec (name, type_params, full_body, rest)
+          else
+            Ast.ELet (name, full_body, rest)
+        end
+      end
+    end
+  and is_destruct_start p =
+    match peek_kind p with
+    | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.UIDENT _ -> true
+    | Token.IDENT _ when (peek_kind_at p 1) = Token.COLONCOLON -> true
+    | _ -> false
+
+  and wrap_params_expr fun_params ret_annot body =
+    let body = List.fold (fn body fp ->
+      do
+        match fp with
+        | FPParam _ -> body
+        | FPPat ((name, pat, _)) -> Ast.EMatch (Ast.EVar name, (pat, None, body) :: [], true)
+
+      end) body fun_params in
+    let params = List.map (fn fp ->
+      do
+        match fp with
+        | FPParam param -> param
+        | FPPat ((name, _, annot)) -> {name; annot; is_generated = true}
+
+      end) fun_params in
+    match ret_annot with
+    | Some (Ast.TyWithEffect ((ret_ty, eff_annot))) when params <> [] -> 
+      let body = Ast.EAnnot (body, ret_ty) in
+      let full_fun = List.fold_right (fn param body -> Ast.EFun (param, body)) params body in
+      let rec build_arrow =
+        fn
+          | [] -> ret_ty
+          | p :: [] -> 
+            let pty =
+              match p.annot with
+              | Some t -> t
+              | None -> Ast.TyVar ("'_eff_p_" ^ p.name)
+             in
+            Ast.TyArrow (pty, ret_ty, Some eff_annot)
+          | p :: rest -> 
+            let pty =
+              match p.annot with
+              | Some t -> t
+              | None -> Ast.TyVar ("'_eff_p_" ^ p.name)
+             in
+            Ast.TyArrow (pty, build_arrow rest, None)
+       in
+      Ast.EAnnot (full_fun, build_arrow params)
+    | _ -> 
+      let body =
+        match ret_annot with
+        | Some ty -> Ast.EAnnot (body, ty)
+        | None -> body
+       in
+      List.fold_right (fn param body -> Ast.EFun (param, body)) params body
+
+  and parse_match p partial =
+    expect p Token.MATCH;
+    let scrut = parse_expr p in
+    expect p Token.WITH;
+    if (peek_kind p) = Token.PIPE do
+      (advance p; ())
+    end;
+    let arms = Ref.create [] in
+    let continue_ = Ref.create true in
+    for Ref.get continue_ do
+      let pat = parse_pattern p in
+      let guard =
+        if (peek_kind p) = Token.WHEN do
+          (advance p; ());
+          Some (parse_expr p)
+        else
+          None in
+      expect p Token.ARROW;
+      let body = parse_expr p in
+      Ref.set arms ((pat, guard, body) :: Ref.get arms);
+      if (peek_kind p) = Token.PIPE do
+        (advance p; ())
+      else
+        Ref.set continue_ false
+    end;
+    Ast.EMatch (scrut, List.rev (Ref.get arms), partial)
+  and parse_handle_expr p =
+    expect p Token.HANDLE;
+    let body = parse_expr p in
+    expect p Token.WITH;
+    if (peek_kind p) = Token.PIPE do
+      (advance p; ())
+    end;
+    let arms = Ref.create [] in
+    let continue_parsing = Ref.create true in
+    for Ref.get continue_parsing do
+      match peek_kind p with
+      | Token.RETURN -> 
+        (advance p; ());
+        let name = expect_ident p in
+        expect p Token.ARROW;
+        let handler_body = parse_expr p in
+        Ref.set arms (Ast.HReturn (name, handler_body) :: Ref.get arms);
+        if (peek_kind p) = Token.PIPE do
+          (advance p; ())
+        else
+          Ref.set continue_parsing false
+      | Token.IDENT s -> 
+        (advance p; ());
+        let arg_name =
+          match peek_kind p with
+          | Token.LPAREN when (peek_kind_at p 1) = Token.RPAREN -> 
+            (advance p; ());
+            (advance p; ());
+            "_"
+          | _ -> expect_ident p
+         in
+        let k_name = expect_ident p in
+        expect p Token.ARROW;
+        let handler_body = parse_expr p in
+        Ref.set arms (Ast.HOp (s, arg_name, k_name, handler_body) :: Ref.get arms);
+        if (peek_kind p) = Token.PIPE do
+          (advance p; ())
+        else
+          Ref.set continue_parsing false
+      | _ -> Ref.set continue_parsing false
+
+    end;
+    Ast.EHandle (body, List.rev (Ref.get arms))
+  and parse_try_expr p =
+    expect p Token.TRY;
+    let body = parse_expr p in
+    expect p Token.WITH;
+    if (peek_kind p) = Token.PIPE do
+      (advance p; ())
+    end;
+    let arms = Ref.create (Ast.HReturn ("__x", Ast.EVar "__x") :: []) in
+    let continue_parsing = Ref.create true in
+    for Ref.get continue_parsing do
+      match peek_kind p with
+      | Token.IDENT s -> 
+        (advance p; ());
+        let arg_name =
+          match peek_kind p with
+          | Token.LPAREN when (peek_kind_at p 1) = Token.RPAREN -> 
+            (advance p; ());
+            (advance p; ());
+            "_"
+          | _ -> expect_ident p
+         in
+        expect p Token.ARROW;
+        let handler_body = parse_expr p in
+        Ref.set arms (Ast.HOp (s, arg_name, "__k", handler_body) :: Ref.get arms);
+        if (peek_kind p) = Token.PIPE do
+          (advance p; ())
+        else
+          Ref.set continue_parsing false
+      | _ -> Ref.set continue_parsing false
+
+    end;
+    Ast.EHandle (body, List.rev (Ref.get arms))
+  and lookahead_in_after_balanced p =
+    let depth = Ref.create 1 in
+    let i = Ref.create 1 in
+    let hit_eof = Ref.create false in
+    for ((Ref.get depth) > 0) && (not (Ref.get hit_eof)) do
+      do
+        match peek_kind_at p (Ref.get i) with
+        | Token.LPAREN | Token.LBRACE | Token.LBRACKET -> Ref.set depth (Ref.get depth + 1)
+        | Token.RPAREN | Token.RBRACE | Token.RBRACKET -> Ref.set depth (Ref.get depth - 1)
+        | Token.EOF -> Ref.set hit_eof true
+        | _ -> ()
+
+      end;
+      Ref.set i (Ref.get i + 1)
+    end;
+    (not (Ref.get hit_eof)) && (((Ref.get depth) = 0) && ((peek_kind_at p (Ref.get i)) = Token.IN))
+  and pat_to_name_and_wrap pat =
+    match pat with
+    | Ast.PatVar name -> (name, fn body -> body)
+    | Ast.PatWild -> ("_", fn body -> body)
+    | _ -> 
+      let pname = fresh_param_name () in
+      (pname, fn body -> Ast.EMatch (Ast.EVar pname, (pat, None, body) :: [], true))
+
+  and parse_for_in_rest p elem_name elem_wrap coll =
+    match peek_kind p with
+    | Token.WITH -> 
+      (advance p; ());
+      let acc_pat =
+        match peek_kind p with
+        | Token.LPAREN | Token.LBRACE | Token.LBRACKET -> parse_pattern_atom p
+        | _ -> 
+          let name = expect_ident p in
+          Ast.PatVar name
+       in
+      let (acc_name, acc_wrap) = pat_to_name_and_wrap acc_pat in
+      expect p Token.EQ;
+      let init = parse_expr_bp p 0 in
+      expect p Token.DO;
+      let body = parse_expr p in
+      expect p Token.END;
+      Ast.EForFold (elem_name, coll, acc_name, init, elem_wrap (acc_wrap body))
+    | Token.DO -> 
+      (advance p; ());
+      let body = parse_expr p in
+      expect p Token.END;
+      Ast.EFor (elem_name, coll, elem_wrap body)
+    | _ -> error p "expected 'do' or 'with' after for collection"
+
+  and parse_for_expr p =
+    expect p Token.FOR;
+    match peek_kind p with
+    | Token.DO -> 
+      (advance p; ());
+      let body = parse_expr p in
+      expect p Token.END;
+      Ast.EWhile (Ast.EBool true, body)
+    | Token.LET -> 
+      (advance p; ());
+      let pat = parse_pattern p in
+      expect p Token.EQ;
+      let scrutinee = parse_expr_bp p 0 in
+      expect p Token.DO;
+      let body = parse_expr p in
+      expect p Token.END;
+      Ast.EWhileLet (pat, scrutinee, body)
+    | Token.IDENT _ | Token.UNDERSCORE when (peek_kind_at p 1) = Token.IN -> 
+      let var_name =
+        if (peek_kind p) = Token.UNDERSCORE do
+          (advance p; ());
+          "_"
+        else
+          expect_ident p in
+      expect p Token.IN;
+      let coll = parse_expr_bp p 0 in
+      parse_for_in_rest p var_name (fn body -> body) coll
+    | Token.LPAREN | Token.LBRACE | Token.LBRACKET when lookahead_in_after_balanced p -> 
+      let pat = parse_pattern_atom p in
+      expect p Token.IN;
+      let coll = parse_expr_bp p 0 in
+      let (elem_name, elem_wrap) = pat_to_name_and_wrap pat in
+      parse_for_in_rest p elem_name elem_wrap coll
+    | _ -> 
+      let cond = parse_expr_bp p 0 in
+      expect p Token.DO;
+      let body = parse_expr p in
+      expect p Token.END;
+      Ast.EWhile (cond, body)
+
+  and parse_record_fields p =
+    let fields = Ref.create [] in
+    let first = Ref.create true in
+    for (peek_kind p) <> Token.RBRACE do
+      if not (Ref.get first) do
+        expect p Token.SEMICOLON
+      end;
+      if (peek_kind p) = Token.RBRACE do
+        ()
+      else do
+        Ref.set first false;
+        let name = expect_ident p in
+        let expr =
+          if (peek_kind p) = Token.EQ do
+            (advance p; ());
+            parse_expr_bp p 0
+          else
+            Ast.EVar name in
+        Ref.set fields ((name, expr) :: Ref.get fields)
+      end
+    end;
+    List.rev (Ref.get fields)
+  and parse_map_pairs p =
+    if (peek_kind p) = Token.RBRACE do
+      []
+    else do
+      let pairs = Ref.create [] in
+      let first = Ref.create true in
+      for (peek_kind p) <> Token.RBRACE do
+        if not (Ref.get first) do
+          expect p Token.SEMICOLON
+        end;
+        Ref.set first false;
+        let key = parse_expr_bp p 0 in
+        expect p Token.COLON;
+        let value = parse_expr_bp p 0 in
+        Ref.set pairs ((key, value) :: Ref.get pairs)
+      end;
+      List.rev (Ref.get pairs)
+    end
+  and parse_set_or_map p =
+    if (peek_kind p) = Token.RBRACE do
+      `Map []
+    else do
+      let first_expr = parse_expr_bp p 0 in
+      if (peek_kind p) = Token.COLON do
+        (advance p; ());
+        let first_val = parse_expr_bp p 0 in
+        let pairs = Ref.create ((first_expr, first_val) :: []) in
+        for (peek_kind p) = Token.SEMICOLON do
+          (advance p; ());
+          if (peek_kind p) <> Token.RBRACE do
+            let key = parse_expr_bp p 0 in
+            expect p Token.COLON;
+            let value = parse_expr_bp p 0 in
+            Ref.set pairs ((key, value) :: Ref.get pairs)
+          end
+        end;
+        `Map (List.rev (Ref.get pairs))
+      else if (peek_kind p) = Token.WITH do
+        (advance p; ());
+        let pairs = Ref.create [] in
+        let continue_ = Ref.create true in
+        for Ref.get continue_ do
+          let key = parse_expr_bp p 0 in
+          expect p Token.COLON;
+          let value = parse_expr_bp p 0 in
+          Ref.set pairs ((key, value) :: Ref.get pairs);
+          if (peek_kind p) = Token.SEMICOLON do
+            (advance p; ());
+            if (peek_kind p) = Token.RBRACE do
+              Ref.set continue_ false
+            end
+          else
+            Ref.set continue_ false
+        end;
+        let result = List.fold (fn acc (k, v) -> Ast.EApp (Ast.EApp (Ast.EApp (Ast.EVar "set", k), v), acc)) first_expr (List.rev (Ref.get pairs)) in
+        `Update result
+      else do
+        let elems = Ref.create (first_expr :: []) in
+        for (peek_kind p) = Token.SEMICOLON do
+          (advance p; ());
+          if (peek_kind p) <> Token.RBRACE do
+            Ref.set elems (parse_expr_bp p 0 :: Ref.get elems)
+          end
+        end;
+        `Set (List.rev (Ref.get elems))
+      end
+    end
+  and parse_list_elems p =
+    let first = parse_expr_bp p 0 in
+    let elems = Ref.create (first :: []) in
+    for (peek_kind p) = Token.SEMICOLON do
+      (advance p; ());
+      if (peek_kind p) <> Token.RBRACKET do
+        Ref.set elems (parse_expr_bp p 0 :: Ref.get elems)
+      end
+    end;
+    List.rev (Ref.get elems)
+
+  pub let is_tyvar_token =
+    fn
+      | Token.TYVAR _ -> true
+      | _ -> false
+
+
+  pub let decompose_gadt_sig ty =
+    let rec collect_args =
+      fn
+        | Ast.TyArrow ((arg, rest, _)) -> 
+          let (more_args, ret) = collect_args rest in
+          (arg :: more_args, ret)
+        | other -> ([], other)
+     in
+    match collect_args ty with
+    | ([], ret) -> (None, ret)
+    | (arg :: [], ret) -> (Some arg, ret)
+    | (args, ret) -> (Some (Ast.TyTuple args), ret)
+
+
+  pub let parse_type_decl p =
+    expect p Token.TYPE;
+    let type_params =
+      match peek_kind p with
+      | Token.TYVAR s -> 
+        (advance p; ());
+        s :: []
+      | Token.LPAREN when is_tyvar_token (peek_kind_at p 1) -> 
+        (advance p; ());
+        let params = Ref.create [] in
+        let first = Ref.create true in
+        for (peek_kind p) <> Token.RPAREN do
+          if not (Ref.get first) do
+            expect p Token.COMMA
+          end;
+          Ref.set first false;
+          match peek_kind p with
+          | Token.TYVAR s -> 
+            (advance p; ());
+            Ref.set params (s :: Ref.get params)
+          | _ -> error p "expected type variable in type parameter list"
+
+        end;
+        expect p Token.RPAREN;
+        List.rev (Ref.get params)
+      | _ -> []
+     in
+    let name = expect_ident p in
+    expect p Token.EQ;
+    let def =
+      match peek_kind p with
+      | Token.LBRACE -> 
+        (advance p; ());
+        let (fields, _is_open) = parse_ty_record_fields p in
+        expect p Token.RBRACE;
+        Ast.TDRecord fields
+      | Token.PIPE | Token.UIDENT _ -> 
+        if (peek_kind p) = Token.PIPE do
+          (advance p; ())
+        end;
+        let ctors = Ref.create [] in
+        let continue_ = Ref.create true in
+        for Ref.get continue_ do
+          let ctor_name = expect_uident p in
+          if (peek_kind p) = Token.COLON do
+            (advance p; ());
+            let full_sig = parse_ty p in
+            let (arg_ty, ret_ty) = decompose_gadt_sig full_sig in
+            Ref.set ctors ((ctor_name, arg_ty, Some ret_ty) :: Ref.get ctors)
+          else do
+            let arg =
+              if (peek_kind p) = Token.OF do
+                (advance p; ());
+                Some (parse_ty p)
+              else
+                None in
+            Ref.set ctors ((ctor_name, arg, None) :: Ref.get ctors)
+          end;
+          if (peek_kind p) = Token.PIPE do
+            (advance p; ())
+          else
+            Ref.set continue_ false
+        end;
+        Ast.TDVariant (List.rev (Ref.get ctors))
+      | _ -> 
+        let rhs = parse_ty p in
+        Ast.TDAlias rhs
+     in
+    let deriving_ =
+      if (peek_kind p) = Token.DERIVING do
+        (advance p; ());
+        let classes = Ref.create [] in
+        let continue_ = Ref.create true in
+        for (Ref.get continue_) && (match peek_kind p with
+        | Token.UIDENT _ -> true
+        | _ -> false
+        ) do
+          let cls = expect_uident p in
+          Ref.set classes (cls :: Ref.get classes);
+          if (peek_kind p) = Token.COMMA do
+            (advance p; ())
+          else
+            Ref.set continue_ false
+        end;
+        List.rev (Ref.get classes)
+      else
+        [] in
+    if (peek_kind p) <> Token.AND do
+      Ast.DType (type_params, name, def, deriving_)
+    else do
+      let defs = Ref.create ((type_params, name, def, deriving_) :: []) in
+      for (peek_kind p) = Token.AND do
+        (advance p; ());
+        let and_type_params =
+          match peek_kind p with
+          | Token.TYVAR s -> 
+            (advance p; ());
+            s :: []
+          | Token.LPAREN when is_tyvar_token (peek_kind_at p 1) -> 
+            (advance p; ());
+            let params = Ref.create [] in
+            let first = Ref.create true in
+            for (peek_kind p) <> Token.RPAREN do
+              if not (Ref.get first) do
+                expect p Token.COMMA
+              end;
+              Ref.set first false;
+              match peek_kind p with
+              | Token.TYVAR s -> 
+                (advance p; ());
+                Ref.set params (s :: Ref.get params)
+              | _ -> error p "expected type variable in type parameter list"
+
+            end;
+            expect p Token.RPAREN;
+            List.rev (Ref.get params)
+          | _ -> []
+         in
+        let and_name = expect_ident p in
+        expect p Token.EQ;
+        let and_def =
+          match peek_kind p with
+          | Token.LBRACE -> 
+            (advance p; ());
+            let (fields, _is_open) = parse_ty_record_fields p in
+            expect p Token.RBRACE;
+            Ast.TDRecord fields
+          | Token.PIPE | Token.UIDENT _ -> 
+            if (peek_kind p) = Token.PIPE do
+              (advance p; ())
+            end;
+            let ctors = Ref.create [] in
+            let cont = Ref.create true in
+            for Ref.get cont do
+              let ctor_name = expect_uident p in
+              if (peek_kind p) = Token.COLON do
+                (advance p; ());
+                let full_sig = parse_ty p in
+                let (arg_ty, ret_ty) = decompose_gadt_sig full_sig in
+                Ref.set ctors ((ctor_name, arg_ty, Some ret_ty) :: Ref.get ctors)
+              else do
+                let arg =
+                  if (peek_kind p) = Token.OF do
+                    (advance p; ());
+                    Some (parse_ty p)
+                  else
+                    None in
+                Ref.set ctors ((ctor_name, arg, None) :: Ref.get ctors)
+              end;
+              if (peek_kind p) = Token.PIPE do
+                (advance p; ())
+              else
+                Ref.set cont false
+            end;
+            Ast.TDVariant (List.rev (Ref.get ctors))
+          | _ -> 
+            let rhs = parse_ty p in
+            Ast.TDAlias rhs
+         in
+        let and_deriving =
+          if (peek_kind p) = Token.DERIVING do
+            (advance p; ());
+            let classes = Ref.create [] in
+            let cont = Ref.create true in
+            for (Ref.get cont) && (match peek_kind p with
+            | Token.UIDENT _ -> true
+            | _ -> false
+            ) do
+              let cls = expect_uident p in
+              Ref.set classes (cls :: Ref.get classes);
+              if (peek_kind p) = Token.COMMA do
+                (advance p; ())
+              else
+                Ref.set cont false
+            end;
+            List.rev (Ref.get classes)
+          else
+            [] in
+        Ref.set defs ((and_type_params, and_name, and_def, and_deriving) :: Ref.get defs)
+      end;
+      Ast.DTypeAnd (List.rev (Ref.get defs))
+    end
+
+  pub let rec extract_pat_vars =
+    fn
+      | Ast.PatVar name -> name :: []
+      | Ast.PatWild | Ast.PatInt _ | Ast.PatFloat _ | Ast.PatBool _ | Ast.PatString _ | Ast.PatUnit | Ast.PatNil -> []
+      | Ast.PatTuple pats -> List.concat_map extract_pat_vars pats
+      | Ast.PatCons ((hd, tl)) -> List.concat (extract_pat_vars hd) (extract_pat_vars tl)
+      | Ast.PatConstruct ((_, None)) -> []
+      | Ast.PatConstruct ((_, Some p)) -> extract_pat_vars p
+      | Ast.PatRecord fields -> List.concat_map (fn (_, p) -> extract_pat_vars p) fields
+      | Ast.PatAs ((inner, name)) -> name :: extract_pat_vars inner
+      | Ast.PatOr ((p1, _)) -> extract_pat_vars p1
+      | Ast.PatArray pats -> List.concat_map extract_pat_vars pats
+      | Ast.PatMap entries -> List.concat_map (fn (k, v) -> List.concat (extract_pat_vars k) (extract_pat_vars v)) entries
+      | Ast.PatPolyVariant ((_, None)) -> []
+      | Ast.PatPolyVariant ((_, Some p)) -> extract_pat_vars p
+      | Ast.PatPin _ -> []
+      | Ast.PatAnnot ((p, _)) -> extract_pat_vars p
+
+  and parse_constraints p =
+    if (peek_kind p) <> Token.WHERE do
+      []
+    else do
+      (advance p; ());
+      let constraints = Ref.create [] in
+      let continue_ = Ref.create true in
+      for Ref.get continue_ do
+        match peek_kind p with
+        | Token.UIDENT class_name_start -> 
+          (advance p; ());
+          let class_name =
+            if (peek_kind p) = Token.DOT do
+              do
+                (advance p; ());
+                match peek_kind p with
+                | Token.UIDENT s2 -> 
+                  (advance p; ());
+                  class_name_start ^ ("." ^ s2)
+                | _ -> error p "expected class name after dot"
+
+              end
+            else
+              class_name_start in
+          let tyvars = Ref.create [] in
+          for match peek_kind p with
+          | Token.TYVAR _ -> true
+          | _ -> false
+           do
+            match (advance p).kind with
+            | Token.TYVAR s -> Ref.set tyvars (s :: Ref.get tyvars)
+            | _ -> ()
+
+          end;
+          if (Ref.get tyvars) = [] do
+            error p "constraint requires at least one type variable"
+          end;
+          Ref.set constraints ((class_name, List.rev (Ref.get tyvars)) :: Ref.get constraints);
+          if (peek_kind p) = Token.COMMA do
+            (advance p; ())
+          else
+            Ref.set continue_ false
+        | _ -> Ref.set continue_ false
+
+      end;
+      List.rev (Ref.get constraints)
+    end
+
+  pub let parse_let_decl p =
+    expect p Token.LET;
+    let is_rec = (peek_kind p) = Token.REC in
+    if is_rec do
+      (advance p; ())
+    end;
+    let is_mut = (peek_kind p) = Token.MUT in
+    if is_mut do
+      (advance p; ())
+    end;
+    if is_rec && is_mut do
+      error p "let rec mut is not supported"
+    end;
+    if (not is_rec) && ((not is_mut) && (is_destruct_start p)) do
+      let pat = parse_pattern p in
+      expect p Token.EQ;
+      let body = parse_expr p in
+      if (peek_kind p) = Token.IN do
+        (advance p; ());
+        let rest = parse_expr p in
+        Ast.DExpr (Ast.EMatch (body, (pat, None, rest) :: [], true)) :: []
+      else do
+        let tmp = "__destruct" in
+        let vars = extract_pat_vars pat in
+        let decls = Ast.DLet (tmp, [], None, [], body) :: [] in
+        List.concat decls (List.map (fn v -> Ast.DLet (v, [], None, [], Ast.EMatch (Ast.EVar tmp, (pat, None, Ast.EVar v) :: [], true))) vars)
+      end
+    else if is_mut do
+      let name = expect_ident p in
+      let annot =
+        if (peek_kind p) = Token.COLON do
+          (advance p; ());
+          Some (parse_ty p)
+        else
+          None in
+      expect p Token.EQ;
+      let body = parse_expr p in
+      let body =
+        match annot with
+        | Some ty -> Ast.EAnnot (body, ty)
+        | None -> body
+       in
+      if (peek_kind p) = Token.IN do
+        (advance p; ());
+        let rest = parse_expr p in
+        Ast.DExpr (Ast.ELetMut (name, body, rest)) :: []
+      else
+        Ast.DLetMut (name, body) :: []
+    else do
+      let type_params =
+        if is_rec do
+          parse_type_params p
+        else
+          [] in
+      let name = expect_ident p in
+      let fun_params = Ref.create [] in
+      for ((peek_kind p) <> Token.EQ) && (((peek_kind p) <> Token.COLON) && ((peek_kind p) <> Token.WHERE)) do
+        Ref.set fun_params (parse_param p :: Ref.get fun_params)
+      end;
+      let ret_annot =
+        if (peek_kind p) = Token.COLON do
+          (advance p; ());
+          let ty = parse_ty p in
+          if (peek_kind p) = Token.SLASH do
+            (advance p; ());
+            let eff =
+              if (peek_kind p) = (Token.IDENT "pure") do
+                (advance p; ());
+                Ast.EffAnnotPure
+              else
+                Ast.EffAnnotRow (parse_eff_items p) in
+            Some (Ast.TyWithEffect (ty, eff))
+          else
+            Some ty
+        else
+          None in
+      let constraints = parse_constraints p in
+      expect p Token.EQ;
+      let body = parse_expr p in
+      let fun_params = List.rev (Ref.get fun_params) in
+      let (params, body) = resolve_fun_params fun_params body in
+      if (peek_kind p) = Token.IN do
+        (advance p; ());
+        let rest = parse_expr p in
+        let full_body = wrap_params_expr fun_params ret_annot body in
+        let expr =
+          if is_rec do
+            Ast.ELetRec (name, type_params, full_body, rest)
+          else
+            Ast.ELet (name, full_body, rest) in
+        Ast.DExpr expr :: []
+      else if is_rec && ((peek_kind p) = Token.AND) do
+        let bindings = Ref.create ((name, type_params, params, ret_annot, constraints, body) :: []) in
+        for (peek_kind p) = Token.AND do
+          (advance p; ());
+          let and_name = expect_ident p in
+          let and_type_params = parse_type_params p in
+          let and_fun_params = Ref.create [] in
+          for ((peek_kind p) <> Token.EQ) && (((peek_kind p) <> Token.COLON) && ((peek_kind p) <> Token.WHERE)) do
+            Ref.set and_fun_params (parse_param p :: Ref.get and_fun_params)
+          end;
+          let and_ret_annot =
+            if (peek_kind p) = Token.COLON do
+              (advance p; ());
+              let ty = parse_ty p in
+              if (peek_kind p) = Token.SLASH do
+                (advance p; ());
+                let eff =
+                  if (peek_kind p) = (Token.IDENT "pure") do
+                    (advance p; ());
+                    Ast.EffAnnotPure
+                  else
+                    Ast.EffAnnotRow (parse_eff_items p) in
+                Some (Ast.TyWithEffect (ty, eff))
+              else
+                Some ty
+            else
+              None in
+          let and_constraints = parse_constraints p in
+          expect p Token.EQ;
+          let and_body = parse_expr p in
+          let and_fun_params = List.rev (Ref.get and_fun_params) in
+          let (and_params, and_body) = resolve_fun_params and_fun_params and_body in
+          Ref.set bindings ((and_name, and_type_params, and_params, and_ret_annot, and_constraints, and_body) :: Ref.get bindings)
+        end;
+        if (peek_kind p) = Token.IN do
+          (advance p; ());
+          let rest = parse_expr p in
+          let expr_bindings = List.map (fn (n, tp, ps, ra, _cs, b) -> let full = wrap_params_expr (List.map (fn p -> FPParam p) ps) ra b in
+          (n, tp, full)) (List.rev (Ref.get bindings)) in
+          Ast.DExpr (Ast.ELetRecAnd (expr_bindings, rest)) :: []
+        else
+          Ast.DLetRecAnd (List.rev (Ref.get bindings)) :: []
+      else if is_rec do
+        Ast.DLetRec (name, type_params, params, ret_annot, constraints, body) :: []
+      else
+        Ast.DLet (name, params, ret_annot, constraints, body) :: []
+    end
+
+  pub let parse_class_name p =
+    match peek_kind p with
+    | Token.UIDENT s -> 
+      (advance p; ());
+      if (peek_kind p) = Token.DOT do
+        do
+          (advance p; ());
+          match peek_kind p with
+          | Token.UIDENT s2 -> 
+            (advance p; ());
+            s ^ ("." ^ s2)
+          | _ -> error p "expected class name after dot"
+
+        end
+      else
+        s
+    | _ -> error p "expected class name"
+
+
+  pub let parse_class_decl p =
+    expect p Token.CLASS;
+    let class_name = expect_uident p in
+    if (peek_kind p) = Token.DOT do
+      error p "class declarations cannot use qualified names; define the class inside a module instead"
+    end;
+    let tyvars = Ref.create [] in
+    let continue_tyvars = Ref.create true in
+    for Ref.get continue_tyvars do
+      match peek_kind p with
+      | Token.TYVAR s -> 
+        (advance p; ());
+        Ref.set tyvars (s :: Ref.get tyvars)
+      | _ -> Ref.set continue_tyvars false
+
+    end;
+    let tyvars = List.rev (Ref.get tyvars) in
+    if tyvars = [] do
+      error p "expected at least one type variable"
+    end;
+    let fundeps =
+      if (peek_kind p) = Token.WHERE do
+        (advance p; ());
+        let deps = Ref.create [] in
+        let continue_ = Ref.create true in
+        for Ref.get continue_ do
+          let from_vars = Ref.create [] in
+          for match peek_kind p with
+          | Token.TYVAR _ -> true
+          | _ -> false
+           do
+            match (advance p).kind with
+            | Token.TYVAR s -> 
+              if not (List.mem s tyvars) do
+                error p ($"functional dependency type variable '{s} not in class parameters")
+              end;
+              Ref.set from_vars (s :: Ref.get from_vars)
+            | _ -> ()
+
+          end;
+          if (Ref.get from_vars) = [] do
+            error p "expected type variable(s) before '->'"
+          end;
+          expect p Token.ARROW;
+          let to_vars = Ref.create [] in
+          for match peek_kind p with
+          | Token.TYVAR _ -> true
+          | _ -> false
+           do
+            match (advance p).kind with
+            | Token.TYVAR s -> 
+              if not (List.mem s tyvars) do
+                error p ($"functional dependency type variable '{s} not in class parameters")
+              end;
+              Ref.set to_vars (s :: Ref.get to_vars)
+            | _ -> ()
+
+          end;
+          if (Ref.get to_vars) = [] do
+            error p "expected type variable(s) after '->'"
+          end;
+          Ref.set deps ((List.rev (Ref.get from_vars), List.rev (Ref.get to_vars)) :: Ref.get deps);
+          if (peek_kind p) = Token.COMMA do
+            (advance p; ())
+          else
+            Ref.set continue_ false
+        end;
+        List.rev (Ref.get deps)
+      else
+        [] in
+    expect p Token.EQ;
+    let methods = Ref.create [] in
+    for (peek_kind p) <> Token.END do
+      let s = expect_ident p in
+      expect p Token.COLON;
+      let ty = parse_ty p in
+      Ref.set methods ((s, ty) :: Ref.get methods);
+      if (peek_kind p) = Token.SEMICOLON do
+        (advance p; ())
+      end
+    end;
+    expect p Token.END;
+    if (Ref.get methods) = [] do
+      error p "class must have at least one method"
+    end;
+    Ast.DClass (class_name, tyvars, fundeps, List.rev (Ref.get methods))
+
+  pub let parse_instance_decl p =
+    expect p Token.INSTANCE;
+    let class_name = parse_class_name p in
+    let inst_tys = Ref.create [] in
+    for ((peek_kind p) <> Token.EQ) && ((peek_kind p) <> Token.WHERE) do
+      Ref.set inst_tys (parse_ty_atom p :: Ref.get inst_tys)
+    end;
+    let inst_tys = List.rev (Ref.get inst_tys) in
+    if inst_tys = [] do
+      error p "expected at least one instance type"
+    end;
+    let constraints = parse_constraints p in
+    expect p Token.EQ;
+    let methods = Ref.create [] in
+    for (peek_kind p) <> Token.END do
+      expect p Token.LET;
+      let method_name =
+        if (peek_kind p) = Token.LPAREN do
+          (advance p; ());
+          let name =
+            match peek_kind p with
+            | Token.PLUS -> "+"
+            | Token.MINUS -> "-"
+            | Token.STAR -> "*"
+            | Token.SLASH -> "/"
+            | Token.LT -> "<"
+            | Token.GT -> ">"
+            | Token.LE -> "<="
+            | Token.GE -> ">="
+            | Token.EQ -> "="
+            | Token.NEQ -> "<>"
+            | Token.LAND -> "land"
+            | Token.LOR -> "lor"
+            | Token.LXOR -> "lxor"
+            | Token.LNOT -> "lnot"
+            | Token.LSL -> "lsl"
+            | Token.LSR -> "lsr"
+            | _ -> error p "expected operator"
+           in
+          (advance p; ());
+          expect p Token.RPAREN;
+          name
+        else
+          expect_ident p in
+      let params = Ref.create [] in
+      for ((peek_kind p) <> Token.EQ) && (((peek_kind p) <> Token.COLON) && ((peek_kind p) <> Token.WHERE)) do
+        Ref.set params (parse_param p :: Ref.get params)
+      end;
+      let ret_annot =
+        if (peek_kind p) = Token.COLON do
+          (advance p; ());
+          Some (parse_ty p)
+        else
+          None in
+      let _constraints = parse_constraints p in
+      expect p Token.EQ;
+      let body = parse_expr p in
+      let fun_params = List.rev (Ref.get params) in
+      let body = List.fold (fn body fp ->
+        do
+          match fp with
+          | FPParam _ -> body
+          | FPPat ((name, pat, _)) -> Ast.EMatch (Ast.EVar name, (pat, None, body) :: [], true)
+
+        end) body fun_params in
+      let body =
+        match ret_annot with
+        | Some ty -> Ast.EAnnot (body, ty)
+        | None -> body
+       in
+      let plain_params = List.map (fn fp ->
+        do
+          match fp with
+          | FPParam param -> param
+          | FPPat ((name, _, annot)) -> {name; annot; is_generated = true}
+
+        end) fun_params in
+      Ref.set methods ((method_name, plain_params, body) :: Ref.get methods)
+    end;
+    expect p Token.END;
+    if (Ref.get methods) = [] do
+      error p "instance must implement at least one method"
+    end;
+    Ast.DInstance (class_name, inst_tys, constraints, List.rev (Ref.get methods))
+
+  pub let parse_effect_decl p =
+    expect p Token.EFFECT;
+    let name = parse_class_name p in
+    let type_params = Ref.create [] in
+    for match peek_kind p with
+    | Token.TYVAR _ -> true
+    | _ -> false
+     do
+      match (advance p).kind with
+      | Token.TYVAR s -> Ref.set type_params (s :: Ref.get type_params)
+      | _ -> ()
+
+    end;
+    let type_params = List.rev (Ref.get type_params) in
+    expect p Token.EQ;
+    let ops = Ref.create [] in
+    for (peek_kind p) <> Token.END do
+      let s = expect_ident p in
+      expect p Token.COLON;
+      let ty = parse_ty p in
+      Ref.set ops ((s, ty) :: Ref.get ops);
+      if (peek_kind p) = Token.SEMICOLON do
+        (advance p; ())
+      end
+    end;
+    expect p Token.END;
+    if (Ref.get ops) = [] do
+      error p "effect must have at least one operation"
+    end;
+    Ast.DEffect (name, type_params, List.rev (Ref.get ops))
+
+  pub let parse_extern_decl p =
+    expect p Token.EXTERN;
+    let name =
+      match peek_kind p with
+      | Token.UIDENT mod_name -> 
+        (advance p; ());
+        expect p Token.DOT;
+        let field = expect_ident p in
+        mod_name ^ ("." ^ field)
+      | _ -> expect_ident p
+     in
+    expect p Token.COLON;
+    let ty = parse_ty p in
+    Ast.DExtern (name, ty)
+
+  pub let rec parse_module_body_item p : Ast.module_decl list =
+    match peek_kind p with
+    | Token.PUB -> 
+      (advance p; ());
+      let decls = parse_inner_decl p in
+      List.map (fn d -> {vis = Public; decl = d}) decls
+    | Token.OPAQUE -> 
+      (advance p; ());
+      let decl = parse_type_decl p in
+      {vis = Opaque; decl} :: []
+    | _ -> 
+      let decls = parse_inner_decl p in
+      List.map (fn d -> {vis = Private; decl = d}) decls
+
+  and parse_inner_decl p =
+    match peek_kind p with
+    | Token.TYPE -> parse_type_decl p :: []
+    | Token.LET -> parse_let_decl p
+    | Token.CLASS -> parse_class_decl p :: []
+    | Token.INSTANCE -> parse_instance_decl p :: []
+    | Token.EFFECT -> parse_effect_decl p :: []
+    | Token.EXTERN -> parse_extern_decl p :: []
+    | Token.MODULE -> parse_module_decl p :: []
+    | Token.OPEN -> parse_open_decl p :: []
+    | _ -> error p "expected declaration inside module"
+
+  and parse_module_decl p =
+    expect p Token.MODULE;
+    let name = expect_uident p in
+    expect p Token.EQ;
+    let items = Ref.create [] in
+    for (peek_kind p) <> Token.END do
+      let module_items = parse_module_body_item p in
+      Ref.set items (List.rev_append module_items (Ref.get items));
+      if (peek_kind p) = Token.DOUBLE_SEMICOLON do
+        (advance p; ())
+      end
+    end;
+    expect p Token.END;
+    Ast.DModule (name, List.rev (Ref.get items))
+  and parse_open_decl p =
+    expect p Token.OPEN;
+    let name = expect_uident p in
+    if (peek_kind p) = Token.LPAREN do
+      (advance p; ());
+      let names = Ref.create [] in
+      let first = Ref.create true in
+      for (peek_kind p) <> Token.RPAREN do
+        if not (Ref.get first) do
+          expect p Token.COMMA
+        end;
+        Ref.set first false;
+        let n = expect_ident p in
+        Ref.set names (n :: Ref.get names)
+      end;
+      expect p Token.RPAREN;
+      Ast.DOpen (name, Some (List.rev (Ref.get names)))
+    else
+      Ast.DOpen (name, None)
+  and parse_decl p =
+    match peek_kind p with
+    | Token.TYPE -> parse_type_decl p :: []
+    | Token.LET -> parse_let_decl p
+    | Token.CLASS -> parse_class_decl p :: []
+    | Token.INSTANCE -> parse_instance_decl p :: []
+    | Token.EFFECT -> parse_effect_decl p :: []
+    | Token.EXTERN -> parse_extern_decl p :: []
+    | Token.MODULE -> parse_module_decl p :: []
+    | Token.OPEN -> parse_open_decl p :: []
+    | _ -> 
+      let expr = parse_expr p in
+      Ast.DExpr expr :: []
+
+
+  pub let parse_program tokens =
+    let p = create tokens in
+    let decls = Ref.create [] in
+    for (peek_kind p) <> Token.EOF do
+      let ds = parse_decl p in
+      Ref.set decls (List.rev_append ds (Ref.get decls));
+      if (peek_kind p) = Token.DOUBLE_SEMICOLON do
+        (advance p; ())
+      end
+    end;
+    List.rev (Ref.get decls)
+
+  pub let parse_expr_string tokens =
+    let p = create tokens in
+    parse_expr p
+
+end

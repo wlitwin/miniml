@@ -1,0 +1,54 @@
+(library
+ (name test_helpers)
+ (libraries interpreter)
+ (modules test_helpers))
+
+(test
+ (name test_core)
+ (libraries interpreter test_helpers)
+ (modules test_core))
+
+(test
+ (name test_data_structures)
+ (libraries interpreter test_helpers)
+ (modules test_data_structures))
+
+(test
+ (name test_pattern_matching)
+ (libraries interpreter test_helpers)
+ (modules test_pattern_matching))
+
+(test
+ (name test_types)
+ (libraries interpreter test_helpers)
+ (modules test_types))
+
+(test
+ (name test_typeclasses)
+ (libraries interpreter test_helpers)
+ (modules test_typeclasses))
+
+(test
+ (name test_modules)
+ (libraries interpreter test_helpers)
+ (modules test_modules))
+
+(test
+ (name test_loops)
+ (libraries interpreter test_helpers)
+ (modules test_loops))
+
+(test
+ (name test_effects)
+ (libraries interpreter test_helpers)
+ (modules test_effects))
+
+(test
+ (name test_stdlib)
+ (libraries interpreter test_helpers)
+ (modules test_stdlib))
+
+(test
+ (name test_gadts)
+ (libraries interpreter test_helpers)
+ (modules test_gadts))

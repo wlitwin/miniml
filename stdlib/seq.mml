@@ -1,0 +1,135 @@
+type 'a seq = ('a -> unit) -> unit
+;;
+effect SeqStop =
+  __seq_stop : unit -> unit
+end
+module Seq =
+  pub let range start stop : int seq = fn yield ->
+    let rec go i =
+      if i >= stop do ()
+      else (yield i; go (i + 1))
+    in go start
+
+  pub let of_list xs : 'a seq = fn yield ->
+    let rec go l =
+      match l with
+      | [] -> ()
+      | x :: rest -> yield x; go rest
+    in go xs
+
+  pub let repeat x : 'a seq = fn yield ->
+    let rec go u = yield x; go u
+    in go 0
+
+  pub let iterate seed step : 'a seq = fn yield ->
+    let rec go x = yield x; go (step x)
+    in go seed
+
+  pub let map f s : 'a seq = fn yield ->
+    s (fn x -> yield (f x))
+
+  pub let filter f s : 'a seq = fn yield ->
+    s (fn x -> if f x do yield x else ())
+
+  pub let take n (s : 'a seq) : 'a seq = fn yield ->
+    let mut i = 0 in
+    try
+      s (fn x ->
+        if i >= n do perform __seq_stop ()
+        else (yield x; i := i + 1))
+    with
+    | __seq_stop () -> ()
+
+  pub let take_while f (s : 'a seq) : 'a seq = fn yield ->
+    try
+      s (fn x ->
+        if f x do yield x
+        else perform __seq_stop ())
+    with
+    | __seq_stop () -> ()
+
+  pub let drop n (s : 'a seq) : 'a seq = fn yield ->
+    let mut i = 0 in
+    s (fn x ->
+      if i >= n do yield x
+      else i := i + 1)
+
+  pub let drop_while f (s : 'a seq) : 'a seq = fn yield ->
+    let mut dropping = true in
+    s (fn x ->
+      if dropping do
+        (if f x do () else (dropping := false; yield x))
+      else yield x)
+
+  pub let flat_map (f : 'a -> 'b seq) (s : 'a seq) : 'b seq = fn yield ->
+    s (fn x -> (f x) yield)
+
+  pub let enumerate (s : 'a seq) : 'b seq = fn yield ->
+    let mut i = 0 in
+    s (fn x ->
+      yield (i, x);
+      i := i + 1)
+
+  pub let chunk n (s : 'a seq) : 'b seq = fn yield ->
+    let mut buf = [] in
+    let mut count = 0 in
+    s (fn x ->
+      buf := List.concat buf [x];
+      count := count + 1;
+      if count >= n do
+        (yield buf; buf := []; count := 0)
+      else ());
+    if count > 0 do yield buf else ()
+
+  pub let to_list (s : 'a seq) =
+    let mut acc = [] in
+    s (fn x -> acc := x :: acc);
+    List.rev acc
+
+  pub let fold f init (s : 'a seq) =
+    let mut acc = init in
+    s (fn x -> acc := f acc x);
+    acc
+
+  pub let each (f : 'a -> unit) (s : 'a seq) = s f
+
+  pub let count (s : 'a seq) =
+    let mut n = 0 in
+    s (fn _ -> n := n + 1);
+    n
+
+  pub let sum (s : int seq) =
+    let mut total = 0 in
+    s (fn x -> total := total + x);
+    total
+
+  pub let find f (s : 'a seq) =
+    let mut result = None in
+    let _ = try
+      s (fn x ->
+        if f x do (result := Some x; perform __seq_stop ())
+        else ())
+    with
+    | __seq_stop () -> ()
+    in result
+
+  pub let any f (s : 'a seq) =
+    let mut result = false in
+    let _ = try
+      s (fn x ->
+        if f x do (result := true; perform __seq_stop ())
+        else ())
+    with
+    | __seq_stop () -> ()
+    in result
+
+  pub let all f (s : 'a seq) =
+    let mut result = true in
+    let _ = try
+      s (fn x ->
+        if f x do ()
+        else (result := false; perform __seq_stop ()))
+    with
+    | __seq_stop () -> ()
+    in result
+end

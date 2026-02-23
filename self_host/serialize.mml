@@ -1,0 +1,207 @@
+module Serialize =
+  open Bytecode
+  pub let json_escape_string s =
+    let buf = Buffer.create ((String.length s) + 8) in
+    Buffer.add_byte buf #22;
+    String.iter (fn c ->
+      do
+        match c with
+        | _c when _c = #22 -> Buffer.add_string buf "\\\""
+        | _c when _c = #5c -> Buffer.add_string buf "\\\\"
+        | _c when _c = #0a -> Buffer.add_string buf "\\n"
+        | _c when _c = #0d -> Buffer.add_string buf "\\r"
+        | _c when _c = #09 -> Buffer.add_string buf "\\t"
+        | c when (Byte.to_int c) < 0x20 -> Buffer.add_string buf ($"\\u{Byte.to_int c:04x}")
+        | c -> Buffer.add_byte buf c
+
+      end) s;
+    Buffer.add_byte buf #22;
+    Buffer.contents buf
+
+  pub let serialize_capture =
+    fn
+      | Bytecode.CaptureLocal i -> $"[\"local\",{i}]"
+      | Bytecode.CaptureUpvalue i -> $"[\"upvalue\",{i}]"
+
+
+  pub let serialize_captures caps = "[" ^ ((String.concat "," (List.map serialize_capture caps)) ^ "]")
+
+  pub let serialize_opcode =
+    fn
+      | Bytecode.CONST i -> $"[\"CONST\",{i}]"
+      | POP -> "[\"POP\"]"
+      | DUP -> "[\"DUP\"]"
+      | GET_LOCAL i -> $"[\"GET_LOCAL\",{i}]"
+      | SET_LOCAL i -> $"[\"SET_LOCAL\",{i}]"
+      | GET_UPVALUE i -> $"[\"GET_UPVALUE\",{i}]"
+      | SET_UPVALUE i -> $"[\"SET_UPVALUE\",{i}]"
+      | MAKE_REF -> "[\"MAKE_REF\"]"
+      | DEREF -> "[\"DEREF\"]"
+      | SET_REF -> "[\"SET_REF\"]"
+      | GET_GLOBAL i -> $"[\"GET_GLOBAL\",{i}]"
+      | SET_GLOBAL i -> $"[\"SET_GLOBAL\",{i}]"
+      | DEF_GLOBAL i -> $"[\"DEF_GLOBAL\",{i}]"
+      | ADD -> "[\"ADD\"]"
+      | SUB -> "[\"SUB\"]"
+      | MUL -> "[\"MUL\"]"
+      | DIV -> "[\"DIV\"]"
+      | MOD -> "[\"MOD\"]"
+      | NEG -> "[\"NEG\"]"
+      | FADD -> "[\"FADD\"]"
+      | FSUB -> "[\"FSUB\"]"
+      | FMUL -> "[\"FMUL\"]"
+      | FDIV -> "[\"FDIV\"]"
+      | FNEG -> "[\"FNEG\"]"
+      | EQ -> "[\"EQ\"]"
+      | NEQ -> "[\"NEQ\"]"
+      | LT -> "[\"LT\"]"
+      | GT -> "[\"GT\"]"
+      | LE -> "[\"LE\"]"
+      | GE -> "[\"GE\"]"
+      | NOT -> "[\"NOT\"]"
+      | BAND -> "[\"BAND\"]"
+      | BOR -> "[\"BOR\"]"
+      | BXOR -> "[\"BXOR\"]"
+      | BNOT -> "[\"BNOT\"]"
+      | BSHL -> "[\"BSHL\"]"
+      | BSHR -> "[\"BSHR\"]"
+      | JUMP off -> $"[\"JUMP\",{off}]"
+      | JUMP_IF_FALSE off -> $"[\"JUMP_IF_FALSE\",{off}]"
+      | JUMP_IF_TRUE off -> $"[\"JUMP_IF_TRUE\",{off}]"
+      | CLOSURE ((i, caps)) -> $"[\"CLOSURE\",{i},{serialize_captures caps}]"
+      | CLOSURE_REC ((i, caps, self)) -> $"[\"CLOSURE_REC\",{i},{serialize_captures caps},{self}]"
+      | CALL n -> $"[\"CALL\",{n}]"
+      | TAIL_CALL n -> $"[\"TAIL_CALL\",{n}]"
+      | RETURN -> "[\"RETURN\"]"
+      | FUNC_RETURN -> "[\"FUNC_RETURN\"]"
+      | ENTER_FUNC -> "[\"ENTER_FUNC\"]"
+      | EXIT_FUNC -> "[\"EXIT_FUNC\"]"
+      | MAKE_TUPLE n -> $"[\"MAKE_TUPLE\",{n}]"
+      | TUPLE_GET i -> $"[\"TUPLE_GET\",{i}]"
+      | MAKE_RECORD fields -> $"[\"MAKE_RECORD\",[{String.concat "," (List.map json_escape_string fields)}]]"
+      | FIELD name -> $"[\"FIELD\",{json_escape_string name}]"
+      | SET_FIELD name -> $"[\"SET_FIELD\",{json_escape_string name}]"
+      | RECORD_UPDATE fields -> $"[\"RECORD_UPDATE\",[{String.concat "," (List.map json_escape_string fields)}]]"
+      | RECORD_UPDATE_DYN n -> $"[\"RECORD_UPDATE_DYN\",{n}]"
+      | MAKE_VARIANT ((tag, name, has_payload)) -> $"[\"MAKE_VARIANT\",{tag},{json_escape_string name},{has_payload}]"
+      | CONS -> "[\"CONS\"]"
+      | NIL -> "[\"NIL\"]"
+      | TAG_EQ tag -> $"[\"TAG_EQ\",{tag}]"
+      | IS_NIL -> "[\"IS_NIL\"]"
+      | IS_CONS -> "[\"IS_CONS\"]"
+      | HEAD -> "[\"HEAD\"]"
+      | TAIL -> "[\"TAIL\"]"
+      | VARIANT_PAYLOAD -> "[\"VARIANT_PAYLOAD\"]"
+      | MATCH_FAIL loc -> $"[\"MATCH_FAIL\",{json_escape_string loc}]"
+      | PERFORM op -> $"[\"PERFORM\",{json_escape_string op}]"
+      | HANDLE n -> $"[\"HANDLE\",{n}]"
+      | RESUME -> "[\"RESUME\"]"
+      | ENTER_LOOP n -> $"[\"ENTER_LOOP\",{n}]"
+      | EXIT_LOOP -> "[\"EXIT_LOOP\"]"
+      | LOOP_BREAK -> "[\"LOOP_BREAK\"]"
+      | LOOP_CONTINUE n -> $"[\"LOOP_CONTINUE\",{n}]"
+      | FOLD_CONTINUE n -> $"[\"FOLD_CONTINUE\",{n}]"
+      | MAKE_MAP n -> $"[\"MAKE_MAP\",{n}]"
+      | MAKE_ARRAY n -> $"[\"MAKE_ARRAY\",{n}]"
+      | INDEX -> "[\"INDEX\"]"
+      | HALT -> "[\"HALT\"]"
+      | GET_LOCAL_CALL ((slot, arity)) -> $"[\"GET_LOCAL_CALL\",{slot},{arity}]"
+      | GET_LOCAL_TUPLE_GET ((slot, idx)) -> $"[\"GET_LOCAL_TUPLE_GET\",{slot},{idx}]"
+      | GET_LOCAL_FIELD ((slot, name)) -> $"[\"GET_LOCAL_FIELD\",{slot},{json_escape_string name}]"
+      | JUMP_TABLE ((min_tag, targets, default)) -> $"[\"JUMP_TABLE\",{min_tag},[{String.concat "," (Array.to_list (Array.map string_of_int targets))}],{default}]"
+
+
+  pub let rec serialize_value =
+    fn
+      | Bytecode.VInt n -> $"\{\"t\":\"i\",\"v\":{n}\}"
+      | VFloat f -> 
+        let s = $"{f:.17g}" in
+        $"\{\"t\":\"f\",\"v\":{s}\}"
+      | VBool b -> $"\{\"t\":\"b\",\"v\":{b}\}"
+      | VString s -> $"\{\"t\":\"s\",\"v\":{json_escape_string s}\}"
+      | VByte n -> $"\{\"t\":\"y\",\"v\":{n}\}"
+      | VRune n -> $"\{\"t\":\"r\",\"v\":{n}\}"
+      | VUnit -> "{\"t\":\"u\"}"
+      | VProto p -> $"\{\"t\":\"p\",\"v\":{serialize_prototype p}\}"
+      | VTuple vs -> $"\{\"t\":\"T\",\"v\":[{String.concat "," (List.map serialize_value (Array.to_list vs))}]\}"
+      | VList vs -> $"\{\"t\":\"L\",\"v\":[{String.concat "," (List.map serialize_value vs)}]\}"
+      | VVariant ((tag, name, payload)) -> 
+        let payload_str =
+          match payload with
+          | None -> "null"
+          | Some v -> serialize_value v
+         in
+        $"\{\"t\":\"V\",\"tag\":{tag},\"name\":{json_escape_string name},\"payload\":{payload_str}\}"
+      | _ -> failwith "serialize_value: unsupported value type in constants"
+
+  and serialize_prototype proto =
+    let code_strs = Array.to_list (Array.map serialize_opcode proto.code) in
+    let const_strs = Array.to_list (Array.map serialize_value proto.constants) in
+    let line_strs = Array.to_list (Array.map string_of_int proto.line_table) in
+    $"\{\"name\":{json_escape_string proto.name},\"arity\":{proto.arity},\"num_locals\":{proto.num_locals},\"code\":[{String.concat "," code_strs}],\"constants\":[{String.concat "," const_strs}],\"line_table\":[{String.concat "," line_strs}]\}"
+
+  pub let serialize_native_global idx value =
+    match value with
+    | Bytecode.VExternal ext -> Some ($"{json_escape_string (string_of_int idx)}:\{\"type\":\"external\",\"name\":{json_escape_string ext.ext_name},\"arity\":{ext.ext_arity}\}")
+    | Bytecode.VRecord ((shape, values)) -> 
+      let all_external = Array.forall (fn v ->
+        do
+          match v with
+          | Bytecode.VExternal _ -> true
+          | _ -> false
+
+        end) values in
+      if all_external && ((Array.length values) > 0) do
+        let field_strs = List.init (Array.length shape.rs_fields) (fn i -> let name = Array.get shape.rs_fields i in
+        match Array.get values i with
+        | Bytecode.VExternal ext -> $"{json_escape_string name}:\{\"name\":{json_escape_string ext.ext_name},\"arity\":{ext.ext_arity}\}"
+        | _ -> failwith "assert false"
+        ) in
+        Some ($"{json_escape_string (string_of_int idx)}:\{\"type\":\"dict\",\"fields\":\{{String.concat "," field_strs}\}\}")
+      else
+        None
+    | _ -> None
+
+
+  pub let serialize_native_ext idx name arity = $"{json_escape_string (string_of_int idx)}:\{\"type\":\"external\",\"name\":{json_escape_string name},\"arity\":{arity}\}"
+
+  pub let serialize_native_dict idx fields =
+    let field_strs = List.map (fn (name, ext_name, arity) -> $"{json_escape_string name}:\{\"name\":{json_escape_string ext_name},\"arity\":{arity}\}") fields in
+    $"{json_escape_string (string_of_int idx)}:\{\"type\":\"dict\",\"fields\":\{{String.concat "," field_strs}\}\}"
+
+  pub let build_native_globals_json globals =
+    let parts = Ref.create [] in
+    Hashtbl.iter (fn idx value ->
+      do
+        match serialize_native_global idx value with
+        | Some s -> Ref.set parts (s :: Ref.get parts)
+        | None -> ()
+
+      end) globals;
+    String.concat "," (Ref.get parts)
+
+  pub let serialize_bundle global_names native_globals_json setup_protos main_proto =
+    let buf = Buffer.create 4096 in
+    Buffer.add_string buf "{\"version\":1";
+    let names = Dynarray.to_array global_names in
+    Buffer.add_string buf ",\"global_names\":[";
+    Array.iteri (fn i name -> if i > 0 do
+      Buffer.add_byte buf #2c
+    end;
+    Buffer.add_string buf (json_escape_string name)) names;
+    Buffer.add_string buf "]";
+    Buffer.add_string buf ",\"native_globals\":{";
+    Buffer.add_string buf native_globals_json;
+    Buffer.add_string buf "}";
+    Buffer.add_string buf ",\"setup\":[";
+    List.iteri (fn i proto -> if i > 0 do
+      Buffer.add_byte buf #2c
+    end;
+    Buffer.add_string buf (serialize_prototype proto)) setup_protos;
+    Buffer.add_string buf "]";
+    Buffer.add_string buf ",\"main\":";
+    Buffer.add_string buf (serialize_prototype main_proto);
+    Buffer.add_string buf "}";
+    Buffer.contents buf
+
+end

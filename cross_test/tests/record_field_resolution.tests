@@ -1,0 +1,68 @@
+=== Record Field Resolution ===
+
+--- test: field access on ambiguous record resolves with second field
+type loc = { line: int; col: int; offset: int }
+type span = { line: int; end_line: int }
+;;
+let get_col r =
+  let _ = r.line in
+  r.col
+;;
+get_col { line = 1; col = 2; offset = 3 }
+--- expect: 2
+
+--- test: multiple field accesses disambiguate record type
+type point = { x: int; y: int }
+type rect = { x: int; y: int; w: int; h: int }
+;;
+let area r =
+  r.x + r.y + r.w + r.h
+;;
+area { x = 1; y = 2; w = 3; h = 4 }
+--- expect: 10
+
+--- test: single candidate resolves immediately
+type color = { r: int; g: int; b: int }
+;;
+let get_r c = c.r
+;;
+get_r { r = 255; g = 0; b = 0 }
+--- expect: 255
+
+--- test: mutable field assign on ambiguous record
+type counter = { mut count: int; name: string }
+type stat = { mut count: int; total: int }
+;;
+let bump c =
+  let _ = c.name in
+  c.count := c.count + 1;
+  c.count
+;;
+bump { count = 0; name = "test" }
+--- expect: 1
+
+=== Field Access Precedence ===
+
+--- test: not with field access
+type game = { game_over: bool }
+;;
+let check g = not g.game_over
+;;
+check { game_over = false }
+--- expect: true
+
+--- test: negation with field access
+type point = { x: int }
+;;
+let neg_x p = 0 - p.x
+;;
+neg_x { x = 5 }
+--- expect: -5
+
+--- test: not with nested field access and application
+type state = { active: bool; count: int }
+;;
+let f s = if not s.active do 0 else s.count
+;;
+f { active = true; count = 42 }
+--- expect: 42

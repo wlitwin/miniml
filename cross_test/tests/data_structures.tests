@@ -1,0 +1,1204 @@
+=== List Tests ===
+
+--- test: empty list
+([] : int list)
+--- expect: []
+
+--- test: list literal
+[1; 2; 3]
+--- expect: [1; 2; 3]
+
+--- test: cons operator
+0 :: [1; 2]
+--- expect: [0; 1; 2]
+
+--- test: list sum
+let rec sum (xs: int list) : int =
+  match xs with
+  | [] -> 0
+  | x :: rest -> x + sum rest
+in sum [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: list map
+let rec map (f: int -> int) (xs: int list) : int list =
+  match xs with
+  | [] -> ([] : int list)
+  | x :: rest -> f x :: map f rest
+in map (fn (x: int) -> x * 2) [1; 2; 3]
+--- expect: [2; 4; 6]
+
+=== Record Tests ===
+
+--- test: record creation
+let r = { x = 1; y = 2 } in r.x + r.y
+--- expect: 3
+
+--- test: row polymorphism width
+let get_x r = r.x in
+let p = { x = 10; y = 20 } in
+get_x p
+--- expect: 10
+
+--- test: closed record annotation rejects extra fields
+let get_x (r: { x: int }) : int = r.x in
+let p = { x = 10; y = 20 } in
+get_x p
+--- expect-type-error
+
+--- test: open record annotation accepts extra fields
+let get_x (r: { x: int; .. }) = r.x in
+get_x { x = 42; y = "hello" }
+--- expect: 42
+
+--- test: open record annotation multiple fields
+let sum (r : { x: int; y: int; .. }) = r.x + r.y in
+sum { x = 10; y = 20; z = "extra" }
+--- expect: 30
+
+--- test: open record annotation rejects missing field
+let get_x (r: { x: int; .. }) = r.x in
+get_x { y = 42 }
+--- expect-type-error
+
+=== Record Update Tests ===
+
+--- test: record update one field
+let r = { x = 1; y = 2 } in
+let r2 = { r with x = 10 } in
+r2.x + r2.y
+--- expect: 12
+
+--- test: record update multiple fields
+let r = { a = 1; b = 2; c = 3 } in
+let r2 = { r with a = 10; c = 30 } in
+r2.a + r2.b + r2.c
+--- expect: 42
+
+--- test: record update preserves original
+let r = { x = 1; y = 2 } in
+let r2 = { r with x = 10 } in
+r.x + r2.x
+--- expect: 11
+
+--- test: record update expression base
+let f x = { x = x; y = 2 } in
+let r = { f 1 with x = 10 } in
+r.x + r.y
+--- expect: 12
+
+--- test: record update all fields
+let r = { x = 1; y = 2 } in
+let r2 = { r with x = 10; y = 20 } in
+r2.x + r2.y
+--- expect: 30
+
+--- test: record update nested
+let r = { x = 1; y = 2; z = 3 } in
+let r2 = { { r with x = 10 } with y = 20 } in
+r2.x + r2.y + r2.z
+--- expect: 33
+
+--- test: record update unknown field error
+let r = { x = 1; y = 2 } in
+{ r with z = 3 }
+--- expect-type-error
+
+--- test: record update wrong type error
+let r = { x = 1; y = 2 } in
+{ r with x = true }
+--- expect-type-error
+
+--- test: record update non-record error
+{ 42 with x = 1 }
+--- expect-type-error
+
+=== Variant Tests ===
+
+--- test: variant creation and match
+type color = Red | Green | Blue
+let to_int (c: color) : int =
+  match c with
+  | Red -> 0
+  | Green -> 1
+  | Blue -> 2
+;;
+to_int Green
+--- expect: 1
+
+--- test: variant with payload
+type opt = None | Some of int
+let get (o: opt) (d: int) : int =
+  match o with
+  | None -> d
+  | Some v -> v
+;;
+get (Some 42) 0
+--- expect: 42
+
+--- test: constructor as function
+let f = Some;;
+match f 42 with
+| Some v -> v
+| None -> 0
+--- expect: 42
+
+--- test: constructor as function in map
+let rec length xs = match xs with
+  | [] -> 0
+  | _ :: rest -> 1 + length rest
+;;
+let rec map f xs = match xs with
+  | [] -> []
+  | x :: rest -> f x :: map f rest
+;;
+length (map Some [1; 2; 3])
+--- expect: 3
+
+--- test: constructor as function passed to higher-order
+type 'a box = Box of 'a;;
+let apply f x = f x;;
+match apply Box 10 with
+| Box v -> v
+--- expect: 10
+
+=== Option Type Tests ===
+
+--- test: option Some
+Some 42
+--- expect: Some 42
+
+--- test: option None
+None
+--- expect: None
+
+--- test: option pattern match Some
+let x = Some 42;;
+match x with
+  | Some n -> n
+  | None -> 0
+--- expect: 42
+
+--- test: option pattern match None
+match None with
+  | Some n -> n
+  | None -> 99
+--- expect: 99
+
+=== Map Tests ===
+
+--- test: empty map
+#{}
+--- expect: #{}
+
+--- test: map get returns Some
+let m = #{"a": 1; "b": 2};;
+get "a" m
+--- expect: Some 1
+
+--- test: map get pattern match
+let m = #{"a": 1; "b": 2};;
+match get "a" m with
+  | Some v -> v
+  | None -> 0
+--- expect: 1
+
+--- test: map get second key
+let m = #{"a": 1; "b": 2};;
+match get "b" m with
+  | Some v -> v
+  | None -> 0
+--- expect: 2
+
+--- test: map get missing returns None
+get "z" #{"a": 1}
+--- expect: None
+
+--- test: map set
+let m = #{"a": 1};;
+let m2 = set "b" 2 m;;
+match get "b" m2 with
+  | Some v -> v
+  | None -> 0
+--- expect: 2
+
+--- test: map set overwrite
+let m = #{"a": 1};;
+let m2 = set "a" 42 m;;
+match get "a" m2 with
+  | Some v -> v
+  | None -> 0
+--- expect: 42
+
+--- test: map has true
+has "a" #{"a": 1}
+--- expect: true
+
+--- test: map has false
+has "z" #{"a": 1}
+--- expect: false
+
+--- test: map size
+size #{"a": 1; "b": 2}
+--- expect: 2
+
+--- test: map size empty
+size #{}
+--- expect: 0
+
+--- test: map remove
+let m = remove "a" #{"a": 1; "b": 2};;
+size m
+--- expect: 1
+
+--- test: map keys
+keys #{"a": 1}
+--- expect: [a]
+
+--- test: map values
+values #{"a": 1}
+--- expect: [1]
+
+--- test: map to_list
+to_list #{"a": 1}
+--- expect: [(a, 1)]
+
+--- test: map int keys
+match get 42 #{42: "answer"} with
+  | Some v -> 1
+  | None -> 0
+--- expect: 1
+
+--- test: map type error mixed values
+#{"a": 1; "b": true}
+--- expect-type-error
+
+--- test: map type error mixed keys
+#{1: "a"; "b": "c"}
+--- expect-type-error
+
+--- test: map immutable update
+let m = #{"a": 1};;
+let _ = set "a" 99 m;;
+match get "a" m with
+  | Some v -> v
+  | None -> 0
+--- expect: 1
+
+--- test: map with expressions
+let x = 10;;
+let m = #{x: x + 1; x + 1: x + 2};;
+match get 10 m with
+  | Some v -> v
+  | None -> 0
+--- expect: 11
+
+--- test: map higher-order
+let lookup key m = match get key m with
+  | Some v -> v
+  | None -> 0;;
+lookup "x" #{"x": 42}
+--- expect: 42
+
+--- test: map of_list
+let m = of_list [("a", 1); ("b", 2)];;
+match get "a" m with
+  | Some v -> v
+  | None -> 0
+--- expect: 1
+
+--- test: map typed syntax
+let m = #{"x": 10; "y": 20};;
+match get "x" m with
+  | Some v -> v
+  | None -> 0
+--- expect: 10
+
+--- test: map typed syntax size
+size #{"a": 1; "b": 2}
+--- expect: 2
+
+--- test: map typed empty
+size #{}
+--- expect: 0
+
+=== Array Tests ===
+
+--- test: empty array
+#[]
+--- expect: #[]
+
+--- test: array with elements
+#[1; 2; 3]
+--- expect: #[1; 2; 3]
+
+--- test: array_get
+array_get #[10; 20; 30] 1
+--- expect: 20
+
+--- test: array_length
+array_length #[1; 2; 3]
+--- expect: 3
+
+--- test: array_length empty
+array_length #[]
+--- expect: 0
+
+--- test: array out of bounds get
+array_get #[1; 2] 5
+--- expect-runtime-error: out of bounds
+
+--- test: array equality
+#[1; 2; 3] = #[1; 2; 3]
+--- expect: true
+
+--- test: array inequality
+#[1; 2] = #[1; 3]
+--- expect: false
+
+--- test: array pipe
+#[1; 2; 3] |> array_length
+--- expect: 3
+
+--- test: array for loop
+let mut sum = 0 in
+for x in #[1; 2; 3] do
+  sum := sum + x
+end;
+sum
+--- expect: 6
+
+--- test: array fold for loop
+for x in #[1; 2; 3] with acc = 0 do
+  acc + x
+end
+--- expect: 6
+
+--- test: array type annotation
+let f = fn (a : int array) -> array_get a 0 in
+f #[42; 1; 2]
+--- expect: 42
+
+=== Generalized Collection Literal Tests ===
+
+--- test: set literal
+Set.size #{1; 2; 3}
+--- expect: 3
+
+--- test: set literal mem
+Set.mem 2 #{1; 2; 3}
+--- expect: true
+
+--- test: set literal dedup
+Set.size #{1; 2; 2; 3; 3; 3}
+--- expect: 3
+
+--- test: set literal single
+Set.size #{42}
+--- expect: 1
+
+--- test: empty braces still map
+size #{}
+--- expect: 0
+
+--- test: typed set explicit
+Set.size #Set{10; 20; 30}
+--- expect: 3
+
+--- test: typed set empty
+Set.size #Set{}
+--- expect-type-error
+
+--- test: typed array bracket
+Array.length #Array[1; 2; 3]
+--- expect: 3
+
+--- test: typed array empty
+Array.length #Array[]
+--- expect: 0
+
+--- test: native array unchanged
+array_length #[10; 20; 30]
+--- expect: 3
+
+--- test: native map unchanged
+size #{"a": 1; "b": 2}
+--- expect: 2
+
+=== Map Iteration Tests ===
+
+--- test: map for loop
+let mut sum = 0 in
+for p in #{"x": 10; "y": 20} do
+  let (_, v) = p in
+  sum := sum + v
+end;
+sum
+--- expect: 30
+
+--- test: map fold
+fold (fn acc p -> let (_, v) = p in acc + v) 0 #{"x": 10; "y": 20}
+--- expect: 30
+
+=== Array API Consolidation Tests ===
+
+--- test: Array.make works
+Array.length (Array.make 5 0)
+--- expect: 5
+
+--- test: Array.set and get
+let a = Array.make 3 0 in
+let _ = Array.set a 1 42 in
+Array.get a 1
+--- expect: 42
+
+--- test: array_get still works
+array_get #[10; 20; 30] 1
+--- expect: 20
+
+--- test: array_length still works
+array_length #[1; 2; 3]
+--- expect: 3
+
+=== Indexing Tests ===
+
+--- test: string indexing
+Byte.to_int ("hello".[0])
+--- expect: 104
+
+--- test: string indexing last
+Byte.to_int ("hello".[4])
+--- expect: 111
+
+--- test: array indexing
+#[10; 20; 30].[1]
+--- expect: 20
+
+--- test: array indexing string
+#["a"; "b"; "c"].[2]
+--- expect: c
+
+--- test: string get
+Byte.to_string (String.get "hello" 0)
+--- expect: h
+
+--- test: string to_bytes of_bytes roundtrip
+String.of_bytes (String.to_bytes "hi")
+--- expect: hi
+
+--- test: string to_runes of_runes roundtrip
+String.of_runes (String.to_runes "abc")
+--- expect: abc
+
+--- test: string get_rune
+Rune.to_int (String.get_rune "hello" 2)
+--- expect: 108
+
+--- test: string get_rune first
+Rune.to_int (String.get_rune "abc" 0)
+--- expect: 97
+
+--- test: string rune_length ascii
+String.rune_length "hello"
+--- expect: 5
+
+--- test: string rune_length empty
+String.rune_length ""
+--- expect: 0
+
+=== Row-Polymorphic Record Update Tests ===
+
+--- test: row-polymorphic record update
+let set_y r = { r with y = 10 } in
+let r1 = { x = 1; y = 2 } in
+let r2 = { x = 1; y = 2; z = 3 } in
+(set_y r1).y + (set_y r2).y
+--- expect: 20
+
+--- test: polymorphic update preserves unknown fields
+let set_y r = { r with y = 10 } in
+let r = { x = 1; y = 2; z = 3 } in
+let r2 = set_y r in
+r2.x + r2.y + r2.z
+--- expect: 14
+
+--- test: polymorphic update with annotation
+let set_y (r: { y: int; .. }) = { r with y = 10 } in
+(set_y { x = 1; y = 2 }).y
+--- expect: 10
+
+--- test: polymorphic update multiple fields
+let reset r = { r with x = 0; y = 0 } in
+let r = { x = 5; y = 10; z = 15 } in
+let r2 = reset r in
+r2.x + r2.y + r2.z
+--- expect: 15
+
+--- test: polymorphic update in pipeline
+let inc_x r = { r with x = r.x + 1 } in
+let r = { x = 0; y = 100 } in
+(inc_x (inc_x (inc_x r))).x
+--- expect: 3
+
+=== Row-Polymorphic Update Cross-Feature Tests ===
+
+--- test: poly update inside effect handler
+effect Val =
+  get_val : unit -> int
+end
+let set_y r = { r with y = 10 } in
+handle
+  let v = perform get_val () in
+  let r = { x = v; y = 0; z = 99 } in
+  (set_y r).y + r.z
+with
+| return x -> x
+| get_val () k -> resume k 5
+--- expect: 109
+
+--- test: poly update function called across effect boundary
+effect Transform =
+  transform : { x: int; y: int; z: int } -> { x: int; y: int; z: int }
+end
+let set_y r = { r with y = 100 } in
+handle
+  let r = { x = 1; y = 2; z = 3 } in
+  let r2 = perform transform r in
+  r2.x + r2.y + r2.z
+with
+| return x -> x
+| transform r k -> resume k (set_y r)
+--- expect: 104
+
+--- test: poly update with state effect
+effect State =
+  get : unit -> int
+  put : int -> unit
+end
+let inc_field r = { r with counter = r.counter + 1 } in
+let mut state = 0 in
+handle
+  let r = { counter = 0; label = 42 } in
+  let r = inc_field r in
+  let r = inc_field r in
+  let r = inc_field r in
+  perform put (r.counter);
+  let s = perform get () in
+  s + r.label
+with
+| return x -> x
+| get () k -> resume k state
+| put v k -> state := v; resume k ()
+--- expect: 45
+
+--- test: poly update resumed multiple times
+effect Choose =
+  choose : unit -> bool
+end
+let set_x r v = { r with x = v } in
+handle
+  let r = { x = 0; y = 10 } in
+  let b = perform choose () in
+  let r2 = if b do set_x r 100 else set_x r 200 in
+  r2.x + r2.y
+with
+| return x -> x
+| choose () k ->
+  let k2 = copy_continuation k in
+  let a = resume k true in
+  let b = resume k2 false in
+  a + b
+--- expect: 320
+
+--- test: poly update with show constraint
+let describe r v = { r with label = show v } in
+let r = { label = ""; extra = true } in
+(describe r 42).label
+--- expect: 42
+
+--- test: poly update with Num constraint
+let add_to_field r n = { r with x = r.x + n } in
+let r = { x = 10; y = 20; z = 30 } in
+(add_to_field r 5).x
+--- expect: 15
+
+--- test: poly update used in typeclass instance
+class Updatable 'a =
+  update_name : 'a -> string -> 'a
+end
+type person = { name: string; age: int }
+instance Updatable person =
+  let update_name p s = { p with name = s }
+end
+let p = { name = "Alice"; age = 30 } in
+(update_name p "Bob").name
+--- expect: Bob
+
+--- test: poly update with derived Eq on record
+type point = { x: int; y: int } deriving Eq
+let move_x p dx = { p with x = p.x + dx } in
+let p1 = { x = 1; y = 2 } in
+let p2 = move_x p1 0 in
+p1 = p2
+--- expect: true
+
+--- test: poly update as higher-order argument
+let apply_update f r = (f r).x in
+let set_x_to_99 r = { r with x = 99 } in
+apply_update set_x_to_99 { x = 0; y = 1; z = 2 }
+--- expect: 99
+
+--- test: poly update in fold over list of records
+let set_y r v = { r with y = v } in
+let rec map f xs = match xs with
+  | [] -> []
+  | x :: rest -> f x :: map f rest
+in
+let records = [{ x = 1; y = 0 }; { x = 2; y = 0 }; { x = 3; y = 0 }] in
+let updated = map (fn r -> set_y r 10) records in
+let rec sum_y xs = match xs with
+  | [] -> 0
+  | r :: rest -> r.y + sum_y rest
+in
+sum_y updated
+--- expect: 30
+
+--- test: poly update composed
+let set_x r v = { r with x = v } in
+let set_y r v = { r with y = v } in
+let r = { x = 0; y = 0; z = 42 } in
+let r = set_x (set_y r 10) 20 in
+r.x + r.y + r.z
+--- expect: 72
+
+--- test: poly update with closure over captured var
+let make_setter v = fn r -> { r with x = v } in
+let set_to_5 = make_setter 5 in
+let set_to_10 = make_setter 10 in
+let r = { x = 0; y = 100 } in
+(set_to_5 r).x + (set_to_10 r).x
+--- expect: 15
+
+--- test: poly update in match branch
+type action = Inc | Dec | Reset
+let apply_action r (a: action) =
+  match a with
+  | Inc -> { r with x = r.x + 1 }
+  | Dec -> { r with x = r.x - 1 }
+  | Reset -> { r with x = 0 }
+in
+let r = { x = 10; y = 20 } in
+let r = apply_action r Inc in
+let r = apply_action r Inc in
+let r = apply_action r Dec in
+r.x + r.y
+--- expect: 31
+
+--- test: poly update with variant payload containing record
+type wrapper = Wrap of { x: int; y: int; z: int }
+let update_wrapped (w: wrapper) =
+  match w with
+  | Wrap r -> Wrap { r with x = r.x * 2 }
+in
+match update_wrapped (Wrap { x = 5; y = 10; z = 15 }) with
+| Wrap r -> r.x + r.y + r.z
+--- expect: 35
+
+--- test: poly update in recursive function
+let rec inc_n_times r n =
+  if n = 0 do r
+  else inc_n_times { r with x = r.x + 1 } (n - 1)
+in
+let r = { x = 0; y = 42 } in
+(inc_n_times r 10).x + (inc_n_times r 10).y
+--- expect: 52
+
+--- test: poly update in mutual recursion
+let rec inc r n =
+  if n = 0 do r
+  else dec { r with x = r.x + 2 } (n - 1)
+and dec r n =
+  if n = 0 do r
+  else inc { r with x = r.x - 1 } (n - 1)
+in
+(inc { x = 0; y = 99 } 5).x
+--- expect: 4
+
+--- test: poly update in fold loop
+let inc_x r = { r with x = r.x + 1 } in
+let r = for i in [1; 2; 3; 4; 5] with acc = { x = 0; y = 100 } do
+  inc_x acc
+end in
+r.x + r.y
+--- expect: 105
+
+--- test: poly update in unit loop
+let set_y r v = { r with y = v } in
+let mut r = { x = 1; y = 0; z = 99 } in
+for i in [10; 20; 30] do
+  r := set_y r i
+end;
+r.y + r.z
+--- expect: 129
+
+--- test: poly update in module function
+module Rec =
+  pub let set_x r v = { r with x = v }
+  pub let set_y r v = { r with y = v }
+end
+let r = { x = 0; y = 0; z = 42 } in
+let r = Rec.set_x r 10 in
+let r = Rec.set_y r 20 in
+r.x + r.y + r.z
+--- expect: 72
+
+--- test: poly update with module open
+module RecOps =
+  pub let inc_x r = { r with x = r.x + 1 }
+  pub let inc_y r = { r with y = r.y + 1 }
+end
+open RecOps
+let r = { x = 0; y = 0; z = 50 } in
+let r = inc_x (inc_x (inc_y r)) in
+r.x + r.y + r.z
+--- expect: 53
+
+--- test: poly update on mutable record
+let set_x r v = { r with x = v } in
+let mut r = { x = 0; y = 10 } in
+r := set_x r 5;
+r := set_x r (r.x + 3);
+r.x + r.y
+--- expect: 18
+
+--- test: poly update with pipe
+let inc_x r = { r with x = r.x + 1 } in
+let double_y r = { r with y = r.y * 2 } in
+let r = { x = 0; y = 1; z = 100 } in
+let r = r |> inc_x |> inc_x |> double_y |> double_y in
+r.x + r.y + r.z
+--- expect: 106
+
+--- test: poly update with tuple destructuring
+let update_pair (r1, r2) =
+  ({ r1 with x = 10 }, { r2 with y = 20 })
+in
+let (a, b) = update_pair ({ x = 0; y = 1 }, { x = 2; y = 0; z = 3 }) in
+a.x + b.y + b.z
+--- expect: 33
+
+--- test: poly update map over list
+let zero_y r = { r with y = 0 } in
+let rec sum_x xs = match xs with
+  | [] -> 0
+  | r :: rest -> r.x + sum_x rest
+in
+let rec map f xs = match xs with
+  | [] -> []
+  | x :: rest -> f x :: map f rest
+in
+let records = [{ x = 1; y = 10 }; { x = 2; y = 20 }; { x = 3; y = 30 }] in
+let zeroed = map zero_y records in
+sum_x zeroed
+--- expect: 6
+
+--- test: poly update on nested record access
+let set_x r v = { r with x = v } in
+let outer = { inner = { x = 1; y = 2 }; z = 3 } in
+let updated_inner = set_x outer.inner 99 in
+updated_inner.x + updated_inner.y + outer.z
+--- expect: 104
+
+--- test: poly update with string interpolation
+let set_name r n = { r with name = n } in
+let r = { name = "world"; extra = 42 } in
+let r = set_name r "Alice" in
+$"Hello, {r.name}!"
+--- expect: Hello, Alice!
+
+--- test: poly update with early return
+let set_x r v = { r with x = v } in
+let f r =
+  if r.x > 10 do return (set_x r 0) else ();
+  set_x r (r.x + 100)
+in
+let r1 = f { x = 20; y = 5 } in
+let r2 = f { x = 3; y = 5 } in
+r1.x + r2.x
+--- expect: 103
+
+--- test: poly update same function many shapes
+let set_x r v = { r with x = v } in
+let a = set_x { x = 0 } 1 in
+let b = set_x { x = 0; y = 2 } 10 in
+let c = set_x { x = 0; y = 2; z = 3 } 100 in
+let d = set_x { x = 0; w = 4; y = 5; z = 6 } 1000 in
+a.x + b.x + c.x + d.x
+--- expect: 1111
+
+--- test: poly update with effect and show
+effect Logger =
+  log : string -> unit
+end
+let update_and_log r =
+  let r2 = { r with x = r.x + 1 } in
+  perform log (show r2.x);
+  r2
+in
+let mut msgs = "" in
+handle
+  let r = { x = 0; y = 99 } in
+  let r = update_and_log r in
+  let _ = update_and_log r in
+  msgs
+with
+| return x -> x
+| log msg k ->
+  msgs := msgs ^ msg ^ ",";
+  resume k ()
+--- expect: 1,2,
+
+--- test: poly update in letrec with closure
+let rec apply_n f r n =
+  if n = 0 do r
+  else apply_n f (f r) (n - 1)
+in
+let inc_x r = { r with x = r.x + 1 } in
+let inc_y r = { r with y = r.y + 1 } in
+let r = { x = 0; y = 0; z = 42 } in
+let r = apply_n inc_x r 3 in
+let r = apply_n inc_y r 7 in
+r.x + r.y + r.z
+--- expect: 52
+
+--- test: poly update on large record
+let set_c r v = { r with c = v } in
+let r = { a = 1; b = 2; c = 3; d = 4; e = 5; f = 6; g = 7; h = 8 } in
+let r = set_c r 100 in
+r.a + r.b + r.c + r.d + r.e + r.f + r.g + r.h
+--- expect: 133
+
+--- test: chain different poly updaters
+let set_a r v = { r with a = v } in
+let set_b r v = { r with b = v } in
+let set_c r v = { r with c = v } in
+let r = { a = 0; b = 0; c = 0; extra = 999 } in
+let r = set_a r 10 in
+let r = set_b r 20 in
+let r = set_c r 30 in
+r.a + r.b + r.c + r.extra
+--- expect: 1059
+
+=== Advanced Cross-Feature Tests ===
+
+--- test: poly update + show in same function
+let label_value r =
+  { r with label = show (r.value) }
+in
+let r = { value = 42; label = ""; tag = true } in
+(label_value r).label
+--- expect: 42
+
+--- test: poly update + show with different record shapes
+let label_it r =
+  { r with label = show (r.value) }
+in
+let a = label_it { value = 99; label = "" } in
+let b = label_it { value = 7; label = ""; extra = 0 } in
+a.label ^ "," ^ b.label
+--- expect: 99,7
+
+--- test: poly update + Eq constraint
+let set_if_eq r target replacement =
+  if r.x = target do { r with x = replacement }
+  else r
+in
+let r = set_if_eq { x = 5; y = 10 } 5 99 in
+r.x = 99
+--- expect: true
+
+--- test: effect handler returns poly-updated record
+effect Incr =
+  incr : int -> int
+end
+let update_x r =
+  let new_x = perform incr (r.x) in
+  { r with x = new_x }
+in
+handle
+  let r = { x = 5; y = 100 } in
+  let r = update_x r in
+  r.x + r.y
+with
+| return x -> x
+| incr n k -> resume k (n + 10)
+--- expect: 115
+
+--- test: nested effect handlers with poly update
+effect E1 = get1 : unit -> int end
+effect E2 = get2 : unit -> int end
+let set_x r v = { r with x = v } in
+let set_y r v = { r with y = v } in
+handle
+  handle
+    let r = { x = 0; y = 0; z = 42 } in
+    let r = set_x r (perform get1 ()) in
+    let r = set_y r (perform get2 ()) in
+    r.x + r.y + r.z
+  with
+  | return x -> x
+  | get2 () k -> resume k 20
+with
+| return x -> x
+| get1 () k -> resume k 10
+--- expect: 72
+
+--- test: poly update with multi-shot continuation
+effect Amb = flip : unit -> bool end
+let set_x r v = { r with x = v } in
+handle
+  let r = { x = 0; y = 1 } in
+  let b = perform flip () in
+  let r = if b do set_x r 10 else set_x r 20 in
+  r.x + r.y
+with
+| return x -> x
+| flip () k ->
+  let k2 = copy_continuation k in
+  let a = resume k true in
+  let b = resume k2 false in
+  a + b
+--- expect: 32
+
+--- test: module poly update with typeclass outside
+module Rec =
+  pub let set_name r n = { r with name = n }
+end
+let r = { name = "old"; value = 42 } in
+let r = Rec.set_name r "new" in
+r.name ^ ":" ^ show (r.value)
+--- expect: new:42
+
+--- test: module with multiple poly update functions
+module PointOps =
+  pub let move_x r dx = { r with x = r.x + dx }
+  pub let move_y r dy = { r with y = r.y + dy }
+  pub let move r dx dy =
+    let r = { r with x = r.x + dx } in
+    { r with y = r.y + dy }
+end
+let p = { x = 0; y = 0; z = 99 } in
+let p = PointOps.move p 10 20 in
+let p = PointOps.move_x p 5 in
+p.x + p.y + p.z
+--- expect: 134
+
+--- test: poly update fold accumulate record
+let add_to_x r v = { r with x = r.x + v } in
+let result = for v in [1; 2; 3; 4; 5] with acc = { x = 0; y = 100 } do
+  add_to_x acc v
+end in
+result.x + result.y
+--- expect: 115
+
+--- test: poly update fold with break
+let add_to_x r v = { r with x = r.x + v } in
+let result = for v in [1; 2; 3; 100; 5] with acc = { x = 0; y = 42 } do
+  if v > 50 do break
+  else add_to_x acc v
+end in
+result.x + result.y
+--- expect: 48
+
+--- test: poly update fold with continue
+let add_to_x r v = { r with x = r.x + v } in
+let result = for v in [1; 2; 3; 4; 5] with acc = { x = 0; y = 42 } do
+  if v mod 2 = 0 do continue
+  else add_to_x acc v
+end in
+result.x + result.y
+--- expect: 51
+
+--- test: poly update in each match arm
+type direction = Up | Down | Left | Right
+let move r (d: direction) =
+  match d with
+  | Up    -> { r with y = r.y + 1 }
+  | Down  -> { r with y = r.y - 1 }
+  | Left  -> { r with x = r.x - 1 }
+  | Right -> { r with x = r.x + 1 }
+in
+let p = { x = 0; y = 0; name = "player" } in
+let p = move p Right in
+let p = move p Right in
+let p = move p Up in
+p.x + p.y
+--- expect: 3
+
+--- test: poly update with option pattern
+let set_x_maybe r opt =
+  match opt with
+  | Some v -> { r with x = v }
+  | None -> r
+in
+let r = { x = 0; y = 10; z = 20 } in
+let r = set_x_maybe r (Some 99) in
+let r = set_x_maybe r None in
+r.x + r.y + r.z
+--- expect: 129
+
+--- test: poly update driven by variant list
+type cmd = SetX of int | SetY of int | AddX of int
+let rec apply_cmds r (cmds: cmd list) =
+  match cmds with
+  | [] -> r
+  | cmd :: rest ->
+    let r = match cmd with
+      | SetX v -> { r with x = v }
+      | SetY v -> { r with y = v }
+      | AddX v -> { r with x = r.x + v }
+    in
+    apply_cmds r rest
+in
+let r = { x = 0; y = 0; tag = 999 } in
+let r = apply_cmds r [SetX 10; AddX 5; SetY 20; AddX 3] in
+r.x + r.y + r.tag
+--- expect: 1037
+
+--- test: poly update then interpolate fields
+let rename r n = { r with name = n } in
+let r = { name = "x"; score = 42 } in
+let r = rename r "Alice" in
+$"{r.name} scored {r.score}"
+--- expect: Alice scored 42
+
+--- test: poly update in while loop
+let inc_x r = { r with x = r.x + 1 } in
+let mut r = { x = 0; y = 42 } in
+let mut i = 0 in
+for i < 10 do
+  r := inc_x r;
+  i := i + 1
+end;
+r.x + r.y
+--- expect: 52
+
+--- test: poly update with nested closures
+let make_updater field_val =
+  let offset = field_val * 2 in
+  fn r -> { r with x = r.x + offset }
+in
+let f = make_updater 5 in
+let g = make_updater 3 in
+let r = { x = 0; y = 99 } in
+let r = f (g r) in
+r.x + r.y
+--- expect: 115
+
+--- test: poly update with early return in loop
+let find_and_update r (xs: int list) =
+  for x in xs do
+    if x > 10 do return { r with found = x } else ()
+  end;
+  { r with found = 0 - 1 }
+in
+let r = find_and_update { found = 0; extra = 42 } [1; 5; 15; 3] in
+r.found + r.extra
+--- expect: 57
+
+--- test: poly update with try/with
+effect Fail = fail : string -> 'a end
+let safe_update r v =
+  if v < 0 do perform fail "negative"
+  else { r with x = v }
+in
+let result =
+  try
+    let r = { x = 0; y = 42 } in
+    safe_update r (0 - 5)
+  with
+  | fail msg -> { x = 999; y = 0 }
+in
+result.x + result.y
+--- expect: 999
+
+--- test: poly update functions touching different fields
+let set_a r v = { r with a = v } in
+let set_b r v = { r with b = v } in
+let set_c r v = { r with c = v } in
+let set_d r v = { r with d = v } in
+let r = { a = 0; b = 0; c = 0; d = 0; sum = 0 } in
+let r = set_a r 1 in
+let r = set_b r 2 in
+let r = set_c r 3 in
+let r = set_d r 4 in
+let r = { r with sum = r.a + r.b + r.c + r.d } in
+r.sum
+--- expect: 10
+
+--- test: poly update in recursive list builder
+let tag_item r i = { r with tag = i } in
+let rec build i =
+  if i = 0 do []
+  else tag_item { tag = 0; value = i * 10 } i :: build (i - 1)
+in
+let items = build 3 in
+let rec sum_tags xs = match xs with
+  | [] -> 0
+  | r :: rest -> r.tag + r.value + sum_tags rest
+in
+sum_tags items
+--- expect: 66
+
+--- test: poly update extreme width difference
+let set_x r v = { r with x = v } in
+let small = set_x { x = 0; y = 1 } 10 in
+let big = set_x { a = 1; b = 2; c = 3; d = 4; e = 5; f = 6; g = 7; x = 0 } 100 in
+small.x + big.x
+--- expect: 110
+
+--- test: poly update reads and writes same record
+let double_x r = { r with x = r.x * 2 } in
+let r = { x = 7; y = 3 } in
+let r = double_x (double_x (double_x r)) in
+r.x + r.y
+--- expect: 59
+
+--- test: poly update + structural equality check
+type pair = { x: int; y: int } deriving Eq
+let set_x r v = { r with x = v } in
+let a = { x = 1; y = 2 } in
+let b = set_x { x = 99; y = 2 } 1 in
+a = b
+--- expect: true
+
+--- test: higher-order poly update + effect
+effect Log = log : string -> unit end
+let apply_and_log f r =
+  let r2 = f r in
+  perform log (show (r2.x));
+  r2
+in
+let set_x_to r = { r with x = 42 } in
+let mut logged = "" in
+handle
+  let r = apply_and_log set_x_to { x = 0; y = 10 } in
+  r.x + r.y
+with
+| return x -> x
+| log msg k -> logged := logged ^ msg; resume k ()
+--- expect: 52
+
+--- test: poly update processes list of commands
+let rec process r (cmds: int list) =
+  match cmds with
+  | [] -> r
+  | n :: rest ->
+    if n > 0 do
+      process { r with x = r.x + n } rest
+    else
+      process { r with y = r.y + (0 - n) } rest
+in
+let r = process { x = 0; y = 0; z = 100 } [3; (0-2); 5; (0-1); 7] in
+r.x + r.y + r.z
+--- expect: 118

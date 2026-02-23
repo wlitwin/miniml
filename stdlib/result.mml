@@ -1,0 +1,15 @@
+module Result =
+  pub type ('a, 'b) t = Ok of 'a | Err of 'b
+  pub let map (f: 'a -> 'c) (r: ('a, 'b) t) : ('c, 'b) t =
+    match r with
+    | Ok v -> Ok (f v)
+    | Err e -> Err e
+  pub let bind (f: 'a -> ('c, 'b) t) (r: ('a, 'b) t) : ('c, 'b) t =
+    match r with
+    | Ok v -> f v
+    | Err e -> Err e
+  pub let unwrap (r: ('a, 'b) t) : 'a =
+    -- @partial
+    match r with
+    | Ok v -> v
+end

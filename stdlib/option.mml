@@ -1,0 +1,38 @@
+module Option =
+  pub let map (f: 'a -> 'b) (opt: 'a option) : 'b option =
+    match opt with
+    | Some x -> Some (f x)
+    | None -> None
+  pub let bind (f: 'a -> 'b option) (opt: 'a option) : 'b option =
+    match opt with
+    | Some x -> f x
+    | None -> None
+  pub let unwrap (opt: 'a option) : 'a =
+    -- @partial
+    match opt with
+    | Some x -> x
+  pub let unwrap_or (default: 'a) (opt: 'a option) : 'a =
+    match opt with
+    | Some x -> x
+    | None -> default
+  pub let is_some (opt: 'a option) : bool =
+    match opt with
+    | Some _ -> true
+    | None -> false
+  pub let is_none (opt: 'a option) : bool =
+    match opt with
+    | Some _ -> false
+    | None -> true
+  pub let to_list (opt: 'a option) : 'a list =
+    match opt with
+    | Some x -> [x]
+    | None -> []
+  pub let iter (f: 'a -> unit) (opt: 'a option) : unit =
+    match opt with
+    | Some x -> f x
+    | None -> ()
+  pub let flat_map (f: 'a -> 'b option) (opt: 'a option) : 'b option =
+    match opt with
+    | Some x -> f x
+    | None -> None
+end

@@ -1,0 +1,20 @@
+module Rune =
+  pub let to_int (r : rune) : int = __rune_to_int r
+  pub let of_int (n : int) : rune = __rune_of_int n
+  pub let to_string (r : rune) : string = __rune_to_string r
+  pub let is_alpha (r : rune) : bool =
+    let n = Rune.to_int r in
+    (n >= 65 && n <= 90) || (n >= 97 && n <= 122)
+  pub let is_digit (r : rune) : bool =
+    let n = Rune.to_int r in
+    n >= 48 && n <= 57
+  pub let is_space (r : rune) : bool =
+    let n = Rune.to_int r in
+    n = 32 || n = 9 || n = 10 || n = 13
+  pub let is_upper (r : rune) : bool =
+    let n = Rune.to_int r in
+    n >= 65 && n <= 90
+  pub let is_lower (r : rune) : bool =
+    let n = Rune.to_int r in
+    n >= 97 && n <= 122
+end

@@ -1,0 +1,862 @@
+=== Fundep polymorphic reuse bug ===
+Generic functions wrapping fundep class methods get monomorphized at
+their first call site when the fundep-determined type variable does
+not appear in the function's return type or parameter types.
+Calling the same function at a different type then fails with
+"no instance of X for types Y, Z" where Z is from the FIRST call.
+
+=== Basic: element type consumed by return ===
+
+--- test: len wrapper monomorphizes on second call
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let len c = List.length (to_list c)
+;;
+let a = len (IntBag [1; 2; 3]) in
+let b = len (StrBag ["a"; "b"]) in
+a + b
+--- expect: 5
+
+--- test: count via fold monomorphizes on second call
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let count c =
+  List.fold (fn acc _ -> acc + 1) 0 (to_list c)
+;;
+let a = count (IntBag [1; 2; 3]) in
+let b = count (StrBag ["a"; "b"]) in
+a + b
+--- expect: 5
+
+--- test: is_empty consumes element type via equality
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let is_empty c = to_list c = []
+;;
+let a = is_empty (IntBag []) in
+let b = is_empty (StrBag ["a"]) in
+show a ^ " " ^ show b
+--- expect: true false
+
+--- test: show_elems consumes element type via show
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let show_elems c = show (to_list c)
+;;
+show_elems (IntBag [1; 2; 3]) ^ " " ^ show_elems (StrBag ["a"; "b"])
+--- expect: [1; 2; 3] [a; b]
+
+--- test: for-loop count consumes element type
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let count c =
+  for _ in to_list c with acc = 0 do acc + 1 end
+;;
+let a = count (IntBag [1; 2; 3]) in
+let b = count (StrBag ["a"; "b"]) in
+a + b
+--- expect: 5
+
+=== Merge pattern: fold + insert + to_list ===
+
+--- test: merge function monomorphizes on second call
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let merge a b =
+  let xs = to_list b in
+  List.fold (fn c x -> insert x c) a xs
+;;
+let r1 = merge (IntBag [1]) (IntBag [2; 3]) in
+let r2 = merge (StrBag ["x"]) (StrBag ["y"; "z"]) in
+show (to_list r1) ^ " " ^ show (to_list r2)
+--- expect: [3; 2; 1] [z; y; x]
+
+--- test: merge three different collection types
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+type float_bag = FloatBag of float list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+instance Collection float_bag float =
+  let empty = FloatBag []
+  let insert x (FloatBag xs) = FloatBag (x :: xs)
+  let to_list (FloatBag xs) = xs
+end
+;;
+let merge a b =
+  let xs = to_list b in
+  List.fold (fn c x -> insert x c) a xs
+;;
+let r1 = merge (IntBag []) (IntBag [1; 2]) in
+let r2 = merge (StrBag []) (StrBag ["a"]) in
+let r3 = merge (FloatBag []) (FloatBag [3.14]) in
+show (List.length (to_list r1)) ^ " " ^ show (List.length (to_list r2)) ^ " " ^ show (List.length (to_list r3))
+--- expect: 2 1 1
+
+=== Convertible pattern ===
+
+--- test: convert and discard result monomorphizes
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+type celsius = C of int
+type fahrenheit = F of int
+type meters = M of int
+type feet = Ft of int
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 2 + 32)
+end
+instance Convertible meters feet =
+  let convert (M m) = Ft (m * 3)
+end
+;;
+let convert_ignore x = let _ = convert x in "done"
+;;
+convert_ignore (C 100) ^ " " ^ convert_ignore (M 10)
+--- expect: done done
+
+--- test: convert result consumed by equality comparison
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+type celsius = C of int
+type fahrenheit = F of int
+type meters = M of int
+type feet = Ft of int
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 2 + 32)
+end
+instance Convertible meters feet =
+  let convert (M m) = Ft (m * 3)
+end
+;;
+let is_idempotent x = convert x = convert x
+;;
+let a = is_idempotent (C 100) in
+let b = is_idempotent (M 10) in
+show a ^ " " ^ show b
+--- expect: true true
+
+--- test: convert result consumed by show
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+type celsius = C of int deriving Show
+type fahrenheit = F of int deriving Show
+type meters = M of int deriving Show
+type feet = Ft of int deriving Show
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 2 + 32)
+end
+instance Convertible meters feet =
+  let convert (M m) = Ft (m * 3)
+end
+;;
+let convert_to_string x = show (convert x)
+;;
+convert_to_string (C 100) ^ " " ^ convert_to_string (M 10)
+--- expect: F(232) Ft(30)
+
+=== Display / print wrappers returning unit ===
+
+--- test: display wrapper prints and returns unit
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let display c = show (to_list c)
+;;
+display (IntBag [1; 2; 3]) ^ " | " ^ display (StrBag ["hello"; "world"])
+--- expect: [1; 2; 3] | [hello; world]
+
+--- test: stringify wrapper returns string via fold
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let stringify c =
+  List.fold (fn acc x -> if acc = "" do show x else acc ^ ", " ^ show x) "" (to_list c)
+;;
+stringify (IntBag [1; 2; 3]) ^ " | " ^ stringify (StrBag ["a"; "b"])
+--- expect: 1, 2, 3 | a, b
+
+=== Nested function layers ===
+
+--- test: double-wrapped: outer calls inner which uses fundep
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let len c = List.length (to_list c)
+;;
+let describe c =
+  let n = len c in
+  if n = 0 do "empty" else "has " ^ show n
+;;
+describe (IntBag [1; 2; 3]) ^ " " ^ describe (StrBag [])
+--- expect: has 3 empty
+
+--- test: show_elems called from compare_sizes
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let show_elems c = show (to_list c)
+;;
+let compare_collections a b =
+  show_elems a ^ " vs " ^ show_elems b
+;;
+compare_collections (IntBag [1; 2]) (StrBag ["a"])
+--- expect: [1; 2] vs [a]
+
+=== Reversed call order ===
+
+--- test: str_bag first then int_bag
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let len c = List.length (to_list c)
+;;
+let a = len (StrBag ["a"; "b"]) in
+let b = len (IntBag [1; 2; 3]) in
+a + b
+--- expect: 5
+
+=== Let-binding polymorphism ===
+
+--- test: let-bound function should remain polymorphic
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let len c = List.length (to_list c) in
+let a = len (IntBag [1; 2; 3]) in
+let b = len (StrBag ["x"]) in
+a + b
+--- expect: 4
+
+--- test: let-bound merge in expression context
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let merge a b =
+  List.fold (fn c x -> insert x c) a (to_list b)
+in
+let r1 = merge (IntBag [1]) (IntBag [2; 3]) in
+let r2 = merge (StrBag ["a"]) (StrBag ["b"; "c"]) in
+show (List.length (to_list r1)) ^ " " ^ show (List.length (to_list r2))
+--- expect: 3 3
+
+=== Convertible round-trip ===
+
+--- test: round_trip consuming both direction types
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+type celsius = C of int
+type fahrenheit = F of int
+type meters = M of int
+type feet = Ft of int
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 2 + 32)
+end
+instance Convertible fahrenheit celsius =
+  let convert (F f) = C ((f - 32) / 2)
+end
+instance Convertible meters feet =
+  let convert (M m) = Ft (m * 3)
+end
+instance Convertible feet meters =
+  let convert (Ft f) = M (f / 3)
+end
+;;
+let convert_and_discard x = let _ = convert x in true
+;;
+let a = convert_and_discard (C 100) in
+let b = convert_and_discard (M 10) in
+show a ^ " " ^ show b
+--- expect: true true
+
+=== Pipeline consuming element type ===
+
+--- test: piped operations consuming element type
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let summarize c = c |> to_list |> List.length |> show
+;;
+summarize (IntBag [1; 2; 3]) ^ " " ^ summarize (StrBag ["a"])
+--- expect: 3 1
+
+=== Lambda and closure patterns ===
+
+--- test: lambda capturing fundep method monomorphizes (value restriction)
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let make_counter () = fn c -> List.length (to_list c)
+;;
+let counter = make_counter () in
+let a = counter (IntBag [1; 2; 3]) in
+let b = counter (StrBag ["a"]) in
+a + b
+--- expect-type-error: cannot unify
+
+=== String interpolation consuming element type ===
+
+--- test: string interpolation consuming fundep element type
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let describe c =
+  let n = List.length (to_list c) in
+  $"has {n}"
+;;
+describe (IntBag [1; 2; 3]) ^ " " ^ describe (StrBag ["a"])
+--- expect: has 3 has 1
+
+=== Multiple fundep classes in one function ===
+
+--- test: function using two different fundep classes
+class Container 'c 'e where 'c -> 'e =
+  elems : 'c -> 'e list
+end
+class Measurable 'm 'u where 'm -> 'u =
+  measure : 'm -> 'u
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Container int_bag int =
+  let elems (IntBag xs) = xs
+end
+instance Container str_bag string =
+  let elems (StrBag xs) = xs
+end
+instance Measurable int_bag int =
+  let measure (IntBag xs) = List.length xs
+end
+instance Measurable str_bag int =
+  let measure (StrBag xs) = List.length xs
+end
+;;
+let describe c =
+  let n = measure c in
+  let len = List.length (elems c) in
+  n + len
+;;
+show (describe (IntBag [1; 2])) ^ " " ^ show (describe (StrBag ["a"; "b"; "c"]))
+--- expect: 4 6
+
+=== Comparison and boolean operations ===
+
+--- test: contains_n consumes element type
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let contains_n c n =
+  List.length (to_list c) >= n
+;;
+let a = contains_n (IntBag [1; 2; 3]) 2 in
+let b = contains_n (StrBag ["a"]) 5 in
+show a ^ " " ^ show b
+--- expect: true false
+
+=== Separate top-level calls (;;-separated) ===
+
+--- test: top-level function used at two types with ;; separator
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+let len c = List.length (to_list c)
+;;
+let a = len (IntBag [1; 2; 3]);;
+let b = len (StrBag ["a"; "b"]);;
+a + b
+--- expect: 5
+
+=== Type annotation: fundep-determined var in where clause ===
+The compiler rejects fundep-determined type variables in 'where'
+constraints if they don't appear in the function's parameter or
+return types. Since the fundep fully determines these variables,
+they should be allowed.
+
+--- test: where Collection 'c 'e rejects 'e not in signature
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+;;
+let len (c : 'c) : int where Collection 'c 'e = List.length (to_list c)
+;;
+len (IntBag [1; 2; 3])
+--- expect: 3
+
+--- test: where Convertible 'a 'b rejects 'b not in signature
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+type celsius = C of int deriving Show
+type fahrenheit = F of int deriving Show
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 2 + 32)
+end
+;;
+let convert_show (x : 'a) : string where Convertible 'a 'b, Show 'b = show (convert x)
+;;
+convert_show (C 100)
+--- expect: F(232)
+
+--- test: Show constraint on fundep-determined element type
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+;;
+let show_first (c : 'c) : string where Collection 'c 'e, Show 'e =
+  match to_list c with
+  | x :: _ -> show x
+  | [] -> "empty"
+;;
+show_first (IntBag [42])
+--- expect: 42
+
+--- test: two Collection constraints with different fundep-determined types
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+let total_size (a : 'c1) (b : 'c2) : int where Collection 'c1 'e1, Collection 'c2 'e2 =
+  List.length (to_list a) + List.length (to_list b)
+;;
+total_size (IntBag [1; 2]) (StrBag ["a"; "b"; "c"])
+--- expect: 5
+
+--- test: unannotated params with fundep where constraint
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+;;
+let len c where Collection 'c 'e = List.length (to_list c)
+;;
+len (IntBag [1; 2; 3])
+--- expect-type-error
+
+--- test: Convertible show without 'b in return but with Show 'b
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+type celsius = C of int deriving Show
+type fahrenheit = F of int deriving Show
+type meters = M of int deriving Show
+type feet = Ft of int deriving Show
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 2 + 32)
+end
+instance Convertible meters feet =
+  let convert (M m) = Ft (m * 3)
+end
+;;
+let convert_and_show (x : 'a) where Convertible 'a 'b, Show 'b = show (convert x)
+;;
+convert_and_show (C 100)
+--- expect: F(232)
+
+--- test: multi-fundep class with two determined vars in where clause
+class Container 'c 'k 'v where 'c -> 'k, 'c -> 'v =
+  get_key : 'c -> 'k
+  get_val : 'c -> 'v
+end
+type pair_si = PairSI of string * int
+instance Container pair_si string int =
+  let get_key (PairSI (k, _)) = k
+  let get_val (PairSI (_, v)) = v
+end
+;;
+let show_pair (c : 'c) : string where Container 'c 'k 'v, Show 'k, Show 'v =
+  show (get_key c) ^ "=" ^ show (get_val c)
+;;
+show_pair (PairSI ("x", 42))
+--- expect: x=42
+
+--- test: partial fundep constraint omitting determined type var
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+;;
+let len (c : 'c) : int where Collection 'c = List.length (to_list c)
+;;
+len (IntBag [1; 2; 3])
+--- expect-type-error
+
+--- test: annotated function with fundep var in return type still monomorphizes
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+type str_bag = StrBag of string list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+instance Collection str_bag string =
+  let empty = StrBag []
+  let insert x (StrBag xs) = StrBag (x :: xs)
+  let to_list (StrBag xs) = xs
+end
+;;
+-- Even if we could annotate with where Collection 'c 'e, the poly reuse bug remains
+let show_elems (c : 'c) : 'e list where Collection 'c 'e = to_list c
+;;
+let a = show (show_elems (IntBag [1; 2; 3])) in
+let b = show (show_elems (StrBag ["a"; "b"])) in
+a ^ " " ^ b
+--- expect: [1; 2; 3] [a; b]
+
+--- test: Eq constraint on fundep-determined element type
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+end
+type int_bag = IntBag of int list
+instance Collection int_bag int =
+  let empty = IntBag []
+  let insert x (IntBag xs) = IntBag (x :: xs)
+  let to_list (IntBag xs) = xs
+end
+;;
+let contains (c : 'c) (x : 'e) : bool where Collection 'c 'e, Eq 'e =
+  List.exists (fn y -> y = x) (to_list c)
+;;
+contains (IntBag [1; 2; 3]) 2
+--- expect: true

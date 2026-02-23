@@ -1,0 +1,107 @@
+=== Gap Investigation: Polymorphic Index in Expr-Level Let ===
+
+--- test: gap1 poly index on map
+let f m k = let v = m.[k] in v in
+f #{"greeting": "hi"} "greeting"
+--- expect: hi
+
+--- test: gap2 poly index on array
+let f arr i = let v = arr.[i] in v in
+f #[100; 200; 300] 2
+--- expect: 300
+
+--- test: gap3 nested index then show poly
+let f m k =
+  let v = m.[k] in
+  let s = show v in
+  s
+in
+f #{"x": 42} "x"
+--- expect: 42
+
+--- test: gap4 poly index and fold combined
+let f arr =
+  let first = arr.[0] in
+  let rest_sum = fold (+) 0 arr in
+  rest_sum - first
+in
+f #[100; 1; 2; 3]
+--- expect: 6
+
+--- test: gap5 multi-constraint poly fn
+let analyze xs m k =
+  let total = fold (+) 0 xs in
+  let v = m.[k] in
+  let has_it = has k m in
+  let s = show total ^ " " ^ show v ^ " " ^ show has_it in
+  s
+in
+analyze [1; 2; 3] #{"key": 99} "key"
+--- expect: "6 99 true"
+
+--- test: gap6 user Index in poly expr let
+type 'a triple = Triple of 'a * 'a * 'a
+
+instance Index ('a triple) int 'a =
+  let at i t = match t with
+    | Triple (a, b, c) -> match i with
+      | 0 -> a
+      | 1 -> b
+      | _ -> c
+end
+;;
+let get_from t i =
+  let v = t.[i] in
+  v
+in
+get_from (Triple (10, 20, 30)) 2
+--- expect: 30
+
+--- test: gap7 mutable with show in poly expr let
+let f xs =
+  let mut s = "" in
+  fold (fn () x ->
+    s := s ^ show x;
+    ()
+  ) () xs;
+  s
+in
+f [7; 8; 9]
+--- expect: 789
+
+--- test: gap8 top-level constrained calls expr-level fold
+let format x = "[" ^ show x ^ "]"
+;;
+let f xs =
+  let go acc x = acc ^ format x ^ " " in
+  fold go "" xs
+in
+f [1; 2; 3]
+--- expect: "[1] [2] [3] "
+
+--- test: gap9 chained top and expr constraints
+let wrap x = "(" ^ show x ^ ")"
+;;
+let process xs =
+  let mapped = fold (fn acc x -> wrap x :: acc) [] xs in
+  fold (fn s x -> s ^ x ^ " ") "" mapped
+in
+process [1; 2; 3]
+--- expect: "(3) (2) (1) "
+
+--- test: gap10 poly index and fold in same let
+let sum_col m k =
+  let vs = m.[k] in
+  let total = fold (+) 0 vs in
+  total
+in
+sum_col #{"nums": [1; 2; 3; 4]} "nums"
+--- expect: 10
+
+--- test: gap11 let in match arm with index poly
+let f arr flag = match flag with
+  | true -> let v = arr.[0] in show v
+  | false -> let v = arr.[1] in show v
+in
+f #[100; 200] true
+--- expect: 100

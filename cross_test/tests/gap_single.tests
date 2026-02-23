@@ -1,0 +1,50 @@
+=== Gap Investigation Focused ===
+
+--- test: gap3 show after index via let
+let f m k =
+  let v = m.[k] in
+  show v
+in
+f #{"x": 42} "x"
+--- expect: 42
+
+--- test: gap4 index and fold same polymorphic fn
+let f arr =
+  let first = arr.[0] in
+  let rest_sum = fold (+) 0 arr in
+  rest_sum - first
+in
+f #[100; 1; 2; 3]
+--- expect: 6
+
+--- test: gap8 expr let calls top constrained fn
+let format x = "[" ^ show x ^ "]"
+;;
+let f xs =
+  let go acc x = acc ^ format x ^ " " in
+  fold go "" xs
+in
+f [1; 2; 3]
+--- expect: "[1] [2] [3] "
+
+--- test: gap10 index result into fold
+let sum_col m k =
+  let vs = m.[k] in
+  fold (+) 0 vs
+in
+sum_col #{"nums": [1; 2; 3; 4]} "nums"
+--- expect: 10
+
+--- test: gap3b show after index no inner let
+let f m k =
+  show m.[k]
+in
+f #{"x": 42} "x"
+--- expect: 42
+
+--- test: gap10b index into fold no inner let
+let sum_col m k =
+  fold (+) 0 m.[k]
+in
+sum_col #{"nums": [1; 2; 3; 4]} "nums"
+--- expect: 10

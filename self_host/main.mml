@@ -1,0 +1,672 @@
+module Main =
+  open Token
+  open Ast
+  open Types
+  open Typechecker
+  open Bytecode
+  open Compiler
+  open Serialize
+  open Lexer
+  open Parser
+
+  -- ---- Helpers ----
+
+  let rec list_iter f xs =
+    match xs with
+    | [] -> ()
+    | x :: rest -> f x; list_iter f rest
+
+  let rec list_iteri_aux f i xs =
+    match xs with
+    | [] -> ()
+    | x :: rest -> f i x; list_iteri_aux f (i + 1) rest
+
+  let list_iteri f xs = list_iteri_aux f 0 xs
+
+  -- ---- Native global tracking ----
+  -- We track native globals as a list of JSON fragments
+
+  let mut native_global_entries = ([] : string list)
+
+  let register_native_ext idx name arity =
+    native_global_entries := serialize_native_ext idx name arity :: native_global_entries
+
+  let register_native_dict idx fields =
+    native_global_entries := serialize_native_dict idx fields :: native_global_entries
+
+  let build_native_globals_json () =
+    String.concat "," (List.rev native_global_entries)
+
+  -- ---- Builtin registration helpers ----
+
+  let add_global global_names name =
+    let idx = Dynarray.length global_names in
+    Dynarray.push global_names name;
+    idx
+
+  let register_builtin (ctx : Typechecker.ctx) global_names name ty quant arity =
+    let scheme = { quant = quant; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty } in
+    let idx = add_global global_names name in
+    register_native_ext idx name arity;
+    -- Also register under Stdlib. prefix
+    let stdlib_name = "Stdlib." ^ name in
+    let sidx = add_global global_names stdlib_name in
+    register_native_ext sidx name arity;
+    let vars = (stdlib_name, scheme) :: (name, scheme) :: ctx.vars in
+    (scheme, { ctx with vars = vars })
+
+  let register_module_fn (ctx : Typechecker.ctx) global_names mod_name fn_name ty arity =
+    let qualified = mod_name ^ "." ^ fn_name in
+    let idx = add_global global_names qualified in
+    register_native_ext idx qualified arity;
+    let max_gen = Typechecker.max_tgen_in_ty ty in
+    let scheme = if max_gen >= 0 do { quant = max_gen + 1; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty }
+                 else mono ty in
+    let vars = (qualified, scheme) :: ctx.vars in
+    ((fn_name, scheme), { ctx with vars = vars })
+
+  let register_class_in_ctx (ctx : Typechecker.ctx) name tyvars methods =
+    let num_params = List.length tyvars in
+    let class_def = {
+      class_name = name;
+      class_params = tyvars;
+      class_methods = methods;
+      class_fundeps = [];
+    } in
+    let new_vars = List.fold (fn vars (mname, mty) ->
+      let max_gen = Typechecker.max_tgen_in_ty mty in
+      let quant = if max_gen + 1 > num_params do max_gen + 1 else num_params in
+      (mname, { quant = quant; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = mty }) :: vars
+    ) ctx.vars methods in
+    let type_env = { ctx.type_env with classes = class_def :: ctx.type_env.classes } in
+    { ctx with vars = new_vars; type_env = type_env }
+
+  let register_native_instance (ctx : Typechecker.ctx) global_names class_name tys methods =
+    -- methods: (method_name, ext_name, arity) list
+    let dname = dict_name class_name tys in
+    let idx = add_global global_names dname in
+    let dict_fields = List.map (fn (mname, ext_name, arity) -> (mname, ext_name, arity)) methods in
+    register_native_dict idx dict_fields;
+    -- Also register individual method globals for direct dispatch (sorted by method name)
+    let sorted = List.sort (fn (a, _, _) (b, _, _) -> String.compare a b) methods in
+    List.iter (fn (mname, ext_name, arity) ->
+      let midx = add_global global_names (dname ^ "$" ^ mname) in
+      register_native_ext midx ext_name arity
+    ) sorted;
+    let inst = {
+      inst_class = class_name;
+      inst_tys = tys;
+      inst_dict_name = dname;
+      inst_constraints = [];
+    } in
+    let type_env = { ctx.type_env with instances = inst :: ctx.type_env.instances } in
+    { ctx with type_env = type_env }
+
+  -- ---- Compile a setup source string ----
+
+  let compile_setup (ctx : Typechecker.ctx) global_names mutable_globals source =
+    let tokens = Lexer.tokenize source in
+    let program = Parser.parse_program tokens in
+    let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+    let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+    let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+    (ctx2, compiled.main)
+
+  -- ---- Arrow type helpers ----
+
+  let arr a b = TArrow (a, EffEmpty, b)
+  let arr2 a b c = arr a (arr b c)
+  let arr3 a b c d = arr a (arr b (arr c d))
+
+  -- ---- Setup builtins ----
+
+  let setup_builtins () =
+    let global_names = Dynarray.create 256 "" in
+    let mutable_globals = Hashtbl.create 8 in
+    let mut stdlib_pub_vars = ([] : (string * scheme) list) in
+
+    let int2 = arr2 TInt TInt TInt in
+    let bool2 = arr2 TBool TBool TBool in
+
+    let mut ctx = Typechecker.empty_ctx in
+
+    -- mod
+    let (sch, ctx2) = register_builtin ctx global_names "mod" int2 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("mod", sch) :: stdlib_pub_vars;
+    -- print
+    let (sch, ctx2) = register_builtin ctx global_names "print" (arr (TGen 0) TUnit) 1 1 in
+    ctx := ctx2; stdlib_pub_vars := ("print", sch) :: stdlib_pub_vars;
+    -- failwith
+    let (sch, ctx2) = register_builtin ctx global_names "failwith" (arr TString (TGen 0)) 1 1 in
+    ctx := ctx2; stdlib_pub_vars := ("failwith", sch) :: stdlib_pub_vars;
+    -- ^
+    let (sch, ctx2) = register_builtin ctx global_names "^" (arr2 TString TString TString) 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("^", sch) :: stdlib_pub_vars;
+    -- &&
+    let (sch, ctx2) = register_builtin ctx global_names "&&" bool2 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("&&", sch) :: stdlib_pub_vars;
+    -- ||
+    let (sch, ctx2) = register_builtin ctx global_names "||" bool2 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("||", sch) :: stdlib_pub_vars;
+    -- not
+    let (sch, ctx2) = register_builtin ctx global_names "not" (arr TBool TBool) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("not", sch) :: stdlib_pub_vars;
+    -- phys_equal
+    let (sch, ctx2) = register_builtin ctx global_names "phys_equal" (arr2 (TGen 0) (TGen 0) TBool) 1 2 in
+    ctx := ctx2; stdlib_pub_vars := ("phys_equal", sch) :: stdlib_pub_vars;
+    -- float_of_int
+    let (sch, ctx2) = register_builtin ctx global_names "float_of_int" (arr TInt TFloat) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("float_of_int", sch) :: stdlib_pub_vars;
+    -- int_of_float
+    let (sch, ctx2) = register_builtin ctx global_names "int_of_float" (arr TFloat TInt) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("int_of_float", sch) :: stdlib_pub_vars;
+    -- string_of_int
+    let (sch, ctx2) = register_builtin ctx global_names "string_of_int" (arr TInt TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("string_of_int", sch) :: stdlib_pub_vars;
+    -- string_of_float
+    let (sch, ctx2) = register_builtin ctx global_names "string_of_float" (arr TFloat TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("string_of_float", sch) :: stdlib_pub_vars;
+    -- string_of_bool
+    let (sch, ctx2) = register_builtin ctx global_names "string_of_bool" (arr TBool TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("string_of_bool", sch) :: stdlib_pub_vars;
+    -- __map_has
+    let (sch, ctx2) = register_builtin ctx global_names "__map_has" (arr2 (TMap (TGen 0, TGen 1)) (TGen 0) TBool) 2 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__map_has", sch) :: stdlib_pub_vars;
+    -- __map_get
+    let (sch, ctx2) = register_builtin ctx global_names "__map_get" (arr2 (TMap (TGen 0, TGen 1)) (TGen 0) (TGen 1)) 2 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__map_get", sch) :: stdlib_pub_vars;
+    -- array_get
+    let (sch, ctx2) = register_builtin ctx global_names "array_get" (arr2 (TArray (TGen 0)) TInt (TGen 0)) 1 2 in
+    ctx := ctx2; stdlib_pub_vars := ("array_get", sch) :: stdlib_pub_vars;
+    -- array_length
+    let (sch, ctx2) = register_builtin ctx global_names "array_length" (arr (TArray (TGen 0)) TInt) 1 1 in
+    ctx := ctx2; stdlib_pub_vars := ("array_length", sch) :: stdlib_pub_vars;
+    -- __byte_to_int
+    let (sch, ctx2) = register_builtin ctx global_names "__byte_to_int" (arr TByte TInt) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__byte_to_int", sch) :: stdlib_pub_vars;
+    -- __byte_of_int
+    let (sch, ctx2) = register_builtin ctx global_names "__byte_of_int" (arr TInt TByte) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__byte_of_int", sch) :: stdlib_pub_vars;
+    -- __byte_to_string
+    let (sch, ctx2) = register_builtin ctx global_names "__byte_to_string" (arr TByte TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__byte_to_string", sch) :: stdlib_pub_vars;
+    -- __rune_to_int
+    let (sch, ctx2) = register_builtin ctx global_names "__rune_to_int" (arr TRune TInt) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__rune_to_int", sch) :: stdlib_pub_vars;
+    -- __rune_of_int
+    let (sch, ctx2) = register_builtin ctx global_names "__rune_of_int" (arr TInt TRune) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__rune_of_int", sch) :: stdlib_pub_vars;
+    -- __rune_to_string
+    let (sch, ctx2) = register_builtin ctx global_names "__rune_to_string" (arr TRune TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__rune_to_string", sch) :: stdlib_pub_vars;
+    -- __math_pow
+    let (sch, ctx2) = register_builtin ctx global_names "__math_pow" (arr2 TFloat TFloat TFloat) 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__math_pow", sch) :: stdlib_pub_vars;
+    -- __math_sqrt
+    let (sch, ctx2) = register_builtin ctx global_names "__math_sqrt" (arr TFloat TFloat) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__math_sqrt", sch) :: stdlib_pub_vars;
+    -- __math_floor
+    let (sch, ctx2) = register_builtin ctx global_names "__math_floor" (arr TFloat TInt) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__math_floor", sch) :: stdlib_pub_vars;
+    -- __math_ceil
+    let (sch, ctx2) = register_builtin ctx global_names "__math_ceil" (arr TFloat TInt) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__math_ceil", sch) :: stdlib_pub_vars;
+    -- __math_round
+    let (sch, ctx2) = register_builtin ctx global_names "__math_round" (arr TFloat TInt) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__math_round", sch) :: stdlib_pub_vars;
+    -- __fmt_float
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_float" (arr2 TInt TFloat TString) 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_float", sch) :: stdlib_pub_vars;
+    -- __fmt_hex
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_hex" (arr TInt TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_hex", sch) :: stdlib_pub_vars;
+    -- __fmt_hex_upper
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_hex_upper" (arr TInt TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_hex_upper", sch) :: stdlib_pub_vars;
+    -- __fmt_oct
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_oct" (arr TInt TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_oct", sch) :: stdlib_pub_vars;
+    -- __fmt_bin
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_bin" (arr TInt TString) 0 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_bin", sch) :: stdlib_pub_vars;
+    -- __fmt_zero_pad
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_zero_pad" (arr2 TInt TString TString) 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_zero_pad", sch) :: stdlib_pub_vars;
+    -- __fmt_pad_left
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_pad_left" (arr2 TInt TString TString) 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_pad_left", sch) :: stdlib_pub_vars;
+    -- __fmt_pad_right
+    let (sch, ctx2) = register_builtin ctx global_names "__fmt_pad_right" (arr2 TInt TString TString) 0 2 in
+    ctx := ctx2; stdlib_pub_vars := ("__fmt_pad_right", sch) :: stdlib_pub_vars;
+    -- __show_value
+    let (sch, ctx2) = register_builtin ctx global_names "__show_value" (arr (TGen 0) TString) 1 1 in
+    ctx := ctx2; stdlib_pub_vars := ("__show_value", sch) :: stdlib_pub_vars;
+    -- copy_continuation
+    let copy_ty = arr (TGen 0) (TGen 0) in
+    let copy_scheme = { quant = 1; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = copy_ty } in
+    let cidx = add_global global_names "copy_continuation" in
+    register_native_ext cidx "copy_continuation" 1;
+    let csidx = add_global global_names "Stdlib.copy_continuation" in
+    register_native_ext csidx "copy_continuation" 1;
+    stdlib_pub_vars := ("copy_continuation", copy_scheme) :: stdlib_pub_vars;
+    ctx := { ctx with vars = ("Stdlib.copy_continuation", copy_scheme) :: ("copy_continuation", copy_scheme) :: ctx.vars };
+
+    (ctx, global_names, mutable_globals, stdlib_pub_vars)
+
+  -- ---- Setup Option type ----
+
+  let setup_option_type (ctx : Typechecker.ctx) =
+    let type_env = { ctx.type_env with
+      variants = ("option", 1, [("None", (None : ty option)); ("Some", Some (TGen 0))], false) :: ctx.type_env.variants;
+      constructors =
+        ("None", { ctor_type_name = "option"; ctor_arg_ty = (None : ty option); ctor_num_params = 1;
+                    ctor_return_ty_params = (None : ty list option); ctor_existentials = 0 }) ::
+        ("Some", { ctor_type_name = "option"; ctor_arg_ty = Some (TGen 0); ctor_num_params = 1;
+                    ctor_return_ty_params = (None : ty list option); ctor_existentials = 0 }) ::
+        ctx.type_env.constructors;
+    } in
+    { ctx with type_env = type_env }
+
+  -- ---- Setup type classes and native instances ----
+  -- Must match OCaml interp.ml setup_default_classes order exactly for global index alignment
+
+  let setup_classes (ctx : Typechecker.ctx) global_names mutable_globals stdlib_pub_vars =
+    let a2a = arr2 (TGen 0) (TGen 0) (TGen 0) in
+    let a_a = arr (TGen 0) (TGen 0) in
+    let a2bool = arr2 (TGen 0) (TGen 0) TBool in
+    let mut ctx = ctx in
+    let mut setup_protos = ([] : Bytecode.prototype list) in
+
+    let load name =
+      let (ctx2, proto) = compile_setup ctx global_names mutable_globals
+        (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
+      ctx := ctx2; setup_protos := proto :: setup_protos
+    in
+
+    let set_fundeps class_name fundeps =
+      ctx := { ctx with type_env = { ctx.type_env with
+        classes = List.map (fn (cd : Types.class_def) ->
+          if cd.class_name = class_name do { cd with class_fundeps = fundeps }
+          else cd
+        ) ctx.type_env.classes } }
+    in
+
+    -- Num class
+    ctx := register_class_in_ctx ctx "Num" ["a"]
+      [("+", a2a); ("-", a2a); ("*", a2a); ("/", a2a); ("neg", a_a)];
+    ctx := register_native_instance ctx global_names "Num" [TInt]
+      [("+", "num_add_int", 2); ("-", "num_sub_int", 2); ("*", "num_mul_int", 2);
+       ("/", "num_div_int", 2); ("neg", "num_neg_int", 1)];
+    ctx := register_native_instance ctx global_names "Num" [TFloat]
+      [("+", "num_add_float", 2); ("-", "num_sub_float", 2); ("*", "num_mul_float", 2);
+       ("/", "num_div_float", 2); ("neg", "num_neg_float", 1)];
+
+    -- Eq class
+    ctx := register_class_in_ctx ctx "Eq" ["a"]
+      [("=", a2bool); ("<>", a2bool)];
+    ctx := register_native_instance ctx global_names "Eq" [TInt]
+      [("=", "eq_int", 2); ("<>", "neq_int", 2)];
+    ctx := register_native_instance ctx global_names "Eq" [TFloat]
+      [("=", "eq_float", 2); ("<>", "neq_float", 2)];
+    ctx := register_native_instance ctx global_names "Eq" [TString]
+      [("=", "eq_string", 2); ("<>", "neq_string", 2)];
+    ctx := register_native_instance ctx global_names "Eq" [TBool]
+      [("=", "eq_bool", 2); ("<>", "neq_bool", 2)];
+    ctx := register_native_instance ctx global_names "Eq" [TByte]
+      [("=", "eq_byte", 2); ("<>", "neq_byte", 2)];
+    ctx := register_native_instance ctx global_names "Eq" [TRune]
+      [("=", "eq_rune", 2); ("<>", "neq_rune", 2)];
+
+    -- Ord class
+    ctx := register_class_in_ctx ctx "Ord" ["a"]
+      [("<", a2bool); (">", a2bool); ("<=", a2bool); (">=", a2bool)];
+    ctx := register_native_instance ctx global_names "Ord" [TInt]
+      [("<", "lt_int", 2); (">", "gt_int", 2); ("<=", "le_int", 2); (">=", "ge_int", 2)];
+    ctx := register_native_instance ctx global_names "Ord" [TFloat]
+      [("<", "lt_float", 2); (">", "gt_float", 2); ("<=", "le_float", 2); (">=", "ge_float", 2)];
+    ctx := register_native_instance ctx global_names "Ord" [TString]
+      [("<", "lt_string", 2); (">", "gt_string", 2); ("<=", "le_string", 2); (">=", "ge_string", 2)];
+    ctx := register_native_instance ctx global_names "Ord" [TByte]
+      [("<", "lt_byte", 2); (">", "gt_byte", 2); ("<=", "le_byte", 2); (">=", "ge_byte", 2)];
+    ctx := register_native_instance ctx global_names "Ord" [TRune]
+      [("<", "lt_rune", 2); (">", "gt_rune", 2); ("<=", "le_rune", 2); (">=", "ge_rune", 2)];
+
+    -- Bitwise class
+    ctx := register_class_in_ctx ctx "Bitwise" ["a"]
+      [("land", a2a); ("lor", a2a); ("lxor", a2a); ("lsl", a2a); ("lsr", a2a); ("lnot", a_a)];
+    ctx := register_native_instance ctx global_names "Bitwise" [TInt]
+      [("land", "band_int", 2); ("lor", "bor_int", 2); ("lxor", "bxor_int", 2);
+       ("lsl", "bshl_int", 2); ("lsr", "bshr_int", 2); ("lnot", "bnot_int", 1)];
+
+    -- Show class
+    ctx := register_class_in_ctx ctx "Show" ["a"]
+      [("show", arr (TGen 0) TString)];
+    ctx := register_native_instance ctx global_names "Show" [TInt]
+      [("show", "show_int", 1)];
+    ctx := register_native_instance ctx global_names "Show" [TFloat]
+      [("show", "show_float", 1)];
+    ctx := register_native_instance ctx global_names "Show" [TBool]
+      [("show", "show_bool", 1)];
+    ctx := register_native_instance ctx global_names "Show" [TString]
+      [("show", "show_string", 1)];
+    ctx := register_native_instance ctx global_names "Show" [TUnit]
+      [("show", "show_unit", 1)];
+    ctx := register_native_instance ctx global_names "Show" [TByte]
+      [("show", "show_byte", 1)];
+    ctx := register_native_instance ctx global_names "Show" [TRune]
+      [("show", "show_rune", 1)];
+
+    -- Iter class: fold : ('c -> 'b -> 'c) -> 'c -> 'a -> 'c
+    -- TGen 0='a (collection), TGen 1='b (element), TGen 2='c (accumulator)
+    let fold_ty = arr (arr2 (TGen 2) (TGen 1) (TGen 2)) (arr2 (TGen 2) (TGen 0) (TGen 2)) in
+    ctx := register_class_in_ctx ctx "Iter" ["a"; "b"]
+      [("fold", fold_ty)];
+    set_fundeps "Iter" [{ fd_from = [0]; fd_to = [1] }];
+
+    -- Map class
+    -- TGen 0='m, TGen 1='k, TGen 2='v
+    let option_v = TVariant ("option", [TGen 2]) in
+    let kv_pair = TTuple [TGen 1; TGen 2] in
+    ctx := register_class_in_ctx ctx "Map" ["m"; "k"; "v"]
+      [("of_list", arr (TList kv_pair) (TGen 0));
+       ("get", arr2 (TGen 1) (TGen 0) option_v);
+       ("set", arr3 (TGen 1) (TGen 2) (TGen 0) (TGen 0));
+       ("has", arr2 (TGen 1) (TGen 0) TBool);
+       ("remove", arr2 (TGen 1) (TGen 0) (TGen 0));
+       ("size", arr (TGen 0) TInt);
+       ("keys", arr (TGen 0) (TList (TGen 1)));
+       ("values", arr (TGen 0) (TList (TGen 2)));
+       ("to_list", arr (TGen 0) (TList kv_pair))];
+    set_fundeps "Map" [{ fd_from = [0]; fd_to = [1; 2] }];
+    -- Native map instance
+    ctx := register_native_instance ctx global_names "Map"
+      [TMap (TGen 0, TGen 1); TGen 0; TGen 1]
+      [("of_list", "map_of_list", 1); ("get", "map_get", 2); ("set", "map_set", 3);
+       ("has", "map_has", 2); ("remove", "map_remove", 2); ("size", "map_size", 1);
+       ("keys", "map_keys", 1); ("values", "map_values", 1); ("to_list", "map_to_list", 1)];
+
+    -- Index class: at : 'k -> 'c -> 'v
+    -- TGen 0='c (container), TGen 1='k (key/index), TGen 2='v (value/element)
+    let at_ty = arr (TGen 1) (arr (TGen 0) (TGen 2)) in
+    ctx := register_class_in_ctx ctx "Index" ["c"; "k"; "v"]
+      [("at", at_ty)];
+    set_fundeps "Index" [{ fd_from = [0]; fd_to = [1; 2] }];
+    ctx := register_native_instance ctx global_names "Index"
+      [TArray (TGen 0); TInt; TGen 0]
+      [("at", "index_at_array", 2)];
+    ctx := register_native_instance ctx global_names "Index"
+      [TString; TInt; TByte]
+      [("at", "index_at_string", 2)];
+    ctx := register_native_instance ctx global_names "Index"
+      [TMap (TGen 0, TGen 1); TGen 0; TGen 1]
+      [("at", "index_at_map", 2)];
+
+    -- Load iter source (Iter instances for list, array, string)
+    load "iter";
+    -- Load show source (Show instances for list, array, option, tuple2, tuple3)
+    load "show";
+    -- Load iter_map source (Iter instance for map)
+    load "iter_map";
+    -- Show for map (native, after source show/iter_map to match OCaml ordering)
+    ctx := register_native_instance ctx global_names "Show" [TMap (TGen 0, TGen 1)]
+      [("show", "show_map", 1)];
+
+    -- Build Stdlib module_info
+    let stdlib_constructors =
+      List.filter (fn (name, _) ->
+        name = "None" || name = "Some"
+      ) ctx.type_env.constructors
+    in
+    let stdlib_info = {
+      mod_name = "Stdlib"; mod_pub_vars = stdlib_pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_pub_constructors = stdlib_constructors;
+      mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Stdlib", stdlib_info) :: ctx.type_env.modules } };
+
+    (ctx, List.rev setup_protos)
+
+  -- ---- Setup all modules (interleaved native + source to match OCaml register_all order) ----
+
+  let setup_modules (ctx : Typechecker.ctx) global_names mutable_globals =
+    let mut pub_vars = ([] : (string * scheme) list) in
+    let mut ctx = ctx in
+    let mut setup_protos = ([] : Bytecode.prototype list) in
+
+    let register_fn mod_name fn_name ty arity =
+      let (pv, ctx2) = register_module_fn ctx global_names mod_name fn_name ty arity in
+      pub_vars := pv :: pub_vars;
+      ctx := ctx2
+    in
+
+    let load name =
+      let (ctx2, proto) = compile_setup ctx global_names mutable_globals
+        (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
+      ctx := ctx2; setup_protos := proto :: setup_protos
+    in
+
+    let load_source source =
+      let (ctx2, proto) = compile_setup ctx global_names mutable_globals source in
+      ctx := ctx2; setup_protos := proto :: setup_protos
+    in
+
+    -- String module (26 native fns)
+    pub_vars := [];
+    register_fn "String" "length" (arr TString TInt) 1;
+    register_fn "String" "sub" (arr3 TString TInt TInt TString) 3;
+    register_fn "String" "split" (arr2 TString TString (TList TString)) 2;
+    register_fn "String" "trim" (arr TString TString) 1;
+    register_fn "String" "starts_with" (arr2 TString TString TBool) 2;
+    register_fn "String" "contains" (arr2 TString TString TBool) 2;
+    register_fn "String" "replace" (arr3 TString TString TString TString) 3;
+    register_fn "String" "to_int" (arr TString (TVariant ("option", [TInt]))) 1;
+    register_fn "String" "to_float" (arr TString (TVariant ("option", [TFloat]))) 1;
+    register_fn "String" "uppercase" (arr TString TString) 1;
+    register_fn "String" "lowercase" (arr TString TString) 1;
+    register_fn "String" "get" (arr2 TString TInt TByte) 2;
+    register_fn "String" "to_bytes" (arr TString (TList TByte)) 1;
+    register_fn "String" "of_bytes" (arr (TList TByte) TString) 1;
+    register_fn "String" "to_byte_array" (arr TString (TArray TByte)) 1;
+    register_fn "String" "of_byte_array" (arr (TArray TByte) TString) 1;
+    register_fn "String" "to_runes" (arr TString (TList TRune)) 1;
+    register_fn "String" "of_runes" (arr (TList TRune) TString) 1;
+    register_fn "String" "get_rune" (arr2 TString TInt TRune) 2;
+    register_fn "String" "of_byte" (arr TByte TString) 1;
+    register_fn "String" "rune_length" (arr TString TInt) 1;
+    register_fn "String" "make" (arr2 TInt TByte TString) 2;
+    register_fn "String" "index_opt" (arr2 TString TByte (TVariant ("option", [TInt]))) 2;
+    register_fn "String" "rindex_opt" (arr2 TString TByte (TVariant ("option", [TInt]))) 2;
+    register_fn "String" "concat" (arr2 TString (TList TString) TString) 2;
+    register_fn "String" "compare" (arr2 TString TString TInt) 2;
+    let string_info = {
+      mod_name = "String"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("String", string_info) :: ctx.type_env.modules } };
+    -- String.iter (source-defined, adds 1 global)
+    load_source "module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end";
+
+    -- List module (source)
+    load "list";
+
+    -- Array module (8 native fns)
+    pub_vars := [];
+    register_fn "Array" "make" (arr2 TInt (TGen 0) (TArray (TGen 0))) 2;
+    register_fn "Array" "get" (arr2 (TArray (TGen 0)) TInt (TGen 0)) 2;
+    register_fn "Array" "set" (arr3 (TArray (TGen 0)) TInt (TGen 0) TUnit) 3;
+    register_fn "Array" "length" (arr (TArray (TGen 0)) TInt) 1;
+    register_fn "Array" "to_list" (arr (TArray (TGen 0)) (TList (TGen 0))) 1;
+    register_fn "Array" "of_list" (arr (TList (TGen 0)) (TArray (TGen 0))) 1;
+    register_fn "Array" "copy" (arr (TArray (TGen 0)) (TArray (TGen 0))) 1;
+    register_fn "Array" "sub" (arr3 (TArray (TGen 0)) TInt TInt (TArray (TGen 0))) 3;
+    let array_info = {
+      mod_name = "Array"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Array", array_info) :: ctx.type_env.modules } };
+
+    -- array_extra (source)
+    load "array_extra";
+
+    -- IO module (5 native fns)
+    pub_vars := [];
+    register_fn "IO" "read_file" (arr TString TString) 1;
+    register_fn "IO" "write_file" (arr2 TString TString TUnit) 2;
+    register_fn "IO" "append_file" (arr2 TString TString TUnit) 2;
+    register_fn "IO" "read_line" (arr TUnit TString) 1;
+    register_fn "IO" "file_exists" (arr TString TBool) 1;
+    let io_info = {
+      mod_name = "IO"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("IO", io_info) :: ctx.type_env.modules } };
+
+    -- Sys module (4 native fns)
+    pub_vars := [];
+    register_fn "Sys" "args" (arr TUnit (TList TString)) 1;
+    register_fn "Sys" "getenv" (arr TString (TVariant ("option", [TString]))) 1;
+    register_fn "Sys" "exit" (arr TInt TUnit) 1;
+    register_fn "Sys" "time" (arr TUnit TFloat) 1;
+    let sys_info = {
+      mod_name = "Sys"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Sys", sys_info) :: ctx.type_env.modules } };
+
+    -- Source-defined modules (matching OCaml register_all order)
+    load "math";
+    load "result";
+    load "byte";
+    load "rune";
+    load "set";
+    load "enum";
+    load "seq";
+    load "option";
+    load "buffer";
+    load "fmt";
+    load "hash";
+    load "hashtbl";
+    load "ref";
+    load "dynarray";
+    load "compat";
+
+    -- Runtime module (native, registered last to match OCaml ordering)
+    pub_vars := [];
+    register_fn "Runtime" "eval" (arr TString TUnit) 1;
+    register_fn "Runtime" "eval_file" (arr TString TUnit) 1;
+    let runtime_info = {
+      mod_name = "Runtime"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Runtime", runtime_info) :: ctx.type_env.modules } };
+
+    (ctx, List.rev setup_protos)
+
+  -- ---- Batch compilation ----
+
+  let run_batch manifest_file =
+    handle
+      let manifest = IO.read_file manifest_file in
+      let files = List.filter (fn s -> s <> "") (String.split "\n" manifest) in
+
+      -- Setup type environment (done once)
+      let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
+      let ctx = setup_option_type ctx in
+      let (ctx, class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+      let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
+      let setup_protos = List.concat class_protos module_protos in
+
+      -- Snapshot post-setup mutable state
+      let base_gn_len = Dynarray.length global_names in
+      let base_native = native_global_entries in
+      let base_mutable = Hashtbl.to_list mutable_globals in
+
+      -- Compile each file
+      list_iter (fn filename ->
+        -- Reset state to post-setup snapshot
+        global_names.count := base_gn_len;
+        native_global_entries := base_native;
+        Hashtbl.clear mutable_globals;
+        list_iter (fn (k, v) -> Hashtbl.set mutable_globals k v) base_mutable;
+
+        handle
+          let source = IO.read_file filename in
+          let tokens = Lexer.tokenize source in
+          let program = Parser.parse_program tokens in
+          let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+          let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+          let ng_json = build_native_globals_json () in
+          let json = Serialize.serialize_bundle global_names ng_json setup_protos compiled.main in
+          print json;
+          print "===BATCH-SEP==="
+        with
+        | return x -> x
+        | lex_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | parse_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | type_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | compile_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | unify_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+      ) files
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+
+  -- ---- Main entry point ----
+
+  let () =
+    let args = Sys.args () in
+    let batch_file = match args with
+      | _ :: "--batch" :: f :: _ -> Some f
+      | _ -> None
+    in
+    let no_optimize = List.exists (fn a -> a = "--no-optimize") args in
+    if no_optimize do Ref.set Compiler.optimize_enabled false end;
+    let args = List.filter (fn a -> a <> "--no-optimize") args in
+    match batch_file with
+    | Some f -> run_batch f
+    | None ->
+      handle
+        let filename = match args with
+          | _ :: "--emit-json" :: file :: _ -> file
+          | _ :: file :: _ -> file
+          | _ -> failwith "Usage: compiler [--emit-json | --batch <manifest>] <source-file>"
+        in
+        let source = IO.read_file filename in
+
+        -- Setup type environment
+        let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
+        let ctx = setup_option_type ctx in
+        let (ctx, class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+        let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
+        let setup_protos = List.concat class_protos module_protos in
+
+        -- Compile user source
+        let tokens = Lexer.tokenize source in
+        let program = Parser.parse_program tokens in
+        let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+        let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+        let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+
+        -- Serialize
+        let ng_json = build_native_globals_json () in
+        let json = Serialize.serialize_bundle global_names ng_json setup_protos compiled.main in
+        print json
+      with
+      | return x -> x
+      | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+      | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+      | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+      | compile_error msg _k -> failwith msg
+      | unify_error msg _k -> failwith msg
+end

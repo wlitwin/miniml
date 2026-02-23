@@ -1,0 +1,128 @@
+=== Optimization: Jump Tables ===
+
+--- test: multi-arm variant match
+type color = Red | Green | Blue | Yellow;;
+let name c = match c with
+  | Red -> "red"
+  | Green -> "green"
+  | Blue -> "blue"
+  | Yellow -> "yellow"
+;;
+name Blue
+--- expect: blue
+
+--- test: jump table with default arm
+type shape = Circle | Square | Triangle | Hex;;
+let sides s = match s with
+  | Circle -> 0
+  | Triangle -> 3
+  | Square -> 4
+  | Hex -> 6
+;;
+sides Triangle
+--- expect: 3
+
+--- test: variant match with nested pattern no jump table
+type 'a opt = N | S of 'a;;
+let f x = match x with
+  | S (N) -> "some-none"
+  | S (S _) -> "some-some"
+  | N -> "none"
+;;
+f (S N)
+--- expect: some-none
+
+--- test: variant match with guard no jump table
+type animal = Cat | Dog | Fish;;
+let describe a age = match a with
+  | Cat when age > 10 -> "old cat"
+  | Cat -> "cat"
+  | Dog -> "dog"
+  | Fish -> "fish"
+;;
+describe Cat 15
+--- expect: old cat
+
+--- test: variant match with guard young cat
+type animal2 = Cat2 | Dog2 | Fish2;;
+let describe2 a age = match a with
+  | Cat2 when age > 10 -> "old cat"
+  | Cat2 -> "young cat"
+  | Dog2 -> "dog"
+  | Fish2 -> "fish"
+;;
+describe2 Cat2 3
+--- expect: young cat
+
+=== Optimization: Dead Code After TAIL_CALL ===
+
+--- test: tail recursive function
+let rec sum acc n = if n <= 0 do acc else sum (acc + n) (n - 1);;
+sum 0 100
+--- expect: 5050
+
+--- test: tail call in match arm
+type cmd = Inc of int | Dec of int | Halt;;
+let rec run acc cmds = match cmds with
+  | [] -> acc
+  | Inc n :: rest -> run (acc + n) rest
+  | Dec n :: rest -> run (acc - n) rest
+  | Halt :: _ -> acc
+;;
+run 0 [Inc 5; Inc 3; Dec 1; Halt; Inc 100]
+--- expect: 7
+
+--- test: tail call to external in loop
+let rec count_down n = if n <= 0 do string_of_int 0 else count_down (n - 1);;
+count_down 10
+--- expect: 0
+
+=== Optimization: Superinstructions ===
+
+--- test: local call via superinstruction
+let double x = x * 2;;
+let apply f x = f x;;
+apply double 21
+--- expect: 42
+
+--- test: local tuple get via superinstruction
+let t = (10, 20, 30);;
+let second p = match p with (_, b, _) -> b;;
+second t
+--- expect: 20
+
+--- test: local field access via superinstruction
+type point = { x : int; y : int };;
+let p = { x = 3; y = 4 };;
+let get_y pt = pt.y;;
+get_y p
+--- expect: 4
+
+=== Optimization: Typeclass Dispatch ===
+
+--- test: typeclass method on concrete type
+show 42
+--- expect: 42
+
+--- test: typeclass method on string
+show "hello"
+--- expect: "hello"
+
+--- test: typeclass binop
+3 + 4
+--- expect: 7
+
+--- test: typeclass show on list
+show [1; 2; 3]
+--- expect: [1; 2; 3]
+
+=== Optimization: JUMP to Next ===
+
+--- test: simple if-else
+if true do 1 else 2
+--- expect: 1
+
+--- test: chained if-else
+let classify n = if n < 0 do "negative" else if n = 0 do "zero" else "positive";;
+classify 5
+--- expect: positive

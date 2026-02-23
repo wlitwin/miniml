@@ -1,0 +1,103 @@
+=== String Interpolation ===
+
+--- test: basic interpolation
+$"value is {42}"
+--- expect: value is 42
+
+--- test: interpolation with variable
+let x = 10 in $"x = {x}"
+--- expect: x = 10
+
+--- test: interpolation with expression
+$"{1 + 2 + 3}"
+--- expect: 6
+
+--- test: multiple interpolations
+$"{42} and {true}"
+--- expect: 42 and true
+
+--- test: interpolation no expressions
+$"hello world"
+--- expect: hello world
+
+--- test: interpolation escaped braces
+$"a \{ b \} c"
+--- expect: a { b } c
+
+--- test: interpolation with string variable
+let name = "world" in $"hello {name}"
+--- expect: hello world
+
+=== Format Specifiers ===
+
+--- test: format float .2f
+$"{3.14159:.2f}"
+--- expect: 3.14
+
+--- test: format float .0f
+$"{3.14159:.0f}"
+--- expect: 3
+
+--- test: format float .4f
+$"{2.5:.4f}"
+--- expect: 2.5000
+
+--- test: format hex lowercase
+$"{255:x}"
+--- expect: ff
+
+--- test: format hex uppercase
+$"{255:X}"
+--- expect: FF
+
+--- test: format octal
+$"{8:o}"
+--- expect: 10
+
+--- test: format binary
+$"{10:b}"
+--- expect: 1010
+
+--- test: format binary zero
+$"{0:b}"
+--- expect: 0
+
+--- test: format zero-pad hex
+$"{42:08x}"
+--- expect: 0000002a
+
+--- test: format right-align
+$"{42:>10}"
+--- expect:         42
+
+--- test: format left-align
+let s = "hi" in $"{s:<10}"
+--- expect: "hi        "
+
+--- test: format combined align and float
+$"{3.14159:>10.2f}"
+--- expect:       3.14
+
+--- test: format no spec backward compat
+$"{1 + 2}"
+--- expect: 3
+
+--- test: format spec with variable
+let pi = 3.14159 in $"pi = {pi:.2f}"
+--- expect: pi = 3.14
+
+--- test: format colon inside parens preserved
+$"{(42 : int)}"
+--- expect: 42
+
+--- test: format mixed literal and formatted
+$"hex: {255:x}, dec: {255}"
+--- expect: hex: ff, dec: 255
+
+--- test: format type error float spec on int
+$"{42:.2f}"
+--- expect-type-error
+
+--- test: format type error hex on float
+$"{3.14:x}"
+--- expect-type-error

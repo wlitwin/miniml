@@ -1,0 +1,1056 @@
+=== Module Tests ===
+
+--- test: module pub access
+module M =
+  pub let x = 42
+  let secret = 99
+end
+;;
+M.x
+--- expect: 42
+
+--- test: module private hidden
+module M =
+  pub let x = 42
+  let secret = 99
+end
+;;
+M.secret
+--- expect-type-error
+
+--- test: qualified access
+module Math =
+  pub let double x = x + x
+  pub let square x = x * x
+end
+;;
+Math.double 5 + Math.square 3
+--- expect: 19
+
+--- test: open all
+module M =
+  pub let a = 10
+  pub let b = 20
+end
+;;
+open M
+;;
+a + b
+--- expect: 30
+
+--- test: selective open
+module M =
+  pub let a = 10
+  pub let b = 20
+end
+;;
+open M (a)
+;;
+a
+--- expect: 10
+
+--- test: selective open excludes
+module M =
+  pub let a = 10
+  pub let b = 20
+end
+;;
+open M (a)
+;;
+b
+--- expect-type-error
+
+--- test: local open
+module M =
+  pub let x = 10
+  pub let y = 20
+end
+;;
+M.(x + y)
+--- expect: 30
+
+--- test: nested module
+module Outer =
+  let secret = 100
+  pub module Inner =
+    pub let f x = x + secret
+  end
+end
+;;
+Outer.Inner.f 5
+--- expect: 105
+
+--- test: pub type in module
+module M =
+  pub type color = Red | Green | Blue
+  pub let to_int c = match c with
+    | Red -> 0
+    | Green -> 1
+    | Blue -> 2
+end
+;;
+M.to_int M.Green
+--- expect: 1
+
+--- test: opaque type visible
+module M =
+  opaque type token = Wrap of int
+  pub let make x = Wrap x
+  pub let get h = match h with
+    | Wrap n -> n
+end
+;;
+M.get (M.make 42)
+--- expect: 42
+
+--- test: opaque type constructor hidden
+module M =
+  opaque type token = Wrap of int
+  pub let make x = Wrap x
+end
+;;
+M.Wrap 42
+--- expect-type-error
+
+--- test: pub function uses private helper
+module M =
+  let helper x = x * 2
+  pub let double_add x y = helper x + helper y
+end
+;;
+M.double_add 3 4
+--- expect: 14
+
+--- test: instance in module is public
+module M =
+  pub type wrapper = W of int
+  instance Show wrapper =
+    let show w = match w with
+      | W n -> $"W({n})"
+  end
+end
+;;
+show (M.W 42)
+--- expect: W(42)
+
+--- test: Stdlib.mod works
+Stdlib.mod 10 3
+--- expect: 1
+
+--- test: Stdlib.string_of_int
+Stdlib.string_of_int 42
+--- expect: 42
+
+--- test: shadowing with qualified disambiguation
+module M =
+  pub let x = 10
+end
+;;
+open M
+;;
+let x = 20
+;;
+x + M.x
+--- expect: 30
+
+--- test: multiple modules
+module A =
+  pub let x = 1
+end
+;;
+module B =
+  pub let x = 2
+end
+;;
+A.x + B.x
+--- expect: 3
+
+--- test: module with rec function
+module M =
+  pub let rec fact n = if n <= 1 do 1 else n * fact (n - 1)
+end
+;;
+M.fact 5
+--- expect: 120
+
+--- test: open inside module
+module A =
+  pub let x = 10
+end
+;;
+module B =
+  open A
+  pub let y = x + 5
+end
+;;
+B.y
+--- expect: 15
+
+--- test: open variant type annotation
+module M =
+  pub type color = Red | Green | Blue
+end
+;;
+open M
+;;
+let f (c : color) : color = c in
+f Red
+--- expect: Red
+
+--- test: open type unifies with qualified
+module M =
+  pub type color = Red | Green | Blue
+end
+;;
+open M
+;;
+let f (c : color) : M.color = c in
+f Green
+--- expect: Green
+
+--- test: open record type annotation
+module M =
+  pub type pt = { x: int; y: int }
+end
+;;
+open M
+;;
+let f (p : pt) = p.x + p.y in
+f { x = 10; y = 20 }
+--- expect: 30
+
+--- test: open type in mutable annotation
+module M =
+  pub type item = A of int | B of string
+end
+;;
+open M
+;;
+let mut xs = ([] : item list) in
+xs := [A 1; B "hi"];
+match List.hd xs with
+| A n -> n
+| B _ -> 0
+--- expect: 1
+
+--- test: open type synonym
+module M =
+  pub type pair = int * string
+end
+;;
+open M
+;;
+let f (p : pair) = match p with (n, _) -> n in
+f (42, "hi")
+--- expect: 42
+
+=== Module-Scoped Record Type Tests ===
+
+--- test: module record type annotation
+module Pt =
+  type t = { x: int; y: int }
+  pub let make (x: int) (y: int) : t = { x = x; y = y }
+  pub let get_x (p: t) : int = p.x
+end
+Pt.get_x (Pt.make 10 20)
+--- expect: 10
+
+--- test: module record type qualified annotation
+module Pt =
+  type t = { x: int; y: int }
+  pub let make (x: int) (y: int) : t = { x = x; y = y }
+end
+let get_y (p: Pt.t) : int = p.y in
+get_y (Pt.make 10 20)
+--- expect: 20
+
+=== Parameterized Qualified Type Tests ===
+
+--- test: parameterized qualified type annotation
+module Wrap =
+  type 'a t = Val of 'a | Empty
+  pub let make (x: 'a) : 'a t = Val x
+  pub let get (w: 'a t) : int =
+    match w with
+    | Val x -> x
+    | Empty -> 0
+end
+let unwrap (w: int Wrap.t) : int = Wrap.get w in
+unwrap (Wrap.make 42)
+--- expect: 42
+
+--- test: multi-param qualified type annotation
+module Pair =
+  type ('a, 'b) t = P of 'a * 'b | None
+  pub let make (x: 'a) (y: 'b) : ('a, 'b) t = P (x, y)
+  pub let fst (p: ('a, 'b) t) : 'a =
+    match p with
+    | P (a, _) -> a
+    | None -> 0
+end
+let f (p: (int, string) Pair.t) : int = Pair.fst p in
+f (Pair.make 42 "hi")
+--- expect: 42
+
+=== Qualified Record Type Annotation Tests ===
+
+--- test: qualified record type annotation basic
+module Pt =
+  pub type t = { x: int; y: int }
+  pub let make (x: int) (y: int) : t = { x = x; y = y }
+end
+let get_x (p: Pt.t) : int = p.x in
+get_x (Pt.make 10 20)
+--- expect: 10
+
+--- test: parameterized qualified record type annotation
+module Box =
+  pub type 'a t = { value: 'a; label: string }
+  pub let make (v: 'a) (l: string) : 'a t = { value = v; label = l }
+end
+let get_value (b: int Box.t) : int = b.value in
+get_value (Box.make 42 "answer")
+--- expect: 42
+
+--- test: multi-param qualified record type annotation
+module Pair =
+  pub type ('a, 'b) t = { fst: 'a; snd: 'b }
+  pub let make (a: 'a) (b: 'b) : ('a, 'b) t = { fst = a; snd = b }
+end
+let get_fst (p: (int, string) Pair.t) : int = p.fst in
+get_fst (Pair.make 42 "hi")
+--- expect: 42
+
+--- test: qualified record type in let binding
+module Config =
+  pub type t = { width: int; height: int }
+end
+let cfg : Config.t = { width = 800; height = 600 } in
+cfg.width + cfg.height
+--- expect: 1400
+
+--- test: qualified record type as function return
+module Pt =
+  pub type t = { x: int; y: int }
+end
+let origin () : Pt.t = { x = 0; y = 0 } in
+let p = origin () in
+p.x + p.y
+--- expect: 0
+
+--- test: parameterized record type annotation local
+type ('a, 'b) pair_rec = { fst: 'a; snd: 'b }
+let get_fst (p : (int, string) pair_rec) = p.fst in
+get_fst { fst = 42; snd = "hello" }
+--- expect: 42
+
+--- test: single param record type annotation local
+type 'a wrapper = { inner: 'a; tag: string }
+let unwrap (w : int wrapper) = w.inner in
+unwrap { inner = 42; tag = "test" }
+--- expect: 42
+
+--- test: hashtbl qualified type annotation
+let tbl : (string, int) Hashtbl.t = Hashtbl.create 4 in
+Hashtbl.set tbl "key" 42;
+match Hashtbl.get tbl "key" with
+| Some v -> v
+| None -> 0
+--- expect: 42
+
+=== Record Field Inference Tests ===
+
+--- test: record field inference basic
+type point = { x: int; y: int }
+let get_x p = p.x in
+get_x { x = 42; y = 0 }
+--- expect: 42
+
+--- test: record field inference in function
+type point = { x: int; y: int }
+let sum p = p.x + p.y in
+sum { x = 20; y = 22 }
+--- expect: 42
+
+--- test: ambiguous field resolves structurally
+type a = { name: string; x: int }
+type b = { name: string; y: int }
+let f p = p.name in
+f { name = "hi"; x = 1 }
+--- expect: hi
+
+=== Field Accessor Tests ===
+
+--- test: field accessor getter
+type point = {x: int; y: int}
+let p = {x = 10; y = 20} in
+.x p
+--- expect: 10
+
+--- test: field accessor getter y
+type point = {x: int; y: int}
+.y {x = 10; y = 20}
+--- expect: 20
+
+--- test: field accessor in map
+type point = {x: int; y: int}
+let pts = [{x=1;y=2}; {x=3;y=4}; {x=5;y=6}] in
+show (List.map .x pts)
+--- expect: [1; 3; 5]
+
+--- test: field accessor passed to higher-order
+type point = {x: int; y: int}
+let pts = [{x=10;y=1}; {x=20;y=2}; {x=30;y=3}] in
+List.fold (fn acc p -> acc + .x p) 0 pts
+--- expect: 60
+
+--- test: field accessor structural subtyping
+type big = {a: int; b: int; c: int}
+.a {a = 99; b = 0; c = 0}
+--- expect: 99
+
+--- test: field accessor polymorphic ambiguous
+type a = {x: int; y: int}
+type b = {x: string; z: bool}
+.x {x = 42; y = 0}
+--- expect: 42
+
+--- test: field accessor polymorphic different types
+type a = {x: int; y: int}
+type b = {x: string; z: bool}
+.x {x = "hello"; z = true}
+--- expect: hello
+
+--- test: field accessor postfix still works
+type point = {x: int; y: int}
+let p = {x = 42; y = 0} in
+p.x
+--- expect: 42
+
+=== Pipe Operator Tests ===
+
+--- test: basic pipe
+1 |> fn x -> x + 1
+--- expect: 2
+
+--- test: pipe with named function
+let double x = x * 2
+;;
+5 |> double
+--- expect: 10
+
+--- test: chained pipes
+let add1 x = x + 1
+;;
+let double x = x * 2
+;;
+3 |> add1 |> double
+--- expect: 8
+
+--- test: pipe precedence lower than arithmetic
+1 + 2 |> fn x -> x * 10
+--- expect: 30
+
+--- test: pipe with partial application
+let add a b = a + b
+;;
+5 |> add 3
+--- expect: 8
+
+--- test: pipe with string
+let exclaim s = s ^ "!"
+;;
+"hello" |> exclaim
+--- expect: hello!
+
+--- test: module let rec and
+module M =
+  pub let rec is_even n =
+    if n = 0 do true else is_odd (n - 1)
+  and is_odd n =
+    if n = 0 do false else is_even (n - 1)
+end
+;;
+if M.is_even 10 do 1 else 0
+--- expect: 1
+
+--- test: module let rec and odd
+module M =
+  pub let rec is_even n =
+    if n = 0 do true else is_odd (n - 1)
+  and is_odd n =
+    if n = 0 do false else is_even (n - 1)
+end
+;;
+if M.is_odd 7 do 1 else 0
+--- expect: 1
+
+--- test: module let rec and three functions
+module M =
+  pub let rec a n =
+    if n <= 0 do 1 else b (n - 1)
+  and b n =
+    if n <= 0 do 2 else c (n - 1)
+  and c n =
+    if n <= 0 do 3 else a (n - 1)
+end
+;;
+M.a 0 + M.a 1 + M.a 2 + M.a 3
+--- expect: 7
+
+--- test: module let rec and with open
+module M =
+  pub let rec f n =
+    if n <= 0 do 0 else n + g (n - 1)
+  and g n =
+    if n <= 0 do 0 else f (n - 1)
+end
+;;
+open M
+;;
+f 4
+--- expect: 6
+
+=== Module Global Name Collision Tests ===
+
+--- test: two modules same function name no collision
+module A =
+  pub let create x = x + 1
+end
+;;
+module B =
+  pub let create x = x * 10
+end
+;;
+A.create 5 + B.create 3
+--- expect: 36
+
+--- test: module function does not shadow other module
+module Lexer =
+  let create s = String.length s
+  pub let tokenize s = create s
+end
+;;
+module Parser =
+  let create n = n * 2
+  pub let parse n = create n
+end
+;;
+Lexer.tokenize "hello" + Parser.parse 3
+--- expect: 11
+
+--- test: three modules same function name
+module A =
+  let helper x = x + 1
+  pub let run x = helper x
+end
+;;
+module B =
+  let helper x = x * 2
+  pub let run x = helper x
+end
+;;
+module C =
+  let helper x = x * x
+  pub let run x = helper x
+end
+;;
+A.run 5 + B.run 5 + C.run 5
+--- expect: 41
+
+--- test: nested module uses parent private
+module Outer =
+  let secret = 7
+  pub module Inner =
+    pub let reveal x = x + secret
+  end
+end
+;;
+Outer.Inner.reveal 3
+--- expect: 10
+
+--- test: nested module uses parent private function
+module Outer =
+  let helper x = x * 3
+  pub module Inner =
+    pub let compute x = helper x + 1
+  end
+end
+;;
+Outer.Inner.compute 4
+--- expect: 13
+
+--- test: open inside module uses opened function
+module Utils =
+  pub let double x = x * 2
+end
+;;
+module M =
+  open Utils
+  pub let quad x = double (double x)
+end
+;;
+M.quad 5
+--- expect: 20
+
+--- test: open inside module multiple values
+module A =
+  pub let x = 10
+  pub let y = 20
+end
+;;
+module B =
+  open A
+  pub let sum = x + y
+end
+;;
+B.sum
+--- expect: 30
+
+--- test: module rec function calls private helper
+module M =
+  let step x = x - 1
+  pub let rec count n = if n <= 0 do 0 else 1 + count (step n)
+end
+;;
+M.count 5
+--- expect: 5
+
+--- test: open inside nested module
+module A =
+  pub let base = 100
+end
+;;
+module Outer =
+  pub module Inner =
+    open A
+    pub let f x = x + base
+  end
+end
+;;
+Outer.Inner.f 5
+--- expect: 105
+
+=== Module-Level Mutable Variable Tests ===
+
+--- test: module mutable closure captures ref
+module M =
+  let mut counter = 0
+  pub let inc () =
+    let id = counter in
+    counter := id + 1;
+    id
+end
+;;
+let a = M.inc ()
+;;
+let b = M.inc ()
+;;
+let c = M.inc ()
+;;
+a + b + c
+--- expect: 3
+
+--- test: module mutable multiple closures share state
+module M =
+  let mut state = 0
+  pub let get () = state
+  pub let set n = state := n
+end
+;;
+M.set 42;
+M.get ()
+--- expect: 42
+
+--- test: module mutable closure reads updated value
+module M =
+  let mut x = 0
+  pub let read () = x
+  pub let write n = x := n
+end
+;;
+M.write 10;
+M.write (M.read () + 5);
+M.read ()
+--- expect: 15
+
+--- test: module pub mutable assign from outside
+module M =
+  pub let mut x = 0
+end
+;;
+M.x := 5;
+M.x
+--- expect: 5
+
+--- test: module pub mutable open and assign
+module M =
+  pub let mut x = 0
+end
+;;
+open M
+;;
+x := 42;
+x
+--- expect: 42
+
+--- test: module pub mutable closure and external assign
+module M =
+  pub let mut x = 0
+  pub let read () = x
+end
+;;
+M.x := 99;
+M.read ()
+--- expect: 99
+
+=== Module Mutable Edge Case Tests ===
+
+--- test: module mutable counter pattern
+module Counter =
+  let mut n = 0
+  pub let next () =
+    let v = n in
+    n := v + 1;
+    v
+  pub let reset () = n := 0
+end
+;;
+let a = Counter.next ()
+;;
+let b = Counter.next ()
+;;
+let c = Counter.next ()
+;;
+Counter.reset ()
+;;
+let d = Counter.next ()
+;;
+a * 1000 + b * 100 + c * 10 + d
+--- expect: 120
+
+--- test: two modules same mutable name independent
+module A =
+  let mut x = 0
+  pub let inc () = x := x + 1; x
+end
+;;
+module B =
+  let mut x = 100
+  pub let inc () = x := x + 1; x
+end
+;;
+A.inc () + B.inc ()
+--- expect: 102
+
+--- test: module mutable not visible outside
+module M =
+  let mut secret = 42
+  pub let get () = secret
+end
+;;
+M.get ()
+--- expect: 42
+
+--- test: module non-mutable same name as prior module mutable
+module A =
+  pub let mut x = 10
+end
+;;
+module B =
+  pub let x = 20
+end
+;;
+A.x + B.x
+--- expect: 30
+
+--- test: module non-mutable after open of mutable
+module A =
+  pub let mut x = 10
+end
+;;
+open A
+;;
+module B =
+  pub let x = 99
+end
+;;
+open B
+;;
+x
+--- expect: 99
+
+--- test: module mutable after open of non-mutable
+module A =
+  pub let x = 10
+end
+;;
+open A
+;;
+module B =
+  pub let mut x = 99
+end
+;;
+open B
+;;
+x := x + 1;
+x
+--- expect: 100
+
+--- test: open mutable then local shadow
+module M =
+  pub let mut x = 0
+end
+;;
+open M
+;;
+x := 50;;
+let result = let x = 42 in x in
+result
+--- expect: 42
+
+--- test: open mutable read after local shadow
+module M =
+  pub let mut x = 0
+end
+;;
+open M
+;;
+x := 50;;
+let f () = let x = 1 in x in
+f () + x
+--- expect: 51
+
+--- test: qualified mutable and non-mutable same short name
+module M =
+  pub let mut x = 0
+end
+;;
+let x = 42
+;;
+M.x := 10;
+x + M.x
+--- expect: 52
+
+--- test: nested module mutable
+module Outer =
+  pub module Inner =
+    let mut count = 0
+    pub let inc () = count := count + 1; count
+  end
+end
+;;
+let a = Outer.Inner.inc ()
+;;
+let b = Outer.Inner.inc ()
+;;
+a + b
+--- expect: 3
+
+--- test: module mutable closure multiple calls same section
+module M =
+  let mut x = 0
+  pub let inc () = x := x + 1; x
+end
+;;
+M.inc () + M.inc () + M.inc ()
+--- expect: 6
+
+--- test: module pub mutable sequential assign
+module M =
+  pub let mut x = 0
+end
+;;
+M.x := 1;
+M.x := M.x + 1;
+M.x := M.x + 1;
+M.x
+--- expect: 3
+
+--- test: module pub mutable read in arithmetic
+module M =
+  pub let mut x = 10
+end
+;;
+M.x + M.x + M.x
+--- expect: 30
+
+--- test: module mutable with helper function
+module M =
+  let mut total = 0
+  let add n = total := total + n
+  pub let accumulate items =
+    List.fold (fn acc x -> add x; acc) () items;
+    total
+end
+;;
+M.accumulate [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: module pub mutable open assign read qualified
+module M =
+  pub let mut x = 0
+end
+;;
+open M
+;;
+x := 77;
+M.x
+--- expect: 77
+
+--- test: module pub mutable qualified assign read opened
+module M =
+  pub let mut x = 0
+end
+;;
+open M
+;;
+M.x := 88;
+x
+--- expect: 88
+
+--- test: module mutable private not assignable from outside
+module M =
+  let mut x = 0
+  pub let get () = x
+end
+;;
+M.x := 5
+--- expect-type-error
+
+--- test: module redefine replaces mutable tracking
+module M =
+  pub let mut x = 10
+end
+;;
+module M =
+  pub let x = 42
+end
+;;
+M.x
+--- expect: 42
+
+--- test: open mutable then function uses both local and opened
+module M =
+  pub let mut counter = 0
+end
+;;
+open M
+;;
+let f n =
+  counter := counter + n;
+  counter
+in
+f 10 + f 20
+--- expect: 40
+
+=== Open Module Constraint Propagation ===
+
+--- test: open constrained function in module
+module A =
+  pub let f x = $"value: {x}"
+end
+;;
+module B =
+  open A
+  pub let result = f 42
+end
+;;
+B.result
+--- expect: value: 42
+
+--- test: open constrained function called with string
+module A =
+  pub let f x = $"value: {x}"
+end
+;;
+module B =
+  open A
+  pub let result = f "hello"
+end
+;;
+B.result
+--- expect: value: hello
+
+--- test: open constrained function multi-arg
+module A =
+  pub let fmt idx name arity = $"{idx}:{name}:{arity}"
+end
+;;
+module B =
+  open A
+  pub let result = fmt 0 "print" 1
+end
+;;
+B.result
+--- expect: 0:print:1
+
+--- test: open constrained function used in helper
+module A =
+  pub let show_val x = $"{x}"
+end
+;;
+module B =
+  open A
+  let helper n = show_val n ^ "!"
+  pub let result = helper 42
+end
+;;
+B.result
+--- expect: 42!
+
+--- test: open constrained function chained modules
+module A =
+  pub let fmt x = $"[{x}]"
+end
+;;
+module B =
+  open A
+  pub let wrap x = fmt x
+end
+;;
+B.wrap 99
+--- expect: [99]
+
+--- test: open constrained function with format spec
+module A =
+  pub let hex n = $"{n:x}"
+end
+;;
+module B =
+  open A
+  pub let result = hex 255
+end
+;;
+B.result
+--- expect: ff
+
+--- test: open show on polymorphic record field
+module A =
+  pub let get_name r = $"name={r.name}"
+end
+;;
+module B =
+  open A
+  pub let result = get_name { name = "test"; value = 42 }
+end
+;;
+B.result
+--- expect: name=test
+
+--- test: constrained function same module no open
+module A =
+  pub let f x = $"v={x}"
+  pub let result = f 10
+end
+;;
+A.result
+--- expect: v=10
+
+--- test: constrained function direct qualified call
+module A =
+  pub let f x = $"v={x}"
+end
+;;
+A.f 10
+--- expect: v=10

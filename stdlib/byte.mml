@@ -1,0 +1,26 @@
+module Byte =
+  pub let to_int (b : byte) : int = __byte_to_int b
+  pub let of_int (n : int) : byte = __byte_of_int n
+  pub let to_string (b : byte) : string = __byte_to_string b
+  pub let is_alpha (b : byte) : bool =
+    let n = Byte.to_int b in
+    (n >= 65 && n <= 90) || (n >= 97 && n <= 122)
+  pub let is_digit (b : byte) : bool =
+    let n = Byte.to_int b in
+    n >= 48 && n <= 57
+  pub let is_space (b : byte) : bool =
+    let n = Byte.to_int b in
+    n = 32 || n = 9 || n = 10 || n = 13
+  pub let is_upper (b : byte) : bool =
+    let n = Byte.to_int b in
+    n >= 65 && n <= 90
+  pub let is_lower (b : byte) : bool =
+    let n = Byte.to_int b in
+    n >= 97 && n <= 122
+  pub let to_upper (b : byte) : byte =
+    let n = Byte.to_int b in
+    if n >= 97 && n <= 122 do Byte.of_int (n - 32) else b
+  pub let to_lower (b : byte) : byte =
+    let n = Byte.to_int b in
+    if n >= 65 && n <= 90 do Byte.of_int (n + 32) else b
+end

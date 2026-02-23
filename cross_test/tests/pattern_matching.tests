@@ -1,0 +1,657 @@
+=== Let Destructuring Tests ===
+
+--- test: tuple destructure
+let (x, y) = (1, 2) in x + y
+--- expect: 3
+
+--- test: nested tuple destructure
+let ((a, b), c) = ((1, 2), 3) in a + b + c
+--- expect: 6
+
+--- test: list cons destructure
+let x :: rest = [1; 2; 3] in x
+--- expect: 1
+
+--- test: variant destructure
+type option = Some of int | None
+let Some x = Some 42 in x
+--- expect: 42
+
+--- test: record destructure
+let {x = a; y = b} = {x = 10; y = 20} in a + b
+--- expect: 30
+
+--- test: record destructure punning
+let {x; y} = {x = 10; y = 20} in x + y
+--- expect: 30
+
+--- test: record destructure punning mixed
+let {x; y = b} = {x = 10; y = 20} in x + b
+--- expect: 30
+
+--- test: record destructure punning in match
+match {x = 1; y = 2} with {x; y} -> x + y
+--- expect: 3
+
+--- test: wildcard in destructure
+let (_, y) = (1, 2) in y
+--- expect: 2
+
+--- test: top-level tuple destructure
+let (x, y) = (10, 20)
+;;
+x + y
+--- expect: 30
+
+--- test: top-level nested destructure
+let (a, b, c) = (1, 2, 3)
+;;
+a + b + c
+--- expect: 6
+
+--- test: unit destructure
+let () = () in 42
+--- expect: 42
+
+=== As-Pattern Tests ===
+
+--- test: basic as-pattern tuple
+match (1, 2) with
+| (a, b) as _p -> a + b
+--- expect: 3
+
+--- test: as-pattern cons binding whole list
+match [1; 2; 3] with
+| x :: _ as _lst -> x
+| [] -> 0
+--- expect: 1
+
+--- test: as-pattern with variant
+match Some 42 with
+| Some n as _opt -> n
+| None -> 0
+--- expect: 42
+
+--- test: as-pattern uses whole value
+let rec len xs = match xs with
+  | [] -> 0
+  | _ :: rest -> 1 + len rest
+;;
+match [10; 20; 30] with
+| _ :: _ as whole -> len whole
+| [] -> 0
+--- expect: 3
+
+--- test: as-pattern with or-pattern in parens
+type color = Red | Green | Blue
+;;
+match Green with
+| (Red | Green) as _c -> 1
+| Blue -> 2
+--- expect: 1
+
+=== Or-Pattern Tests ===
+
+--- test: or-pattern literals
+let classify n = match n with
+  | 1 | 2 -> "small"
+  | 3 | 4 -> "medium"
+  | _ -> "big"
+;;
+classify 2
+--- expect: small
+
+--- test: or-pattern constructors
+type color = Red | Green | Blue
+;;
+let temp c = match c with
+  | Red | Green -> "warm"
+  | Blue -> "cool"
+;;
+temp Green
+--- expect: warm
+
+--- test: or-pattern structural
+let describe xs = match xs with
+  | [] | [_] -> "short"
+  | _ -> "long"
+;;
+describe [1]
+--- expect: short
+
+--- test: or-pattern with bindings
+match (1, 10) with
+| (1, x) | (2, x) -> x
+| _ -> 0
+--- expect: 10
+
+--- test: or-pattern second branch matches
+let classify n = match n with
+  | 1 | 2 -> "small"
+  | _ -> "big"
+;;
+classify 5
+--- expect: big
+
+=== Guard Tests ===
+
+--- test: basic guard
+let classify n = match n with
+  | x when x > 0 -> "positive"
+  | x when x = 0 -> "zero"
+  | _ -> "negative"
+;;
+classify 5
+--- expect: positive
+
+--- test: guard zero
+let classify n = match n with
+  | x when x > 0 -> "positive"
+  | x when x = 0 -> "zero"
+  | _ -> "negative"
+;;
+classify 0
+--- expect: zero
+
+--- test: guard negative
+let classify n = match n with
+  | x when x > 0 -> "positive"
+  | x when x = 0 -> "zero"
+  | _ -> "negative"
+;;
+classify (0 - 3)
+--- expect: negative
+
+--- test: guard with destructuring
+match (3, 1) with
+| (a, b) when a > b -> a
+| (a, b) when a < b -> b
+| _ -> 0
+--- expect: 3
+
+--- test: guard with cons pattern
+match [15; 2; 3] with
+| x :: _ when x > 10 -> x
+| _ -> 0
+--- expect: 15
+
+--- test: guard fallthrough to next arm
+match [5; 2; 3] with
+| x :: _ when x > 10 -> x
+| _ -> 0
+--- expect: 0
+
+--- test: or-pattern with guard
+let check n = match n with
+  | 1 | 2 when true -> "yes"
+  | _ -> "no"
+;;
+check 2
+--- expect: yes
+
+=== Exhaustiveness Checking Tests ===
+
+--- test: exhaustive variant all constructors
+type color = Red | Green | Blue
+match Red with
+| Red -> 1
+| Green -> 2
+| Blue -> 3
+--- expect: 1
+
+--- test: exhaustive variant with wildcard
+type color = Red | Green | Blue
+match Green with
+| Red -> 1
+| _ -> 0
+--- expect: 0
+
+--- test: exhaustive bool
+match true with
+| true -> 1
+| false -> 0
+--- expect: 1
+
+--- test: exhaustive option
+type option = Some of int | None
+match Some 5 with
+| Some x -> x
+| None -> 0
+--- expect: 5
+
+--- test: exhaustive list nil and cons
+match [1; 2] with
+| [] -> 0
+| x :: _ -> x
+--- expect: 1
+
+--- test: exhaustive or-pattern covers all
+type color = Red | Green | Blue
+match Blue with
+| Red | Green -> 1
+| Blue -> 2
+--- expect: 2
+
+--- test: exhaustive variant with payload
+type expr = Num of int | Add of int | Neg
+match Num 42 with
+| Num n -> n
+| Add n -> n
+| Neg -> 0
+--- expect: 42
+
+--- test: exhaustive with variable pattern
+type color = Red | Green | Blue
+match Red with
+| x -> 1
+--- expect: 1
+
+--- test: non-exhaustive variant missing constructor
+type color = Red | Green | Blue
+match Red with
+| Red -> 1
+| Green -> 2
+--- expect-type-error: Blue
+
+--- test: non-exhaustive bool missing false
+match true with
+| true -> 1
+--- expect-type-error: false
+
+--- test: non-exhaustive list missing cons
+match [1] with
+| [] -> 0
+--- expect-type-error: _ :: _
+
+--- test: non-exhaustive list missing nil
+match [1] with
+| x :: _ -> x
+--- expect-type-error: []
+
+--- test: non-exhaustive option missing None
+type option = Some of int | None
+match Some 1 with
+| Some x -> x
+--- expect-type-error: None
+
+--- test: non-exhaustive guard does not count
+match true with
+| x when x -> 1
+--- expect-type-error: non-exhaustive
+
+--- test: non-exhaustive multiple missing
+type color = Red | Green | Blue | Yellow
+match Red with
+| Red -> 1
+--- expect-type-error: Green
+
+=== Fn Pattern Destructuring Tests ===
+
+--- test: fn tuple destructure
+let add = fn (x, y) -> x + y in
+add (10, 32)
+--- expect: 42
+
+--- test: fn record destructure
+type point = { x: int; y: int }
+let get_x = fn {x; y} -> x in
+get_x {x = 42; y = 0}
+--- expect: 42
+
+--- test: fn nested tuple destructure
+let f = fn ((a, b), c) -> a + b + c in
+f ((10, 20), 12)
+--- expect: 42
+
+--- test: fn tuple destructure with other params
+let f = fn x (a, b) -> x + a + b in
+f 10 (20, 12)
+--- expect: 42
+
+--- test: fn unit destructure
+let f = fn () -> 42 in
+f ()
+--- expect: 42
+
+--- test: fn annotated record destructure
+let z = {x = 10; y = "hello"}
+let get_x = fn ({x} : {x: int}) -> x in
+get_x z
+--- expect-type-error
+
+--- test: fn annotated record destructure with wildcard
+type point = { x: int; y: int }
+let p = { x = 42; y = 99 }
+let get_x = fn ({x; _} : point) -> x in
+get_x p
+--- expect: 42
+
+--- test: fn annotated tuple destructure
+let f = fn ((a, b) : int * string) -> a in
+f (42, "hi")
+--- expect: 42
+
+--- test: fn record destructure subtyping
+type has_x = { x: int }
+let get_x = fn ({x} : has_x) -> x in
+get_x {x = 42; y = "extra"}
+--- expect-type-error
+
+--- test: fn record wildcard pattern
+type point = { x: int; y: int }
+let p = { x = 10; y = 32 }
+match p with | {x; _} -> x
+--- expect: 10
+
+=== Let Function Param Destructuring Tests ===
+
+--- test: let fun tuple destructure
+let add (x, y) = x + y in
+add (10, 32)
+--- expect: 42
+
+--- test: let fun triple destructure
+let sum (x, y, z) = x + y + z in
+sum (10, 20, 12)
+--- expect: 42
+
+--- test: let fun nested tuple destructure
+let f ((a, b), c) = a + b + c in
+f ((10, 20), 12)
+--- expect: 42
+
+--- test: let fun tuple with other params
+let f x (a, b) = x + a + b in
+f 10 (20, 12)
+--- expect: 42
+
+--- test: let fun tuple between other params
+let f x (a, b) y = x + a + b + y in
+f 5 (10, 20) 7
+--- expect: 42
+
+--- test: let fun record destructure
+type point = { x: int; y: int }
+let get_x {x; y} = x in
+get_x {x = 42; y = 0}
+--- expect: 42
+
+--- test: let fun record destructure with rename
+type point = { x: int; y: int }
+let get_sum {x = a; y = b} = a + b in
+get_sum {x = 20; y = 22}
+--- expect: 42
+
+--- test: let fun wildcard in tuple
+let snd (_, y) = y in
+snd (1, 42)
+--- expect: 42
+
+--- test: let fun unit param
+let f () = 42 in
+f ()
+--- expect: 42
+
+--- test: let fun annotated tuple destructure
+let f ((x, y) : int * int) = x + y in
+f (20, 22)
+--- expect: 42
+
+--- test: top-level let fun tuple destructure
+let add (x, y) = x + y
+;;
+add (10, 32)
+--- expect: 42
+
+--- test: top-level let fun triple destructure
+let sum (a, b, c) = a + b + c
+;;
+sum (10, 20, 12)
+--- expect: 42
+
+--- test: top-level let fun nested tuple destructure
+let f ((a, b), c) = a + b + c
+;;
+f ((10, 20), 12)
+--- expect: 42
+
+--- test: top-level let fun tuple with other params
+let f x (a, b) y = x + a + b + y
+;;
+f 5 (10, 20) 7
+--- expect: 42
+
+--- test: top-level let fun record destructure
+type point = { x: int; y: int }
+;;
+let get_x {x; y} = x
+;;
+get_x {x = 42; y = 0}
+--- expect: 42
+
+--- test: let fun tuple destructure in module
+module M =
+  pub let add (x, y) = x + y
+end
+;;
+M.add (20, 22)
+--- expect: 42
+
+--- test: let rec fun tuple destructure
+let rec sum_pairs xs = match xs with
+  | [] -> 0
+  | p :: rest -> let add (a, b) = a + b in add p + sum_pairs rest
+in sum_pairs [(10, 20); (5, 7)]
+--- expect: 42
+
+--- test: let fun multiple tuple params
+let f (a, b) (c, d) = a + b + c + d in
+f (10, 20) (5, 7)
+--- expect: 42
+
+--- test: let fun cons destructure
+let head_or_zero (x :: _) = x in
+head_or_zero [42; 1; 2]
+--- expect: 42
+
+=== Array Pattern Matching Tests ===
+
+--- test: array pattern basic
+match #[1; 2; 3] with
+  | #[a; b; c] -> a + b + c
+  | _ -> 0
+--- expect: 6
+
+--- test: array pattern single
+match #[42] with
+  | #[x] -> x
+  | _ -> 0
+--- expect: 42
+
+--- test: array pattern length mismatch
+match #[1; 2] with
+  | #[a; b; c] -> 0
+  | #[a; b] -> a + b
+  | _ -> -1
+--- expect: 3
+
+--- test: array pattern empty
+match #[] with
+  | #[] -> true
+  | _ -> false
+--- expect: true
+
+--- test: array pattern nested
+match #[1; 2] with
+  | #[1; x] -> x * 10
+  | _ -> 0
+--- expect: 20
+
+=== Map Pattern Matching Tests ===
+
+--- test: map pattern basic
+match #{"x": 1; "y": 2} with
+  | #{"x": x} -> x
+  | _ -> 0
+--- expect: 1
+
+--- test: map pattern multiple keys
+match #{"a": 1; "b": 2} with
+  | #{"a": a; "b": b} -> a + b
+  | _ -> 0
+--- expect: 3
+
+--- test: map pattern missing key fallthrough
+match #{"x": 1} with
+  | #{"y": y} -> y
+  | _ -> 0
+--- expect: 0
+
+--- test: map pattern int keys
+match #{1: 10; 2: 20} with
+  | #{1: v} -> v
+  | _ -> 0
+--- expect: 10
+
+=== Array/Map Exhaustiveness Tests ===
+
+--- test: non-exhaustive array pattern
+match #[1; 2] with
+  | #[a; b] -> a + b
+--- expect-type-error: non-exhaustive match, missing: #[]
+
+--- test: non-exhaustive array skips covered length
+match #[1] with
+  | #[] -> 0
+  | #[x] -> x
+--- expect-type-error: non-exhaustive match, missing: #[_; _]
+
+--- test: array pattern with wildcard is exhaustive
+match #[1; 2; 3] with
+  | #[a; b; c] -> a + b + c
+  | _ -> 0
+--- expect: 6
+
+--- test: non-exhaustive map pattern
+match #{"x": 1} with
+  | #{"x": x} -> x
+--- expect-type-error: non-exhaustive match, missing: _
+
+--- test: map pattern with wildcard is exhaustive
+match #{"x": 1} with
+  | #{"x": x} -> x
+  | _ -> 0
+--- expect: 1
+
+=== Lambda (fn) Tests ===
+
+--- test: fn basic lambda
+(fn x -> x + 1) 5
+--- expect: 6
+
+--- test: fn multi-param lambda
+(fn x y -> x + y) 3 4
+--- expect: 7
+
+--- test: fn lambda match option
+let f = fn | Some x -> x | None -> 0 in
+f (Some 42)
+--- expect: 42
+
+--- test: fn lambda match option none
+let f = fn | Some x -> x | None -> 0 in
+f None
+--- expect: 0
+
+--- test: fn lambda match list
+let f = fn | [] -> 0 | x :: _ -> x in
+f [10; 20; 30]
+--- expect: 10
+
+--- test: fn lambda match list empty
+let f = fn | [] -> 0 | x :: _ -> x in
+f []
+--- expect: 0
+
+--- test: fn lambda match with map
+List.map (fn | Some x -> x | None -> 0) [Some 1; None; Some 3]
+  |> List.fold (fn acc x -> acc + x) 0
+--- expect: 4
+
+--- test: fn lambda match non-exhaustive
+fn | true -> 1
+--- expect-type-error: non-exhaustive match, missing: false
+
+--- test: fn lambda match with guard
+let f = fn | x when x > 0 -> x | _ -> 0 in
+f 5
+--- expect: 5
+
+--- test: fn lambda match guard fallthrough
+let f = fn | x when x > 0 -> x | _ -> 0 in
+f (-3)
+--- expect: 0
+
+--- test: fn lambda match or-pattern
+let f = fn | Some 1 | Some 2 -> 99 | Some x -> x | None -> 0 in
+f (Some 2)
+--- expect: 99
+
+--- test: fn no-param lambda
+(fn -> 5)()
+--- expect: 5
+
+--- test: fn no-param lambda bound
+let f = fn -> 42 in f ()
+--- expect: 42
+
+--- test: fn no-param lambda unit body
+(fn -> ())()
+--- expect: ()
+
+--- test: fn no-param lambda has unit -> type
+(fn -> 5) 3
+--- expect-type-error
+
+=== Tuple/Unit Exhaustiveness Tests ===
+
+--- test: non-exhaustive unit match
+match () with
+| _ when false -> 1
+--- expect-type-error: non-exhaustive match, missing: ()
+
+--- test: exhaustive unit match
+match () with
+| () -> 1
+--- expect: 1
+
+--- test: non-exhaustive tuple match missing pattern
+match (1, true) with
+| (0, true) -> 1
+--- expect-type-error: non-exhaustive
+
+--- test: exhaustive tuple match with wildcard
+match (1, 2) with
+| (_, _) -> 3
+--- expect: 3
+
+--- test: exhaustive tuple match with variable
+match (1, 2) with
+| (a, b) -> a + b
+--- expect: 3
+
+--- test: non-exhaustive tuple match missing bool branch
+match (1, true) with
+| (x, true) -> x
+--- expect-type-error: non-exhaustive
+
+--- test: exhaustive tuple match bool both branches
+match (1, true) with
+| (x, true) -> x
+| (x, false) -> x + 1
+--- expect: 1
+
+--- test: exhaustive tuple match variable covers all
+match (true, 1) with
+| (_, x) -> x
+--- expect: 1

@@ -1,0 +1,81 @@
+--- test: basic pin match
+let x = 42
+in match 42 with
+  | ^x -> "matched"
+  | _ -> "nope"
+--- expect: matched
+
+--- test: pin no match
+let x = 42
+in match 99 with
+  | ^x -> "matched"
+  | _ -> "nope"
+--- expect: nope
+
+--- test: pin string
+let name = "alice"
+in match "alice" with
+  | ^name -> "found"
+  | _ -> "not found"
+--- expect: found
+
+--- test: pin in tuple
+let x = 1
+let y = 2
+in match (1, 2) with
+  | (^x, ^y) -> "both"
+  | _ -> "nope"
+--- expect: both
+
+--- test: pin in tuple no match
+let x = 1
+let y = 2
+in match (1, 3) with
+  | (^x, ^y) -> "both"
+  | _ -> "nope"
+--- expect: nope
+
+--- test: pin with other patterns
+let tag = "ok"
+in match ("ok", 42) with
+  | (^tag, n) -> n
+  | _ -> 0
+--- expect: 42
+
+--- test: pin in list head
+let x = 1
+in match [1; 2; 3] with
+  | ^x :: _ -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+--- test: pin with variant
+let expected = Some 42
+in match Some 42 with
+  | ^expected -> "match"
+  | _ -> "no match"
+--- expect: match
+
+--- test: pin falls through to next arm
+let x = 10
+in match 20 with
+  | ^x -> "ten"
+  | 20 -> "twenty"
+  | _ -> "other"
+--- expect: twenty
+
+--- test: pin with function parameter
+let check expected actual = match actual with
+  | ^expected -> true
+  | _ -> false
+in
+check 42 42
+--- expect: true
+
+--- test: pin with function parameter no match
+let check expected actual = match actual with
+  | ^expected -> true
+  | _ -> false
+in
+check 42 99
+--- expect: false

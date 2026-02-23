@@ -1,0 +1,21 @@
+class Hash 'a =
+  hash : 'a -> int
+end
+
+instance Hash int =
+  let hash n = n
+end
+instance Hash string =
+  let hash s =
+    let bytes = String.to_byte_array s in
+    fold (fn h b -> h * 31 + Byte.to_int b) 5381 bytes
+end
+instance Hash bool =
+  let hash b = if b do 1 else 0
+end
+instance Hash byte =
+  let hash b = Byte.to_int b
+end
+instance Hash rune =
+  let hash r = Rune.to_int r
+end

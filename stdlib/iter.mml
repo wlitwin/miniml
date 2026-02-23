@@ -1,0 +1,15 @@
+instance Iter ('a list) 'a =
+  let fold f acc xs =
+    let rec go a l = match l with
+      | [] -> a
+      | x :: rest -> go (f a x) rest
+    in go acc xs
+end
+
+instance Iter ('a array) 'a =
+  let fold = fn f -> fn acc -> fn arr ->
+    let rec go = fn a -> fn i ->
+      if i = array_length arr do a
+      else go (f a (array_get arr i)) (i + 1)
+    in go acc 0
+end

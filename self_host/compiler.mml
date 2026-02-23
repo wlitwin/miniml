@@ -1,0 +1,1210 @@
+module Compiler =
+  open Bytecode
+  effect Compile_errorExn =
+    compile_error : string -> 'a
+  end
+
+  pub let optimize_enabled = Ref.create true
+
+  pub type local = {
+    name: string;
+    slot: int;
+    depth: int
+  }
+
+  pub type upvalue_entry = {
+    capture: Bytecode.capture;
+    uv_name: string
+  }
+
+  pub type state = {
+    mut locals: local list;
+    mut num_locals: int;
+    mut max_locals: int;
+    mut scope_depth: int;
+    mut upvalues: upvalue_entry list;
+    mut code: Bytecode.opcode Dynarray.t;
+    mut constants: Bytecode.value Dynarray.t;
+    enclosing: state option;
+    proto_name: string;
+    arity: int;
+    global_names: string Dynarray.t;
+    mutable_globals: (string, unit) Hashtbl.t;
+    type_env: Types.type_env;
+    mut mutable_locals: string list;
+    mut loop_start: int option;
+    mut operand_depth: int;
+    lines: int Dynarray.t;
+    mut current_line: int
+  }
+
+  pub let error msg = perform compile_error msg
+
+  pub let create_state enclosing arity global_names mutable_globals type_env name = {locals = []; num_locals = 0; max_locals = 0; scope_depth = 0; upvalues = []; code = Dynarray.empty (); constants = Dynarray.empty (); enclosing; proto_name = name; arity; global_names; mutable_globals; type_env; mutable_locals = []; loop_start = None; operand_depth = 0; lines = Dynarray.empty (); current_line = 0}
+
+  pub let emit s op =
+    Dynarray.push s.code op;
+    Dynarray.push s.lines s.current_line
+
+  pub let emit_idx s op =
+    let idx = Dynarray.length s.code in
+    Dynarray.push s.code op;
+    Dynarray.push s.lines s.current_line;
+    idx
+
+  pub let patch s idx op = Dynarray.set s.code idx op
+
+  pub let current_offset s = Dynarray.length s.code
+
+  pub let add_constant s v =
+    let len = Dynarray.length s.constants in
+    let rec find i =
+      if i >= len do
+        Dynarray.push s.constants v;
+        len
+      else if (Dynarray.get s.constants i) = v do
+        i
+      else
+        find (i + 1) in
+    find 0
+
+  pub let emit_constant s v =
+    let idx = add_constant s v in
+    emit s (Bytecode.CONST idx)
+
+  pub let allocate_local s name =
+    let slot = s.num_locals in
+    s.locals := {name; slot; depth = s.scope_depth} :: s.locals;
+    s.num_locals := s.num_locals + 1;
+    if s.num_locals > s.max_locals do
+      s.max_locals := s.num_locals
+    end;
+    slot
+
+  pub let free_local s =
+    match s.locals with
+    | [] -> error "no locals to free"
+    | _ :: rest -> 
+      s.locals := rest;
+      s.num_locals := s.num_locals - 1
+
+
+  pub let find_local s name =
+    let rec search =
+      fn
+        | [] -> None
+        | local :: _ when local.name = name -> Some (local.slot)
+        | _ :: rest -> search rest
+     in
+    search s.locals
+
+  pub let rec remove_first_occurrence name =
+    fn
+      | [] -> []
+      | x :: rest when x = name -> rest
+      | x :: rest -> x :: remove_first_occurrence name rest
+
+
+  pub let rec is_mutable_local s name =
+    if List.mem name s.mutable_locals do
+      true
+    else
+      match s.enclosing with
+      | Some enc -> is_mutable_local enc name
+      | None -> false
+
+
+  pub let is_mutable_global s name = Hashtbl.has s.mutable_globals name
+
+  pub let add_upvalue s capture name =
+    let rec find i =
+      fn
+        | [] -> 
+          s.upvalues := List.concat s.upvalues ({capture; uv_name = name} :: []);
+          (List.length s.upvalues) - 1
+        | uv :: _ when (uv.uv_name = name) && (uv.capture = capture) -> i
+        | _ :: rest -> find (i + 1) rest
+     in
+    find 0 s.upvalues
+
+  pub let rec resolve_upvalue s name =
+    match s.enclosing with
+    | None -> None
+    | Some enc -> 
+      do
+        match find_local enc name with
+        | Some slot -> 
+          let idx = add_upvalue s (Bytecode.CaptureLocal slot) name in
+          Some idx
+        | None -> 
+          do
+            match resolve_upvalue enc name with
+            | Some enc_uv_idx -> 
+              let idx = add_upvalue s (Bytecode.CaptureUpvalue enc_uv_idx) name in
+              Some idx
+            | None -> None
+
+          end
+
+      end
+
+
+  pub let find_global s name =
+    let len = Dynarray.length s.global_names in
+    let rec find i =
+      if i >= len do
+        None
+      else if (Dynarray.get s.global_names i) = name do
+        Some i
+      else
+        find (i + 1) in
+    find 0
+
+  pub let find_or_add_global s name =
+    match find_global s name with
+    | Some i -> i
+    | None -> 
+      let len = Dynarray.length s.global_names in
+      Dynarray.push s.global_names name;
+      len
+
+
+  pub let tag_for_constructor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | None -> error ($"unknown constructor: {name}")
+    | Some info -> 
+      let (_, _, variant_def, _) = list_find (fn (n, _, _, _) -> n = info.ctor_type_name) type_env.variants in
+      let short_name =
+        match String.rindex_opt name #2e with
+        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+        | None -> name
+       in
+      let rec find_tag i =
+        fn
+          | [] -> error ($"constructor {name} not found in type")
+          | (cname, _) :: _ when cname = short_name -> i
+          | _ :: rest -> find_tag (i + 1) rest
+       in
+      find_tag 0 variant_def
+
+
+  pub let extract_class_ty_args num_params schema_ty resolved_ty =
+    let found = Hashtbl.create num_params in
+    let rec go schema_ty resolved_ty =
+      let resolved_ty = Types.repr resolved_ty in
+      match (schema_ty, resolved_ty) with
+      | (Types.TGen i, ty) when i < num_params -> 
+        if not (Hashtbl.has found i) do
+          Hashtbl.set found i ty
+        end
+      | (Types.TArrow ((s_a, _, s_r)), Types.TArrow ((r_a, _, r_r))) | (Types.TCont ((s_a, _, s_r)), Types.TCont ((r_a, _, r_r))) -> 
+        go s_a r_a;
+        go s_r r_r
+      | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
+      | (Types.TList s, Types.TList r) -> go s r
+      | _ -> ()
+     in
+    go schema_ty resolved_ty;
+    List.init num_params (fn i -> Hashtbl.get found i)
+
+  pub let emit_builtin_call1 s name =
+    let gidx = find_or_add_global s name in
+    emit s (Bytecode.GET_GLOBAL gidx);
+    emit s (Bytecode.CALL 1)
+
+  pub let emit_builtin_call2 s name =
+    let gidx = find_or_add_global s name in
+    emit s (Bytecode.GET_GLOBAL gidx)
+
+  pub let rec compile_expr tail s (te : Typechecker.texpr) =
+    if te.loc.line > 0 do
+      s.current_line := te.loc.line
+    end;
+    match te.expr with
+    | Typechecker.TEInt n -> emit_constant s (Bytecode.VInt n)
+    | Typechecker.TEFloat f -> emit_constant s (Bytecode.VFloat f)
+    | Typechecker.TEBool b -> emit_constant s (Bytecode.VBool b)
+    | Typechecker.TEString str -> emit_constant s (Bytecode.VString str)
+    | Typechecker.TEByte n -> emit_constant s (Bytecode.VByte n)
+    | Typechecker.TERune n -> emit_constant s (Bytecode.VRune n)
+    | Typechecker.TEUnit -> emit_constant s Bytecode.VUnit
+    | Typechecker.TENil -> emit s Bytecode.NIL
+    | Typechecker.TEVar name -> 
+      if ((find_local s name) = None) && (((resolve_upvalue s name) = None) && ((find_global s name) = None)) do
+        do
+          let (class_opt, method_name) =
+            match Types.find_method_class s.type_env.classes name with
+            | Some _ as result -> (result, name)
+            | None -> 
+              do
+                match String.rindex_opt name #2e with
+                | None -> (None, name)
+                | Some i -> 
+                  do
+                    let mod_prefix = String.sub name 0 (i + 1) in
+                    let short = String.sub name (i + 1) (((String.length name) - i) - 1) in
+                    let class_prefix = String.sub name 0 i in
+                    match Types.find_method_class s.type_env.classes short with
+                    | Some class_def when class_def.class_name = class_prefix -> (Some class_def, short)
+                    | Some class_def when ((String.length class_def.class_name) > (String.length mod_prefix)) && ((String.sub class_def.class_name 0 (String.length mod_prefix)) = mod_prefix) -> (Some class_def, short)
+                    | _ -> (None, name)
+
+                  end
+
+              end
+           in
+          match class_opt with
+          | Some class_def -> 
+            do
+              let method_schema_ty = List.assoc method_name class_def.class_methods in
+              let num_params = List.length class_def.class_params in
+              let partial = extract_class_ty_args num_params method_schema_ty te.ty in
+              let concrete_partial = List.map (fn opt ->
+                do
+                  match opt with
+                  | Some ty -> 
+                    do
+                      match Types.repr ty with
+                      | Types.TVar {contents = Types.Unbound _} -> None
+                      | _ -> Some (Types.repr ty)
+
+                    end
+                  | None -> None
+
+                end) partial in
+              let concrete_partial =
+                if class_def.class_fundeps <> [] do
+                  Types.improve_with_fundeps s.type_env.instances class_def concrete_partial
+                else
+                  concrete_partial in
+              let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_def.class_name) && (((List.length inst.inst_tys) = num_params) && (Types.match_partial_inst inst.inst_tys concrete_partial))) s.type_env.instances in
+              match matching with
+              | inst :: [] -> 
+                if inst.inst_constraints = [] do
+                  let method_gidx = find_or_add_global s (inst.inst_dict_name ^ ("$" ^ method_name)) in
+                  emit s (Bytecode.GET_GLOBAL method_gidx)
+                else do
+                  let dict_gidx = find_or_add_global s inst.inst_dict_name in
+                  emit s (Bytecode.GET_GLOBAL dict_gidx);
+                  emit s (Bytecode.FIELD method_name)
+                end
+              | [] -> 
+                let is_structural = List.exists (fn
+                  | Some ty -> 
+                    do
+                      match Types.repr ty with
+                      | Types.TPolyVariant _ | Types.TRecord _ -> true
+                      | _ -> false
+
+                    end
+                  | None -> false
+                ) partial in
+                if is_structural && ((class_def.class_name = "Show") && (method_name = "show")) do
+                  let gidx = find_or_add_global s "__show_value" in
+                  emit s (Bytecode.GET_GLOBAL gidx)
+                else do
+                  let ty_strs = List.map (fn
+                    | Some ty -> Types.pp_ty ty
+                    | None -> "_"
+                  ) partial in
+                  error ($"no instance of {class_def.class_name} for types {String.concat ", " ty_strs}")
+                end
+              | _ -> 
+                do
+                  match Types.most_specific_inst matching with
+                  | Some inst -> 
+                    if inst.inst_constraints = [] do
+                      let method_gidx = find_or_add_global s (inst.inst_dict_name ^ ("$" ^ method_name)) in
+                      emit s (Bytecode.GET_GLOBAL method_gidx)
+                    else do
+                      let dict_gidx = find_or_add_global s inst.inst_dict_name in
+                      emit s (Bytecode.GET_GLOBAL dict_gidx);
+                      emit s (Bytecode.FIELD method_name)
+                    end
+                  | None -> error ($"ambiguous instance for {class_def.class_name} method {method_name}")
+
+                end
+
+            end
+          | None -> compile_var_access s name
+
+        end
+      else
+        compile_var_access s name
+    | Typechecker.TEBinop ((op, e1, e2)) -> compile_binop s op e1 e2
+    | Typechecker.TEUnop ((op, e)) -> compile_unop s op e
+    | Typechecker.TEApp ((fn_, arg)) -> 
+      compile_expr false s fn_;
+      compile_expr false s arg;
+      if tail do
+        emit s (Bytecode.TAIL_CALL 1)
+      else
+        emit s (Bytecode.CALL 1)
+    | Typechecker.TEFun ((param, body, has_return)) -> compile_function has_return s param body te.ty
+    | Typechecker.TELet ((name, _scheme, e1, e2)) -> 
+      compile_expr false s e1;
+      let was_mutable = List.mem name s.mutable_locals in
+      if was_mutable do
+        s.mutable_locals := List.filter (fn n -> n <> name) s.mutable_locals
+      end;
+      let slot = allocate_local s name in
+      emit s (Bytecode.SET_LOCAL slot);
+      compile_expr tail s e2;
+      if was_mutable do
+        s.mutable_locals := name :: s.mutable_locals
+      end;
+      free_local s
+    | Typechecker.TELetMut ((name, e1, e2)) -> 
+      compile_expr false s e1;
+      emit s Bytecode.MAKE_REF;
+      let slot = allocate_local s name in
+      s.mutable_locals := name :: s.mutable_locals;
+      emit s (Bytecode.SET_LOCAL slot);
+      compile_expr tail s e2;
+      s.mutable_locals := remove_first_occurrence name s.mutable_locals;
+      free_local s
+    | Typechecker.TEWhile ((cond, body)) -> 
+      let enter_idx = emit_idx s (Bytecode.ENTER_LOOP 0) in
+      let prev_loop_start = s.loop_start in
+      let loop_start = current_offset s in
+      s.loop_start := Some loop_start;
+      compile_expr false s cond;
+      let exit_jump = emit_idx s (Bytecode.JUMP_IF_FALSE 0) in
+      compile_expr false s body;
+      emit s Bytecode.POP;
+      emit s (Bytecode.JUMP loop_start);
+      let exit_normal = current_offset s in
+      patch s exit_jump (Bytecode.JUMP_IF_FALSE exit_normal);
+      emit s Bytecode.EXIT_LOOP;
+      let unit_idx = add_constant s Bytecode.VUnit in
+      emit s (Bytecode.CONST unit_idx);
+      let end_jump = emit_idx s (Bytecode.JUMP 0) in
+      let break_target = current_offset s in
+      let end_target = current_offset s in
+      patch s enter_idx (Bytecode.ENTER_LOOP break_target);
+      patch s end_jump (Bytecode.JUMP end_target);
+      s.loop_start := prev_loop_start
+    | Typechecker.TEAssign ((name, e)) -> 
+      do
+        match find_local s name with
+        | Some slot -> 
+          compile_expr false s e;
+          emit s (Bytecode.GET_LOCAL slot);
+          emit s Bytecode.SET_REF
+        | None -> 
+          do
+            match resolve_upvalue s name with
+            | Some idx -> 
+              compile_expr false s e;
+              emit s (Bytecode.GET_UPVALUE idx);
+              emit s Bytecode.SET_REF
+            | None -> 
+              compile_expr false s e;
+              let gidx = find_or_add_global s name in
+              emit s (Bytecode.GET_GLOBAL gidx);
+              emit s Bytecode.SET_REF
+
+          end
+
+      end;
+      emit_constant s Bytecode.VUnit
+    | Typechecker.TEFieldAssign ((record_e, field, value_e)) -> 
+      compile_expr false s record_e;
+      compile_expr false s value_e;
+      emit s (Bytecode.SET_FIELD field);
+      emit_constant s Bytecode.VUnit
+    | Typechecker.TELetRec ((name, _scheme, e1, e2)) -> 
+      compile_let_rec s name e1;
+      compile_expr tail s e2;
+      free_local s
+    | Typechecker.TEIf ((cond, then_e, else_e)) -> compile_if tail s cond then_e else_e
+    | Typechecker.TETuple exprs -> 
+      List.iter (compile_expr false s) exprs;
+      emit s (Bytecode.MAKE_TUPLE (List.length exprs))
+    | Typechecker.TERecord fields -> 
+      let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
+      let names = List.map fst sorted in
+      List.iter (fn (_, e) -> compile_expr false s e) sorted;
+      emit s (Bytecode.MAKE_RECORD names)
+    | Typechecker.TERecordUpdate ((base, overrides)) -> 
+      compile_expr false s base;
+      List.iter (fn (_, e) -> compile_expr false s e) overrides;
+      let field_names = List.map fst overrides in
+      emit s (Bytecode.RECORD_UPDATE field_names)
+    | Typechecker.TERecordUpdateIdx ((base, pairs)) -> 
+      compile_expr false s base;
+      List.iter (fn (idx_e, val_e) -> compile_expr false s idx_e;
+      compile_expr false s val_e) pairs;
+      emit s (Bytecode.RECORD_UPDATE_DYN (List.length pairs))
+    | Typechecker.TEField ((e, field)) -> 
+      compile_expr false s e;
+      emit s (Bytecode.FIELD field)
+    | Typechecker.TEIndex ((base, idx)) -> 
+      compile_expr false s base;
+      compile_expr false s idx;
+      emit s Bytecode.INDEX
+    | Typechecker.TECons ((hd, tl)) -> 
+      compile_expr false s hd;
+      compile_expr false s tl;
+      emit s Bytecode.CONS
+    | Typechecker.TEConstruct ((name, arg)) -> 
+      do
+        let tag =
+          if ((String.length name) > 0) && ((String.get name 0) = #60) do
+            ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
+          else
+            tag_for_constructor s.type_env name in
+        let short_name =
+          match String.rindex_opt name #2e with
+          | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+          | None -> name
+         in
+        match arg with
+        | Some e -> 
+          compile_expr false s e;
+          emit s (Bytecode.MAKE_VARIANT (tag, short_name, true))
+        | None -> emit s (Bytecode.MAKE_VARIANT (tag, short_name, false))
+
+      end
+    | Typechecker.TEMatch ((scrut, arms, _partial)) -> compile_match tail s scrut arms
+    | Typechecker.TESeq ((e1, e2)) -> 
+      compile_expr false s e1;
+      emit s Bytecode.POP;
+      compile_expr tail s e2
+    | Typechecker.TEPerform ((op_name, arg_te)) -> 
+      compile_expr false s arg_te;
+      emit s (Bytecode.PERFORM op_name)
+    | Typechecker.TEHandle ((body_te, arms)) -> compile_handle s body_te arms
+    | Typechecker.TEResume ((k_te, v_te)) -> 
+      compile_expr false s k_te;
+      compile_expr false s v_te;
+      emit s Bytecode.RESUME
+    | Typechecker.TEBreak value_te -> 
+      compile_expr false s value_te;
+      emit s Bytecode.LOOP_BREAK
+    | Typechecker.TEContinueLoop -> 
+      do
+        match s.loop_start with
+        | Some target -> emit s (Bytecode.LOOP_CONTINUE target)
+        | None -> error "continue outside of loop"
+
+      end
+    | Typechecker.TEFoldContinue value_te -> 
+      let depth_before = s.operand_depth in
+      compile_expr false s value_te;
+      let n_pops = depth_before in
+      emit s (Bytecode.FOLD_CONTINUE n_pops)
+    | Typechecker.TEForLoop fold_te -> 
+      let enter_idx = emit_idx s (Bytecode.ENTER_LOOP 0) in
+      let prev_loop_start = s.loop_start in
+      s.loop_start := None;
+      compile_expr false s fold_te;
+      emit s Bytecode.EXIT_LOOP;
+      let end_jump = emit_idx s (Bytecode.JUMP 0) in
+      let break_target = current_offset s in
+      let end_target = current_offset s in
+      patch s enter_idx (Bytecode.ENTER_LOOP break_target);
+      patch s end_jump (Bytecode.JUMP end_target);
+      s.loop_start := prev_loop_start
+    | Typechecker.TEMap pairs -> 
+      List.iter (fn (k, v) -> compile_expr false s k;
+      compile_expr false s v) pairs;
+      emit s (Bytecode.MAKE_MAP (List.length pairs))
+    | Typechecker.TEArray elems -> 
+      List.iter (compile_expr false s) elems;
+      emit s (Bytecode.MAKE_ARRAY (List.length elems))
+    | Typechecker.TEReturn value_te -> 
+      compile_expr false s value_te;
+      emit s Bytecode.FUNC_RETURN
+    | Typechecker.TELetRecAnd ((bindings, body)) -> 
+      let slots = List.map (fn (name, _) -> let unit_idx = add_constant s Bytecode.VUnit in
+      emit s (Bytecode.CONST unit_idx);
+      emit s Bytecode.MAKE_REF;
+      let slot = allocate_local s name in
+      s.mutable_locals := name :: s.mutable_locals;
+      emit s (Bytecode.SET_LOCAL slot);
+      slot) bindings in
+      List.iter2 (fn (_name, fn_te) slot -> compile_expr false s fn_te;
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s Bytecode.SET_REF) bindings slots;
+      compile_expr tail s body;
+      List.iter (fn (name, _) -> s.mutable_locals := List.filter (fn n -> n <> name) s.mutable_locals) bindings;
+      List.iter (fn _ -> free_local s) bindings
+
+  and compile_var_access s name =
+    match find_local s name with
+    | Some slot -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      if is_mutable_local s name do
+        emit s Bytecode.DEREF
+      end
+    | None -> 
+      do
+        match resolve_upvalue s name with
+        | Some idx -> 
+          emit s (Bytecode.GET_UPVALUE idx);
+          if is_mutable_local s name do
+            emit s Bytecode.DEREF
+          end
+        | None -> 
+          let gidx = find_or_add_global s name in
+          emit s (Bytecode.GET_GLOBAL gidx);
+          if is_mutable_global s name do
+            emit s Bytecode.DEREF
+          end
+
+      end
+
+  and compile_binop s op e1 e2 =
+    match op with
+    | Ast.And -> 
+      compile_expr false s e1;
+      emit s Bytecode.DUP;
+      let jump_idx = emit_idx s (Bytecode.JUMP_IF_FALSE 0) in
+      emit s Bytecode.POP;
+      compile_expr false s e2;
+      let target = current_offset s in
+      patch s jump_idx (Bytecode.JUMP_IF_FALSE target)
+    | Ast.Or -> 
+      compile_expr false s e1;
+      emit s Bytecode.DUP;
+      let jump_idx = emit_idx s (Bytecode.JUMP_IF_TRUE 0) in
+      emit s Bytecode.POP;
+      compile_expr false s e2;
+      let target = current_offset s in
+      patch s jump_idx (Bytecode.JUMP_IF_TRUE target)
+    | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> 
+      do
+        let resolved = Types.repr e1.ty in
+        match resolved with
+        | Types.TInt -> 
+          compile_expr false s e1;
+          compile_expr false s e2;
+          emit s (match op with
+          | Ast.Add -> Bytecode.ADD
+          | Ast.Sub -> Bytecode.SUB
+          | Ast.Mul -> Bytecode.MUL
+          | Ast.Div -> Bytecode.DIV
+          | _ -> failwith "assert false"
+          )
+        | Types.TFloat -> 
+          compile_expr false s e1;
+          compile_expr false s e2;
+          emit s (match op with
+          | Ast.Add -> Bytecode.FADD
+          | Ast.Sub -> Bytecode.FSUB
+          | Ast.Mul -> Bytecode.FMUL
+          | Ast.Div -> Bytecode.FDIV
+          | _ -> failwith "assert false"
+          )
+        | _ -> 
+          let method_name =
+            match op with
+            | Ast.Add -> "+"
+            | Ast.Sub -> "-"
+            | Ast.Mul -> "*"
+            | Ast.Div -> "/"
+            | _ -> failwith "assert false"
+           in
+          compile_class_binop s "Num" method_name e1.ty e1 e2
+
+      end
+    | Ast.Mod -> 
+      compile_expr false s e1;
+      compile_expr false s e2;
+      emit s Bytecode.MOD
+    | Ast.Eq | Ast.Neq -> 
+      let resolved = Types.repr e1.ty in
+      let has_custom_instance class_name ty = List.exists (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = 1) && (Types.match_partial_inst inst.inst_tys (Some ty :: [])))) s.type_env.instances in
+      let use_structural =
+        match resolved with
+        | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte | Types.TRune | Types.TUnit | Types.TList _ | Types.TTuple _ | Types.TVariant _ | Types.TPolyVariant _ | Types.TMap _ | Types.TArray _ | Types.TVar {contents = Types.Unbound _} -> true
+        | Types.TRecord _ -> not (has_custom_instance "Eq" resolved)
+        | _ -> false
+       in
+      if use_structural do
+        compile_expr false s e1;
+        compile_expr false s e2;
+        emit s (if op = Ast.Eq do
+          Bytecode.EQ
+        else
+          Bytecode.NEQ)
+      else do
+        let method_name =
+          if op = Ast.Eq do
+            "="
+          else
+            "<>" in
+        compile_class_binop s "Eq" method_name e1.ty e1 e2
+      end
+    | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> 
+      let resolved = Types.repr e1.ty in
+      let is_builtin =
+        match resolved with
+        | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune | Types.TVar {contents = Types.Unbound _} -> true
+        | _ -> false
+       in
+      if is_builtin do
+        compile_expr false s e1;
+        compile_expr false s e2;
+        emit s (match op with
+        | Ast.Lt -> Bytecode.LT
+        | Ast.Gt -> Bytecode.GT
+        | Ast.Le -> Bytecode.LE
+        | Ast.Ge -> Bytecode.GE
+        | _ -> failwith "assert false"
+        )
+      else do
+        let method_name =
+          match op with
+          | Ast.Lt -> "<"
+          | Ast.Gt -> ">"
+          | Ast.Le -> "<="
+          | Ast.Ge -> ">="
+          | _ -> failwith "assert false"
+         in
+        compile_class_binop s "Ord" method_name e1.ty e1 e2
+      end
+    | Ast.Concat -> 
+      let gidx = find_or_add_global s "^" in
+      emit s (Bytecode.GET_GLOBAL gidx);
+      compile_expr false s e1;
+      emit s (Bytecode.CALL 1);
+      compile_expr false s e2;
+      emit s (Bytecode.CALL 1)
+    | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> 
+      do
+        let resolved = Types.repr e1.ty in
+        match resolved with
+        | Types.TInt -> 
+          compile_expr false s e1;
+          compile_expr false s e2;
+          emit s (match op with
+          | Ast.Land -> Bytecode.BAND
+          | Ast.Lor -> Bytecode.BOR
+          | Ast.Lxor -> Bytecode.BXOR
+          | Ast.Lsl -> Bytecode.BSHL
+          | Ast.Lsr -> Bytecode.BSHR
+          | _ -> failwith "assert false"
+          )
+        | _ -> 
+          let method_name =
+            match op with
+            | Ast.Land -> "land"
+            | Ast.Lor -> "lor"
+            | Ast.Lxor -> "lxor"
+            | Ast.Lsl -> "lsl"
+            | Ast.Lsr -> "lsr"
+            | _ -> failwith "assert false"
+           in
+          compile_class_binop s "Bitwise" method_name e1.ty e1 e2
+
+      end
+    | Ast.Pipe -> 
+      compile_expr false s e2;
+      compile_expr false s e1;
+      emit s (Bytecode.CALL 1)
+
+  and compile_class_binop (s : state) class_name method_name operand_ty e1 e2 =
+    let conc_ty = Types.repr operand_ty in
+    let class_def =
+      match List.find (fn (c : Types.class_def) -> c.class_name = class_name) s.type_env.classes with
+      | Some cd -> cd
+      | None -> error ($"class {class_name} not found")
+     in
+    let num_params = List.length class_def.class_params in
+    let partial = List.init num_params (fn _ -> Some conc_ty) in
+    let concrete_partial = List.map (fn opt ->
+      do
+        match opt with
+        | Some ty -> 
+          do
+            match Types.repr ty with
+            | Types.TVar {contents = Types.Unbound _} -> None
+            | _ -> Some (Types.repr ty)
+
+          end
+        | None -> None
+
+      end) partial in
+    let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = num_params) && (Types.match_partial_inst inst.inst_tys concrete_partial))) s.type_env.instances in
+    match matching with
+    | inst :: [] -> 
+      if inst.inst_constraints = [] do
+        let method_gidx = find_or_add_global s (inst.inst_dict_name ^ ("$" ^ method_name)) in
+        emit s (Bytecode.GET_GLOBAL method_gidx)
+      else do
+        let dict_gidx = find_or_add_global s inst.inst_dict_name in
+        emit s (Bytecode.GET_GLOBAL dict_gidx);
+        emit s (Bytecode.FIELD method_name)
+      end;
+      compile_expr false s e1;
+      emit s (Bytecode.CALL 1);
+      compile_expr false s e2;
+      emit s (Bytecode.CALL 1)
+    | [] -> error ($"no instance of {class_name} for type {Types.pp_ty conc_ty}")
+    | _ -> error ($"ambiguous instance for {class_name} method {method_name}")
+
+  and compile_class_unop (s : state) class_name method_name operand_ty e =
+    let conc_ty = Types.repr operand_ty in
+    let class_def =
+      match List.find (fn (c : Types.class_def) -> c.class_name = class_name) s.type_env.classes with
+      | Some cd -> cd
+      | None -> error ($"class {class_name} not found")
+     in
+    let num_params = List.length class_def.class_params in
+    let partial = List.init num_params (fn _ -> Some conc_ty) in
+    let concrete_partial = List.map (fn opt ->
+      do
+        match opt with
+        | Some ty -> 
+          do
+            match Types.repr ty with
+            | Types.TVar {contents = Types.Unbound _} -> None
+            | _ -> Some (Types.repr ty)
+
+          end
+        | None -> None
+
+      end) partial in
+    let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = num_params) && (Types.match_partial_inst inst.inst_tys concrete_partial))) s.type_env.instances in
+    match matching with
+    | inst :: [] -> 
+      if inst.inst_constraints = [] do
+        let method_gidx = find_or_add_global s (inst.inst_dict_name ^ ("$" ^ method_name)) in
+        emit s (Bytecode.GET_GLOBAL method_gidx)
+      else do
+        let dict_gidx = find_or_add_global s inst.inst_dict_name in
+        emit s (Bytecode.GET_GLOBAL dict_gidx);
+        emit s (Bytecode.FIELD method_name)
+      end;
+      compile_expr false s e;
+      emit s (Bytecode.CALL 1)
+    | [] -> error ($"no instance of {class_name} for type {Types.pp_ty conc_ty}")
+    | _ -> error ($"ambiguous instance for {class_name} method {method_name}")
+
+  and compile_unop s op (e : Typechecker.texpr) =
+    match op with
+    | Ast.Neg -> 
+      do
+        let resolved = Types.repr e.ty in
+        match resolved with
+        | Types.TInt -> 
+          compile_expr false s e;
+          emit s Bytecode.NEG
+        | Types.TFloat -> 
+          compile_expr false s e;
+          emit s Bytecode.FNEG
+        | _ -> compile_class_unop s "Num" "neg" e.ty e
+
+      end
+    | Ast.Not -> 
+      compile_expr false s e;
+      emit s Bytecode.NOT
+    | Ast.Lnot -> 
+      do
+        let resolved = Types.repr e.ty in
+        match resolved with
+        | Types.TInt -> 
+          compile_expr false s e;
+          emit s Bytecode.BNOT
+        | _ -> compile_class_unop s "Bitwise" "lnot" e.ty e
+
+      end
+
+  and compile_if tail s cond then_e else_e =
+    compile_expr false s cond;
+    let else_jump = emit_idx s (Bytecode.JUMP_IF_FALSE 0) in
+    compile_expr tail s then_e;
+    let end_jump = emit_idx s (Bytecode.JUMP 0) in
+    let else_target = current_offset s in
+    patch s else_jump (Bytecode.JUMP_IF_FALSE else_target);
+    compile_expr tail s else_e;
+    let end_target = current_offset s in
+    patch s end_jump (Bytecode.JUMP end_target)
+  and compile_function has_return s param_name body fn_ty =
+    let param_ty_arity = count_arrows fn_ty in
+    let _ = param_ty_arity in
+    let sub = create_state (Some s) 1 s.global_names s.mutable_globals s.type_env param_name in
+    (allocate_local sub param_name; ());
+    if has_return do
+      emit sub Bytecode.ENTER_FUNC
+    end;
+    compile_expr (not has_return) sub body;
+    if has_return do
+      emit sub Bytecode.EXIT_FUNC
+    end;
+    emit sub Bytecode.RETURN;
+    let proto = finalize_proto sub in
+    let proto_idx = add_constant s (Bytecode.VProto proto) in
+    let captures = List.map (fn uv -> uv.capture) sub.upvalues in
+    emit s (Bytecode.CLOSURE (proto_idx, captures))
+  and count_arrows ty =
+    match Types.repr ty with
+    | Types.TArrow ((_, _, r)) | Types.TCont ((_, _, r)) -> 1 + (count_arrows r)
+    | _ -> 0
+
+  and finalize_proto s = {name = s.proto_name; arity = s.arity; num_locals = s.max_locals; code = Dynarray.to_array s.code; constants = Dynarray.to_array s.constants; line_table = Dynarray.to_array s.lines}
+  and compile_let_rec s name fn_expr =
+    let slot = allocate_local s name in
+    match fn_expr.expr with
+    | Typechecker.TEFun ((param, body, has_return)) -> 
+      let sub = create_state (Some s) 1 s.global_names s.mutable_globals s.type_env name in
+      (allocate_local sub param; ());
+      if has_return do
+        emit sub Bytecode.ENTER_FUNC
+      end;
+      compile_expr (not has_return) sub body;
+      if has_return do
+        emit sub Bytecode.EXIT_FUNC
+      end;
+      emit sub Bytecode.RETURN;
+      let proto = finalize_proto sub in
+      let proto_idx = add_constant s (Bytecode.VProto proto) in
+      let captures = List.map (fn uv -> uv.capture) sub.upvalues in
+      let self_idx = List.find_map (fn (i, uv) -> if uv.uv_name = name do
+        Some i
+      else
+        None) (List.mapi (fn i uv -> (i, uv)) sub.upvalues) in
+      do
+        match self_idx with
+        | Some si -> emit s (Bytecode.CLOSURE_REC (proto_idx, captures, si))
+        | None -> emit s (Bytecode.CLOSURE (proto_idx, captures))
+
+      end;
+      emit s (Bytecode.SET_LOCAL slot)
+    | _ -> error "let rec must bind a function"
+
+  and compile_match tail s scrut arms =
+    compile_expr false s scrut;
+    let scrut_slot = allocate_local s "_match_scrut" in
+    emit s (Bytecode.SET_LOCAL scrut_slot);
+    let end_jumps = Ref.create [] in
+    List.iter (fn (pat, guard, body) -> let saved_num_locals = s.num_locals in
+    let saved_locals = s.locals in
+    let fail_jumps = Ref.create [] in
+    compile_pattern s scrut_slot pat fail_jumps;
+    do
+      match guard with
+      | Some guard_te -> 
+        compile_expr false s guard_te;
+        Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+      | None -> ()
+
+    end;
+    compile_expr tail s body;
+    s.num_locals := saved_num_locals;
+    s.locals := saved_locals;
+    Ref.set end_jumps (emit_idx s (Bytecode.JUMP 0) :: Ref.get end_jumps);
+    let target = current_offset s in
+    List.iter (fn idx -> patch s idx (Bytecode.JUMP_IF_FALSE target)) (Ref.get fail_jumps)) arms;
+    let loc_str = $"line {scrut.loc.line}" in
+    emit s (Bytecode.MATCH_FAIL loc_str);
+    let end_target = current_offset s in
+    List.iter (fn idx -> patch s idx (Bytecode.JUMP end_target)) (Ref.get end_jumps);
+    free_local s
+  and compile_pattern s slot pat fail_jumps =
+    match pat with
+    | Ast.PatWild -> ()
+    | Ast.PatVar name -> 
+      let var_slot = allocate_local s name in
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s (Bytecode.SET_LOCAL var_slot)
+    | Ast.PatInt n -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      emit_constant s (Bytecode.VInt n);
+      emit s Bytecode.EQ;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+    | Ast.PatFloat f -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      emit_constant s (Bytecode.VFloat f);
+      emit s Bytecode.EQ;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+    | Ast.PatBool b -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      emit_constant s (Bytecode.VBool b);
+      emit s Bytecode.EQ;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+    | Ast.PatString str -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      emit_constant s (Bytecode.VString str);
+      emit s Bytecode.EQ;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+    | Ast.PatUnit -> ()
+    | Ast.PatNil -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s Bytecode.IS_NIL;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+    | Ast.PatCons ((hd_pat, tl_pat)) -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s Bytecode.IS_CONS;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps);
+      let hd_slot = allocate_local s "_hd" in
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s Bytecode.HEAD;
+      emit s (Bytecode.SET_LOCAL hd_slot);
+      let tl_slot = allocate_local s "_tl" in
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s Bytecode.TAIL;
+      emit s (Bytecode.SET_LOCAL tl_slot);
+      compile_pattern s hd_slot hd_pat fail_jumps;
+      compile_pattern s tl_slot tl_pat fail_jumps
+    | Ast.PatConstruct ((name, arg_pat)) -> 
+      do
+        let tag = tag_for_constructor s.type_env name in
+        emit s (Bytecode.GET_LOCAL slot);
+        emit s (Bytecode.TAG_EQ tag);
+        Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps);
+        match arg_pat with
+        | Some sub_pat -> 
+          let payload_slot = allocate_local s "_payload" in
+          emit s (Bytecode.GET_LOCAL slot);
+          emit s Bytecode.VARIANT_PAYLOAD;
+          emit s (Bytecode.SET_LOCAL payload_slot);
+          compile_pattern s payload_slot sub_pat fail_jumps
+        | None -> ()
+
+      end
+    | Ast.PatTuple pats -> List.iteri (fn i sub_pat -> let elem_slot = allocate_local s "_tup" in
+    emit s (Bytecode.GET_LOCAL slot);
+    emit s (Bytecode.TUPLE_GET i);
+    emit s (Bytecode.SET_LOCAL elem_slot);
+    compile_pattern s elem_slot sub_pat fail_jumps) pats
+    | Ast.PatRecord field_pats -> List.iter (fn (fname, sub_pat) -> let field_slot = allocate_local s "_fld" in
+    emit s (Bytecode.GET_LOCAL slot);
+    emit s (Bytecode.FIELD fname);
+    emit s (Bytecode.SET_LOCAL field_slot);
+    compile_pattern s field_slot sub_pat fail_jumps) field_pats
+    | Ast.PatAs ((inner_pat, name)) -> 
+      compile_pattern s slot inner_pat fail_jumps;
+      let var_slot = allocate_local s name in
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s (Bytecode.SET_LOCAL var_slot)
+    | Ast.PatOr ((p1, p2)) -> 
+      let saved_locals = s.locals in
+      let saved_num_locals = s.num_locals in
+      let or_fail_jumps = Ref.create [] in
+      compile_pattern s slot p1 or_fail_jumps;
+      let p1_bindings = List.filter_map (fn (l : local) -> if (l.slot >= saved_num_locals) && ((l.name <> "") && ((String.get l.name 0) <> #5f)) do
+        Some (l.name, l.slot)
+      else
+        None) s.locals in
+      let success_jump = emit_idx s (Bytecode.JUMP 0) in
+      let p2_target = current_offset s in
+      List.iter (fn idx -> patch s idx (Bytecode.JUMP_IF_FALSE p2_target)) (Ref.get or_fail_jumps);
+      s.locals := saved_locals;
+      s.num_locals := saved_num_locals;
+      compile_pattern s slot p2 fail_jumps;
+      let remaps = List.filter_map (fn (name, p1_slot) ->
+        do
+          match List.find (fn (l : local) -> (l.name = name) && (l.slot >= saved_num_locals)) s.locals with
+          | Some l when l.slot <> p1_slot -> Some (l.slot, p1_slot)
+          | _ -> None
+
+        end) p1_bindings in
+      if remaps <> [] do
+        let temps = List.map (fn (src, _dst) -> let tmp = allocate_local s "_or_tmp" in
+        emit s (Bytecode.GET_LOCAL src);
+        emit s (Bytecode.SET_LOCAL tmp);
+        tmp) remaps in
+        List.iter2 (fn tmp (_src, dst) -> emit s (Bytecode.GET_LOCAL tmp);
+        emit s (Bytecode.SET_LOCAL dst)) temps remaps
+      end;
+      let success_target = current_offset s in
+      patch s success_jump (Bytecode.JUMP success_target);
+      let p2_only_locals = List.filter (fn (l : local) -> (l.slot < saved_num_locals) || (List.exists (fn (n, _) -> n = l.name) p1_bindings)) s.locals in
+      let remapped = List.map (fn (l : local) ->
+        do
+          match List.assoc_opt l.name p1_bindings with
+          | Some p1_slot when l.slot >= saved_num_locals -> {l with slot = p1_slot}
+          | _ -> l
+
+        end) p2_only_locals in
+      s.locals := remapped
+    | Ast.PatArray pats -> 
+      let al_gidx = find_or_add_global s "array_length" in
+      emit s (Bytecode.GET_GLOBAL al_gidx);
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s (Bytecode.CALL 1);
+      emit_constant s (Bytecode.VInt (List.length pats));
+      emit s Bytecode.EQ;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps);
+      List.iteri (fn i sub_pat -> let elem_slot = allocate_local s "_arr_elem" in
+      emit s (Bytecode.GET_LOCAL slot);
+      emit_constant s (Bytecode.VInt i);
+      emit s Bytecode.INDEX;
+      emit s (Bytecode.SET_LOCAL elem_slot);
+      compile_pattern s elem_slot sub_pat fail_jumps) pats
+    | Ast.PatMap entries -> 
+      let has_gidx = find_or_add_global s "__map_has" in
+      let get_gidx = find_or_add_global s "__map_get" in
+      List.iter (fn (key_pat, val_pat) -> let key_val =
+        match key_pat with
+        | Ast.PatInt n -> Bytecode.VInt n
+        | Ast.PatString s -> Bytecode.VString s
+        | Ast.PatBool b -> Bytecode.VBool b
+        | Ast.PatFloat f -> Bytecode.VFloat f
+        | _ -> error "map pattern keys must be literals"
+       in
+      emit s (Bytecode.GET_GLOBAL has_gidx);
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s (Bytecode.CALL 1);
+      emit_constant s key_val;
+      emit s (Bytecode.CALL 1);
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps);
+      let val_slot = allocate_local s "_map_val" in
+      emit s (Bytecode.GET_GLOBAL get_gidx);
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s (Bytecode.CALL 1);
+      emit_constant s key_val;
+      emit s (Bytecode.CALL 1);
+      emit s (Bytecode.SET_LOCAL val_slot);
+      compile_pattern s val_slot val_pat fail_jumps) entries
+    | Ast.PatPolyVariant ((tag, arg_pat)) -> 
+      do
+        let num_tag = ((hash (tag))) land 0x3FFFFFFF in
+        emit s (Bytecode.GET_LOCAL slot);
+        emit s (Bytecode.TAG_EQ num_tag);
+        Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps);
+        match arg_pat with
+        | Some sub_pat -> 
+          let payload_slot = allocate_local s "_payload" in
+          emit s (Bytecode.GET_LOCAL slot);
+          emit s Bytecode.VARIANT_PAYLOAD;
+          emit s (Bytecode.SET_LOCAL payload_slot);
+          compile_pattern s payload_slot sub_pat fail_jumps
+        | None -> ()
+
+      end
+    | Ast.PatPin name -> 
+      emit s (Bytecode.GET_LOCAL slot);
+      compile_var_access s name;
+      emit s Bytecode.EQ;
+      Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
+    | Ast.PatAnnot ((inner_pat, _)) -> compile_pattern s slot inner_pat fail_jumps
+
+  and compile_handle s body_te arms =
+    let return_arm = Ref.create None in
+    let op_arms = Ref.create [] in
+    List.iter (fn
+      | Typechecker.THReturn ((name, handler_body)) -> Ref.set return_arm (Some (name, handler_body))
+      | Typechecker.THOp ((op_name, arg_name, k_name, handler_body)) -> Ref.set op_arms ((op_name, arg_name, k_name, handler_body) :: Ref.get op_arms)
+    ) arms;
+    let op_arms = List.rev (Ref.get op_arms) in
+    let (ret_name, ret_body) =
+      match Ref.get return_arm with
+      | Some arm -> arm
+      | None -> error "handle expression missing return arm"
+     in
+    compile_function false s "_" body_te (Types.TArrow (Types.TUnit, Types.EffEmpty, Types.TUnit));
+    compile_function false s ret_name ret_body (Types.TArrow (Types.TUnit, Types.EffEmpty, Types.TUnit));
+    List.iter (fn (op_name, arg_name, k_name, handler_body) -> emit_constant s (Bytecode.VString op_name);
+    compile_op_handler s arg_name k_name handler_body) op_arms;
+    emit s (Bytecode.HANDLE (List.length op_arms))
+  and compile_op_handler s arg_name k_name handler_body =
+    let sub = create_state (Some s) 1 s.global_names s.mutable_globals s.type_env "__handler" in
+    let pair_slot = allocate_local sub "__pair" in
+    let arg_slot = allocate_local sub arg_name in
+    emit sub (Bytecode.GET_LOCAL pair_slot);
+    emit sub (Bytecode.TUPLE_GET 0);
+    emit sub (Bytecode.SET_LOCAL arg_slot);
+    let k_slot = allocate_local sub k_name in
+    emit sub (Bytecode.GET_LOCAL pair_slot);
+    emit sub (Bytecode.TUPLE_GET 1);
+    emit sub (Bytecode.SET_LOCAL k_slot);
+    ((arg_slot, k_slot); ());
+    compile_expr true sub handler_body;
+    emit sub Bytecode.RETURN;
+    let proto = finalize_proto sub in
+    let proto_idx = add_constant s (Bytecode.VProto proto) in
+    let captures = List.map (fn uv -> uv.capture) sub.upvalues in
+    emit s (Bytecode.CLOSURE (proto_idx, captures))
+
+  pub let rec compile_decl s (decl : Typechecker.tdecl) =
+    match decl with
+    | Typechecker.TDType _ | Typechecker.TDClass _ | Typechecker.TDEffect _ -> ()
+    | Typechecker.TDExtern ((name, _)) -> (find_or_add_global s name; ())
+    | Typechecker.TDLet ((name, te)) -> 
+      do
+        compile_expr false s te;
+        Hashtbl.remove s.mutable_globals name;
+        let gidx = find_or_add_global s name in
+        emit s (Bytecode.DEF_GLOBAL gidx);
+        if ((String.length name) > 6) && ((String.sub name 0 6) = "__dict") do
+          let inst_opt = List.find (fn (inst : Types.instance_def) -> inst.inst_dict_name = name) s.type_env.instances in
+          match inst_opt with
+          | Some inst when inst.inst_constraints = [] -> 
+            do
+              let class_opt = List.find (fn (c : Types.class_def) -> c.class_name = inst.inst_class) s.type_env.classes in
+              match class_opt with
+              | Some class_def -> List.iter (fn (method_name, _) -> let mgidx = find_or_add_global s (name ^ ("$" ^ method_name)) in
+              emit s (Bytecode.GET_GLOBAL gidx);
+              emit s (Bytecode.FIELD method_name);
+              emit s (Bytecode.DEF_GLOBAL mgidx)) class_def.class_methods
+              | None -> ()
+
+            end
+          | _ -> ()
+
+        end
+      end
+    | Typechecker.TDLetMut ((name, te)) -> 
+      compile_expr false s te;
+      emit s Bytecode.MAKE_REF;
+      Hashtbl.set s.mutable_globals name ();
+      let gidx = find_or_add_global s name in
+      emit s (Bytecode.DEF_GLOBAL gidx)
+    | Typechecker.TDLetRec ((name, te)) -> 
+      Hashtbl.remove s.mutable_globals name;
+      let gidx = find_or_add_global s name in
+      compile_expr false s te;
+      emit s (Bytecode.DEF_GLOBAL gidx)
+    | Typechecker.TDLetRecAnd bindings -> 
+      List.iter (fn (name, _) -> Hashtbl.remove s.mutable_globals name) bindings;
+      let gidxs = List.map (fn (name, _) -> find_or_add_global s name) bindings in
+      List.iter2 (fn (_name, te) gidx -> compile_expr false s te;
+      emit s (Bytecode.DEF_GLOBAL gidx)) bindings gidxs
+    | Typechecker.TDExpr te -> 
+      compile_expr false s te;
+      emit s Bytecode.POP
+    | Typechecker.TDModule ((_name, inner_decls)) -> List.iter (fn d -> compile_decl s d) inner_decls
+    | Typechecker.TDOpen alias_pairs -> List.iter (fn (short_name, qualified_name) -> let src_idx = find_or_add_global s qualified_name in
+    let dst_idx = find_or_add_global s short_name in
+    emit s (Bytecode.GET_GLOBAL src_idx);
+    emit s (Bytecode.DEF_GLOBAL dst_idx);
+    if is_mutable_global s qualified_name do
+      Hashtbl.set s.mutable_globals short_name ()
+    else
+      Hashtbl.remove s.mutable_globals short_name) alias_pairs
+
+
+  pub let compile_decl_last s (decl : Typechecker.tdecl) =
+    match decl with
+    | Typechecker.TDExpr te -> compile_expr false s te
+    | _ -> compile_decl s decl
+
+
+  pub let compile_program_with_globals type_env global_names mutable_globals (program : Typechecker.tprogram) : Bytecode.compiled_program =
+    let s = create_state None 0 global_names mutable_globals type_env "<main>" in
+    let rec compile_all =
+      fn
+        | [] -> ()
+        | last :: [] -> compile_decl_last s last
+        | decl :: rest -> 
+          compile_decl s decl;
+          compile_all rest
+     in
+    compile_all program;
+    emit s Bytecode.HALT;
+    let main = finalize_proto s in
+    let main =
+      if Ref.get optimize_enabled do
+        Optimize.optimize_proto main
+      else
+        main in
+    let gn = Dynarray.to_array global_names in
+    {main; global_names = gn}
+
+  pub let compile_program type_env (program : Typechecker.tprogram) : Bytecode.compiled_program = compile_program_with_globals type_env (Dynarray.empty ()) (Hashtbl.create 8 : (string, unit) Hashtbl.t) program
+
+end

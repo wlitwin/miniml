@@ -1,0 +1,46 @@
+type 'a set = ('a, unit) map
+;;
+module Set =
+  pub let empty () : 'a set = #{}
+
+  pub let singleton (x : 'a) : 'a set = set x () #{}
+
+  pub let of_list xs : 'a set =
+    List.fold (fn acc x -> set x () acc) #{} xs
+
+  pub let add elem (s : 'a set) : 'a set = set elem () s
+
+  pub let remove elem (s : 'a set) : 'a set = remove elem s
+
+  pub let mem elem (s : 'a set) = has elem s
+
+  pub let size (s : 'a set) = size s
+
+  pub let to_list (s : 'a set) = keys s
+
+  pub let union (s1 : 'a set) (s2 : 'a set) : 'a set =
+    List.fold (fn acc x -> set x () acc) s2 (keys s1)
+
+  pub let inter (s1 : 'a set) (s2 : 'a set) : 'a set =
+    List.fold (fn acc x ->
+      if has x s2 do set x () acc else acc
+    ) (Set.empty ()) (keys s1)
+
+  pub let diff (s1 : 'a set) (s2 : 'a set) : 'a set =
+    List.fold (fn acc x ->
+      if not (has x s2) do set x () acc else acc
+    ) (Set.empty ()) (keys s1)
+
+  pub let is_empty (s : 'a set) = size s = 0
+
+  pub let is_subset (s1 : 'a set) (s2 : 'a set) =
+    List.forall (fn x -> has x s2) (keys s1)
+end
+;;
+instance Iter (('a, unit) map) 'a =
+  let fold f acc s =
+    let rec go a l = match l with
+      | [] -> a
+      | x :: rest -> go (f a x) rest
+    in go acc (Set.to_list s)
+end

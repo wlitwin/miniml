@@ -1,0 +1,119 @@
+module Enum =
+  pub let reduce f xs =
+    -- @partial
+    match xs with
+    | x :: rest -> List.fold f x rest
+
+  pub let sum xs = List.fold (fn a b -> a + b) 0 xs
+
+  pub let count f xs =
+    List.fold (fn acc x -> if f x do acc + 1 else acc) 0 xs
+
+  pub let take n xs =
+    let rec go i acc l =
+      if i >= n do List.rev acc
+      else match l with
+        | [] -> List.rev acc
+        | x :: rest -> go (i + 1) (x :: acc) rest
+    in go 0 [] xs
+
+  pub let drop n xs =
+    let rec go i l =
+      if i >= n do l
+      else match l with
+        | [] -> []
+        | _ :: rest -> go (i + 1) rest
+    in go 0 xs
+
+  pub let take_while f xs =
+    let rec go acc l =
+      match l with
+      | [] -> List.rev acc
+      | x :: rest ->
+        if f x do go (x :: acc) rest
+        else List.rev acc
+    in go [] xs
+
+  pub let drop_while f xs =
+    let rec go l =
+      match l with
+      | [] -> []
+      | x :: rest ->
+        if f x do go rest
+        else l
+    in go xs
+
+  pub let flat_map f xs = List.flatten (List.map f xs)
+
+  pub let each f xs = List.fold (fn _ x -> f x) () xs
+
+  pub let reject f xs = List.filter (fn x -> not (f x)) xs
+
+  pub let enumerate xs = List.mapi (fn i x -> (i, x)) xs
+
+  pub let join sep xs =
+    match xs with
+    | [] -> ""
+    | first :: rest ->
+      List.fold (fn acc x -> acc ^ sep ^ x) first rest
+
+  pub let chunk n xs =
+    let rec go acc l =
+      match l with
+      | [] -> List.rev acc
+      | _ -> go (Enum.take n l :: acc) (Enum.drop n l)
+    in go [] xs
+
+  pub let dedup xs =
+    let rec go prev acc l =
+      match l with
+      | [] -> List.rev acc
+      | x :: rest ->
+        if x = prev do go prev acc rest
+        else go x (x :: acc) rest
+    in match xs with
+      | [] -> []
+      | x :: rest -> go x [x] rest
+
+  pub let uniq xs =
+    List.rev (List.fold (fn acc x ->
+      if List.exists (fn y -> y = x) acc do acc
+      else x :: acc
+    ) [] xs)
+
+  pub let scan f init xs =
+    List.rev (List.fold (fn acc x ->
+      match acc with
+      | [] -> [f init x]
+      | prev :: _ -> f prev x :: acc
+    ) [init] xs)
+
+  pub let intersperse sep xs =
+    match xs with
+    | [] -> []
+    | first :: rest ->
+      List.fold (fn acc x -> List.concat acc [sep; x]) [first] rest
+
+  pub let zip_with f xs ys =
+    List.map (fn p -> match p with (a, b) -> f a b) (List.zip xs ys)
+
+  pub let min_by f xs =
+    -- @partial
+    match xs with
+    | x :: rest ->
+      List.fold (fn best y -> if f y < f best do y else best) x rest
+
+  pub let max_by f xs =
+    -- @partial
+    match xs with
+    | x :: rest ->
+      List.fold (fn best y -> if f y > f best do y else best) x rest
+
+  pub let group_by f xs =
+    List.fold (fn m x ->
+      let k = f x in
+      match get k m with
+      | None -> set k [x] m
+      | Some vs -> set k (List.concat vs [x]) m
+    ) #{} xs
+end

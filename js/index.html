@@ -1,0 +1,2366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MiniML Playground</title>
+<style>
+  /* Ayu Mirage palette */
+  :root {
+    --bg: #1F2430;
+    --bg-sunk: #181C26;
+    --bg-lift: #242936;
+    --bg-panel: #282E3B;
+    --fg: #CCCAC2;
+    --fg-ui: #707A8C;
+    --fg-dim: #5C6773;
+    --line: #171B24;
+    --line-ui: #1A1F29;
+    --accent: #FFCC66;
+    --accent-dim: #E6B450;
+    --blue: #73D0FF;
+    --green: #D5FF80;
+    --red: #F28779;
+    --orange: #FFA659;
+    --yellow: #FFCD66;
+    --teal: #95E6CB;
+    --purple: #DFBFFF;
+    --string: #AAD94C;
+    --error: #FF6666;
+    --select: rgba(99, 117, 153, 0.15);
+    /* Syntax highlighting (Ayu Mirage) */
+    --syn-keyword: #FFA759;
+    --syn-string: #D5FF80;
+    --syn-comment: #5C6773;
+    --syn-number: #D4BFFF;
+    --syn-operator: #F29E74;
+    --syn-type: #73D0FF;
+    --syn-tyvar: #95E6CB;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); padding: 20px; }
+  h1 { font-size: 1.4em; margin-bottom: 4px; color: var(--accent); }
+  .subtitle { font-size: 0.8em; color: var(--fg-ui); margin-bottom: 16px; }
+  .container { max-width: 960px; margin: 0 auto; }
+  .panel { background: var(--bg-panel); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  label { display: block; font-size: 0.85em; color: var(--fg-ui); margin-bottom: 6px; }
+  textarea {
+    width: 100%; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 14px; line-height: 1.5; background: var(--bg-sunk); color: var(--fg);
+    border: 1px solid var(--bg-panel); border-radius: 4px; padding: 12px; resize: vertical;
+    tab-size: 2; outline: none;
+  }
+  textarea:focus { border-color: var(--fg-dim); }
+  #source { height: 700px; }
+  #output {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 14px; background: var(--bg-sunk); border: 1px solid var(--bg-panel);
+    border-radius: 4px; padding: 12px; min-height: 120px; white-space: pre-wrap;
+    max-height: 400px; overflow-y: auto; line-height: 1.5;
+  }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+  button {
+    padding: 8px 20px; font-size: 14px; border: none; border-radius: 4px;
+    cursor: pointer; font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #runBtn { background: var(--accent); color: var(--bg); }
+  #runBtn:hover:not(:disabled) { background: var(--accent-dim); }
+  #clearBtn { background: var(--bg-panel); color: var(--fg-ui); }
+  #clearBtn:hover { background: var(--bg-lift); }
+  select {
+    padding: 8px 12px; font-size: 14px; border: 1px solid var(--bg-panel);
+    border-radius: 4px; background: var(--bg-lift); color: var(--fg); cursor: pointer;
+  }
+  .spacer { flex: 1; }
+  .toggle-label {
+    display: flex; align-items: center; gap: 6px; font-size: 0.8em;
+    color: var(--fg-ui); cursor: pointer; user-select: none;
+  }
+  .toggle-label input {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border: 1.5px solid var(--fg-dim);
+    border-radius: 3px; background: var(--bg-sunk); cursor: pointer;
+    display: grid; place-content: center; margin: 0;
+  }
+  .toggle-label input:checked {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .toggle-label input:checked::after {
+    content: ''; width: 8px; height: 5px;
+    border-left: 2px solid var(--bg); border-bottom: 2px solid var(--bg);
+    transform: rotate(-45deg) translate(0.5px, -0.5px);
+  }
+  .toggle-label input:hover { border-color: var(--fg-ui); }
+  .status { font-size: 0.8em; color: var(--fg-ui); }
+  .error { color: var(--error); }
+  .compile-error { color: var(--orange); }
+  .timing { color: var(--string); }
+
+  /* Syntax highlighting */
+  .hl-keyword { color: var(--syn-keyword); }
+  .hl-string { color: var(--syn-string); }
+  .hl-comment { color: var(--syn-comment); font-style: italic; }
+  .hl-number { color: var(--syn-number); }
+  .hl-operator { color: var(--syn-operator); }
+  .hl-constructor { color: var(--syn-type); }
+  .hl-tyvar { color: var(--syn-tyvar); font-style: italic; }
+  .hl-annotation { color: var(--syn-keyword); font-style: italic; }
+
+  /* Editor overlay for syntax highlighting */
+  .editor-container { position: relative; }
+  .editor-highlight {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 14px; line-height: 1.5;
+    padding: 12px; margin: 0;
+    border: 1px solid transparent; border-radius: 4px;
+    overflow: hidden; pointer-events: none;
+    white-space: pre-wrap; overflow-wrap: break-word;
+    tab-size: 2; color: var(--fg);
+  }
+  #source {
+    position: relative; color: transparent; caret-color: var(--fg);
+    background: transparent;
+  }
+  #source::selection { background: rgba(99, 117, 153, 0.4); }
+  #source::placeholder { color: var(--fg-dim); }
+  .editor-container { background: var(--bg-sunk); border-radius: 4px; }
+  .info { color: var(--blue); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--fg-dim);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite;
+    vertical-align: middle; margin-right: 6px; }
+
+  /* Tab bar */
+  .tab-bar { display: flex; gap: 0; margin-bottom: 12px; border-bottom: 2px solid var(--bg-panel); }
+  .tab-bar button {
+    padding: 10px 24px; font-size: 14px; font-weight: 600; border: none;
+    background: transparent; color: var(--fg-dim); cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -2px;
+    border-radius: 0; transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-bar button:hover { color: var(--fg); }
+  .tab-bar button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Tab views */
+  .tab-view { display: none; }
+  .tab-view.active { display: block; }
+
+  /* Docs layout */
+  .docs-layout { display: flex; gap: 16px; min-height: 500px; }
+  .docs-sidebar {
+    width: 200px; flex-shrink: 0; background: var(--bg-panel);
+    border-radius: 8px; padding: 12px 0;
+  }
+  .docs-sidebar a {
+    display: block; padding: 8px 16px; color: var(--fg-ui); text-decoration: none;
+    font-size: 0.9em; border-left: 3px solid transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .docs-sidebar a:hover { color: var(--fg); background: var(--select); }
+  .docs-sidebar a.active {
+    color: var(--accent); border-left-color: var(--accent); background: rgba(255, 204, 102, 0.06);
+  }
+  .docs-content { flex: 1; min-width: 0; overflow-y: auto; max-height: 80vh; }
+
+  /* Markdown content styling */
+  .docs-content h1 { font-size: 1.6em; color: var(--accent); margin: 0 0 16px 0; }
+  .docs-content h2 { font-size: 1.3em; color: var(--blue); margin: 24px 0 12px 0; border-bottom: 1px solid var(--bg-panel); padding-bottom: 6px; }
+  .docs-content h3 { font-size: 1.1em; color: var(--blue); margin: 20px 0 8px 0; }
+  .docs-content h4 { font-size: 1.0em; color: var(--blue); margin: 16px 0 6px 0; }
+  .docs-content p { line-height: 1.7; margin: 0 0 12px 0; }
+  .docs-content a { color: var(--blue); }
+  .docs-content a:hover { text-decoration: underline; }
+  .docs-content ul, .docs-content ol { margin: 0 0 12px 24px; line-height: 1.7; }
+  .docs-content li { margin-bottom: 4px; }
+  .docs-content code {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg-sunk); padding: 2px 6px; border-radius: 3px;
+    font-size: 0.9em; color: var(--orange);
+  }
+  .docs-content pre {
+    background: var(--bg-sunk); border: 1px solid var(--bg-panel); border-radius: 4px;
+    padding: 12px; overflow-x: auto; margin: 0 0 16px 0; line-height: 1.5;
+  }
+  .docs-content pre code {
+    background: none; padding: 0; font-size: 14px; color: var(--fg);
+  }
+  .docs-content table { width: 100%; border-collapse: collapse; margin: 0 0 16px 0; font-size: 0.9em; }
+  .docs-content th { text-align: left; padding: 8px 12px; border-bottom: 2px solid var(--bg-panel); color: var(--accent); }
+  .docs-content td { padding: 6px 12px; border-bottom: 1px solid var(--bg-lift); }
+  .docs-content tr:hover td { background: var(--select); }
+  .docs-content blockquote {
+    border-left: 3px solid var(--fg-dim); padding: 8px 16px; margin: 0 0 12px 0;
+    color: var(--fg-ui); background: var(--select); border-radius: 0 4px 4px 0;
+  }
+  .docs-content hr { border: none; border-top: 1px solid var(--bg-panel); margin: 24px 0; }
+  .docs-content strong { color: #E8E8E8; }
+  .docs-content em { color: var(--teal); }
+  .docs-loading { color: var(--fg-ui); padding: 40px; text-align: center; }
+
+  @media (max-width: 700px) {
+    .docs-layout { flex-direction: column; }
+    .docs-sidebar {
+      width: 100%; display: flex; overflow-x: auto; padding: 0;
+      border-radius: 8px 8px 0 0;
+    }
+    .docs-sidebar a {
+      white-space: nowrap; border-left: none;
+      border-bottom: 3px solid transparent; padding: 10px 14px; font-size: 0.85em;
+    }
+    .docs-sidebar a.active { border-left-color: transparent; border-bottom-color: var(--accent); }
+    .docs-content { max-height: none; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>MiniML Playground</h1>
+  <div class="subtitle">Self-hosted compiler running in the browser</div>
+
+  <div class="tab-bar">
+    <button class="active" data-tab="playground">Playground</button>
+    <button data-tab="docs">Docs</button>
+  </div>
+
+  <div id="playground-view" class="tab-view active">
+    <div class="panel">
+      <label for="source">Source Code</label>
+      <div class="editor-container">
+      <pre class="editor-highlight" id="sourceHighlight" aria-hidden="true"></pre>
+      <textarea id="source" spellcheck="false" placeholder="Write MiniML code here...">-- Try some MiniML!
+let () = print "Hello, MiniML!"
+
+let rec fib n =
+  if n <= 1 do n
+  else fib (n - 1) + fib (n - 2)
+
+let () = print $"fib(10) = {fib 10}"
+let () = print $"fib(20) = {fib 20}"
+</textarea>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button id="runBtn">Run</button>
+      <button id="clearBtn">Clear Output</button>
+      <select id="samples">
+        <option value="">Load example...</option>
+        <option value="hello">Hello World</option>
+        <option value="fib">Fibonacci</option>
+        <option value="lists">List Operations</option>
+        <option value="variants">Variants &amp; Pattern Matching</option>
+        <option value="higher">Higher-Order Functions</option>
+        <option value="modules">Modules</option>
+        <option value="hashtbl">Hash Tables</option>
+        <option value="effects">Effect Handlers</option>
+        <option value="typeclasses">Type Classes</option>
+        <option value="generators">Generators</option>
+        <option value="iterators">Custom Iterators</option>
+        <option value="evaluator">Expression Evaluator</option>
+        <option value="gadts">GADTs</option>
+        <option value="fundeps">Functional Dependencies</option>
+        <option value="canvas">Canvas GUI</option>
+        <option value="framework">Framework GUI</option>
+        <option value="layout">Layout Engine</option>
+        <option value="snake">Snake Game</option>
+      </select>
+      <div class="spacer"></div>
+      <label class="toggle-label"><input type="checkbox" id="optimizeToggle"> Optimize</label>
+      <span id="statusText" class="status"></span>
+    </div>
+
+    <div id="canvasContainer" class="panel" style="display:none">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <label style="margin-bottom:0">Canvas</label>
+        <button id="stopBtn" style="display:none; padding:4px 12px; font-size:12px; background:var(--red); color:var(--bg);">Stop</button>
+      </div>
+      <canvas id="appCanvas" style="display:block; background:#000; border-radius:4px; margin-top:8px; max-width:100%;"></canvas>
+    </div>
+
+    <div class="panel">
+      <label>Output</label>
+      <div id="output"></div>
+    </div>
+  </div>
+
+  <div id="docs-view" class="tab-view" style="display:none">
+    <div class="docs-layout">
+      <nav class="docs-sidebar" id="docsSidebar"></nav>
+      <div class="docs-content panel" id="docsContent">
+        <div class="docs-loading">Select a topic from the sidebar.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="miniml.bundle.js"></script>
+<script>
+const source = document.getElementById("source");
+const output = document.getElementById("output");
+const runBtn = document.getElementById("runBtn");
+const clearBtn = document.getElementById("clearBtn");
+const samples = document.getElementById("samples");
+const statusText = document.getElementById("statusText");
+const sourceHighlight = document.getElementById("sourceHighlight");
+const appCanvas = document.getElementById("appCanvas");
+const canvasContainer = document.getElementById("canvasContainer");
+const stopBtn = document.getElementById("stopBtn");
+
+// --- Canvas App Support ---
+
+let animFrameId = null;
+let mouseWasDown = false;
+globalThis._canvasMouseX = 0;
+globalThis._canvasMouseY = 0;
+globalThis._canvasMouseDown = false;
+globalThis._canvasMouseClicked = false;
+globalThis._canvasCtx = null;
+globalThis._canvasApp = null;
+globalThis._canvasKeysDown = {};
+globalThis._canvasKeysPressed = {};
+let _prevKeysDown = {};
+
+globalThis._canvasInit = function(w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  appCanvas.width = w * dpr;
+  appCanvas.height = h * dpr;
+  canvasContainer.style.display = "block";
+
+  const ctx = appCanvas.getContext("2d");
+  globalThis._canvasCtx = ctx;
+  ctx.scale(dpr, dpr);
+
+  appCanvas.style.width = `${w}px`;
+  appCanvas.style.height = `${h}px`;
+};
+
+appCanvas.addEventListener("mousemove", (e) => {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = appCanvas.getBoundingClientRect();
+  const scaleX = appCanvas.width / (rect.width * dpr);
+  const scaleY = appCanvas.height / (rect.height * dpr);
+  globalThis._canvasMouseX = (e.clientX - rect.left) * scaleX;
+  globalThis._canvasMouseY = (e.clientY - rect.top) * scaleY;
+});
+appCanvas.addEventListener("mousedown", () => { globalThis._canvasMouseDown = true; });
+appCanvas.addEventListener("mouseup", () => { globalThis._canvasMouseDown = false; });
+appCanvas.addEventListener("mouseleave", () => { globalThis._canvasMouseDown = false; });
+document.addEventListener("keydown", (e) => {
+  if (globalThis._canvasCtx) {
+    e.preventDefault();
+    globalThis._canvasKeysDown[e.key] = true;
+  }
+});
+document.addEventListener("keyup", (e) => {
+  delete globalThis._canvasKeysDown[e.key];
+});
+
+function stopCanvasApp() {
+  if (animFrameId !== null) {
+    cancelAnimationFrame(animFrameId);
+    animFrameId = null;
+  }
+  stopBtn.style.display = "none";
+  globalThis._canvasApp = null;
+  globalThis._canvasCtx = null;
+  globalThis._canvasKeysDown = {};
+  globalThis._canvasKeysPressed = {};
+  _prevKeysDown = {};
+}
+
+stopBtn.addEventListener("click", () => {
+  stopCanvasApp();
+  appendOutput("Canvas app stopped.", "info");
+});
+
+// --- Syntax Highlighting ---
+
+const HL_KEYWORDS = new Set([
+  'let','rec','in','if','else','fn','match','with','type','of','not','mod',
+  'true','false','class','instance','effect','extern','perform','handle','try',
+  'resume','return','continue','mut','for','do','break','when','where','module',
+  'pub','open','end','opaque','and','deriving','land','lor','lxor','lnot','lsl','lsr'
+]);
+
+const HL_OPS2 = new Set(['->', '=>', '|>', '::', ':=', '<>', '<=', '>=', '&&', '||', ';;']);
+const HL_OPS1 = new Set(['+', '-', '*', '/', '^', '=', '<', '>', '|', ';']);
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function highlightMiniML(code) {
+  let r = '', i = 0;
+  const n = code.length;
+  const isDig = c => c >= '0' && c <= '9';
+  const isHex = c => isDig(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+  const isIdS = c => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_';
+  const isIdC = c => isIdS(c) || isDig(c) || c === "'";
+  const sp = (cls, t) => `<span class="hl-${cls}">${escHtml(t)}</span>`;
+
+  while (i < n) {
+    // Line comment --
+    if (code[i] === '-' && code[i+1] === '-') {
+      let j = i; while (i < n && code[i] !== '\n') i++;
+      const cmt = escHtml(code.slice(j, i));
+      // Highlight @annotations inside comments
+      r += '<span class="hl-comment">' + cmt.replace(/@(\w+)/g, '</span><span class="hl-annotation">@$1</span><span class="hl-comment">') + '</span>';
+      continue;
+    }
+    // Block comment (* ... *) with nesting
+    // But not operator-in-parens like let (*) =
+    if (code[i] === '(' && code[i+1] === '*') {
+      // Check if this is (* used as an operator: (*) pattern
+      if (code[i+2] === ')') {
+        // It's (*) — emit as operator, not comment
+        r += sp('operator', '(*)'); i += 3; continue;
+      }
+      let j = i; i += 2; let d = 1;
+      while (i < n && d > 0) {
+        if (code[i] === '(' && code[i+1] === '*') { d++; i += 2; }
+        else if (code[i] === '*' && code[i+1] === ')') { d--; i += 2; }
+        else i++;
+      }
+      r += sp('comment', code.slice(j, i)); continue;
+    }
+    // Interpolated string $"..."
+    if (code[i] === '$' && code[i+1] === '"') {
+      r += '<span class="hl-string">' + escHtml('$"'); i += 2;
+      while (i < n && code[i] !== '"') {
+        if (code[i] === '\\' && i+1 < n) { r += escHtml(code.slice(i, i+2)); i += 2; }
+        else if (code[i] === '{') {
+          r += '</span>' + escHtml('{'); i++;
+          let d = 1, expr = '';
+          while (i < n && d > 0) {
+            if (code[i] === '{') d++;
+            else if (code[i] === '}') { d--; if (d === 0) break; }
+            expr += code[i]; i++;
+          }
+          r += highlightMiniML(expr);
+          if (i < n) { r += escHtml('}'); i++; }
+          r += '<span class="hl-string">';
+        } else { r += escHtml(code[i]); i++; }
+      }
+      if (i < n) { r += escHtml('"'); i++; }
+      r += '</span>'; continue;
+    }
+    // String "..."
+    if (code[i] === '"') {
+      let j = i; i++;
+      while (i < n && code[i] !== '"') { if (code[i] === '\\') i++; i++; }
+      if (i < n) i++;
+      r += sp('string', code.slice(j, i)); continue;
+    }
+    // Raw string {|...|}
+    if (code[i] === '{' && code[i+1] === '|') {
+      let j = i; i += 2;
+      while (i < n && !(code[i] === '|' && code[i+1] === '}')) i++;
+      if (i < n) i += 2;
+      r += sp('string', code.slice(j, i)); continue;
+    }
+    // Byte literal #XX
+    if (code[i] === '#' && i+1 < n && isHex(code[i+1]) && i+2 < n && isHex(code[i+2])) {
+      r += sp('number', code.slice(i, i+3)); i += 3; continue;
+    }
+    // Rune literal 'c' or type variable 'ident
+    if (code[i] === "'") {
+      let j = i;
+      if (i+1 < n && code[i+1] >= 'a' && code[i+1] <= 'z' && (i+2 >= n || code[i+2] !== "'")) {
+        // Type variable 'ident
+        i++;
+        while (i < n && isIdC(code[i])) i++;
+        r += sp('tyvar', code.slice(j, i)); continue;
+      }
+      // Rune literal 'c'
+      i++;
+      if (i < n && code[i] === '\\') i += 2; else if (i < n) i++;
+      if (i < n && code[i] === "'") i++;
+      r += sp('string', code.slice(j, i)); continue;
+    }
+    // Number (decimal, hex 0xFF, binary 0b1010, float)
+    if (isDig(code[i])) {
+      let j = i;
+      if (code[i] === '0' && i+1 < n && (code[i+1] === 'x' || code[i+1] === 'X')) {
+        i += 2; while (i < n && isHex(code[i])) i++;
+      } else if (code[i] === '0' && i+1 < n && (code[i+1] === 'b' || code[i+1] === 'B')) {
+        i += 2; while (i < n && (code[i] === '0' || code[i] === '1')) i++;
+      } else {
+        while (i < n && isDig(code[i])) i++;
+        if (i < n && code[i] === '.' && i+1 < n && isDig(code[i+1])) { i++; while (i < n && isDig(code[i])) i++; }
+      }
+      r += sp('number', code.slice(j, i)); continue;
+    }
+    // Identifier or keyword
+    if (isIdS(code[i])) {
+      let j = i;
+      while (i < n && isIdC(code[i])) i++;
+      const w = code.slice(j, i);
+      if (HL_KEYWORDS.has(w)) r += sp('keyword', w);
+      else if (w[0] >= 'A' && w[0] <= 'Z') r += sp('constructor', w);
+      else r += escHtml(w);
+      continue;
+    }
+    // Polymorphic variant `Tag
+    if (code[i] === '`' && i+1 < n && code[i+1] >= 'A' && code[i+1] <= 'Z') {
+      let j = i; i++;
+      while (i < n && isIdC(code[i])) i++;
+      r += sp('constructor', code.slice(j, i)); continue;
+    }
+    // Two-char operators
+    if (i+1 < n && HL_OPS2.has(code[i] + code[i+1])) {
+      r += sp('operator', code[i] + code[i+1]); i += 2; continue;
+    }
+    // Single-char operators
+    if (HL_OPS1.has(code[i])) {
+      r += sp('operator', code[i]); i++; continue;
+    }
+    // Default
+    r += escHtml(code[i]); i++;
+  }
+  return r;
+}
+
+function updateHighlight() {
+  sourceHighlight.innerHTML = highlightMiniML(source.value) + '\n';
+}
+
+source.addEventListener("input", updateHighlight);
+source.addEventListener("scroll", () => {
+  sourceHighlight.scrollTop = source.scrollTop;
+  sourceHighlight.scrollLeft = source.scrollLeft;
+});
+updateHighlight();
+
+// Configure marked.js to highlight code blocks and add heading IDs
+marked.use({
+  renderer: {
+    code(src, lang) {
+      const text = typeof src === 'object' ? (src.text || '') : src;
+      const language = typeof src === 'object' ? (src.lang || '') : (lang || '');
+      const hl = (!language || language === 'ocaml' || language === 'miniml' || language === 'ml')
+        ? highlightMiniML(text) : escHtml(text);
+      return '<pre><code>' + hl + '</code></pre>\n';
+    },
+    heading(token) {
+      const text = typeof token === 'object' ? (token.text || '') : token;
+      const depth = typeof token === 'object' ? (token.depth || 1) : 1;
+      const slug = text.toLowerCase().replace(/<[^>]*>/g, '').replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').trim();
+      return `<h${depth} id="${slug}">${text}</h${depth}>\n`;
+    }
+  }
+});
+
+// Compiler bundle cache
+let compilerJson = null;  // JSON string for compiler bundle
+let compilerLoading = false;
+
+function appendOutput(text, cls) {
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text + "\n";
+  output.appendChild(span);
+  output.scrollTop = output.scrollHeight;
+}
+
+function setStatus(html) {
+  statusText.innerHTML = html;
+}
+
+async function loadCompiler() {
+  if (compilerJson) return compilerJson;
+  if (compilerLoading) return null;
+  compilerLoading = true;
+  setStatus('<span class="spinner"></span>Loading compiler...');
+  try {
+    const resp = await fetch("compiler.json");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    compilerJson = await resp.text();
+    setStatus("Compiler loaded");
+    return compilerJson;
+  } catch (e) {
+    setStatus("");
+    appendOutput("Failed to load compiler: " + e.message, "error");
+    return null;
+  } finally {
+    compilerLoading = false;
+  }
+}
+
+// Pre-fetch compiler on page load
+loadCompiler();
+
+async function runProgram() {
+  // Clean up any running canvas app
+  stopCanvasApp();
+  canvasContainer.style.display = "none";
+  globalThis._canvasApp = null;
+  globalThis._canvasMouseClicked = false;
+  mouseWasDown = false;
+
+  output.textContent = "";
+  runBtn.disabled = true;
+
+  const code = source.value;
+  if (!code.trim()) {
+    appendOutput("No source code provided.", "error");
+    runBtn.disabled = false;
+    return;
+  }
+
+  // Load compiler if needed
+  const compiler = await loadCompiler();
+  if (!compiler) {
+    runBtn.disabled = false;
+    return;
+  }
+
+  // Stage 1: Compile
+  setStatus('<span class="spinner"></span>Compiling...');
+  // Yield to let browser paint the status update before blocking
+  await new Promise(r => setTimeout(r, 10));
+  const compileOutput = [];
+
+  const optimize = document.getElementById("optimizeToggle").checked;
+  globalThis._vmArgs = optimize
+    ? ["compiler", "--emit-json", "input.mml"]
+    : ["compiler", "--emit-json", "--no-optimize", "input.mml"];
+  globalThis._vmReadFile = (filename) => {
+    if (filename === "input.mml") return code;
+    if (MiniML.STDLIB_SOURCES[filename]) return MiniML.STDLIB_SOURCES[filename];
+    throw new Error("File not found: " + filename);
+  };
+  globalThis._vmOutput = (s) => compileOutput.push(s);
+
+  let compiledJson;
+  const t0 = performance.now();
+  try {
+    MiniML.loadBundle(compiler);
+    compiledJson = compileOutput.join("\n");
+  } catch (e) {
+    const elapsed = (performance.now() - t0).toFixed(1);
+    globalThis._vmArgs = null;
+    globalThis._vmReadFile = null;
+    globalThis._vmOutput = null;
+    setStatus("");
+    // Strip outer VM's [line N] prefix - the compiler's own line is noise
+    let msg = e.message || String(e);
+    msg = msg.replace(/^\[line \d+\] /, "");
+    appendOutput("Compile error: " + msg, "compile-error");
+    appendOutput(`\n--- failed in ${elapsed}ms ---`, "timing");
+    runBtn.disabled = false;
+    return;
+  }
+
+  globalThis._vmArgs = null;
+  globalThis._vmReadFile = null;
+  globalThis._vmOutput = null;
+
+  const compileTime = (performance.now() - t0).toFixed(1);
+
+  if (!compiledJson || !compiledJson.trim()) {
+    setStatus("");
+    appendOutput("Compiler produced no output.", "error");
+    runBtn.disabled = false;
+    return;
+  }
+
+  // Stage 2: Execute
+  setStatus('<span class="spinner"></span>Running...');
+  globalThis._vmOutput = (s) => appendOutput(s);
+
+  const t1 = performance.now();
+  try {
+    const result = MiniML.loadBundle(compiledJson);
+    const runTime = (performance.now() - t1).toFixed(1);
+    if (result !== MiniML.VUNIT && result.tag !== "unit") {
+      appendOutput(MiniML.ppValue(result));
+    }
+    setStatus("");
+    appendOutput(`\n--- compiled in ${compileTime}ms, ran in ${runTime}ms ---`, "timing");
+  } catch (e) {
+    const runTime = (performance.now() - t1).toFixed(1);
+    setStatus("");
+    if (e instanceof MiniML.RuntimeError) {
+      appendOutput("Runtime error: " + e.message, "error");
+    } else {
+      appendOutput("Error: " + e.message, "error");
+    }
+    appendOutput(`\n--- compiled in ${compileTime}ms, failed in ${runTime}ms ---`, "timing");
+  }
+
+  // Stage 3: Start canvas animation loop if app was registered
+  if (globalThis._canvasApp) {
+    const { initFn, frameFn } = globalThis._canvasApp;
+    const vmInst = globalThis._vmInstance;
+    stopBtn.style.display = "inline-block";
+
+    // Keep _vmOutput active so print inside frame functions shows in output
+    // globalThis._vmOutput stays set
+
+    let state;
+    try {
+      state = MiniML.callClosure(vmInst, initFn, MiniML.VUNIT);
+    } catch (e) {
+      appendOutput("Canvas init error: " + e.message, "error");
+      stopCanvasApp();
+      globalThis._vmOutput = null;
+      runBtn.disabled = false;
+      return;
+    }
+
+    function canvasFrame() {
+      // Update click state: true for exactly one frame on mouse-down transition
+      const isDown = globalThis._canvasMouseDown;
+      globalThis._canvasMouseClicked = isDown && !mouseWasDown;
+      mouseWasDown = isDown;
+
+      // Update key pressed state: true for exactly one frame per key
+      const currentKeys = { ...globalThis._canvasKeysDown };
+      globalThis._canvasKeysPressed = {};
+      for (const key in currentKeys) {
+        if (!_prevKeysDown[key]) {
+          globalThis._canvasKeysPressed[key] = true;
+        }
+      }
+      _prevKeysDown = currentKeys;
+
+      try {
+        state = MiniML.callClosure(vmInst, frameFn, state);
+      } catch (e) {
+        appendOutput("Canvas frame error: " + e.message, "error");
+        stopCanvasApp();
+        globalThis._vmOutput = null;
+        runBtn.disabled = false;
+        return;
+      }
+      animFrameId = requestAnimationFrame(canvasFrame);
+    }
+    animFrameId = requestAnimationFrame(canvasFrame);
+    runBtn.disabled = false;
+    return;
+  }
+
+  globalThis._vmOutput = null;
+  runBtn.disabled = false;
+}
+
+runBtn.addEventListener("click", runProgram);
+
+clearBtn.addEventListener("click", () => {
+  output.textContent = "";
+  setStatus("");
+});
+
+// Tab key support in textarea
+source.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const start = source.selectionStart;
+    const end = source.selectionEnd;
+    source.value = source.value.substring(0, start) + "  " + source.value.substring(end);
+    source.selectionStart = source.selectionEnd = start + 2;
+    updateHighlight();
+  }
+  // Ctrl/Cmd+Enter to run
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    runProgram();
+  }
+});
+
+// Sample programs
+const SAMPLES = {
+  hello: `let () = print "Hello, MiniML!"
+let () = print $"1 + 2 = {1 + 2}"
+let () = print $"pi ~ {3.14159}"
+`,
+  fib: `let rec fib n =
+  if n <= 1 do n
+  else fib (n - 1) + fib (n - 2)
+
+let () = print $"fib(10) = {fib 10}"
+let () = print $"fib(20) = {fib 20}"
+let () = print $"fib(30) = {fib 30}"
+`,
+  lists: `let nums = [1; 2; 3; 4; 5]
+let () = print $"nums = {show nums}"
+
+let doubled = List.map (fn x -> x * 2) nums
+let () = print $"doubled = {show doubled}"
+
+let total = List.fold (fn acc x -> acc + x) 0 nums
+let () = print $"sum = {total}"
+
+let evens = List.filter (fn x -> x mod 2 = 0) nums
+let () = print $"evens = {show evens}"
+
+let sorted = List.sort (fn a b -> b - a) [3; 1; 4; 1; 5; 9]
+let () = print $"sorted desc = {show sorted}"
+
+let reversed = List.rev nums
+let () = print $"reversed = {show reversed}"
+`,
+  variants: `type shape =
+  | Circle of float
+  | Rect of float * float
+  | Triangle of float * float
+
+let area s = match s with
+  | Circle r -> 3.14159 * r * r
+  | Rect (w, h) -> w * h
+  | Triangle (b, h) -> 0.5 * b * h
+
+let shapes = [Circle 5.0; Rect (3.0, 4.0); Triangle (6.0, 8.0)]
+
+let () = List.fold (fn _ s ->
+  print $"area = {area s}"
+) () shapes
+
+type animal = Cat of string | Dog of string
+
+let speak a = match a with
+  | Cat name -> $"{name} says meow"
+  | Dog name -> $"{name} says woof"
+
+let () = print (speak (Cat "Whiskers"))
+let () = print (speak (Dog "Rex"))
+`,
+  higher: `-- Function composition
+let compose f g x = f (g x)
+let add1 x = x + 1
+let double x = x * 2
+
+let add1_then_double = compose double add1
+let () = print $"add1_then_double 5 = {add1_then_double 5}"
+
+-- Currying
+let add a b = a + b
+let add10 = add 10
+let () = print $"add10 25 = {add10 25}"
+
+-- Map with lambda
+let squares = List.map (fn x -> x * x) [1; 2; 3; 4; 5]
+let () = print $"squares = {show squares}"
+
+-- Fold to build a string
+let words = ["hello"; "functional"; "world"]
+let sentence = List.fold (fn acc w ->
+  if acc = "" do w else acc ^ " " ^ w
+) "" words
+let () = print sentence
+`,
+  modules: `module Counter =
+  let mut state = 0
+
+  pub let increment () =
+    state := state + 1
+
+  pub let get () = state
+end
+
+let () = Counter.increment ()
+let () = Counter.increment ()
+let () = Counter.increment ()
+let () = print $"counter = {Counter.get ()}"
+
+module Point =
+  type t = { x: float; y: float }
+
+  pub let make x y = { x = x; y = y }
+
+  pub let distance p1 p2 =
+    let dx = p1.x - p2.x in
+    let dy = p1.y - p2.y in
+    Math.sqrt (dx * dx + dy * dy)
+end
+
+let p1 = Point.make 0.0 0.0
+let p2 = Point.make 3.0 4.0
+let () = print $"distance = {Point.distance p1 p2}"
+`,
+  hashtbl: `let h = Hashtbl.create 16
+let () = Hashtbl.set h "name" "MiniML"
+let () = Hashtbl.set h "version" "1.0"
+let () = Hashtbl.set h "author" "Walter"
+
+let () = print (Hashtbl.get h "name")
+let () = print (Hashtbl.has h "version")
+let () = print (Hashtbl.length h)
+
+let () = Hashtbl.remove h "version"
+let () = print (Hashtbl.length h)
+
+let keys = Hashtbl.keys h
+let () = print keys
+`,
+  effects: `-- Effect handlers: exceptions
+effect Exn =
+  raise : string -> 'a
+end
+
+let safe_div a b =
+  if b = 0 do perform raise "division by zero"
+  else a / b
+
+let result =
+  try safe_div 10 0
+  with
+  | raise msg -> print $"caught: {msg}"; 0
+
+let () = print $"result = {result}"
+
+-- Effect handlers: state
+effect State =
+  get : unit -> int
+  put : int -> unit
+end
+
+let stateful () =
+  let x = perform get () in
+  perform put (x + 1);
+  let y = perform get () in
+  perform put (y * 2);
+  perform get ()
+
+let run_state init f =
+  let mut s = init in
+  handle f () with
+  | return x -> (x, s)
+  | get () k ->
+    resume k s
+  | put v k ->
+    s := v;
+    resume k ()
+
+let (result, final) = run_state 10 stateful
+let () = print $"result = {result}, final state = {final}"
+`,
+  typeclasses: `-- Operator overloading with type classes
+
+type vec2 = { x: float; y: float } deriving Show
+
+instance Num vec2 =
+  let (+) a b = { x = a.x + b.x; y = a.y + b.y }
+  let (-) a b = { x = a.x - b.x; y = a.y - b.y }
+  let (*) a b = { x = a.x * b.x; y = a.y * b.y }
+  let (/) a b = { x = a.x / b.x; y = a.y / b.y }
+  let neg a = { x = neg a.x; y = neg a.y }
+end
+
+let dot (a: vec2) (b: vec2) =
+  let p = a * b in p.x + p.y
+
+let magnitude v = Math.sqrt (dot v v)
+
+let normalize v =
+  let m = magnitude v in
+  v / { x = m; y = m }
+
+let v1 = { x = 3.0; y = 4.0 }
+let v2 = { x = 1.0; y = 2.0 }
+
+let () = print $"v1 + v2 = {show (v1 + v2)}"
+let () = print $"|v1| = {magnitude v1:.4f}"
+let () = print $"norm = {show (normalize v1)}"
+let () = print $"v1 · v2 = {dot v1 v2:.1f}"
+
+-- Generic: works on int, float, or vec2
+let sum zero xs = List.fold (+) zero xs
+
+let () = print $"sum ints = {sum 0 [10; 20; 30]}"
+let () = print $"sum vecs = {show (sum { x = 0.0; y = 0.0 } [v1; v2; { x = 0.0; y = 1.0 }])}"
+`,
+  generators: `-- Generators with algebraic effects
+
+effect Emit =
+  emit : int -> unit
+end
+
+-- Infinite fibonacci generator
+let fib_gen () =
+  let mut a = 0 in
+  let mut b = 1 in
+  for do
+    perform emit a;
+    let t = b in
+    b := a + b;
+    a := t
+  end
+
+-- Infinite squares generator
+let squares_gen () =
+  let mut n = 1 in
+  for do
+    perform emit (n * n);
+    n := n + 1
+  end
+
+-- Reusable handler: collect first N values
+let take n gen =
+  let mut result = [] in
+  let mut count = 0 in
+  handle gen () with
+  | return _ -> List.rev result
+  | emit x k ->
+    result := x :: result;
+    count := count + 1;
+    if count < n do resume k ()
+    else List.rev result
+
+let () = print $"fibs    = {show (take 15 fib_gen)}"
+let () = print $"squares = {show (take 10 squares_gen)}"
+
+-- Reusable handler: sum first N values
+let sum_first n gen =
+  let mut total = 0 in
+  let mut count = 0 in
+  handle gen () with
+  | return _ -> total
+  | emit x k ->
+    total := total + x;
+    count := count + 1;
+    if count < n do resume k ()
+    else total
+
+let () = print $"sum of first 20 fibs = {sum_first 20 fib_gen}"
+`,
+  iterators: `-- Custom iterators with type classes
+
+type 'a tree =
+  | Leaf of 'a
+  | Node of 'a tree * 'a * 'a tree
+
+-- Implement Iter to enable for-loops and Enum
+instance Iter ('a tree) 'a =
+  let fold f acc t = match t with
+    | Leaf x -> f acc x
+    | Node (l, x, r) ->
+      let acc = fold f acc l in
+      let acc = f acc x in
+      fold f acc r
+end
+
+let tree =
+  Node (
+    Node (Leaf 1, 2, Leaf 3),
+    4,
+    Node (Leaf 5, 6, Leaf 7)
+  )
+
+-- For-in loops work on any Iter type
+let sum = for x in tree with acc = 0 do acc + x end
+let () = print $"sum = {sum}"
+
+let elems : int list = for x in tree with acc = [] do x :: acc end
+let () = print $"in-order = {show (List.rev elems)}"
+
+-- Collect to list, then use Enum
+let items : int list = List.rev elems
+let () = print $"total = {Enum.sum items}"
+let () = print $"evens = {Enum.count (fn x -> x mod 2 = 0) items}"
+let () = print $"doubled = {show (List.map (fn x -> x * 2) items)}"
+`,
+  evaluator: `-- Mini Expression Evaluator
+-- Features: ADTs, type classes (custom instances + where constraints),
+-- algebraic effects (handle/with + try/with), pattern matching (or-patterns,
+-- guards, destructuring), modules, for/in and fold loops, pipes, mutability
+
+type op = Add | Sub | Mul | Div
+
+instance Show op =
+  let show o = match o with
+    | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/"
+end
+
+type expr =
+  | Num of float
+  | Var of string
+  | Bin of op * expr * expr
+  | Let of string * expr * expr
+
+-- Constructor helpers in a module
+module E =
+  pub let num n = Num (float_of_int n)
+  pub let var s = Var s
+  pub let add a b = Bin (Add, a, b)
+  pub let sub a b = Bin (Sub, a, b)
+  pub let mul a b = Bin (Mul, a, b)
+  pub let div a b = Bin (Div, a, b)
+  pub let let_ n v b = Let (n, v, b)
+end
+
+-- Effects for tracing and errors
+effect Trace =
+  trace : string -> unit
+end
+
+effect Fail =
+  fail : string -> 'a
+end
+
+-- Classify ops with or-patterns
+let classify op = match op with
+  | Add | Sub -> "additive"
+  | Mul | Div -> "multiplicative"
+;;
+
+-- Generic display using type class constraint
+let labeled (tag: string) (x: 'a) : string where Show 'a =
+  $"{tag}: {show x}"
+;;
+
+-- Environment lookup with destructuring and guard
+let rec lookup name env =
+  match env with
+  | [] -> perform fail $"undefined: {name}"
+  | (k, v) :: _ when k = name -> v
+  | _ :: rest -> lookup name rest
+;;
+
+-- Recursive evaluator with effects
+let rec eval env expr =
+  match expr with
+  | Num n -> n
+  | Var name ->
+    let v = lookup name env in
+    perform trace $"  {name} => {v}";
+    v
+  | Bin (op, left, right) ->
+    let a = eval env left in
+    let b = eval env right in
+    let is_div = match op with Div -> true | _ -> false in
+    if is_div && b = 0.0 do
+      perform fail "division by zero"
+    end;
+    let result = match op with
+      | Add -> a + b | Sub -> a - b
+      | Mul -> a * b | Div -> a / b
+    in
+    perform trace $"  {a} {show op} {b} = {result}  [{classify op}]";
+    result
+  | Let (name, val_expr, body) ->
+    let v = eval env val_expr in
+    perform trace $"  let {name} = {v}";
+    eval ((name, v) :: env) body
+;;
+
+-- Run with nested effect handlers (handle for trace, try for errors)
+let run expr =
+  let mut log = [] in
+  let value =
+    try
+      handle eval [] expr with
+      | return x -> Some x
+      | trace msg k ->
+        log := msg :: log;
+        resume k ()
+    with
+    | fail msg ->
+      log := $"  ERROR: {msg}" :: log;
+      None
+  in
+  (value, List.rev log)
+;;
+
+-- Display a single result with its trace
+let show_result (desc, value, log) =
+  print $">> {desc}";
+  for msg in log do print msg end;
+  match value with
+  | Some v -> print (labeled "   result" v)
+  | None -> print "   failed"
+;;
+
+-- Test expressions
+let tests = [
+  (E.add (E.num 1) (E.num 2), "1 + 2");
+  (E.mul (E.num 6) (E.num 7), "6 * 7");
+  (E.let_ "x" (E.num 5) (E.mul (E.var "x") (E.var "x")),
+    "let x=5 in x*x");
+  (E.let_ "a" (E.num 10)
+    (E.let_ "b" (E.num 3)
+      (E.add (E.mul (E.var "a") (E.var "b")) (E.num 2))),
+    "let a=10 in let b=3 in a*b+2");
+  (E.div (E.num 1) (E.num 0), "1 / 0")
+]
+
+-- Evaluate all, collecting results with fold loop + destructuring + pipe
+let results =
+  for (expr, desc) in tests with acc = [] do
+    let (value, log) = run expr in
+    (desc, value, log) :: acc
+  end |> List.rev
+;;
+
+-- Display results
+print "=== Expression Evaluator ===";
+print "";
+
+for (desc, value, log) in results do
+  show_result (desc, value, log)
+end
+;;
+
+-- Summary: count successes with fold + destructuring
+let ok = for (_, value, _) in results with n = 0 do
+  match value with Some _ -> n + 1 | None -> n
+end
+;;
+
+print "";
+print $"Summary: {ok} ok, {List.length tests - ok} errors out of {List.length tests} tests"
+`,
+  gadts: `-- Type-Safe Expression Language with GADTs
+-- Features: GADTs, polymorphic recursion via (type 'a),
+-- pattern matching, type classes, string interpolation
+
+-- A GADT where each constructor encodes its result type
+type 'a expr =
+  | IntLit : int -> int expr
+  | BoolLit : bool -> bool expr
+  | Add : int expr * int expr -> int expr
+  | Mul : int expr * int expr -> int expr
+  | Neg : int expr -> int expr
+  | Eq : int expr * int expr -> bool expr
+  | Lt : int expr * int expr -> bool expr
+  | And : bool expr * bool expr -> bool expr
+  | Not : bool expr -> bool expr
+  | If : bool expr * 'a expr * 'a expr -> 'a expr
+
+-- Type-safe evaluator using polymorphic recursion
+-- (type 'a) introduces a locally abstract type so the return
+-- type varies per GADT branch: int for IntLit, bool for BoolLit
+let rec (type 'a) eval (e : 'a expr) : 'a =
+  match e with
+  | IntLit n -> n
+  | BoolLit b -> b
+  | Add (a, b) -> eval a + eval b
+  | Mul (a, b) -> eval a * eval b
+  | Neg a -> 0 - eval a
+  | Eq (a, b) -> eval a = eval b
+  | Lt (a, b) -> eval a < eval b
+  | And (a, b) -> eval a && eval b
+  | Not a -> not (eval a)
+  | If (cond, t, f) -> if eval cond do eval t else eval f
+
+-- Pretty-printer: also polymorphic over the GADT index
+let rec (type 'a) to_string (e : 'a expr) : string =
+  match e with
+  | IntLit n -> string_of_int n
+  | BoolLit b -> if b do "true" else "false"
+  | Add (a, b) -> $"({to_string a} + {to_string b})"
+  | Mul (a, b) -> $"({to_string a} * {to_string b})"
+  | Neg a -> $"(-{to_string a})"
+  | Eq (a, b) -> $"({to_string a} = {to_string b})"
+  | Lt (a, b) -> $"({to_string a} < {to_string b})"
+  | And (a, b) -> $"({to_string a} && {to_string b})"
+  | Not a -> $"(!{to_string a})"
+  | If (c, t, f) -> $"(if {to_string c} then {to_string t} else {to_string f})"
+
+-- Evaluate and display (type class constraint for Show)
+let run (e : 'a expr) where Show 'a =
+  print $"{to_string e}  =>  {show (eval e)}"
+;;
+
+-- abs(x) = if x < 0 then -x else x
+let abs_expr x = If (Lt (x, IntLit 0), Neg x, x)
+;;
+
+-- Arithmetic
+print "-- Arithmetic --";
+run (Add (IntLit 3, IntLit 4));
+run (Mul (IntLit 6, IntLit 7));
+run (Add (IntLit 10, Neg (IntLit 3)));
+
+-- Comparisons
+print "";
+print "-- Comparisons --";
+run (Eq (IntLit 3, IntLit 3));
+run (Lt (IntLit 2, IntLit 5));
+run (And (BoolLit true, Not (BoolLit false)));
+
+-- Conditionals (both branches must have matching types)
+print "";
+print "-- Conditionals --";
+run (If (BoolLit true, IntLit 1, IntLit 0));
+run (If (Eq (IntLit 2, IntLit 2), IntLit 42, IntLit 0));
+run (If (Lt (IntLit 10, IntLit 5), BoolLit true, BoolLit false));
+
+-- Nested expression
+print "";
+print "-- Nested --";
+run (If (Eq (Add (IntLit 3, IntLit 4), IntLit 7),
+         If (Lt (IntLit 2, IntLit 1), IntLit 0, Mul (IntLit 100, IntLit 2)),
+         Neg (IntLit 1)));
+
+run (abs_expr (IntLit 5));
+run (abs_expr (Neg (IntLit 5)))
+
+-- The type checker prevents ill-typed expressions at compile time:
+-- Add (IntLit 1, BoolLit true)       -- rejected: bool expr != int expr
+-- If (IntLit 1, IntLit 2, IntLit 3)  -- rejected: int expr != bool expr
+`,
+  fundeps: `-- Functional Dependencies & Multi-Parameter Type Classes
+-- Features: fundeps, multi-param type classes, ADTs, pattern matching,
+-- type inference guided by fundeps, unit conversion pattern
+
+-- Collection class: the container 'c determines the element type 'e.
+-- Once the compiler knows the container, elements are inferred.
+class Collection 'c 'e where 'c -> 'e =
+  empty : 'c
+  insert : 'e -> 'c -> 'c
+  to_list : 'c -> 'e list
+  size : 'c -> int
+end
+
+-- Sorted list: maintains ascending order
+type sorted_list = SortedList of int list
+
+instance Collection sorted_list int =
+  let empty = SortedList []
+  let insert x (SortedList xs) =
+    let rec go xs = match xs with
+      | [] -> [x]
+      | h :: t -> if x <= h do x :: h :: t else h :: go t
+    in SortedList (go xs)
+  let to_list (SortedList xs) = xs
+  let size (SortedList xs) = List.length xs
+end
+
+-- Unique set: no duplicates, preserves insertion order
+type string_set = StringSet of string list
+
+instance Collection string_set string =
+  let empty = StringSet []
+  let insert x (StringSet xs) =
+    if List.exists (fn s -> s = x) xs do StringSet xs
+    else StringSet (x :: xs)
+  let to_list (StringSet xs) = List.rev xs
+  let size (StringSet xs) = List.length xs
+end
+
+-- Generic from_list: fundep lets compiler infer element types
+let from_list xs =
+  List.fold (fn c x -> insert x c) empty xs
+;;
+
+-- Sorted list: compiler infers int elements from sorted_list
+let () = print "=== Sorted List ==="
+let nums = (from_list [5; 3; 8; 1; 3; 7; 1; 4] : sorted_list)
+let () = print $"sorted:  {show (to_list nums)}"
+let () = print $"size:    {size nums}"
+let () = print $"doubled: {show (List.map (fn x -> x * 2) (to_list nums))}"
+
+-- String set: compiler infers string elements from string_set
+let () = print ""
+let () = print "=== String Set ==="
+let names = (from_list ["alice"; "bob"; "alice"; "carol"; "bob"] : string_set)
+let () = print $"unique:  {show (to_list names)}"
+let () = print $"size:    {size names}"
+let () = print $"upper:   {show (List.map String.uppercase (to_list names))}"
+
+-- Convertible: source type determines target type
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+
+type celsius = C of float deriving Show
+type fahrenheit = F of float deriving Show
+type meters = M of float deriving Show
+type feet = Ft of float deriving Show
+
+instance Convertible celsius fahrenheit =
+  let convert (C c) = F (c * 1.8 + 32.0)
+end
+
+instance Convertible fahrenheit celsius =
+  let convert (F f) = C ((f - 32.0) / 1.8)
+end
+
+instance Convertible meters feet =
+  let convert (M m) = Ft (m * 3.28084)
+end
+
+instance Convertible feet meters =
+  let convert (Ft f) = M (f / 3.28084)
+end
+
+-- convert is unambiguous: C 100.0 can only produce fahrenheit
+let () = print ""
+let () = print "=== Unit Conversions ==="
+
+let (F f) = convert (C 100.0)
+let () = print $"100 C   = {f:.1f} F"
+
+let (C c) = convert (F 32.0)
+let () = print $"32 F    = {c:.1f} C"
+
+let (Ft ft) = convert (M 1.8)
+let () = print $"1.8 m   = {ft:.2f} ft"
+
+let (M m) = convert (Ft 5280.0)
+let () = print $"5280 ft = {m:.2f} m"
+
+-- Round-trip conversions
+let () = print ""
+let () = print "=== Round Trips ==="
+
+let temp = C 37.0
+let (F as_f) = convert temp
+let (C back) = convert (F as_f)
+let () = print $"37 C -> {as_f:.1f} F -> {back:.1f} C"
+
+let dist = M 100.0
+let (Ft as_ft) = convert dist
+let (M back_m) = convert (Ft as_ft)
+let () = print $"100 m -> {as_ft:.2f} ft -> {back_m:.2f} m"
+
+-- Using the built-in Iter fundep (Iter 'a 'b where 'a -> 'b)
+-- for-in loops: collection type determines element type
+let () = print ""
+let () = print "=== Built-in Iter Fundep ==="
+
+let sum = for x in to_list nums with acc = 0 do acc + x end
+let () = print $"sum of sorted: {sum}"
+
+let joined = for name in to_list names with acc = "" do
+  if acc = "" do name else acc ^ ", " ^ name
+end
+let () = print $"joined: {joined}"
+`,
+  canvas: `-- Interactive Canvas Demo
+-- Elm architecture (init/frame), immediate-mode widgets,
+-- records, string interpolation, closures, extern declarations
+
+-- Canvas API declarations (browser-provided externs)
+extern Canvas.init : int -> int -> unit
+extern Canvas.clear : string -> unit
+extern Canvas.fill_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.stroke_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.fill_circle : float -> float -> float -> string -> unit
+extern Canvas.draw_text : string -> float -> float -> string -> unit
+extern Canvas.set_font : string -> unit
+extern Canvas.mouse_x : unit -> float
+extern Canvas.mouse_y : unit -> float
+extern Canvas.mouse_down : unit -> bool
+extern Canvas.mouse_clicked : unit -> bool
+extern Canvas.start_app : (unit -> 'a) -> ('a -> 'a) -> unit
+extern __math_sin : float -> float
+extern __math_cos : float -> float
+
+let pi = 3.14159265
+
+-- Immediate-mode button: draws itself, returns true if clicked
+let button x y w h label =
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  let hover = mx >= x && mx < x + w && my >= y && my < y + h in
+  Canvas.fill_rect x y w h (if hover do "#3D4555" else "#2A3040");
+  if hover do Canvas.stroke_rect x y w h "#FFCC66" end;
+  Canvas.set_font "15px monospace";
+  Canvas.draw_text label (x + 10.0) (y + 8.0)
+    (if hover do "#FFCC66" else "#CCCAC2");
+  hover && Canvas.mouse_clicked ()
+
+-- Application state
+type state = {
+  count: int;
+  frame: int;
+  message: string
+}
+
+-- Initialize canvas and return starting state
+let init () =
+  Canvas.init 500 400;
+  { count = 0; frame = 0; message = "Click the buttons!" }
+
+-- Frame function: draws UI, handles input, returns new state
+let frame s =
+  Canvas.clear "#1a202c";
+
+  -- Title
+  Canvas.set_font "bold 24px sans-serif";
+  Canvas.draw_text "MiniML Canvas Demo" 20.0 16.0 "#FFCC66";
+
+  -- Counter display
+  Canvas.set_font "20px monospace";
+  Canvas.draw_text $"Count: {s.count}" 20.0 60.0 "#E2E8F0";
+
+  -- Buttons (immediate mode: draw + detect click in one call)
+  let inc = button 20.0 92.0 100.0 32.0 "  + Add" in
+  let dec = button 130.0 92.0 100.0 32.0 "  - Sub" in
+  let rst = button 240.0 92.0 100.0 32.0 "  Reset" in
+
+  -- Progress bar
+  let bar_w = 340.0 in
+  let fill = float_of_int (s.count mod 21) / 20.0 in
+  let fill = if fill < 0.0 do 0.0 - fill else fill in
+  Canvas.fill_rect 20.0 140.0 bar_w 16.0 "#2D3748";
+  Canvas.fill_rect 20.0 140.0 (bar_w * fill) 16.0
+    (if s.count >= 0 do "#48BB78" else "#FC8181");
+  Canvas.stroke_rect 20.0 140.0 bar_w 16.0 "#4A5568";
+
+  -- Animated orbiting circles
+  let t = float_of_int s.frame / 60.0 in
+  let cx = 250.0 in
+  let cy = 250.0 in
+  -- Draw orbit path
+  Canvas.stroke_rect (cx - 80.0) (cy - 80.0) 160.0 160.0 "#2D3748";
+  -- Three orbiting dots
+  Canvas.fill_circle
+    (cx + 70.0 * __math_cos (t * 2.0))
+    (cy + 70.0 * __math_sin (t * 2.0))
+    8.0 "#63B3ED";
+  Canvas.fill_circle
+    (cx + 70.0 * __math_cos (t * 2.0 + 2.094))
+    (cy + 70.0 * __math_sin (t * 2.0 + 2.094))
+    8.0 "#FC8181";
+  Canvas.fill_circle
+    (cx + 70.0 * __math_cos (t * 2.0 + 4.189))
+    (cy + 70.0 * __math_sin (t * 2.0 + 4.189))
+    8.0 "#68D391";
+
+  -- Mouse cursor follower
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  Canvas.fill_circle mx my 6.0 "#FFCC66";
+  Canvas.set_font "11px monospace";
+  Canvas.draw_text $"({int_of_float mx}, {int_of_float my})"
+    (mx + 10.0) (my - 14.0) "#A0AEC0";
+
+  -- Status message
+  Canvas.set_font "13px sans-serif";
+  Canvas.draw_text s.message 20.0 375.0 "#718096";
+
+  -- Compute updated state
+  let new_count =
+    if inc do s.count + 1
+    else if dec do s.count - 1
+    else if rst do 0
+    else s.count
+  in
+  let new_msg =
+    if inc do $"Incremented to {new_count}"
+    else if dec do $"Decremented to {new_count}"
+    else if rst do "Reset to zero"
+    else s.message
+  in
+  { count = new_count; frame = s.frame + 1; message = new_msg }
+
+-- Wire it up: register init + frame, start the app loop
+let () = Canvas.start_app init frame
+`,
+  framework: `-- Framework GUI Demo
+-- Elm architecture with algebraic effects for message dispatch
+-- Shows: effects, handle/with, records, pattern matching, closures
+
+-- Canvas API
+extern Canvas.init : int -> int -> unit
+extern Canvas.clear : string -> unit
+extern Canvas.fill_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.stroke_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.fill_circle : float -> float -> float -> string -> unit
+extern Canvas.draw_text : string -> float -> float -> string -> unit
+extern Canvas.set_font : string -> unit
+extern Canvas.mouse_x : unit -> float
+extern Canvas.mouse_y : unit -> float
+extern Canvas.mouse_down : unit -> bool
+extern Canvas.mouse_clicked : unit -> bool
+extern Canvas.start_app : (unit -> 'a) -> ('a -> 'a) -> unit
+extern __math_sin : float -> float
+extern __math_cos : float -> float
+
+-- ============================================================
+-- Message types for the application
+-- ============================================================
+
+type msg =
+  | Increment
+  | Decrement
+  | Reset
+  | SetTheme of string
+  | Tick
+
+-- ============================================================
+-- Dispatch effect: widgets send messages without knowing the
+-- update function. The framework handles them.
+-- ============================================================
+
+effect Dispatch =
+  dispatch : msg -> unit
+end
+
+-- ============================================================
+-- Widget library: immediate-mode widgets that dispatch messages
+-- ============================================================
+
+let ui_button x y w h label message =
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  let hover = mx >= x && mx < x + w && my >= y && my < y + h in
+  Canvas.fill_rect x y w h (if hover do "#3D4555" else "#2A3040");
+  if hover do Canvas.stroke_rect x y w h "#FFCC66" end;
+  Canvas.set_font "15px monospace";
+  Canvas.draw_text label (x + 10.0) (y + 8.0)
+    (if hover do "#FFCC66" else "#CCCAC2");
+  if hover && Canvas.mouse_clicked () do
+    perform dispatch message
+  end
+
+let ui_label x y text color =
+  Canvas.draw_text text x y color
+
+let ui_swatch x y w h color selected msg =
+  Canvas.fill_rect x y w h color;
+  Canvas.stroke_rect x y w h (if selected do "#FFCC66" else "#4A5568");
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  let clicked = mx >= x && mx < x + w && my >= y && my < y + h
+    && Canvas.mouse_clicked () in
+  if clicked do perform dispatch msg end
+
+-- ============================================================
+-- Framework: run loop that handles the Dispatch effect
+-- ============================================================
+
+let framework_frame update view model =
+  let mut msgs : msg list = [] in
+  let _ = handle
+    view model;
+    perform dispatch Tick
+  with
+  | return x -> x
+  | dispatch msg k ->
+    msgs := msg :: msgs;
+    resume k ()
+  in
+  List.fold (fn m msg -> update msg m) model (List.rev msgs)
+
+-- ============================================================
+-- Application: Model, Update, View
+-- ============================================================
+
+type theme = { bg: string; fg: string; accent: string; name: string }
+
+let themes = [
+  { bg = "#1a202c"; fg = "#E2E8F0"; accent = "#FFCC66"; name = "Dark" };
+  { bg = "#F7F7F7"; fg = "#1a202c"; accent = "#D97706"; name = "Light" };
+  { bg = "#1E1E2E"; fg = "#CDD6F4"; accent = "#F38BA8"; name = "Catppuccin" };
+  { bg = "#282A36"; fg = "#F8F8F2"; accent = "#FF79C6"; name = "Dracula" }
+]
+
+let find_theme name =
+  match List.find (fn t -> t.name = name) themes with
+  | Some t -> t
+  | None -> List.hd themes
+
+type model = {
+  count: int;
+  frame_num: int;
+  theme_name: string;
+  log: string list
+}
+
+-- Init
+let init () =
+  Canvas.init 500 420;
+  { count = 0; frame_num = 0; theme_name = "Dark";
+    log = ["Welcome! Try the buttons."] }
+
+-- Update: pure function, pattern match on messages
+let update msg model =
+  match msg with
+  | Increment ->
+    { model with
+      count = model.count + 1;
+      log = List.concat [$"+ Incremented to {model.count + 1}"] model.log }
+  | Decrement ->
+    { model with
+      count = model.count - 1;
+      log = List.concat [$"- Decremented to {model.count - 1}"] model.log }
+  | Reset ->
+    { model with
+      count = 0;
+      log = List.concat ["* Reset to zero"] model.log }
+  | SetTheme name ->
+    { model with
+      theme_name = name;
+      log = List.concat [$"~ Theme: {name}"] model.log }
+  | Tick ->
+    { model with frame_num = model.frame_num + 1 }
+
+-- View: draws the UI using widgets that dispatch messages
+let view model =
+  let theme = find_theme model.theme_name in
+
+  -- Background
+  Canvas.clear theme.bg;
+
+  -- Title
+  Canvas.set_font "bold 22px sans-serif";
+  ui_label 20.0 16.0 "MiniML Framework Demo" theme.accent;
+  Canvas.set_font "12px sans-serif";
+  ui_label 20.0 44.0
+    "Elm architecture + Dispatch effect + immediate-mode widgets"
+    "#707A8C";
+
+  -- Counter section
+  Canvas.set_font "18px monospace";
+  ui_label 20.0 76.0 $"Count: {model.count}" theme.fg;
+
+  -- Buttons dispatch messages (no direct state mutation!)
+  ui_button 20.0 100.0 90.0 30.0 " + Add" Increment;
+  ui_button 118.0 100.0 90.0 30.0 " - Sub" Decrement;
+  ui_button 216.0 100.0 90.0 30.0 " Reset" Reset;
+
+  -- Progress bar
+  let bar_w = 300.0 in
+  let fill = float_of_int (model.count mod 21) / 20.0 in
+  let fill = if fill < 0.0 do 0.0 - fill else fill in
+  Canvas.fill_rect 20.0 146.0 bar_w 12.0 "#2D3748";
+  Canvas.fill_rect 20.0 146.0 (bar_w * fill) 12.0 theme.accent;
+  Canvas.stroke_rect 20.0 146.0 bar_w 12.0 "#4A5568";
+
+  -- Theme section
+  Canvas.set_font "14px sans-serif";
+  ui_label 20.0 180.0 "Theme:" theme.fg;
+
+  -- Theme swatches dispatch SetTheme messages
+  ui_swatch 80.0 172.0 24.0 24.0 "#1a202c"
+    (model.theme_name = "Dark") (SetTheme "Dark");
+  ui_swatch 112.0 172.0 24.0 24.0 "#F7F7F7"
+    (model.theme_name = "Light") (SetTheme "Light");
+  ui_swatch 144.0 172.0 24.0 24.0 "#1E1E2E"
+    (model.theme_name = "Catppuccin") (SetTheme "Catppuccin");
+  ui_swatch 176.0 172.0 24.0 24.0 "#282A36"
+    (model.theme_name = "Dracula") (SetTheme "Dracula");
+
+  Canvas.set_font "12px monospace";
+  ui_label 212.0 182.0 model.theme_name "#707A8C";
+
+  -- Animated spinner
+  let t = float_of_int model.frame_num / 60.0 in
+  let sx = 420.0 in
+  let sy = 100.0 in
+  Canvas.fill_circle
+    (sx + 30.0 * __math_cos (t * 3.0))
+    (sy + 30.0 * __math_sin (t * 3.0))
+    6.0 theme.accent;
+  Canvas.fill_circle
+    (sx + 30.0 * __math_cos (t * 3.0 + 3.14159))
+    (sy + 30.0 * __math_sin (t * 3.0 + 3.14159))
+    6.0 "#63B3ED";
+
+  -- Event log
+  Canvas.set_font "bold 14px sans-serif";
+  ui_label 20.0 216.0 "Event Log" theme.fg;
+  Canvas.fill_rect 20.0 234.0 460.0 160.0 "#181C26";
+  Canvas.stroke_rect 20.0 234.0 460.0 160.0 "#2D3748";
+
+  Canvas.set_font "12px monospace";
+  let rec take n xs = match xs with
+    | [] -> []
+    | x :: rest -> if n <= 0 do [] else x :: take (n - 1) rest
+  in
+  let visible_log = take 9 model.log in
+  let _ = List.fold (fn i entry ->
+    let y = 248.0 + float_of_int i * 16.0 in
+    let color = if i = 0 do theme.accent else "#707A8C" in
+    ui_label 30.0 y entry color;
+    i + 1
+  ) 0 visible_log in
+
+  -- Mouse position
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  Canvas.fill_circle mx my 4.0 theme.accent;
+  Canvas.set_font "10px monospace";
+  ui_label (mx + 8.0) (my - 10.0)
+    $"({int_of_float mx},{int_of_float my})" "#5C6773"
+
+-- ============================================================
+-- Wire it all together
+-- ============================================================
+
+let frame model = framework_frame update view model
+
+let () = Canvas.start_app init frame
+`,
+  layout: `-- Layout Engine Demo
+-- Flexbox-inspired layout computed from a declarative tree
+-- Shows: recursive ADTs, tree traversal, pattern matching, layout algorithms
+
+extern Canvas.init : int -> int -> unit
+extern Canvas.clear : string -> unit
+extern Canvas.fill_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.stroke_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.fill_circle : float -> float -> float -> string -> unit
+extern Canvas.draw_text : string -> float -> float -> string -> unit
+extern Canvas.set_font : string -> unit
+extern Canvas.mouse_x : unit -> float
+extern Canvas.mouse_y : unit -> float
+extern Canvas.mouse_down : unit -> bool
+extern Canvas.mouse_clicked : unit -> bool
+extern Canvas.start_app : (unit -> 'a) -> ('a -> 'a) -> unit
+extern __math_sin : float -> float
+extern __math_cos : float -> float
+
+-- ============================================================
+-- Layout tree ADT
+-- ============================================================
+
+type node =
+  | HStack of float * float * string * node list
+  | VStack of float * float * string * node list
+  | Box of string * string * string
+  | Spacer
+
+-- Helpers to build layout trees concisely
+let hstack pad gap bg children = HStack (pad, gap, bg, children)
+let vstack pad gap bg children = VStack (pad, gap, bg, children)
+let box label bg fg = Box (label, bg, fg)
+
+-- ============================================================
+-- Recursive layout + render pass
+-- Traverses the tree top-down, dividing available space among
+-- children equally (flexbox-like), accounting for padding & gap
+-- ============================================================
+
+let fmax a b = if a > b do a else b
+
+let rec render x y w h node =
+  match node with
+  | Box (label, bg, fg) ->
+    Canvas.fill_rect x y w h bg;
+    Canvas.stroke_rect x y w h "#1A1F29";
+    Canvas.set_font "12px monospace";
+    Canvas.draw_text label (x + 6.0) (y + h / 2.0 - 7.0) fg
+
+  | Spacer -> ()
+
+  | HStack (pad, gap, bg, children) ->
+    Canvas.fill_rect x y w h bg;
+    let ix = x + pad in
+    let iy = y + pad in
+    let iw = fmax 0.0 (w - pad * 2.0) in
+    let ih = fmax 0.0 (h - pad * 2.0) in
+    let n = float_of_int (List.length children) in
+    if n > 0.0 do
+      let gap_total = gap * (n - 1.0) in
+      let child_w = (iw - gap_total) / n in
+      let _ = List.fold (fn cx child ->
+        render cx iy child_w ih child;
+        cx + child_w + gap
+      ) ix children in
+      ()
+    end
+
+  | VStack (pad, gap, bg, children) ->
+    Canvas.fill_rect x y w h bg;
+    let ix = x + pad in
+    let iy = y + pad in
+    let iw = fmax 0.0 (w - pad * 2.0) in
+    let ih = fmax 0.0 (h - pad * 2.0) in
+    let n = float_of_int (List.length children) in
+    if n > 0.0 do
+      let gap_total = gap * (n - 1.0) in
+      let child_h = (ih - gap_total) / n in
+      let _ = List.fold (fn cy child ->
+        render ix cy iw child_h child;
+        cy + child_h + gap
+      ) iy children in
+      ()
+    end
+
+-- ============================================================
+-- Example layouts
+-- ============================================================
+
+let layout_dashboard () =
+  vstack 6.0 6.0 "#1A1F29" [
+    box "Header" "#FFCC66" "#1A1F29";
+    hstack 0.0 6.0 "#1A1F29" [
+      box "Sidebar" "#2D3748" "#A0AEC0";
+      vstack 0.0 6.0 "#1A1F29" [
+        box "Toolbar" "#3D4555" "#CCCAC2";
+        box "Content" "#242936" "#718096";
+        box "Content" "#242936" "#718096"
+      ]
+    ]
+  ]
+
+let layout_cards () =
+  vstack 6.0 6.0 "#1A1F29" [
+    box "Card Grid" "#FFCC66" "#1A1F29";
+    hstack 0.0 8.0 "#1A1F29" [
+      vstack 6.0 4.0 "#2D3748" [
+        box "Image" "#4A5568" "#A0AEC0";
+        box "Title" "#2D3748" "#E2E8F0";
+        box "Desc" "#2D3748" "#718096"
+      ];
+      vstack 6.0 4.0 "#2D3748" [
+        box "Image" "#4A5568" "#A0AEC0";
+        box "Title" "#2D3748" "#E2E8F0";
+        box "Desc" "#2D3748" "#718096"
+      ];
+      vstack 6.0 4.0 "#2D3748" [
+        box "Image" "#4A5568" "#A0AEC0";
+        box "Title" "#2D3748" "#E2E8F0";
+        box "Desc" "#2D3748" "#718096"
+      ]
+    ]
+  ]
+
+let layout_holy_grail () =
+  vstack 6.0 6.0 "#1A1F29" [
+    box "Header" "#FFCC66" "#1A1F29";
+    hstack 0.0 6.0 "#1A1F29" [
+      box "Nav" "#3D4555" "#CCCAC2";
+      vstack 0.0 4.0 "#1A1F29" [
+        box "Main Content" "#242936" "#E2E8F0";
+        box "Main Content" "#242936" "#718096"
+      ];
+      box "Aside" "#3D4555" "#CCCAC2"
+    ];
+    box "Footer" "#2D3748" "#A0AEC0"
+  ]
+
+let layout_nested () =
+  hstack 6.0 6.0 "#1A1F29" [
+    vstack 4.0 4.0 "#2D3748" [
+      box "A1" "#FC8181" "#1A1F29";
+      hstack 4.0 4.0 "#3D4555" [
+        box "A2" "#68D391" "#1A1F29";
+        box "A3" "#63B3ED" "#1A1F29"
+      ];
+      box "A4" "#D6BCFA" "#1A1F29"
+    ];
+    vstack 4.0 4.0 "#2D3748" [
+      hstack 4.0 4.0 "#3D4555" [
+        vstack 4.0 4.0 "#4A5568" [
+          box "B1" "#FFCC66" "#1A1F29";
+          box "B2" "#F6AD55" "#1A1F29"
+        ];
+        box "B3" "#FC8181" "#1A1F29"
+      ];
+      box "B4" "#68D391" "#1A1F29";
+      hstack 4.0 4.0 "#3D4555" [
+        box "B5" "#63B3ED" "#1A1F29";
+        box "B6" "#D6BCFA" "#1A1F29";
+        box "B7" "#F6AD55" "#1A1F29"
+      ]
+    ]
+  ]
+
+-- ============================================================
+-- Immediate-mode button
+-- ============================================================
+
+let button x y w h label =
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  let hover = mx >= x && mx < x + w && my >= y && my < y + h in
+  Canvas.fill_rect x y w h (if hover do "#3D4555" else "#2A3040");
+  if hover do Canvas.stroke_rect x y w h "#FFCC66" end;
+  Canvas.set_font "14px monospace";
+  Canvas.draw_text label (x + 10.0) (y + 6.0)
+    (if hover do "#FFCC66" else "#CCCAC2");
+  hover && Canvas.mouse_clicked ()
+
+-- ============================================================
+-- Application state and loop
+-- ============================================================
+
+type state = { page: int; frame_num: int }
+
+let num_pages = 4
+
+let page_title p = match p with
+  | 0 -> "Dashboard"
+  | 1 -> "Card Grid"
+  | 2 -> "Holy Grail"
+  | _ -> "Nested"
+
+let page_subtitle p = match p with
+  | 0 -> "VStack(Header, HStack(Sidebar, VStack(Toolbar, Content, Content)))"
+  | 1 -> "VStack(Title, HStack(Card, Card, Card)) -- each card is a VStack"
+  | 2 -> "VStack(Header, HStack(Nav, Content, Aside), Footer)"
+  | _ -> "Deep recursive rows-in-cols-in-rows composition"
+
+let page_layout p = match p with
+  | 0 -> layout_dashboard ()
+  | 1 -> layout_cards ()
+  | 2 -> layout_holy_grail ()
+  | _ -> layout_nested ()
+
+let init () =
+  Canvas.init 500 440;
+  { page = 0; frame_num = 0 }
+
+let frame s =
+  Canvas.clear "#1F2430";
+
+  -- Title
+  Canvas.set_font "bold 20px sans-serif";
+  Canvas.draw_text "MiniML Layout Engine" 20.0 14.0 "#FFCC66";
+
+  -- Navigation
+  let prev = button 20.0 40.0 70.0 26.0 " Prev" in
+  let next = button 98.0 40.0 70.0 26.0 " Next" in
+
+  Canvas.set_font "bold 14px sans-serif";
+  Canvas.draw_text (page_title s.page) 184.0 46.0 "#E2E8F0";
+
+  Canvas.set_font "11px monospace";
+  Canvas.draw_text (page_subtitle s.page) 20.0 76.0 "#5C6773";
+
+  -- Render the layout tree into the available area
+  let tree = page_layout s.page in
+  render 20.0 96.0 460.0 320.0 tree;
+
+  -- Animated dot
+  let t = float_of_int s.frame_num / 60.0 in
+  Canvas.fill_circle
+    (460.0 + 20.0 * __math_cos (t * 2.0))
+    (46.0 + 8.0 * __math_sin (t * 2.0))
+    4.0 "#FFCC66";
+
+  -- Page indicator
+  Canvas.set_font "12px monospace";
+  Canvas.draw_text $"{s.page + 1}/{num_pages}" 20.0 424.0 "#5C6773";
+
+  -- Update state
+  let new_page =
+    if next do (s.page + 1) mod num_pages
+    else if prev do (s.page + num_pages - 1) mod num_pages
+    else s.page
+  in
+  { page = new_page; frame_num = s.frame_num + 1 }
+
+let () = Canvas.start_app init frame
+`,
+  snake: `-- Snake Game
+-- Arrow keys or WASD to move, eat food to grow, don't hit walls or yourself!
+-- Shows: algebraic types, records, pattern matching, lists, immutable state
+
+extern Canvas.init : int -> int -> unit
+extern Canvas.clear : string -> unit
+extern Canvas.fill_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.stroke_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.fill_circle : float -> float -> float -> string -> unit
+extern Canvas.draw_text : string -> float -> float -> string -> unit
+extern Canvas.set_font : string -> unit
+extern Canvas.key_pressed : string -> bool
+extern Canvas.start_app : (unit -> 'a) -> ('a -> 'a) -> unit
+
+-- Direction type
+type direction = Up | Down | Left | Right
+
+-- Game state
+type state = {
+  snake: (int * int) list;
+  dir: direction;
+  food: (int * int);
+  score: int;
+  started: bool;
+  game_over: bool;
+  tick: int;
+  rng: int
+}
+
+let grid_w = 25
+let grid_h = 25
+let cell = 20.0
+let speed = 8
+
+-- Simple LCG random number generator
+let next_rng seed =
+  (seed * 1103515245 + 12345) mod 2147483647
+
+let rand_pos seed =
+  let r1 = next_rng seed in
+  let r2 = next_rng r1 in
+  let x = (if r1 < 0 do 0 - r1 else r1) mod grid_w in
+  let y = (if r2 < 0 do 0 - r2 else r2) mod grid_h in
+  ((x, y), r2)
+
+-- Check if a position is occupied by the snake
+let rec mem_pos pos snake =
+  match snake with
+  | [] -> false
+  | (hd :: tl) -> if hd = pos do true else mem_pos pos tl
+
+-- Generate food not on the snake
+let rec gen_food seed snake =
+  let (pos, new_seed) = rand_pos seed in
+  if mem_pos pos snake do gen_food new_seed snake
+  else (pos, new_seed)
+
+-- Drop the last element of a list
+let rec drop_last lst =
+  match lst with
+  | [] -> []
+  | [_] -> []
+  | (x :: rest) -> x :: drop_last rest
+
+-- Opposite direction check (prevent 180-degree turns)
+let opposite d1 d2 =
+  match (d1, d2) with
+  | (Up, Down) -> true
+  | (Down, Up) -> true
+  | (Left, Right) -> true
+  | (Right, Left) -> true
+  | _ -> false
+
+-- Read direction from arrow keys or WASD
+let read_dir default =
+  if Canvas.key_pressed "ArrowUp" || Canvas.key_pressed "w" do Up
+  else if Canvas.key_pressed "ArrowDown" || Canvas.key_pressed "s" do Down
+  else if Canvas.key_pressed "ArrowLeft" || Canvas.key_pressed "a" do Left
+  else if Canvas.key_pressed "ArrowRight" || Canvas.key_pressed "d" do Right
+  else default
+
+-- Check if any direction key was pressed
+let any_key_pressed () =
+  Canvas.key_pressed "ArrowUp" || Canvas.key_pressed "ArrowDown"
+  || Canvas.key_pressed "ArrowLeft" || Canvas.key_pressed "ArrowRight"
+  || Canvas.key_pressed "w" || Canvas.key_pressed "a"
+  || Canvas.key_pressed "s" || Canvas.key_pressed "d"
+
+let new_game seed =
+  let start_snake = [(12, 12); (11, 12); (10, 12)] in
+  let (food, rng) = gen_food seed start_snake in
+  { snake = start_snake;
+    dir = Right;
+    food = food;
+    score = 0;
+    started = false;
+    game_over = false;
+    tick = 0;
+    rng = rng }
+
+let init () =
+  Canvas.init 500 500;
+  new_game 42
+
+-- Move the snake one step: compute new head, check collisions, update state
+let step s new_dir =
+  let (hx, hy) = List.hd s.snake in
+  let (nx, ny) = match new_dir with
+    | Up -> (hx, hy - 1)
+    | Down -> (hx, hy + 1)
+    | Left -> (hx - 1, hy)
+    | Right -> (hx + 1, hy)
+  in
+  if nx < 0 || nx >= grid_w || ny < 0 || ny >= grid_h do
+    { s with game_over = true }
+  else if mem_pos (nx, ny) s.snake do
+    { s with game_over = true }
+  else if (nx, ny) = s.food do
+    let new_snake = (nx, ny) :: s.snake in
+    let (new_food, new_rng) = gen_food s.rng new_snake in
+    { s with snake = new_snake; food = new_food;
+             score = s.score + 1; rng = new_rng; dir = new_dir }
+  else
+    let new_snake = (nx, ny) :: drop_last s.snake in
+    { s with snake = new_snake; dir = new_dir }
+
+-- Draw the grid, snake, food, and score
+let draw s =
+  Canvas.clear "#1a202c";
+  let _ = List.init grid_h (fn y ->
+    List.init grid_w (fn x ->
+      let xf = float_of_int x * cell in
+      let yf = float_of_int y * cell in
+      let color = if (x + y) mod 2 = 0 do "#222832" else "#1e2430" in
+      Canvas.fill_rect xf yf cell cell color
+    )
+  ) in
+  let (fx, fy) = s.food in
+  Canvas.fill_circle
+    (float_of_int fx * cell + cell / 2.0)
+    (float_of_int fy * cell + cell / 2.0)
+    (cell / 2.5) "#FC8181";
+  let _ = List.iteri (fn i (sx, sy) ->
+    let xf = float_of_int sx * cell + 1.0 in
+    let yf = float_of_int sy * cell + 1.0 in
+    let color = if i = 0 do "#68D391" else "#48BB78" in
+    Canvas.fill_rect xf yf (cell - 2.0) (cell - 2.0) color
+  ) s.snake in
+  Canvas.set_font "bold 16px monospace";
+  Canvas.draw_text $"Score: {s.score}" 10.0 6.0 "#E2E8F0"
+
+-- Draw a centered overlay box with a message
+let draw_overlay title subtitle =
+  Canvas.fill_rect 100.0 180.0 300.0 100.0 "#2D3748";
+  Canvas.stroke_rect 100.0 180.0 300.0 100.0 "#FFCC66";
+  Canvas.set_font "bold 28px sans-serif";
+  Canvas.draw_text title 130.0 200.0 "#FFCC66";
+  Canvas.set_font "14px monospace";
+  Canvas.draw_text subtitle 112.0 245.0 "#A0AEC0"
+
+let frame s =
+  -- Waiting to start: draw scene, show prompt, start on any direction key
+  if not s.started do (
+    draw s;
+    draw_overlay "Snake Game" "Press arrow keys or WASD to start";
+    if any_key_pressed () do
+      { s with started = true; dir = read_dir s.dir }
+    else s
+  )
+  -- Game over: draw scene, show result, restart on any key
+  else if s.game_over do (
+    draw s;
+    Canvas.fill_rect 100.0 180.0 300.0 100.0 "#2D3748";
+    Canvas.stroke_rect 100.0 180.0 300.0 100.0 "#FC8181";
+    Canvas.set_font "bold 28px sans-serif";
+    Canvas.draw_text "Game Over!" 145.0 200.0 "#FC8181";
+    Canvas.set_font "16px monospace";
+    Canvas.draw_text $"Final score: {s.score}" 160.0 240.0 "#E2E8F0";
+    Canvas.set_font "14px monospace";
+    Canvas.draw_text "Press any key to restart" 130.0 265.0 "#A0AEC0";
+    if any_key_pressed () do new_game s.rng
+    else s
+  )
+  -- Playing: read input, update, draw
+  else (
+    let new_dir = read_dir s.dir in
+    let new_dir = if opposite s.dir new_dir do s.dir else new_dir in
+    let s =
+      if s.tick mod speed = 0 do step s new_dir
+      else { s with dir = new_dir }
+    in
+    draw s;
+    { s with tick = s.tick + 1 }
+  )
+
+let () = Canvas.start_app init frame
+`,
+};
+
+samples.addEventListener("change", () => {
+  const key = samples.value;
+  if (key && SAMPLES[key]) {
+    source.value = SAMPLES[key];
+    samples.value = "";
+    updateHighlight();
+  }
+});
+
+// --- Docs Tab ---
+
+const DOCS = [
+  { file: "language.md", title: "Language Overview" },
+  { file: "syntax.md",   title: "Syntax Reference" },
+  { file: "types.md",    title: "Type System" },
+  { file: "effects.md",  title: "Algebraic Effects" },
+  { file: "stdlib.md",   title: "Standard Library" },
+  { file: "modules.md",  title: "Module System" },
+  { file: "compiler.md", title: "Compiler Pipeline" },
+  { file: "js-vm.md",    title: "JavaScript VM" },
+  { separator: true, title: "Type System Internals" },
+  { file: "typesystem/00-overview.md",        title: "Overview" },
+  { file: "typesystem/01-types.md",           title: "Types & Representation" },
+  { file: "typesystem/02-unification.md",     title: "Unification" },
+  { file: "typesystem/03-inference.md",       title: "Type Inference" },
+  { file: "typesystem/04-generalization.md",  title: "Generalization" },
+  { file: "typesystem/05-typeclasses.md",     title: "Type Classes" },
+  { file: "typesystem/06-patterns.md",        title: "Pattern Matching" },
+  { file: "typesystem/07-advanced.md",        title: "Advanced Topics" },
+];
+
+const docsCache = {};
+
+// Tab switching
+document.querySelectorAll(".tab-bar button").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab-bar button").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tab-view").forEach(v => {
+      v.classList.remove("active");
+      v.style.display = "none";
+    });
+    tab.classList.add("active");
+    const view = document.getElementById(tab.dataset.tab + "-view");
+    if (view) {
+      view.classList.add("active");
+      view.style.display = "block";
+    }
+    // Auto-load first doc when switching to docs tab
+    if (tab.dataset.tab === "docs" && !document.querySelector(".docs-sidebar a.active")) {
+      loadDoc(DOCS[0].file);
+    }
+  });
+});
+
+// Build sidebar
+const docsSidebar = document.getElementById("docsSidebar");
+DOCS.forEach(doc => {
+  if (doc.separator) {
+    const sep = document.createElement("div");
+    sep.textContent = doc.title;
+    sep.style.cssText = "padding: 10px 16px 4px; font-size: 0.75em; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.05em;";
+    docsSidebar.appendChild(sep);
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = "#";
+  a.textContent = doc.title;
+  a.dataset.file = doc.file;
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    loadDoc(doc.file);
+  });
+  docsSidebar.appendChild(a);
+});
+
+async function loadDoc(file, anchor) {
+  // Update sidebar active state
+  document.querySelectorAll(".docs-sidebar a").forEach(a => {
+    a.classList.toggle("active", a.dataset.file === file);
+  });
+
+  const content = document.getElementById("docsContent");
+
+  if (docsCache[file]) {
+    content.innerHTML = docsCache[file];
+    if (anchor) scrollToAnchor(content, anchor);
+    else content.scrollTop = 0;
+    return;
+  }
+
+  content.innerHTML = '<div class="docs-loading"><span class="spinner"></span> Loading...</div>';
+
+  try {
+    const resp = await fetch("../docs/" + file);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const md = await resp.text();
+    const html = marked.parse(md);
+    docsCache[file] = html;
+    content.innerHTML = html;
+    if (anchor) scrollToAnchor(content, anchor);
+    else content.scrollTop = 0;
+  } catch (e) {
+    content.innerHTML = '<div class="docs-loading error">Failed to load document: ' + e.message + '</div>';
+  }
+}
+
+function scrollToAnchor(container, id) {
+  const el = container.querySelector('#' + CSS.escape(id));
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Handle anchor clicks within docs content
+document.getElementById("docsContent").addEventListener("click", function(e) {
+  const link = e.target.closest("a[href^='#']");
+  if (!link) return;
+  e.preventDefault();
+  const id = link.getAttribute("href").slice(1);
+  scrollToAnchor(this, id);
+});
+</script>
+</body>
+</html>

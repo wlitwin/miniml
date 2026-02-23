@@ -1,0 +1,240 @@
+=== Polymorphism Tests ===
+
+--- test: identity function
+let id x = x in id 5
+--- expect: 5
+
+--- test: polymorphic identity
+let id x = x in let a = id 5 in let _ = id true in a
+--- expect: 5
+
+--- test: polymorphic identity bool
+let id x = x in let _ = id 5 in id true
+--- expect: true
+
+--- test: unannotated function
+let f x = x + 1 in f 10
+--- expect: 11
+
+--- test: unannotated multi-arg
+let add x y = x + y in add 3 4
+--- expect: 7
+
+--- test: inferred higher-order
+let apply f x = f x in apply (fn x -> x + 1) 5
+--- expect: 6
+
+--- test: generic list map
+let rec map f xs =
+  match xs with
+  | [] -> []
+  | x :: rest -> f x :: map f rest
+in map (fn x -> x + 1) [1; 2; 3]
+--- expect: [2; 3; 4]
+
+--- test: generic list length
+let rec length xs =
+  match xs with
+  | [] -> 0
+  | _ :: rest -> 1 + length rest
+in length [10; 20; 30; 40]
+--- expect: 4
+
+--- test: polymorphic length on strings
+let rec length xs =
+  match xs with
+  | [] -> 0
+  | _ :: rest -> 1 + length rest
+in length ["a"; "b"; "c"]
+--- expect: 3
+
+--- test: generic fold
+let rec fold f acc xs =
+  match xs with
+  | [] -> acc
+  | x :: rest -> fold f (f acc x) rest
+in fold (fn a b -> a + b) 0 [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: inferred let rec
+let rec fact n =
+  if n <= 1 do 1 else n * fact (n - 1)
+in fact 5
+--- expect: 120
+
+--- test: empty list unifies
+let rec length xs =
+  match xs with
+  | [] -> 0
+  | _ :: rest -> 1 + length rest
+in length []
+--- expect: 0
+
+--- test: tyvar annotation
+let id (x: 'a) : 'a = x in id 42
+--- expect: 42
+
+=== Polymorphic Instance Tests ===
+
+--- test: fold on int list
+fold (+) 0 [1; 2; 3]
+--- expect: 6
+
+--- test: fold on string list
+fold (^) "" ["a"; "b"; "c"]
+--- expect: abc
+
+=== Type Alias Tests ===
+
+--- test: basic type alias
+type name = string;;
+let greet (n: name) : name = "hello " ^ n;;
+greet "world"
+--- expect: hello world
+
+--- test: alias to tuple
+type point = int * int;;
+let p : point = (3, 4);;
+let (x, y) = p;;
+x + y
+--- expect: 7
+
+--- test: parameterized type alias
+type 'a pair = 'a * 'a;;
+let p : int pair = (10, 20);;
+let (a, b) = p;;
+a + b
+--- expect: 30
+
+--- test: multi-param type alias
+type ('a, 'b) assoc = ('a * 'b) list;;
+let xs : (string, int) assoc = [("a", 1); ("b", 2)];;
+let rec len l = match l with | [] -> 0 | _ :: t -> 1 + len t;;
+len xs
+--- expect: 2
+
+--- test: alias to variant type
+type 'a maybe = 'a option;;
+let x : int maybe = Some 42;;
+match x with
+| Some v -> v
+| None -> 0
+--- expect: 42
+
+--- test: alias in function signature
+type age = int;;
+let birthday (a: age) : age = a + 1;;
+birthday 25
+--- expect: 26
+
+--- test: alias wrong arg count error
+type 'a box = 'a list;;
+let x : box = [1; 2];;
+x
+--- expect-type-error
+
+=== Parameterized Type Tests ===
+
+--- test: basic parameterized type
+type 'a option = None | Some of 'a;;
+match Some 42 with
+  Some v -> v
+  | None -> 0
+--- expect: 42
+
+--- test: polymorphic parameterized usage
+type 'a option = None | Some of 'a;;
+let is_some x = match x with Some _ -> true | None -> false;;
+is_some (Some 42) && is_some (Some "hello")
+--- expect: true
+
+--- test: recursive parameterized type
+type 'a tree = Leaf of 'a | Node of ('a tree * 'a tree);;
+let rec sum t = match t with
+  Leaf n -> n
+  | Node p -> sum (match p with (l, _) -> l) + sum (match p with (_, r) -> r)
+;;
+sum (Node (Node (Leaf 1, Leaf 2), Leaf 3))
+--- expect: 6
+
+--- test: multi-param type
+type ('a, 'b) either = Left of 'a | Right of 'b;;
+let get_left e = match e with Left v -> v | Right _ -> 0;;
+get_left (Left 42)
+--- expect: 42
+
+--- test: parameterized type annotation
+type 'a option = None | Some of 'a;;
+let unwrap (x : int option) = match x with Some v -> v | None -> 0;;
+unwrap (Some 99)
+--- expect: 99
+
+--- test: iter on parameterized tree
+type 'a tree = Leaf of 'a | Node of ('a tree * 'a tree);;
+instance Iter ('a tree) 'a =
+  let fold f acc t = match t with
+    Leaf v -> f acc v
+    | Node p -> let left = match p with (l, _) -> l in
+                let right = match p with (_, r) -> r in
+                fold f (fold f acc left) right
+end
+let t = Node (Node (Leaf 1, Leaf 2), Leaf 3);;
+for x in t with sum = 0 do sum + x end
+--- expect: 6
+
+=== Recursive Record Type Tests ===
+
+--- test: standalone recursive record
+      type node = { name: string; children: node list }
+      ;;
+      let n = { name = "root"; children = [{ name = "child"; children = [] }] }
+      ;;
+      n.name
+--- expect: root
+
+--- test: recursive record nested access
+      type node = { name: string; children: node list }
+      ;;
+      let n = { name = "a"; children = [{ name = "b"; children = [] }] }
+      ;;
+      (List.hd n.children).name
+--- expect: b
+
+--- test: recursive record with function
+      type node = { val_: int; children: node list }
+      ;;
+      let rec sum_tree (n : node) : int =
+        List.fold (fn acc c -> acc + sum_tree c) n.val_ n.children
+      ;;
+      sum_tree { val_ = 1; children = [{ val_ = 2; children = [] }; { val_ = 3; children = [] }] }
+--- expect: 6
+
+--- test: mutual variant and record
+      type wrapper = Wrap of inner
+      and inner = { val_: int; next: wrapper option }
+      ;;
+      let w = Wrap { val_ = 1; next = Some (Wrap { val_ = 2; next = None }) }
+      ;;
+      match w with Wrap r -> r.val_
+--- expect: 1
+
+--- test: mutual variant and record nested
+      type wrapper = Wrap of inner
+      and inner = { val_: int; next: wrapper option }
+      ;;
+      let w = Wrap { val_ = 10; next = Some (Wrap { val_ = 20; next = None }) }
+      ;;
+      match w with
+      | Wrap r -> match r.next with
+        | Some (Wrap r2) -> r.val_ + r2.val_
+        | None -> r.val_
+--- expect: 30
+
+--- test: mutual record field mutation
+      type wrapper = Wrap of inner
+      and inner = { mut val_: int; next: wrapper option }
+      ;;
+      let w = Wrap { val_ = 1; next = None }
+      ;;
+      match w with Wrap r -> r.val_ := 42; r.val_
+--- expect: 42

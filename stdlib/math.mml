@@ -1,0 +1,10 @@
+module Math =
+  pub let abs (x : int) : int = if x < 0 do 0 - x else x
+  pub let min (a : int) (b : int) : int = if a < b do a else b
+  pub let max (a : int) (b : int) : int = if a > b do a else b
+  pub let pow (a : float) (b : float) : float = __math_pow a b
+  pub let sqrt (x : float) : float = __math_sqrt x
+  pub let floor (x : float) : int = __math_floor x
+  pub let ceil (x : float) : int = __math_ceil x
+  pub let round (x : float) : int = __math_round x
+end

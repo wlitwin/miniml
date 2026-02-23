@@ -1,0 +1,6 @@
+module Ref =
+  pub type 'a t = { mut contents: 'a }
+  pub let create v = { contents = v }
+  pub let get r = r.contents
+  pub let set r v = r.contents := v
+end

@@ -1,0 +1,67 @@
+module Fmt =
+  pub let pad_left (n: int) (c: string) (s: string) : string =
+    let len = String.length s in
+    if len >= n do s
+    else
+      let rec pad acc remaining =
+        if remaining <= 0 do acc ^ s
+        else pad (acc ^ c) (remaining - 1)
+      in
+      pad "" (n - len)
+
+  pub let pad_right (n: int) (c: string) (s: string) : string =
+    let len = String.length s in
+    if len >= n do s
+    else
+      let rec pad acc remaining =
+        if remaining <= 0 do s ^ acc
+        else pad (acc ^ c) (remaining - 1)
+      in
+      pad "" (n - len)
+
+  pub let int_to_hex (n: int) : string =
+    let digits = "0123456789abcdef" in
+    if n = 0 do "0"
+    else
+      let rec go num acc =
+        if num = 0 do acc
+        else
+          let d = num mod 16 in
+          let d = if d < 0 do d + 16 else d in
+          let ch = String.sub digits d 1 in
+          go (num / 16) (ch ^ acc)
+      in
+      let abs_n = if n < 0 do 0 - n else n in
+      let hex = go abs_n "" in
+      if n < 0 do "-" ^ hex else hex
+
+  pub let int_to_bin (n: int) : string =
+    if n = 0 do "0"
+    else
+      let rec go num acc =
+        if num = 0 do acc
+        else
+          let bit = if num mod 2 = 0 do "0" else "1" in
+          go (num / 2) (bit ^ acc)
+      in
+      let abs_n = if n < 0 do 0 - n else n in
+      let bin = go abs_n "" in
+      if n < 0 do "-" ^ bin else bin
+
+  pub let int_to_oct (n: int) : string =
+    if n = 0 do "0"
+    else
+      let rec go num acc =
+        if num = 0 do acc
+        else
+          let d = num mod 8 in
+          let d = if d < 0 do d + 8 else d in
+          go (num / 8) (show d ^ acc)
+      in
+      let abs_n = if n < 0 do 0 - n else n in
+      let oct = go abs_n "" in
+      if n < 0 do "-" ^ oct else oct
+
+  pub let zero_pad (width: int) (s: string) : string =
+    Fmt.pad_left width "0" s
+end

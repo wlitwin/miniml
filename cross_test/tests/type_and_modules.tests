@@ -1,0 +1,34 @@
+=== Mutually Recursive Types in Modules ===
+
+--- test: mutually recursive types in module
+module M =
+  pub type expr = Lit of int | Add of expr * expr
+  and stmt = ExprStmt of expr | Block of stmt list
+end
+;;
+let e = M.Add (M.Lit 1, M.Lit 2);;
+let s = M.Block [M.ExprStmt (M.Lit 42)];;
+"ok"
+--- expect: ok
+
+--- test: mutually recursive types in module with visibility
+module M =
+  pub type tree = Leaf | Node of forest
+  and forest = Nil | Cons of tree * forest
+end
+;;
+let t = M.Node (M.Cons (M.Leaf, M.Nil));;
+"ok"
+--- expect: ok
+
+--- test: mutually recursive record + variant in module
+module M =
+  pub type item = { name: string; children: item_list }
+  and item_list = Empty | Items of item * item_list
+  pub let make (n: string) (c: item_list) : item = { name = n; children = c }
+  pub let get_name (i: item) : string = i.name
+end
+;;
+let x = M.make "root" (M.Items (M.make "child" M.Empty, M.Empty));;
+M.get_name x
+--- expect: root

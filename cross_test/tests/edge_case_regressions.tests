@@ -1,0 +1,138 @@
+=== Fix: Nested constructor patterns ===
+
+--- test: nested constructor pattern S N
+type 'a opt = N | S of 'a;;
+match S N with | S N -> "yes" | _ -> "no"
+--- expect: yes
+
+--- test: nested constructor pattern S (S x)
+type 'a opt = N | S of 'a;;
+match S (S 1) with | S (S x) -> x | _ -> 0
+--- expect: 1
+
+--- test: deeply nested constructor pattern
+type 'a opt = N | S of 'a;;
+match S (S N) with | S (S N) -> "deep" | _ -> "other"
+--- expect: deep
+
+--- test: nested ctor in function with match
+type 'a opt = N | S of 'a;;
+let f x = match x with
+  | S (N) -> "some-none"
+  | S (S _) -> "some-some"
+  | N -> "none"
+;;
+f (S N)
+--- expect: some-none
+
+=== Fix: Typeclass method shadowing by locals ===
+
+--- test: shadow show with top-level let
+let show _ = "OVERRIDE";;
+show 10
+--- expect: OVERRIDE
+
+--- test: shadow show with local let binding
+let show x = "CUSTOM" in show 42
+--- expect: CUSTOM
+
+--- test: shadow show in function param
+let f show = show 1 in f (fn x -> x + 1)
+--- expect: 2
+
+--- test: unshadowed show still resolves
+show 42
+--- expect: 42
+
+--- test: shadow show in match arm
+match "hello" with
+| x -> let show _ = "shadowed" in show x
+--- expect: shadowed
+
+--- test: shadow show in letrec
+let rec show n = if n <= 0 do "done" else show (n - 1) in show 3
+--- expect: done
+
+--- test: shadow show only in inner scope
+let a = show 1 in
+let show _ = "X" in
+let b = show 2 in
+a ^ b
+--- expect: 1X
+
+--- test: show unshadowed after scope ends
+let result =
+  let _ = (let show _ = "X" in show 1) in
+  show 42
+in result
+--- expect: 42
+
+=== Fix: Show on module-prefixed class method returns ===
+
+--- test: show Map.keys result directly
+let m = #{"a": 1; "b": 2} in show (Map.keys m)
+--- expect: [a; b]
+
+--- test: show Map.values result directly
+let m = #{"a": 1; "b": 2} in show (Map.values m)
+--- expect: [1; 2]
+
+=== Fix: Fundep improvement before let-generalization ===
+
+--- test: show Map.keys via let binding
+let m = #{"a": 1; "b": 2} in let ks = Map.keys m in show ks
+--- expect: [a; b]
+
+--- test: show Map.values via let binding
+let m = #{"a": 1; "b": 2} in let vs = Map.values m in show vs
+--- expect: [1; 2]
+
+--- test: Map.keys in let binding used in expression
+let m = #{"x": 10} in let ks = Map.keys m in ks
+--- expect: [x]
+
+--- test: chained let bindings with fundep types
+let m = #{"a": 1; "b": 2} in
+let ks = Map.keys m in
+let first = List.hd ks in
+first
+--- expect: a
+
+=== Hex and binary integer literals ===
+
+--- test: hex literal
+0xFF
+--- expect: 255
+
+--- test: hex literal large
+0xABCDEF
+--- expect: 11259375
+
+--- test: hex literal in expression
+0x10 + 0x20
+--- expect: 48
+
+--- test: binary literal
+0b10101101
+--- expect: 173
+
+--- test: binary literal small
+0b101
+--- expect: 5
+
+--- test: binary literal in expression
+0b100 + 0b010
+--- expect: 6
+
+--- test: hex in pattern match
+match 255 with | 0xFF -> "yes" | _ -> "no"
+--- expect: yes
+
+--- test: binary in pattern match
+match 5 with | 0b101 -> "yes" | _ -> "no"
+--- expect: yes
+
+--- test: zero still works
+0
+--- expect: 0
+

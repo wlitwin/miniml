@@ -1,0 +1,7 @@
+instance Iter (('k, 'v) map) ('k * 'v) =
+  let fold f acc m =
+    let rec go a l = match l with
+      | [] -> a
+      | x :: rest -> go (f a x) rest
+    in go acc (to_list m)
+end

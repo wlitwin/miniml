@@ -1,0 +1,950 @@
+=== Expression-Level Let + Fundep Stress Tests ===
+
+--- test: expr let wrapping map get
+let f m = let v = get "x" m in v in
+f #{"x": 99}
+--- expect: Some 99
+
+--- test: expr let wrapping map keys
+let f m = let ks = keys m in ks in
+f #{"a": 1; "b": 2}
+--- expect: [a; b]
+
+--- test: expr let wrapping map values
+let f m = let vs = values m in vs in
+f #{1: "one"; 2: "two"}
+--- expect: [one; two]
+
+--- test: expr let wrapping map size
+let f m = let n = size m in n in
+f #{"x": 1; "y": 2; "z": 3}
+--- expect: 3
+
+--- test: expr let wrapping map to_list
+let f m = let pairs = to_list m in pairs in
+f #{"k": 42}
+--- expect: [(k, 42)]
+
+--- test: expr let wrapping map set
+let m = set "b" 20 #{"a": 10} in
+size m
+--- expect: 2
+
+--- test: expr let wrapping map has
+let f m = let b = has "x" m in b in
+f #{"x": 1}
+--- expect: true
+
+--- test: expr let wrapping map remove
+let f m = let m2 = remove "a" m in size m2 in
+f #{"a": 1; "b": 2}
+--- expect: 1
+
+--- test: expr let wrapping index on map
+let v = #{"greeting": "hi"}.["greeting"] in
+v
+--- expect: hi
+
+--- test: expr let wrapping index on array
+let v = #[100; 200; 300].[2] in
+v
+--- expect: 300
+
+--- test: expr let wrapping fold on list
+let f xs = let total = fold (+) 0 xs in total in
+f [10; 20; 30]
+--- expect: 60
+
+--- test: expr let wrapping fold on array
+let f arr = let total = fold (+) 0 arr in total in
+f #[5; 10; 15]
+--- expect: 30
+
+--- test: expr let wrapping fold on map pairs
+let f m =
+  let total = fold (fn acc (_, v) -> acc + v) 0 (to_list m) in
+  total
+in
+f #{"a": 10; "b": 20}
+--- expect: 30
+
+=== Nested Expression-Level Lets with Fundeps ===
+
+--- test: nested let with index then show
+let m = #{"x": 42} in
+let v = m.["x"] in
+show v
+--- expect: 42
+
+--- test: nested let with fold then show
+let f xs =
+  let n = fold (+) 0 xs in
+  let s = show n in
+  s
+in
+f [1; 2; 3; 4]
+--- expect: 10
+
+--- test: nested let with map get then fold
+let f m =
+  let xs = match get "items" m with Some v -> v | None -> [] in
+  let total = fold (+) 0 xs in
+  total
+in
+f #{"items": [10; 20; 30]}
+--- expect: 60
+
+--- test: nested let with multiple map operations
+let f m =
+  let ks = keys m in
+  let n = fold (fn acc _ -> acc + 1) 0 ks in
+  n
+in
+f #{"a": 1; "b": 2; "c": 3}
+--- expect: 3
+
+--- test: nested let combining index and fold
+let arr = #[100; 1; 2; 3] in
+let first = arr.[0] in
+let rest_sum = fold (+) 0 [1; 2; 3] in
+rest_sum + first
+--- expect: 106
+
+--- test: triple nested lets with fundeps
+let process m =
+  let pairs = to_list m in
+  let vs = fold (fn acc (_, v) -> v :: acc) [] pairs in
+  let total = fold (+) 0 vs in
+  total
+in
+process #{"x": 10; "y": 20}
+--- expect: 30
+
+=== Expression-Level Let Rec with Fundeps ===
+
+--- test: let rec with fold inside
+let sum_nested xss =
+  let rec go lists acc =
+    match lists with
+    | [] -> acc
+    | xs :: rest -> go rest (acc + fold (+) 0 xs)
+  in
+  go xss 0
+in
+sum_nested [[1; 2]; [3; 4]; [5]]
+--- expect: 15
+
+--- test: let rec with index inside
+let rec go arr i =
+  if i >= 3 do None
+  else if arr.[i] > 20 do Some arr.[i]
+  else go arr (i + 1)
+in
+go #[10; 25; 30] 0
+--- expect: Some 25
+
+--- test: let rec with map operations
+let rec go m keys acc =
+  match keys with
+  | [] -> acc
+  | k :: rest ->
+    let next = if has k m do acc + 1 else acc in
+    go m rest next
+in
+go #{"a": 1; "b": 2; "c": 3} ["a"; "c"; "d"; "e"] 0
+--- expect: 2
+
+=== Polymorphic Expression-Level Lets with Mixed Constraints ===
+
+--- test: expr let with show and fold
+let go acc x = acc ^ show x ^ " " in
+fold go "" [1; 2; 3]
+--- expect: "1 2 3 "
+
+--- test: expr let show and eq combined
+let found = fold (fn acc x -> if x = 20 do show x else acc) "none" [10; 20; 30] in
+found
+--- expect: 20
+
+--- test: expr let with show and ord
+let go acc x = if x > acc do x else acc in
+let biggest = fold go 0 [3; 7; 2; 9; 1] in
+show biggest
+--- expect: 9
+
+--- test: expr let with eq and index
+let rec check arr target i =
+  if i >= 3 do false
+  else if arr.[i] = target do true
+  else check arr target (i + 1)
+in
+check #[10; 20; 30] 20 0
+--- expect: true
+
+--- test: expr let with num and fold
+let mean xs =
+  let sum = fold (+) 0 xs in
+  let count = fold (fn n _ -> n + 1) 0 xs in
+  sum / count
+in
+mean [10; 20; 30]
+--- expect: 20
+
+=== User-Defined Types with Constraint Inference ===
+
+--- test: user type with show in expr let
+type color = Red | Green | Blue deriving Show, Eq
+;;
+let describe c =
+  let s = show c in
+  "color: " ^ s
+in
+describe Green
+--- expect: color: Green
+
+--- test: user record with show in expr let
+type point = { x: int; y: int } deriving Show
+;;
+let format_point p =
+  let s = show p in
+  "at " ^ s
+in
+format_point { x = 3; y = 4 }
+--- expect: at { x = 3; y = 4 }
+
+--- test: user variant with eq in expr let
+type shape = Circle of int | Square of int deriving Eq
+;;
+let same s1 s2 =
+  let result = s1 = s2 in
+  result
+in
+same (Circle 5) (Circle 5)
+--- expect: true
+
+--- test: user parameterized type with show in expr let
+type 'a wrapper = Wrap of 'a deriving Show
+;;
+let show_wrapped w =
+  let s = show w in
+  s
+in
+show_wrapped (Wrap 42)
+--- expect: Wrap(42)
+
+--- test: user type in fold lambda
+type 'a wrapper = W of 'a deriving Show
+;;
+fold (fn acc x -> acc ^ show (W x) ^ ",") "" [1; 2; 3]
+--- expect: "W(1),W(2),W(3),"
+
+=== User-Defined Typeclasses in Expr Let ===
+
+--- test: user class in expr let
+class Describable 'a =
+  describe : 'a -> string
+end
+
+instance Describable int =
+  let describe x = "int:" ^ show x
+end
+
+instance Describable string =
+  let describe x = "str:" ^ x
+end
+;;
+let f x =
+  let d = describe x in
+  d
+in
+f 42
+--- expect: int:42
+
+--- test: user class with two instances in expr let
+class Describable 'a =
+  describe : 'a -> string
+end
+
+instance Describable int =
+  let describe x = "int:" ^ show x
+end
+
+instance Describable string =
+  let describe x = "str:" ^ x
+end
+;;
+let g x =
+  let d = describe x in
+  "(" ^ d ^ ")"
+in
+g "hello"
+--- expect: (str:hello)
+
+--- test: user class polymorphic in expr let
+class Describable 'a =
+  describe : 'a -> string
+end
+
+instance Describable int =
+  let describe x = "int:" ^ show x
+end
+
+instance Describable string =
+  let describe x = "str:" ^ x
+end
+;;
+let wrap_describe x =
+  let d = describe x in
+  "[" ^ d ^ "]"
+in
+wrap_describe 7 ^ " " ^ wrap_describe "hi"
+--- expect: "[int:7] [str:hi]"
+
+--- test: user class with constrained instance in expr let
+class Stringify 'a =
+  stringify : 'a -> string
+end
+
+instance Stringify int =
+  let stringify x = show x
+end
+
+instance Stringify ('a list) where Stringify 'a =
+  let stringify xs =
+    let parts = fold (fn acc x -> acc ^ stringify x ^ ";") "" xs in
+    "{" ^ parts ^ "}"
+end
+;;
+let format xs =
+  let s = stringify xs in
+  "list=" ^ s
+in
+format [1; 2; 3]
+--- expect: "list={1;2;3;}"
+
+=== Multi-Param User Class with Fundeps in Expr Let ===
+
+--- test: user fundep class in expr let
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+
+instance Convertible int string =
+  let convert x = show x
+end
+
+instance Convertible string int =
+  let convert s = String.length s
+end
+;;
+let do_convert x =
+  let result = (convert x : string) in
+  result
+in
+do_convert 42
+--- expect: 42
+
+--- test: user fundep class multiple instances
+class Convertible 'a 'b where 'a -> 'b =
+  convert : 'a -> 'b
+end
+
+instance Convertible int string =
+  let convert x = show x
+end
+
+instance Convertible string int =
+  let convert s = String.length s
+end
+;;
+let do_convert x =
+  let result = (convert x : int) in
+  result
+in
+do_convert "hello"
+--- expect: 5
+
+--- test: user fundep class nested in expr let
+class Extract 'c 'v where 'c -> 'v =
+  extract : 'c -> 'v
+end
+
+instance Extract (int * string) string =
+  let extract p = match p with (_, s) -> s
+end
+;;
+let f p =
+  let v = extract p in
+  let s = "got: " ^ v in
+  s
+in
+f (42, "answer")
+--- expect: "got: answer"
+
+=== Constraint Propagation Through Multiple Levels ===
+
+--- test: constraint propagates through two let levels
+let outer x =
+  let mid y =
+    let inner z = show z in
+    inner y
+  in
+  mid x
+in
+outer 42
+--- expect: 42
+
+--- test: constraint propagates with different classes
+let outer x y =
+  let show_it a = show a in
+  let eq_check a b = a = b in
+  show_it x ^ " " ^ show (eq_check x y)
+in
+outer 1 2
+--- expect: "1 false"
+
+--- test: nested let each using different class methods
+let compute xs =
+  let total = fold (+) 0 xs in
+  let s = show total in
+  let bigger = total > 10 in
+  s ^ ">" ^ show bigger
+in
+compute [3; 4; 5]
+--- expect: "12>true"
+
+--- test: constraint propagation through let rec and let
+let process xs =
+  let rec sum lst = match lst with
+    | [] -> 0
+    | x :: rest -> x + sum rest
+  in
+  let s = show (sum xs) in
+  s
+in
+process [1; 2; 3; 4; 5]
+--- expect: 15
+
+=== Complex Fundep Chains ===
+
+--- test: map index then fold result
+let m = #{"nums": [1; 2; 3]; "more": [4; 5]} in
+let xs = m.["nums"] in
+fold (+) 0 xs
+--- expect: 6
+
+--- test: fold map pairs then show
+let m = #{"a": 1; "b": 2; "c": 3} in
+let result = fold (fn acc (k, v) -> acc ^ k ^ "=" ^ show v ^ " ") "" (to_list m) in
+result
+--- expect: "a=1 b=2 c=3 "
+
+--- test: map values then fold with show
+let m = #{1: "one"; 2: "two"; 3: "three"} in
+let vs = values m in
+fold (fn acc v -> acc ^ v ^ ",") "" vs
+--- expect: "one,two,three,"
+
+--- test: nested map index with show
+let outer = #{"inner": #{"deep": 42}} in
+let inner = outer.["inner"] in
+show inner.["deep"]
+--- expect: 42
+
+--- test: array index in fold accumulator
+let arrs = [#[1; 2; 3]; #[4; 5; 6]; #[7; 8; 9]] in
+fold (fn acc arr -> acc + arr.[0]) 0 arrs
+--- expect: 12
+
+--- test: fold building a string with map values
+let m = #{"x": 10; "y": 20; "z": 30} in
+fold (fn s (k, v) -> s ^ k ^ show v) "" (to_list m)
+--- expect: x10y20z30
+
+=== Edge Cases: Anonymous Lambdas with Multiple Classes ===
+
+--- test: lambda using show and eq
+let xs = [1; 2; 3; 2; 1] in
+fold (fn acc x -> if x = 2 do acc ^ show x else acc) "" xs
+--- expect: 22
+
+--- test: lambda using show and ord
+fold (fn acc x -> if x > 5 do acc ^ show x else acc) "" [3; 7; 2; 9; 1]
+--- expect: 79
+
+--- test: lambda using show and num
+fold (fn acc x -> acc ^ show (x * 2) ^ " ") "" [1; 2; 3]
+--- expect: "2 4 6 "
+
+--- test: lambda using num and eq in fold
+fold (fn acc x -> if x = 0 do acc else acc + x * x) 0 [1; 0; 3; 0; 5]
+--- expect: 35
+
+--- test: lambda with show on tuple element
+fold (fn acc (a, b) -> acc ^ show a ^ "+" ^ show b ^ " ") "" [(1, 2); (3, 4)]
+--- expect: "1+2 3+4 "
+
+--- test: lambda with show on option
+fold (fn acc x -> acc ^ show x ^ " ") "" [Some 1; None; Some 3]
+--- expect: "Some 1 None Some 3 "
+
+=== Expression-Level Let with Explicit Where Clause ===
+
+--- test: explicit where on expr let still works
+let f (x: 'a) : string where Show 'a =
+  let s = show x in
+  s
+in
+f true
+--- expect: true
+
+--- test: explicit where with multiple constraints
+let f (x: 'a) : string where Show 'a, Eq 'a =
+  let s = if x = x do show x else "no" in
+  s
+in
+f 42
+--- expect: 42
+
+=== Stress: Many Constraints in One Function ===
+
+--- test: five different class methods in one expr let
+let total = fold (+) 0 [1; 2; 3] in
+let v = #{"key": 99}.["key"] in
+let has_it = has "key" #{"key": 99} in
+show total ^ " " ^ show v ^ " " ^ show has_it
+--- expect: "6 99 true"
+
+--- test: show eq ord num all in one function
+let describe x y =
+  let s = show x in
+  let eq = x = y in
+  let lt = x < y in
+  let sum = x + y in
+  s ^ " eq=" ^ show eq ^ " lt=" ^ show lt ^ " sum=" ^ show sum
+in
+describe 3 5
+--- expect: "3 eq=false lt=true sum=8"
+
+=== Stress: Let Bindings Inside Match Arms ===
+
+--- test: let in match arm with show
+let f x = match x with
+  | 0 -> let s = show x in "zero:" ^ s
+  | n -> let s = show n in "other:" ^ s
+in
+f 42
+--- expect: other:42
+
+--- test: let in match arm with fold
+let f xs = match xs with
+  | [] -> "empty"
+  | _ ->
+    let total = fold (+) 0 xs in
+    show total
+in
+f [10; 20; 30]
+--- expect: 60
+
+--- test: let in match arm with index
+let f flag =
+  let arr = #[100; 200] in
+  match flag with
+  | true -> show arr.[0]
+  | false -> show arr.[1]
+in
+f true
+--- expect: 100
+
+=== Stress: Higher-Order with Constraints ===
+
+--- test: passing constrained expr let as argument
+let apply f x = f x in
+let s = apply show 42 in
+s
+--- expect: 42
+
+--- test: returning constrained closure from let
+let make_shower () =
+  let f x = show x in
+  f
+in
+let shower = make_shower () in
+shower 99
+--- expect: 99
+
+--- test: constrained let in list map
+let xs = [1; 2; 3] in
+let f x = show x in
+fold (fn acc x -> acc ^ f x ^ ",") "" xs
+--- expect: "1,2,3,"
+
+=== Stress: Recursive Structures with Constraints ===
+
+--- test: let rec show of tree-like structure
+let show_tree xs depth =
+  let rec go items d =
+    match items with
+    | [] -> ""
+    | x :: rest ->
+      let prefix = fold (fn s _ -> s ^ "..") "" (List.init d (fn i -> i)) in
+      prefix ^ show x ^ "|" ^ go rest d
+  in
+  go xs depth
+in
+show_tree [1; 2; 3] 2
+--- expect: "....1|....2|....3|"
+
+--- test: let rec accumulating with show
+let join_all xs sep =
+  let rec go items =
+    match items with
+    | [] -> ""
+    | [x] -> show x
+    | x :: rest -> show x ^ sep ^ go rest
+  in
+  go xs
+in
+join_all [1; 2; 3] ", "
+--- expect: "1, 2, 3"
+
+=== Stress: Mutation + Constraints in Expr Let ===
+
+--- test: mutable var with show in expr let
+let mut s = "" in
+fold (fn () x ->
+  s := s ^ show x;
+  ()
+) () [7; 8; 9];
+s
+--- expect: 789
+
+--- test: mutable counter with eq in fold
+let mut count = 0 in
+fold (fn () x ->
+  if x = 2 do count := count + 1 else ();
+  ()
+) () [1; 2; 3; 2; 1; 2];
+count
+--- expect: 3
+
+--- test: mutable with index and show
+let arr = #[10; 20; 30] in
+let mut result = "" in
+let rec go i =
+  if i >= 3 do ()
+  else (
+    result := result ^ show arr.[i] ^ " ";
+    go (i + 1)
+  )
+in
+go 0;
+result
+--- expect: "10 20 30 "
+
+=== Stress: Interactions Between Top-Level and Expression-Level ===
+
+--- test: top-level constrained calls expr-level constrained
+let format x = "[" ^ show x ^ "]"
+;;
+let go acc x = acc ^ format x ^ " " in
+fold go "" [1; 2; 3]
+--- expect: "[1] [2] [3] "
+
+--- test: expr-level constrained calls top-level constrained
+let double x = x + x
+;;
+let f xs =
+  let total = fold (fn acc x -> acc + double x) 0 xs in
+  show total
+in
+f [1; 2; 3]
+--- expect: 12
+
+--- test: chained top and expr level constraints
+let wrap x = "(" ^ show x ^ ")"
+;;
+let mapped = fold (fn acc x -> wrap x :: acc) [] [1; 2; 3] in
+fold (fn s x -> s ^ x ^ " ") "" mapped
+--- expect: "(3) (2) (1) "
+
+=== Stress: Fundep Improvement Edge Cases ===
+
+--- test: fold with eq comparison in lambda
+fold (fn acc x -> if x = acc do acc else x) 0 [0; 0; 5; 5; 3]
+--- expect: 3
+
+--- test: fold with ord comparison in lambda
+fold (fn acc x -> if x > acc do x else acc) 0 [3; 7; 2; 9; 1]
+--- expect: 9
+
+--- test: fold with arithmetic in lambda
+fold (fn acc x -> acc + x * x) 0 [1; 2; 3; 4]
+--- expect: 30
+
+--- test: nested fold both using fundeps
+let m = #{"a": [1; 2]; "b": [3; 4]} in
+fold (fn acc (_, vs) -> acc + fold (+) 0 vs) 0 (to_list m)
+--- expect: 10
+
+--- test: fold on array with index in lambda body
+let arr = #[10; 20; 30] in
+let lookup = #{"a": 0; "b": 1; "c": 2} in
+fold (fn acc k -> acc + arr.[lookup.[k]]) 0 ["a"; "b"; "c"]
+--- expect: 60
+
+=== Stress: Multiple Fundep Classes in One Expression ===
+
+--- test: index and fold in same expr let
+let vs = #{"nums": [1; 2; 3; 4]}.["nums"] in
+fold (+) 0 vs
+--- expect: 10
+
+--- test: map get and fold combined
+let sum_or_zero m k =
+  let xs = match get k m with Some v -> v | None -> [] in
+  fold (+) 0 xs
+in
+sum_or_zero #{"a": [10; 20]} "a"
+--- expect: 30
+
+--- test: to_list and index and fold
+let m = #{"x": #[1; 2; 3]; "y": #[4; 5; 6]} in
+let pairs = to_list m in
+fold (fn acc (_, arr) -> acc + arr.[0]) 0 pairs
+--- expect: 5
+
+=== Stress: Show on Complex Nested Types ===
+
+--- test: show list of tuples in fold
+fold (fn acc x -> acc ^ show x ^ " ") "" [(1, "a"); (2, "b")]
+--- expect: "(1, a) (2, b) "
+
+--- test: show option in fold
+fold (fn acc x -> acc ^ show x ^ " ") "" [Some 1; None; Some 3]
+--- expect: "Some 1 None Some 3 "
+
+--- test: show nested list in fold
+fold (fn acc x -> acc ^ show x ^ " ") "" [[1; 2]; [3]; []]
+--- expect: "[1; 2] [3] [] "
+
+--- test: show tuple of different types
+show (42, "hello")
+--- expect: (42, hello)
+
+=== Stress: Constraint Inference with Pattern Matching ===
+
+--- test: show in each match arm
+let describe x =
+  let s = match x with
+    | 0 -> "zero"
+    | 1 -> "one"
+    | n -> show n
+  in
+  s
+in
+describe 42
+--- expect: 42
+
+--- test: fold in match arm
+let process flag xs =
+  match flag with
+  | true -> fold (+) 0 xs
+  | false -> fold (fn acc _ -> acc + 1) 0 xs
+in
+process true [10; 20; 30]
+--- expect: 60
+
+--- test: index in match arm
+let get_item flag arr =
+  match flag with
+  | true -> arr.[0]
+  | false -> arr.[1]
+in
+get_item false #[100; 200; 300]
+--- expect: 200
+
+=== Stress: For Loops with Constraints ===
+
+--- test: show in for loop body
+let mut s = "" in
+let mut i = 1 in
+for i <= 5 do
+  s := s ^ show i;
+  i := i + 1
+end;
+s
+--- expect: 12345
+
+--- test: index in for loop
+let arr = #[10; 20; 30; 40; 50] in
+let mut sum = 0 in
+let mut i = 0 in
+for i < 5 do
+  sum := sum + arr.[i];
+  i := i + 1
+end;
+sum
+--- expect: 150
+
+--- test: map operations in loop
+let mut m = #{"count": 0} in
+let mut i = 0 in
+for i < 3 do
+  m := set "count" (m.["count"] + 1) m;
+  i := i + 1
+end;
+m.["count"]
+--- expect: 3
+
+=== Stress: Fundep with User-Defined Instances ===
+
+--- test: user Iter instance with fundep
+type 'a bag = Bag of 'a list
+
+instance Iter ('a bag) 'a =
+  let fold f acc b = match b with
+    | Bag xs -> fold f acc xs
+end
+;;
+let b = Bag [1; 2; 3; 4; 5] in
+fold (+) 0 b
+--- expect: 15
+
+--- test: user Iter instance show in lambda
+type 'a bag = Bag of 'a list
+
+instance Iter ('a bag) 'a =
+  let fold f acc b = match b with
+    | Bag xs -> fold f acc xs
+end
+;;
+let b = Bag [10; 20; 30] in
+fold (fn s x -> s ^ show x ^ " ") "" b
+--- expect: "10 20 30 "
+
+--- test: user Iter instance with expr let
+type 'a bag = Bag of 'a list
+
+instance Iter ('a bag) 'a =
+  let fold f acc b = match b with
+    | Bag xs -> fold f acc xs
+end
+;;
+let sum_bag b =
+  let total = fold (+) 0 b in
+  total
+in
+sum_bag (Bag [1; 2; 3])
+--- expect: 6
+
+--- test: user Index instance with fundep
+type 'a triple = Triple of 'a * 'a * 'a
+
+instance Index ('a triple) int 'a =
+  let at i t = match t with
+    | Triple (a, b, c) -> match i with
+      | 0 -> a
+      | 1 -> b
+      | _ -> c
+end
+;;
+let t = Triple (10, 20, 30) in
+t.[1]
+--- expect: 20
+
+--- test: user Index instance in expr let
+type 'a triple = Triple of 'a * 'a * 'a
+
+instance Index ('a triple) int 'a =
+  let at i t = match t with
+    | Triple (a, b, c) -> match i with
+      | 0 -> a
+      | 1 -> b
+      | _ -> c
+end
+;;
+let t = Triple (10, 20, 30) in
+let v = t.[2] in
+v
+--- expect: 30
+
+--- test: user Index with show in lambda
+type 'a triple = Triple of 'a * 'a * 'a
+
+instance Index ('a triple) int 'a =
+  let at i t = match t with
+    | Triple (a, b, c) -> match i with
+      | 0 -> a
+      | 1 -> b
+      | _ -> c
+end
+;;
+let t = Triple (10, 20, 30) in
+fold (fn s i -> s ^ show t.[i] ^ " ") "" [0; 1; 2]
+--- expect: "10 20 30 "
+
+=== Stress: Deeply Nested Constraint Contexts ===
+
+--- test: four levels of let nesting with show
+let a x =
+  let b y =
+    let c z =
+      let d w = show w in
+      d z
+    in
+    c y
+  in
+  b x
+in
+a 42
+--- expect: 42
+
+--- test: three levels with different constraints each
+let outer x =
+  let mid xs =
+    let inner total = show total in
+    let s = fold (+) 0 xs in
+    inner s
+  in
+  mid x
+in
+outer [10; 20; 30]
+--- expect: 60
+
+=== Stress: Sequences and Side Effects with Constraints ===
+
+--- test: show in sequence expression
+let f x =
+  let _ = show x in
+  show (x + 1)
+in
+f 41
+--- expect: 42
+
+--- test: fold with side effects and show
+let mut log = "" in
+let xs = [1; 2; 3] in
+fold (fn () x ->
+  log := log ^ show x;
+  ()
+) () xs;
+log
+--- expect: 123
+
+=== Stress: Combining Everything ===
+
+--- test: complex pipeline with all features
+let total = fold (+) 0 [1; 2; 3] in
+let factor = #{"factor": 10}.["factor"] in
+let result = total * factor in
+show result
+--- expect: 60
+
+--- test: nested maps with fold and show
+let data = #{"scores": [95; 87; 92]} in
+let scores = data.["scores"] in
+let avg = fold (+) 0 scores / 3 in
+let above_avg = fold (fn acc x -> if x > avg do acc + 1 else acc) 0 scores in
+show avg ^ " avg, " ^ show above_avg ^ " above"
+--- expect: "91 avg, 2 above"

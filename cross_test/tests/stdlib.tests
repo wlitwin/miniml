@@ -1,0 +1,970 @@
+=== String Module Tests ===
+
+--- test: String.length
+ String.length "hello"
+--- expect: 5
+
+--- test: String.length empty
+ String.length ""
+--- expect: 0
+
+--- test: String.sub
+ String.sub "hello world" 6 5
+--- expect: world
+
+--- test: String.split
+ String.split "," "a,b,c"
+--- expect: [a; b; c]
+
+--- test: String.trim
+ String.trim "  hello  "
+--- expect: hello
+
+--- test: String.starts_with
+ String.starts_with "he" "hello"
+--- expect: true
+
+--- test: String.starts_with false
+ String.starts_with "wo" "hello"
+--- expect: false
+
+--- test: String.contains
+ String.contains "llo" "hello"
+--- expect: true
+
+--- test: String.contains false
+ String.contains "xyz" "hello"
+--- expect: false
+
+--- test: String.replace
+ String.replace "world" "ocaml" "hello world"
+--- expect: hello ocaml
+
+--- test: String.to_int Some
+ String.to_int "42"
+--- expect: Some 42
+
+--- test: String.to_int None
+ String.to_int "abc"
+--- expect: None
+
+--- test: String.to_float Some
+ String.to_float "3.14"
+--- expect: Some 3.14
+
+--- test: String.uppercase
+ String.uppercase "hello"
+--- expect: HELLO
+
+--- test: String.lowercase
+ String.lowercase "HELLO"
+--- expect: hello
+
+=== List Module Tests ===
+
+--- test: List.length
+ List.length [1; 2; 3]
+--- expect: 3
+
+--- test: List.length empty
+ List.length []
+--- expect: 0
+
+--- test: List.rev
+ List.rev [1; 2; 3]
+--- expect: [3; 2; 1]
+
+--- test: List.hd
+ List.hd [10; 20; 30]
+--- expect: 10
+
+--- test: List.tl
+ List.tl [1; 2; 3]
+--- expect: [2; 3]
+
+--- test: List.nth
+ List.nth [10; 20; 30] 1
+--- expect: 20
+
+--- test: List.concat
+ List.concat [1; 2] [3; 4]
+--- expect: [1; 2; 3; 4]
+
+--- test: List.is_empty true
+ List.is_empty []
+--- expect: true
+
+--- test: List.is_empty false
+ List.is_empty [1]
+--- expect: false
+
+--- test: List.flatten
+ List.flatten [[1; 2]; [3]; [4; 5]]
+--- expect: [1; 2; 3; 4; 5]
+
+--- test: List.map
+ List.map (fn x -> x + 1) [1; 2; 3]
+--- expect: [2; 3; 4]
+
+--- test: List.filter
+ List.filter (fn x -> x > 2) [1; 2; 3; 4]
+--- expect: [3; 4]
+
+--- test: List.fold
+ List.fold (fn acc x -> acc + x) 0 [1; 2; 3]
+--- expect: 6
+
+--- test: List.find Some
+ List.find (fn x -> x > 2) [1; 2; 3; 4]
+--- expect: Some 3
+
+--- test: List.find None
+ List.find (fn x -> x > 10) [1; 2; 3]
+--- expect: None
+
+--- test: List.exists true
+ List.exists (fn x -> x = 3) [1; 2; 3]
+--- expect: true
+
+--- test: List.exists false
+ List.exists (fn x -> x = 5) [1; 2; 3]
+--- expect: false
+
+--- test: List.forall true
+ List.forall (fn x -> x > 0) [1; 2; 3]
+--- expect: true
+
+--- test: List.forall false
+ List.forall (fn x -> x > 1) [1; 2; 3]
+--- expect: false
+
+--- test: List.mapi
+ List.mapi (fn i x -> i + x) [10; 20; 30]
+--- expect: [10; 21; 32]
+
+--- test: List.sort
+
+      List.sort (fn a b -> if a < b do 0 - 1 else if a > b do 1 else 0) [3; 1; 4; 1; 5]
+
+--- expect: [1; 1; 3; 4; 5]
+
+=== Array Module Tests ===
+
+--- test: Array.make
+ Array.make 3 0
+--- expect: #[0; 0; 0]
+
+--- test: Array.length
+ Array.length #[1; 2; 3]
+--- expect: 3
+
+--- test: Array.get
+ Array.get #[10; 20; 30] 1
+--- expect: 20
+
+--- test: Array.to_list
+ Array.to_list #[1; 2; 3]
+--- expect: [1; 2; 3]
+
+--- test: Array.of_list
+ Array.of_list [1; 2; 3]
+--- expect: #[1; 2; 3]
+
+--- test: Array.copy
+
+      let a = #[1; 2; 3] in
+      let b = Array.copy a in
+      Array.set b 0 99;
+      Array.get a 0
+
+--- expect: 1
+
+--- test: Array.sub
+ Array.sub #[1; 2; 3; 4; 5] 1 3
+--- expect: #[2; 3; 4]
+
+=== Math Module Tests ===
+
+--- test: Math.abs positive
+ Math.abs 5
+--- expect: 5
+
+--- test: Math.abs negative
+ Math.abs (0 - 5)
+--- expect: 5
+
+--- test: Math.min
+ Math.min 3 7
+--- expect: 3
+
+--- test: Math.max
+ Math.max 3 7
+--- expect: 7
+
+--- test: Math.pow
+ Math.pow 2.0 10.0
+--- expect: 1024.
+
+--- test: Math.sqrt
+ Math.sqrt 16.0
+--- expect: 4.
+
+--- test: Math.floor
+ Math.floor 3.7
+--- expect: 3
+
+--- test: Math.ceil
+ Math.ceil 3.2
+--- expect: 4
+
+--- test: Math.round
+ Math.round 3.5
+--- expect: 4
+
+--- test: Math.round down
+ Math.round 3.4
+--- expect: 3
+
+=== Result Module Tests ===
+
+--- test: Result Ok
+ Ok 42
+--- expect: Ok 42
+
+--- test: Result Err
+ Err "fail"
+--- expect: Err fail
+
+--- test: Result.map Ok
+
+      let r = Ok 10 in
+      Result.map (fn x -> x + 1) r
+
+--- expect: Ok 11
+
+--- test: Result.map Err
+
+      let r : (int, string) Result.t = Err "bad" in
+      Result.map (fn x -> x + 1) r
+
+--- expect: Err bad
+
+--- test: Result.bind Ok
+
+      let r = Ok 10 in
+      Result.bind (fn x -> Ok (x + 1)) r
+
+--- expect: Ok 11
+
+--- test: Result.bind Err
+
+      let r : (int, string) Result.t = Err "bad" in
+      Result.bind (fn x -> Ok (x + 1)) r
+
+--- expect: Err bad
+
+--- test: Result.unwrap Ok
+ Result.unwrap (Ok 99)
+--- expect: 99
+
+=== Byte Tests ===
+
+--- test: byte to_int
+Byte.to_int #41
+--- expect: 65
+
+--- test: byte of_int to_int
+Byte.to_int (Byte.of_int 97)
+--- expect: 97
+
+--- test: byte to_string
+Byte.to_string #41
+--- expect: A
+
+--- test: byte is_alpha true
+Byte.is_alpha #41
+--- expect: true
+
+--- test: byte is_alpha false
+Byte.is_alpha #30
+--- expect: false
+
+--- test: byte is_digit true
+Byte.is_digit #39
+--- expect: true
+
+--- test: byte is_digit false
+Byte.is_digit #41
+--- expect: false
+
+--- test: byte is_space true
+Byte.is_space #20
+--- expect: true
+
+--- test: byte is_upper true
+Byte.is_upper #41
+--- expect: true
+
+--- test: byte is_lower true
+Byte.is_lower #61
+--- expect: true
+
+--- test: byte to_upper
+Byte.to_int (Byte.to_upper #61)
+--- expect: 65
+
+--- test: byte to_lower
+Byte.to_int (Byte.to_lower #41)
+--- expect: 97
+
+--- test: byte equality
+#41 = #41
+--- expect: true
+
+--- test: byte inequality
+#41 <> #42
+--- expect: true
+
+--- test: byte less than
+#41 < #42
+--- expect: true
+
+--- test: byte show
+show #41
+--- expect: #41
+
+=== Rune Tests ===
+
+--- test: rune to_int
+Rune.to_int 'a'
+--- expect: 97
+
+--- test: rune of_int to_int
+Rune.to_int (Rune.of_int 65)
+--- expect: 65
+
+--- test: rune to_string
+Rune.to_string 'a'
+--- expect: a
+
+--- test: rune escape newline
+Rune.to_int '\n'
+--- expect: 10
+
+--- test: rune escape tab
+Rune.to_int '\t'
+--- expect: 9
+
+--- test: rune escape null
+Rune.to_int '\0'
+--- expect: 0
+
+--- test: rune is_alpha true
+Rune.is_alpha 'a'
+--- expect: true
+
+--- test: rune is_digit true
+Rune.is_digit '5'
+--- expect: true
+
+--- test: rune is_space true
+Rune.is_space (' ')
+--- expect: true
+
+--- test: rune is_upper true
+Rune.is_upper 'A'
+--- expect: true
+
+--- test: rune is_lower true
+Rune.is_lower 'a'
+--- expect: true
+
+--- test: rune equality
+'a' = 'a'
+--- expect: true
+
+--- test: rune inequality
+'a' <> 'b'
+--- expect: true
+
+--- test: rune less than
+'a' < 'b'
+--- expect: true
+
+--- test: rune show
+show 'a'
+--- expect: 'a'
+
+=== Set Tests ===
+
+--- test: Set.empty
+Set.size (Set.empty ())
+--- expect: 0
+
+--- test: Set.singleton
+Set.size (Set.singleton 42)
+--- expect: 1
+
+--- test: Set.of_list
+Set.size (Set.of_list [1; 2; 3])
+--- expect: 3
+
+--- test: Set.of_list dedup
+Set.size (Set.of_list [1; 1; 2; 2; 3])
+--- expect: 3
+
+--- test: Set.add
+Set.size (Set.add 4 (Set.of_list [1; 2; 3]))
+--- expect: 4
+
+--- test: Set.add duplicate
+Set.size (Set.add 2 (Set.of_list [1; 2; 3]))
+--- expect: 3
+
+--- test: Set.remove
+Set.size (Set.remove 2 (Set.of_list [1; 2; 3]))
+--- expect: 2
+
+--- test: Set.mem true
+Set.mem 2 (Set.of_list [1; 2; 3])
+--- expect: true
+
+--- test: Set.mem false
+Set.mem 5 (Set.of_list [1; 2; 3])
+--- expect: false
+
+--- test: Set.to_list
+Set.to_list (Set.of_list [3; 1; 2])
+--- expect: [2; 1; 3]
+
+--- test: Set.union
+Set.size (Set.union (Set.of_list [1; 2]) (Set.of_list [2; 3]))
+--- expect: 3
+
+--- test: Set.inter
+Set.size (Set.inter (Set.of_list [1; 2; 3]) (Set.of_list [2; 3; 4]))
+--- expect: 2
+
+--- test: Set.diff
+Set.size (Set.diff (Set.of_list [1; 2; 3]) (Set.of_list [2; 3; 4]))
+--- expect: 1
+
+--- test: Set.is_empty true
+Set.is_empty (Set.empty ())
+--- expect: true
+
+--- test: Set.is_empty false
+Set.is_empty (Set.of_list [1])
+--- expect: false
+
+--- test: Set.is_subset true
+Set.is_subset (Set.of_list [1; 2]) (Set.of_list [1; 2; 3])
+--- expect: true
+
+--- test: Set.is_subset false
+Set.is_subset (Set.of_list [1; 4]) (Set.of_list [1; 2; 3])
+--- expect: false
+
+--- test: Set.fold_for
+
+      for x in Set.of_list [10; 20; 30] with acc = 0 do
+        acc + x
+      end
+
+--- expect: 60
+
+--- test: Set.for_loop
+
+      let mut total = 0;;
+      for x in Set.of_list [10; 20; 30] do
+        total := total + x
+      end;;
+      total
+
+--- expect: 60
+
+=== Enum Tests ===
+
+--- test: Enum.sum
+Enum.sum [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: Enum.count
+Enum.count (fn x -> x > 2) [1; 2; 3; 4; 5]
+--- expect: 3
+
+--- test: Enum.take
+Enum.take 3 [1; 2; 3; 4; 5]
+--- expect: [1; 2; 3]
+
+--- test: Enum.drop
+Enum.drop 2 [1; 2; 3; 4; 5]
+--- expect: [3; 4; 5]
+
+--- test: Enum.take_while
+Enum.take_while (fn x -> x < 4) [1; 2; 3; 4; 5]
+--- expect: [1; 2; 3]
+
+--- test: Enum.drop_while
+Enum.drop_while (fn x -> x < 3) [1; 2; 3; 4; 5]
+--- expect: [3; 4; 5]
+
+--- test: Enum.flat_map
+Enum.flat_map (fn x -> [x; x * 10]) [1; 2; 3]
+--- expect: [1; 10; 2; 20; 3; 30]
+
+--- test: Enum.each
+
+      let mut total = 0;;
+      Enum.each (fn x -> total := total + x) [1; 2; 3];;
+      total
+
+--- expect: 6
+
+--- test: Enum.reject
+Enum.reject (fn x -> x > 3) [1; 2; 3; 4; 5]
+--- expect: [1; 2; 3]
+
+--- test: Enum.enumerate
+Enum.enumerate ["a"; "b"; "c"]
+--- expect: [(0, a); (1, b); (2, c)]
+
+--- test: Enum.join
+Enum.join ", " ["a"; "b"; "c"]
+--- expect: a, b, c
+
+--- test: Enum.join empty
+Enum.join ", " []
+--- expect:
+
+--- test: Enum.chunk
+Enum.chunk 2 [1; 2; 3; 4; 5]
+--- expect: [[1; 2]; [3; 4]; [5]]
+
+--- test: Enum.dedup
+Enum.dedup [1; 1; 2; 2; 3; 1]
+--- expect: [1; 2; 3; 1]
+
+--- test: Enum.uniq
+Enum.uniq [1; 2; 1; 3; 2; 4]
+--- expect: [1; 2; 3; 4]
+
+--- test: Enum.scan
+Enum.scan (fn a b -> a + b) 0 [1; 2; 3]
+--- expect: [0; 1; 3; 6]
+
+--- test: Enum.intersperse
+Enum.intersperse 0 [1; 2; 3]
+--- expect: [1; 0; 2; 0; 3]
+
+--- test: Enum.zip_with
+Enum.zip_with (fn a b -> a + b) [1; 2; 3] [10; 20; 30]
+--- expect: [11; 22; 33]
+
+--- test: Enum.min_by
+Enum.min_by (fn x -> x) [3; 1; 4; 1; 5]
+--- expect: 1
+
+--- test: Enum.max_by
+Enum.max_by (fn x -> x) [3; 1; 4; 1; 5]
+--- expect: 5
+
+--- test: Enum.reduce
+
+      -- @partial
+      match Enum.reduce (fn a b -> a + b) [1; 2; 3; 4] with x -> x
+
+--- expect: 10
+
+--- test: Enum.group_by
+
+      let groups = Enum.group_by (fn x -> x / 10) [11; 12; 21; 22; 31];;
+      -- @partial
+      match get 1 groups with Some xs -> List.length xs
+
+--- expect: 2
+
+=== Seq Tests ===
+
+--- test: Seq.range to_list
+Seq.to_list (Seq.range 1 5)
+--- expect: [1; 2; 3; 4]
+
+--- test: Seq.of_list roundtrip
+Seq.to_list (Seq.of_list [1; 2; 3])
+--- expect: [1; 2; 3]
+
+--- test: Seq.map
+Seq.to_list (Seq.map (fn x -> x * 2) (Seq.range 1 4))
+--- expect: [2; 4; 6]
+
+--- test: Seq.filter
+Seq.to_list (Seq.filter (fn x -> x > 2) (Seq.range 1 6))
+--- expect: [3; 4; 5]
+
+--- test: Seq.take from infinite
+Seq.to_list (Seq.take 5 (Seq.repeat 42))
+--- expect: [42; 42; 42; 42; 42]
+
+--- test: Seq.take_while
+Seq.to_list (Seq.take_while (fn x -> x < 4) (Seq.range 1 10))
+--- expect: [1; 2; 3]
+
+--- test: Seq.drop
+Seq.to_list (Seq.drop 3 (Seq.range 1 6))
+--- expect: [4; 5]
+
+--- test: Seq.iterate take
+Seq.to_list (Seq.take 5 (Seq.iterate 1 (fn x -> x * 2)))
+--- expect: [1; 2; 4; 8; 16]
+
+--- test: Seq.fold
+Seq.fold (fn a b -> a + b) 0 (Seq.range 1 5)
+--- expect: 10
+
+--- test: Seq.count
+Seq.count (Seq.range 1 6)
+--- expect: 5
+
+--- test: Seq.sum
+Seq.sum (Seq.range 1 6)
+--- expect: 15
+
+--- test: Seq.find Some
+Seq.find (fn x -> x > 3) (Seq.range 1 10)
+--- expect: Some 4
+
+--- test: Seq.find None
+Seq.find (fn x -> x > 100) (Seq.range 1 10)
+--- expect: None
+
+--- test: Seq.any true
+Seq.any (fn x -> x > 3) (Seq.range 1 10)
+--- expect: true
+
+--- test: Seq.any false
+Seq.any (fn x -> x > 100) (Seq.range 1 10)
+--- expect: false
+
+--- test: Seq.all true
+Seq.all (fn x -> x < 10) (Seq.range 1 10)
+--- expect: true
+
+--- test: Seq.all false
+Seq.all (fn x -> x < 5) (Seq.range 1 10)
+--- expect: false
+
+--- test: Seq.flat_map
+Seq.to_list (Seq.flat_map (fn x -> Seq.range x (x + 3)) (Seq.of_list [1; 10]))
+--- expect: [1; 2; 3; 10; 11; 12]
+
+--- test: Seq.enumerate
+Seq.to_list (Seq.enumerate (Seq.of_list ["a"; "b"; "c"]))
+--- expect: [(0, a); (1, b); (2, c)]
+
+--- test: Seq.drop_while
+Seq.to_list (Seq.drop_while (fn x -> x < 3) (Seq.range 1 6))
+--- expect: [3; 4; 5]
+
+--- test: Seq.chunk
+Seq.to_list (Seq.chunk 2 (Seq.range 1 6))
+--- expect: [[1; 2]; [3; 4]; [5]]
+
+--- test: Seq.each
+
+      let mut total = 0;;
+      Seq.each (fn x -> total := total + x) (Seq.range 1 4);;
+      total
+
+--- expect: 6
+
+--- test: Seq.pipeline
+
+      Seq.iterate 1 (fn x -> x + 1)
+        |> Seq.filter (fn x -> x > 3)
+        |> Seq.map (fn x -> x * 10)
+        |> Seq.take 3
+        |> Seq.to_list
+
+--- expect: [40; 50; 60]
+
+--- test: Seq.nested take
+
+      Seq.to_list (Seq.take 3 (Seq.take 5 (Seq.range 1 100)))
+
+--- expect: [1; 2; 3]
+
+=== Ref Module Tests ===
+
+--- test: Ref.create and get
+ Ref.get (Ref.create 42)
+--- expect: 42
+
+--- test: Ref.set
+
+      let r = Ref.create 10 in
+      Ref.set r 99;
+      Ref.get r
+
+--- expect: 99
+
+--- test: Ref.contents field access
+
+      let r = Ref.create 42 in
+      r.contents
+
+--- expect: 42
+
+--- test: Ref.contents field mutation
+
+      let r = Ref.create 0 in
+      r.contents := 77;
+      r.contents
+
+--- expect: 77
+
+=== Dynarray Module Tests ===
+
+--- test: Dynarray create and length
+ Dynarray.length (Dynarray.create 4 0)
+--- expect: 0
+
+--- test: Dynarray push and length
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 10;
+      Dynarray.push d 20;
+      Dynarray.push d 30;
+      Dynarray.length d
+
+--- expect: 3
+
+--- test: Dynarray get
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 10;
+      Dynarray.push d 20;
+      Dynarray.push d 30;
+      Dynarray.get d 1
+
+--- expect: 20
+
+--- test: Dynarray set
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 10;
+      Dynarray.push d 20;
+      Dynarray.set d 0 99;
+      Dynarray.get d 0
+
+--- expect: 99
+
+--- test: Dynarray pop
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 10;
+      Dynarray.push d 20;
+      Dynarray.push d 30;
+      Dynarray.pop d
+
+--- expect: 30
+
+--- test: Dynarray pop reduces length
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 10;
+      Dynarray.push d 20;
+      let _ = Dynarray.pop d in
+      Dynarray.length d
+
+--- expect: 1
+
+--- test: Dynarray to_list
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 1;
+      Dynarray.push d 2;
+      Dynarray.push d 3;
+      Dynarray.to_list d
+
+--- expect: [1; 2; 3]
+
+--- test: Dynarray grow beyond capacity
+
+      let d = Dynarray.create 2 0 in
+      Dynarray.push d 1;
+      Dynarray.push d 2;
+      Dynarray.push d 3;
+      Dynarray.push d 4;
+      Dynarray.push d 5;
+      Dynarray.push d 6;
+      Dynarray.push d 7;
+      Dynarray.push d 8;
+      Dynarray.push d 9;
+      Dynarray.push d 10;
+      Dynarray.push d 11;
+      Dynarray.push d 12;
+      Dynarray.push d 13;
+      Dynarray.push d 14;
+      Dynarray.push d 15;
+      Dynarray.push d 16;
+      Dynarray.push d 17;
+      Dynarray.get d 16
+
+--- expect: 17
+
+--- test: Dynarray clear
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 1;
+      Dynarray.push d 2;
+      Dynarray.push d 3;
+      Dynarray.clear d;
+      Dynarray.length d
+
+--- expect: 0
+
+--- test: Dynarray to_array
+
+      let d = Dynarray.create 4 0 in
+      Dynarray.push d 10;
+      Dynarray.push d 20;
+      Dynarray.to_array d
+
+--- expect: #[10; 20]
+
+=== New List Function Tests ===
+
+--- test: List.find_map found
+
+      List.find_map (fn x -> if x > 3 do Some (x * 10) else None) [1; 2; 3; 4; 5]
+
+--- expect: Some 40
+
+--- test: List.find_map not found
+
+      List.find_map (fn x -> if x > 10 do Some x else None) [1; 2; 3]
+
+--- expect: None
+
+--- test: List.assoc_opt found
+
+      List.assoc_opt "b" [("a", 1); ("b", 2); ("c", 3)]
+
+--- expect: Some 2
+
+--- test: List.assoc_opt not found
+
+      List.assoc_opt "z" [("a", 1); ("b", 2)]
+
+--- expect: None
+
+--- test: List.fold_right
+
+      List.fold_right (fn x acc -> x :: acc) [1; 2; 3] [4; 5]
+
+--- expect: [1; 2; 3; 4; 5]
+
+--- test: List.init
+
+      List.init 5 (fn i -> i * i)
+
+--- expect: [0; 1; 4; 9; 16]
+
+--- test: List.concat_map
+
+      List.concat_map (fn x -> [x; x * 10]) [1; 2; 3]
+
+--- expect: [1; 10; 2; 20; 3; 30]
+
+--- test: List.map2
+
+      List.map2 (fn a b -> a + b) [1; 2; 3] [10; 20; 30]
+
+--- expect: [11; 22; 33]
+
+--- test: List.iter2
+
+      let mut sum = 0 in
+      List.iter2 (fn a b -> sum := sum + a + b) [1; 2; 3] [10; 20; 30];
+      sum
+
+--- expect: 66
+
+=== New Array Function Tests ===
+
+--- test: Array.init
+
+      Array.init 4 (fn i -> i * 3)
+
+--- expect: #[0; 3; 6; 9]
+
+--- test: Array.init zero
+
+      Array.init 0 (fn i -> i)
+
+--- expect: #[]
+
+--- test: Array.map
+
+      Array.map (fn x -> x + 1) #[10; 20; 30]
+
+--- expect: #[11; 21; 31]
+
+--- test: Array.fold
+
+      Array.fold (fn acc x -> acc + x) 0 #[1; 2; 3; 4; 5]
+
+--- expect: 15
+
+--- test: Array.iter
+
+      let mut total = 0 in
+      Array.iter (fn x -> total := total + x) #[10; 20; 30];
+      total
+
+--- expect: 60
+
+=== New String Function Tests ===
+
+--- test: String.make
+
+      String.make 5 (Byte.of_int 65)
+
+--- expect: AAAAA
+
+--- test: String.make zero
+
+      String.make 0 (Byte.of_int 65)
+
+--- expect:
+
+--- test: String.index_opt found
+
+      String.index_opt "hello" (Byte.of_int 108)
+
+--- expect: Some 2
+
+--- test: String.index_opt not found
+
+      String.index_opt "hello" (Byte.of_int 122)
+
+--- expect: None
+
+--- test: String.rindex_opt
+
+      String.rindex_opt "hello world" (Byte.of_int 111)
+
+--- expect: Some 7
+
+--- test: String.concat
+
+      String.concat ", " ["hello"; "world"; "test"]
+
+--- expect: hello, world, test
+
+--- test: String.concat empty sep
+
+      String.concat "" ["a"; "b"; "c"]
+
+--- expect: abc

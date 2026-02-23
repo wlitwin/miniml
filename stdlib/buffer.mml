@@ -1,0 +1,59 @@
+module Buffer =
+  pub type t = { mut data: byte array; mut len: int }
+
+  pub let create (n: int) : t =
+    { data = Array.make (if n < 16 do 16 else n) #00; len = 0 }
+
+  pub let length (buf: t) : int = buf.len
+
+  pub let clear (buf: t) : unit =
+    buf.len := 0
+
+  pub let grow (buf: t) (needed: int) : unit =
+    let cap = Array.length buf.data in
+    if buf.len + needed > cap do
+      let new_cap = Math.max (cap * 2) (buf.len + needed) in
+      let new_data = Array.make new_cap #00 in
+      let rec copy i =
+        if i < buf.len do
+          Array.set new_data i (Array.get buf.data i);
+          copy (i + 1)
+        else ()
+      in
+      copy 0;
+      buf.data := new_data
+    else ()
+
+  pub let add_byte (buf: t) (b: byte) : unit =
+    Buffer.grow buf 1;
+    Array.set buf.data buf.len b;
+    buf.len := buf.len + 1
+
+  pub let add_string (buf: t) (s: string) : unit =
+    let bytes = String.to_byte_array s in
+    let n = Array.length bytes in
+    Buffer.grow buf n;
+    let rec copy i =
+      if i < n do
+        Array.set buf.data (buf.len + i) (Array.get bytes i);
+        copy (i + 1)
+      else ()
+    in
+    copy 0;
+    buf.len := buf.len + n
+
+  pub let contents (buf: t) : string =
+    String.of_byte_array (Array.sub buf.data 0 buf.len)
+
+  pub let add_buffer (dst: t) (src: t) : unit =
+    let n = src.len in
+    Buffer.grow dst n;
+    let rec copy i =
+      if i < n do
+        Array.set dst.data (dst.len + i) (Array.get src.data i);
+        copy (i + 1)
+      else ()
+    in
+    copy 0;
+    dst.len := dst.len + n
+end

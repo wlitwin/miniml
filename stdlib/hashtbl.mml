@@ -1,0 +1,107 @@
+module Hashtbl =
+  pub type ('k, 'v) t = { mut buckets: ('k * 'v) list array; mut size: int }
+  pub let create (n: int) =
+    let cap = if n < 16 do 16 else n in
+    { buckets = Array.make cap []; size = 0 }
+
+  pub let clear tbl =
+    let cap = Array.length tbl.buckets in
+    tbl.buckets := Array.make cap [];
+    tbl.size := 0
+
+  pub let length tbl = tbl.size
+
+  pub let bucket_index tbl (key: 'k) where Hash 'k =
+    let h = hash key in
+    let h = if h < 0 do 0 - h else h in
+    h mod (Array.length tbl.buckets)
+
+  pub let to_list tbl =
+    let cap = Array.length tbl.buckets in
+    let rec collect i acc =
+      if i >= cap do acc
+      else
+        let bucket = Array.get tbl.buckets i in
+        collect (i + 1) (List.concat bucket acc)
+    in
+    collect 0 []
+
+  let rehash tbl hash_fn =
+    let entries = Hashtbl.to_list tbl in
+    let new_cap = Array.length tbl.buckets * 2 in
+    tbl.buckets := Array.make new_cap [];
+    tbl.size := 0;
+    List.fold (fn _ (k, v) ->
+      let h = hash_fn k in
+      let h = if h < 0 do 0 - h else h in
+      let idx = h mod new_cap in
+      let bucket = Array.get tbl.buckets idx in
+      Array.set tbl.buckets idx ((k, v) :: bucket);
+      tbl.size := tbl.size + 1
+    ) () entries
+
+  pub let set tbl (key: 'k) value where Hash 'k, Eq 'k =
+    let idx = Hashtbl.bucket_index tbl key in
+    let bucket = Array.get tbl.buckets idx in
+    let rec replace = fn
+      | [] -> [(key, value)]
+      | (k, v) :: rest ->
+        if k = key do (key, value) :: rest
+        else (k, v) :: replace rest
+    in
+    let new_bucket = replace bucket in
+    let grew = List.length new_bucket > List.length bucket in
+    Array.set tbl.buckets idx new_bucket;
+    if grew do do
+      tbl.size := tbl.size + 1;
+      if tbl.size > Array.length tbl.buckets * 2 do
+        Hashtbl.rehash tbl hash
+      else ()
+    end else ()
+
+  pub let get tbl (key: 'k) where Hash 'k, Eq 'k =
+    let idx = Hashtbl.bucket_index tbl key in
+    let bucket = Array.get tbl.buckets idx in
+    let rec find = fn
+      | [] -> None
+      | (k, v) :: rest ->
+        if k = key do Some v
+        else find rest
+    in
+    find bucket
+
+  pub let has tbl (key: 'k) where Hash 'k, Eq 'k =
+    match Hashtbl.get tbl key with
+    | Some _ -> true
+    | None -> false
+
+  pub let remove tbl (key: 'k) where Hash 'k, Eq 'k =
+    let idx = Hashtbl.bucket_index tbl key in
+    let bucket = Array.get tbl.buckets idx in
+    let new_bucket = List.filter (fn (k, _) -> k <> key) bucket in
+    do
+      if List.length new_bucket < List.length bucket do
+        tbl.size := tbl.size - 1
+      else ()
+    end;
+    Array.set tbl.buckets idx new_bucket
+
+  pub let find tbl key =
+    match Hashtbl.get tbl key with
+    | Some v -> v
+    | None -> failwith "Hashtbl.find: key not found"
+
+  pub let fold f tbl acc =
+    let entries = Hashtbl.to_list tbl in
+    List.fold (fn a (k, v) -> f k v a) acc entries
+
+  pub let iter f tbl =
+    let entries = Hashtbl.to_list tbl in
+    List.iter (fn (k, v) -> f k v) entries
+
+  pub let keys tbl =
+    List.map (fn (k, _) -> k) (Hashtbl.to_list tbl)
+
+  pub let values tbl =
+    List.map (fn (_, v) -> v) (Hashtbl.to_list tbl)
+end

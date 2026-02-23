@@ -1,0 +1,1019 @@
+=== Arithmetic Tests ===
+
+--- test: integer literal
+42
+--- expect: 42
+
+--- test: addition
+2 + 3
+--- expect: 5
+
+--- test: subtraction
+10 - 4
+--- expect: 6
+
+--- test: multiplication
+3 * 7
+--- expect: 21
+
+--- test: division
+15 / 4
+--- expect: 3
+
+--- test: modulo
+17 mod 5
+--- expect: 2
+
+--- test: negation
+0 - 5
+--- expect: -5
+
+--- test: double negation
+0 - (0 - 3)
+--- expect: 3
+
+--- test: precedence
+2 + 3 * 4
+--- expect: 14
+
+--- test: parentheses
+(2 + 3) * 4
+--- expect: 20
+
+=== Comparison Tests ===
+
+--- test: less than
+3 < 5
+--- expect: true
+
+--- test: greater than
+5 > 3
+--- expect: true
+
+--- test: less equal
+3 <= 3
+--- expect: true
+
+--- test: greater equal
+4 >= 5
+--- expect: false
+
+--- test: equal
+3 = 3
+--- expect: true
+
+--- test: not equal
+3 <> 4
+--- expect: true
+
+=== Boolean Tests ===
+
+--- test: and true
+true && true
+--- expect: true
+
+--- test: and false
+true && false
+--- expect: false
+
+--- test: or true
+false || true
+--- expect: true
+
+--- test: or false
+false || false
+--- expect: false
+
+--- test: not
+not true
+--- expect: false
+
+--- test: short-circuit and
+false && (1 = 0)
+--- expect: false
+
+--- test: short-circuit or
+true || (1 = 0)
+--- expect: true
+
+=== String Tests ===
+
+--- test: string literal
+"hello"
+--- expect: hello
+
+--- test: string concat
+"hello" ^ " " ^ "world"
+--- expect: hello world
+
+=== Let Binding Tests ===
+
+--- test: let binding
+let x = 5 in x
+--- expect: 5
+
+--- test: nested let
+let x = 5 in let y = 10 in x + y
+--- expect: 15
+
+--- test: let shadowing
+let x = 5 in let x = 10 in x
+--- expect: 10
+
+=== Function Tests ===
+
+--- test: lambda with annotation
+let f = fn (x: int) -> x + 1 in f 5
+--- expect: 6
+
+--- test: multi-arg function
+let add (x: int) (y: int) : int = x + y in add 3 4
+--- expect: 7
+
+--- test: higher-order function
+let apply (f: int -> int) (x: int) : int = f x in apply (fn (x: int) -> x * 2) 5
+--- expect: 10
+
+--- test: closure
+let make_adder (n: int) : int -> int = fn (x: int) -> x + n in let add5 = make_adder 5 in add5 10
+--- expect: 15
+
+=== Recursion Tests ===
+
+--- test: factorial
+let rec fact (n: int) : int = if n <= 1 do 1 else n * fact (n - 1) in fact 10
+--- expect: 3628800
+
+--- test: fibonacci
+let rec fib (n: int) : int = if n <= 1 do n else fib (n-1) + fib (n-2) in fib 10
+--- expect: 55
+
+=== If/Else Tests ===
+
+--- test: if true
+if true do 1 else 2
+--- expect: 1
+
+--- test: if false
+if false do 1 else 2
+--- expect: 2
+
+--- test: nested if
+if true do if false do 1 else 2 else 3
+--- expect: 2
+
+=== Tuple Tests ===
+
+--- test: tuple creation
+(1, 2, 3)
+--- expect: (1, 2, 3)
+
+--- test: tuple pattern match
+let p = (10, 20) in match p with (a, b) -> a + b
+--- expect: 30
+
+=== Sequence Tests ===
+
+--- test: sequence
+1; 2; 3
+--- expect: 3
+
+=== Print Tests ===
+
+--- test: print returns unit
+print 42
+--- expect: 42
+
+=== Type Error Tests ===
+
+--- test: add int to bool
+1 + true
+--- expect-type-error
+
+--- test: if non-bool condition
+if 1 do 2 else 3
+--- expect-type-error
+
+--- test: branch type mismatch
+if true do 1 else "hello"
+--- expect-type-error
+
+=== Recursive Type Tests ===
+
+--- test: recursive variant type
+
+      type expr = Num of int | Add of expr * expr
+      let fst_e (p: expr * expr) : expr =
+        match p with
+        | (a, _) -> a
+      let snd_e (p: expr * expr) : expr =
+        match p with
+        | (_, b) -> b
+      let rec eval (e: expr) : int =
+        match e with
+        | Num n -> n
+        | Add p -> eval (fst_e p) + eval (snd_e p)
+      ;;
+      let _ = eval (Num 1);;
+      eval (Add (Num 1, Add (Num 2, Num 3)))
+
+--- expect: 6
+
+=== Operator-as-Value Tests ===
+
+--- test: plus as value
+let f = (+) in f 3 4
+--- expect: 7
+
+--- test: partial application
+let double = (+) 0 in double 5
+--- expect: 5
+
+--- test: multiply partial
+
+      let times3 = (*) 3
+      in times3 7
+
+--- expect: 21
+
+--- test: pass operator to higher-order
+
+      let apply (f: int -> int -> int) (a: int) (b: int) : int = f a b
+      in apply (+) 10 20
+
+--- expect: 30
+
+--- test: string concat as value
+let f = (^) in f "hello" " world"
+--- expect: hello world
+
+--- test: comparison as value
+let f = (<) in f 3 5
+--- expect: true
+
+--- test: float operator as value
+(+) 1.5 2.5
+--- expect: 4.
+
+=== Conversion Tests ===
+
+--- test: float_of_int
+float_of_int 42
+--- expect: 42.
+
+--- test: int_of_float
+int_of_float 3.14
+--- expect: 3
+
+--- test: not as value
+let f = (not) in f true
+--- expect: false
+
+=== Tail Call Optimization Tests ===
+
+--- test: tail recursion does not overflow
+
+      let rec loop (n: int) : int = if n = 0 do 0 else loop (n - 1)
+      in loop 10000000
+
+--- expect: 0
+
+--- test: tail call in match arm
+
+      let rec count_down (n: int) : int =
+        match n with
+        | 0 -> 0
+        | _ -> count_down (n - 1)
+      in count_down 10000000
+
+--- expect: 0
+
+--- test: tail call in let body
+
+      let rec go (n: int) : int =
+        let m = n - 1 in
+        if m = 0 do 42 else go m
+      in go 10000000
+
+--- expect: 42
+
+--- test: tail call accumulator pattern
+
+      let rec sum_acc (n: int) (acc: int) : int =
+        if n = 0 do acc else sum_acc (n - 1) (acc + n)
+      in sum_acc 1000000 0
+
+--- expect: 500000500000
+
+=== Mutable Variable Tests ===
+
+--- test: mutable variable basic
+
+      let mut x = 1 in x := 2; x
+
+--- expect: 2
+
+--- test: mutable variable type check
+
+      let mut x = 10 in x := x + 5; x
+
+--- expect: 15
+
+--- test: immutable assignment error
+
+      let x = 1 in x := 2; x
+
+--- expect-type-error
+
+--- test: mutable in sequence
+
+      let mut x = 0 in x := 1; x := x + 1; x
+
+--- expect: 2
+
+--- test: top-level mutable
+
+      let mut x = 0;;
+      x := 5;;
+      x
+
+--- expect: 5
+
+--- test: mutable record field
+
+      type point = { mut x: int; y: int };;
+      let p = { x = 1; y = 2 } in
+      p.x := 10;
+      p.x
+
+--- expect: 10
+
+--- test: immutable field error
+
+      type point = { x: int; y: int };;
+      let p = { x = 1; y = 2 } in
+      p.x := 10;
+      p.x
+
+--- expect-type-error
+
+--- test: assignment returns unit
+
+      let mut x = 0 in x := 5
+
+--- expect: ()
+
+--- test: let shadow of mutable variable
+      let mut xs = [1; 2; 3] in
+      let xs = List.rev xs in
+      List.hd xs
+--- expect: 3
+
+--- test: let shadow of mutable used in function
+      let mut x = 10 in
+      x := 20;
+      let x = x + 1 in
+      x
+--- expect: 21
+
+=== Mutable Variable Edge Case Tests ===
+
+--- test: mutable closure captures ref not value
+let mut x = 10 in
+let f () = x in
+x := 42;
+f ()
+--- expect: 42
+
+--- test: mutable closure write then read
+let mut x = 0 in
+let inc () = x := x + 1; x in
+let a = inc () in
+let b = inc () in
+let c = inc () in
+a + b + c
+--- expect: 6
+
+--- test: local mutable shadowed by non-mutable let
+let mut x = 100 in
+x := 200;
+let x = x + 1 in
+x
+--- expect: 201
+
+--- test: local non-mutable does not deref
+let mut y = 10 in
+let y = 42 in
+y
+--- expect: 42
+
+--- test: nested mutable shadows outer mutable
+let mut x = 1 in
+let result =
+  let mut x = 10 in
+  x := 20;
+  x
+in
+result + x
+--- expect: 21
+
+--- test: top-level mutable then local same name
+let mut x = 0;;
+x := 99;;
+let result = let x = 42 in x in
+result
+--- expect: 42
+
+--- test: top-level mutable read after local shadow
+let mut x = 0;;
+x := 50;;
+let f () = let x = 1 in x in
+f () + x
+--- expect: 51
+
+--- test: top-level mutable reassign across sections
+let mut counter = 0;;
+counter := counter + 1;;
+counter := counter + 1;;
+counter := counter + 1;;
+counter
+--- expect: 3
+
+--- test: top-level non-mutable redefines mutable name
+let mut x = 100;;
+let x = 42;;
+x
+--- expect: 42
+
+--- test: top-level mutable redefines non-mutable name
+let x = 10;;
+let mut x = 20;;
+x := x + 5;;
+x
+--- expect: 25
+
+--- test: mutable in closure does not leak to outer scope
+let f () =
+  let mut x = 0 in
+  x := 5;
+  x
+in
+f ()
+--- expect: 5
+
+--- test: two mutable vars independent
+let mut a = 1 in
+let mut b = 10 in
+a := a + 1;
+b := b + 10;
+a + b
+--- expect: 22
+
+--- test: mutable passed to function by value
+let mut x = 10 in
+let f n = n + 1 in
+let result = f x in
+x := 0;
+result
+--- expect: 11
+
+--- test: mutable in if branches
+let mut x = 0 in
+(if true do x := 10 else x := 20);
+x
+--- expect: 10
+
+--- test: mutable in match arms
+let mut x = 0 in
+(match Some 42 with
+| Some n -> x := n
+| None -> x := -1);
+x
+--- expect: 42
+
+=== Single-Line Comment Tests ===
+
+--- test: single-line comment ignored
+
+      -- this is a comment
+      42
+
+--- expect: 42
+
+--- test: comment after expression
+
+      let x = 10 -- assign ten
+      in x + 5
+
+--- expect: 15
+
+--- test: comment does not eat next line
+
+      let x = 1 in
+      -- comment
+      let y = 2 in
+      x + y
+
+--- expect: 3
+
+--- test: partial annotation suppresses exhaustiveness
+
+      type option = Some of int | None
+      -- @partial
+      match Some 5 with
+      | Some x -> x
+
+--- expect: 5
+
+--- test: partial annotation on bool match
+
+      -- @partial
+      match true with
+      | true -> 1
+
+--- expect: 1
+
+--- test: at-sign partial annotation
+
+      @partial
+      match 42 with
+      | 42 -> "found"
+
+--- expect: found
+
+--- test: let destructure still works without annotation
+
+      type option = Some of int | None
+      let Some x = Some 42 in x
+
+--- expect: 42
+
+=== Trailing Semicolons Tests ===
+
+--- test: trailing semicolon in record expr
+
+      type point = { x: int; y: int };;
+      let p = { x = 1; y = 2; } in
+      p.x + p.y
+
+--- expect: 3
+
+--- test: trailing semicolon in record pattern
+
+      type point = { x: int; y: int }
+      let p = { x = 10; y = 20 }
+      match p with
+        | { x; y; } -> x + y
+
+--- expect: 30
+
+--- test: trailing semicolon in record type
+
+      type point = { x: int; y: int; };;
+      let p = { x = 5; y = 6 } in
+      p.x + p.y
+
+--- expect: 11
+
+=== Record Expression Punning Tests ===
+
+--- test: record punning single field
+
+      type wrapper = { x: int };;
+      let x = 42 in
+      let w = { x } in
+      w.x
+
+--- expect: 42
+
+--- test: record punning two fields
+
+      type point = { x: int; y: int };;
+      let x = 10 in
+      let y = 20 in
+      let p = { x; y } in
+      p.x + p.y
+
+--- expect: 30
+
+--- test: record punning mixed with explicit
+
+      type point = { x: int; y: int };;
+      let x = 10 in
+      let p = { x; y = 20 } in
+      p.x + p.y
+
+--- expect: 30
+
+--- test: record punning explicit then pun
+
+      type point = { x: int; y: int };;
+      let y = 20 in
+      let p = { x = 10; y } in
+      p.x + p.y
+
+--- expect: 30
+
+--- test: record punning with trailing semicolon
+
+      type point = { x: int; y: int };;
+      let x = 1 in
+      let y = 2 in
+      let p = { x; y; } in
+      p.x + p.y
+
+--- expect: 3
+
+--- test: record punning from function params
+
+      type point = { x: int; y: int };;
+      let make_point x y = { x; y } in
+      let p = make_point 3 4 in
+      p.x + p.y
+
+--- expect: 7
+
+--- test: record punning in nested let
+
+      type point = { x: int; y: int };;
+      let f () =
+        let x = 100 in
+        let y = 200 in
+        { x; y }
+      in
+      let p = f () in
+      p.x + p.y
+
+--- expect: 300
+
+--- test: record punning with string fields
+
+      type person = { name: string; age: int };;
+      let name = "Alice" in
+      let age = 30 in
+      let p = { name; age } in
+      p.name ^ " is " ^ string_of_int p.age
+
+--- expect: "Alice is 30"
+
+--- test: record punning roundtrip with pattern
+
+      type point = { x: int; y: int };;
+      let p = { x = 5; y = 10 } in
+      let { x; y } = p in
+      let q = { x; y } in
+      q.x + q.y
+
+--- expect: 15
+
+--- test: record punning update still works
+
+      type point = { x: int; y: int };;
+      let p = { x = 1; y = 2 } in
+      let q = { p with x = 10 } in
+      q.x + q.y
+
+--- expect: 12
+
+--- test: record punning three fields
+
+      type rgb = { r: int; g: int; b: int };;
+      let r = 255 in
+      let g = 128 in
+      let b = 0 in
+      let c = { r; g; b } in
+      c.r + c.g + c.b
+
+--- expect: 383
+
+--- test: record punning with computed values
+
+      type point = { x: int; y: int };;
+      let x = 3 * 4 in
+      let y = 5 + 6 in
+      let p = { x; y } in
+      p.x + p.y
+
+--- expect: 23
+
+--- test: record punning unbound variable error
+      type point = { x: int; y: int };;
+      let x = 1 in
+      { x; y }
+--- expect-type-error
+
+=== Unit Parameter Parsing Tests ===
+
+--- test: fun unit param
+let f = fn () -> 42 in f ()
+--- expect: 42
+
+--- test: mutable closure with unit param
+
+      let mut x = 0 in
+      let f = fn () -> x in
+      x := 42;
+      f ()
+
+--- expect: 42
+
+=== Raw String Literal Tests ===
+
+--- test: raw string basic
+{|hello|}
+--- expect: hello
+
+--- test: raw string empty
+{||}
+--- expect:
+
+--- test: raw string no escape processing
+{|hello\nworld|}
+--- expect: hello\nworld
+
+--- test: raw string with quotes inside
+{|she said "hi"|}
+--- expect: she said "hi"
+
+=== Print as First-Class Function Tests ===
+
+--- test: print still works
+print 42
+--- expect: 42
+
+--- test: print is first-class
+let f = print in f "hello"
+--- expect: hello
+
+--- test: print as higher-order arg
+let apply f x = f x in
+apply print 99
+--- expect: 99
+
+=== Float Operators Removed Tests ===
+
+--- test: float add with polymorphic +
+1.0 + 2.0
+--- expect: 3.
+
+--- test: float sub with polymorphic -
+5.0 - 1.5
+--- expect: 3.5
+
+--- test: float mul with polymorphic *
+2.0 * 3.0
+--- expect: 6.
+
+--- test: float div with polymorphic /
+10.0 / 4.0
+--- expect: 2.5
+
+--- test: float negation
+-(3.5)
+--- expect: -3.5
+
+=== Do/End Tests ===
+
+--- test: do end basic
+ do 42 end
+--- expect: 42
+
+--- test: do end sequence
+
+      let mut x = 0 in
+      do x := 1; x := x + 41; x end
+
+--- expect: 42
+
+--- test: do end in if branch
+
+      let mut x = 0 in
+      if true do do x := 42; x end else 0
+
+--- expect: 42
+
+--- test: do end nested
+
+      do do 42 end end
+
+--- expect: 42
+
+=== Failwith Tests ===
+
+--- test: failwith raises runtime error
+failwith "test error"
+--- expect-runtime-error: test error
+
+--- test: non-exhaustive match includes location
+type color = Red | Blue
+@partial
+match Red with
+| Blue -> "blue"
+--- expect-runtime-error: non-exhaustive match at line
+
+=== String.of_byte Tests ===
+
+--- test: String.of_byte
+ String.of_byte (Byte.of_int 65)
+--- expect: A
+
+--- test: String.of_byte zero
+ String.length (String.of_byte (Byte.of_int 0))
+--- expect: 1
+
+=== Mutual Function Recursion Tests ===
+
+--- test: mutual recursion expression level
+
+      let rec is_even n =
+        if n = 0 do true
+        else is_odd (n - 1)
+      and is_odd n =
+        if n = 0 do false
+        else is_even (n - 1)
+      in
+      is_even 10
+
+--- expect: true
+
+--- test: mutual recursion is_odd
+
+      let rec is_even n =
+        if n = 0 do true
+        else is_odd (n - 1)
+      and is_odd n =
+        if n = 0 do false
+        else is_even (n - 1)
+      in
+      is_odd 7
+
+--- expect: true
+
+--- test: mutual recursion is_even false
+
+      let rec is_even n =
+        if n = 0 do true
+        else is_odd (n - 1)
+      and is_odd n =
+        if n = 0 do false
+        else is_even (n - 1)
+      in
+      is_even 3
+
+--- expect: false
+
+--- test: mutual recursion three functions
+
+      let rec f x = if x <= 0 do 0 else g (x - 1) + 1
+      and g x = if x <= 0 do 0 else h (x - 1) + 2
+      and h x = if x <= 0 do 0 else f (x - 1) + 3
+      in
+      f 6
+
+--- expect: 12
+
+--- test: mutual recursion declaration level
+
+      let rec is_even n =
+        if n = 0 do true
+        else is_odd (n - 1)
+      and is_odd n =
+        if n = 0 do false
+        else is_even (n - 1)
+      ;;
+      is_even 8
+
+--- expect: true
+
+=== Mutual Type Recursion Tests ===
+
+--- test: mutual type recursion tree/forest
+
+      type 'a tree = Leaf | Node of 'a * 'a forest
+      and 'a forest = Empty | Trees of 'a tree * 'a forest
+      ;;
+      let rec count_tree t = match t with
+        | Leaf -> 0
+        | Node (_, f) -> 1 + count_forest f
+      and count_forest f = match f with
+        | Empty -> 0
+        | Trees (t, rest) -> count_tree t + count_forest rest
+      in
+      count_tree (Node (1, Trees (Node (2, Empty), Trees (Leaf, Empty))))
+
+--- expect: 2
+
+--- test: mutual type recursion construct
+
+      type 'a tree = Leaf | Node of 'a * 'a forest
+      and 'a forest = Empty | Trees of 'a tree * 'a forest
+      ;;
+      match Node (42, Empty) with
+      | Leaf -> 0
+      | Node (x, _) -> x
+
+--- expect: 42
+
+=== Physical Equality Tests ===
+
+--- test: same record is phys_equal
+      type box = { mut val_: int };;
+      let r = { val_ = 1 } in phys_equal r r
+--- expect: true
+
+--- test: different records not phys_equal
+      type box = { mut val_: int };;
+      let r1 = { val_ = 1 } in
+      let r2 = { val_ = 1 } in
+      phys_equal r1 r2
+--- expect: false
+
+--- test: phys_equal survives mutation
+      type box = { mut val_: int };;
+      let r = { val_ = 0 } in
+      r.val_ := 42;
+      phys_equal r r
+--- expect: true
+
+--- test: shared record through let binding
+      type box = { mut val_: int };;
+      let r = { val_ = 1 } in
+      let alias = r in
+      phys_equal r alias
+--- expect: true
+
+--- test: phys_equal on closures
+      let f = fn x -> x + 1 in phys_equal f f
+--- expect: true
+
+--- test: different closures not phys_equal
+      let f = fn x -> x + 1 in
+      let g = fn x -> x + 1 in
+      phys_equal f g
+--- expect: false
+
+--- test: phys_equal in variant pattern
+      type tvar = Unbound of int | Link of int
+      and tv_ref = { mut tv: tvar }
+      ;;
+      let r = { tv = Unbound 1 } in
+      let v1 = r in
+      let v2 = r in
+      phys_equal v1 v2
+--- expect: true
+
+=== Value Restriction Tests ===
+
+--- test: ref used at two different types
+let r = Ref.create [] in
+Ref.set r [1; 2; 3];
+Ref.set r ["hello"]
+--- expect-type-error
+
+--- test: hashtbl used with different value types
+let tbl = Hashtbl.create 8 in
+Hashtbl.set tbl "x" 1;
+Hashtbl.set tbl "y" "hello"
+--- expect-type-error
+
+--- test: ref identity used polymorphically
+let r = Ref.create (fn x -> x) in
+((Ref.get r) 1, (Ref.get r) "hello")
+--- expect-type-error
+
+--- test: ref consistent type works
+let r = Ref.create [] in
+Ref.set r [1; 2; 3];
+List.hd (Ref.get r)
+--- expect: 1
+
+--- test: ref identity consistent type works
+let r = Ref.create (fn x -> x) in
+let f = Ref.get r in
+f 42
+--- expect: 42
+
+--- test: monomorphic ref works
+let r = Ref.create 0 in
+Ref.set r 42;
+Ref.get r
+--- expect: 42
+
+--- test: monomorphic hashtbl works
+let tbl = Hashtbl.create 8 in
+Hashtbl.set tbl "a" 1;
+Hashtbl.set tbl "b" 2;
+Hashtbl.get tbl "a"
+--- expect: Some 1
+
+--- test: lambda is syntactic value and generalizes
+let id = fn x -> x in
+(id 42, id "hello")
+--- expect: (42, hello)
+
+--- test: constructor is syntactic value and generalizes
+let x = None in
+let a = match x with | Some n -> n | None -> 42 in
+let b = match x with | Some s -> s | None -> "hi" in
+(a, b)
+--- expect: (42, hi)

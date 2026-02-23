@@ -1,0 +1,1131 @@
+=== Type Class Tests ===
+
+--- test: basic class and instance
+show 42
+--- expect: 42
+
+--- test: multiple instances
+show 42 ^ " " ^ show true
+--- expect: 42 true
+
+--- test: class method in annotated function
+      let show_int (x: int) : string = show x
+      ;;
+      show_int 99
+--- expect: 99
+
+--- test: show float instance
+show 3.14
+--- expect: 3.14
+
+--- test: class method with let binding
+let s = show 100 in s
+--- expect: 100
+
+--- test: multi-method class
+      class Describable 'a =
+        describe : 'a -> string
+        label : 'a -> string
+      end
+      instance Describable int =
+        let describe x = string_of_int x
+        let label _ = "integer"
+      end
+      label 0 ^ ": " ^ describe 42
+--- expect: integer: 42
+
+=== Multi-Parameter Type Class Tests ===
+
+--- test: multi-param class basic
+      class Convert 'a 'b =
+        convert : 'a -> 'b
+      end
+      instance Convert int string =
+        let convert (x: int) = string_of_int x
+      end
+      convert 42
+--- expect: 42
+
+--- test: multi-param class both params in method
+      class Container 'c 'e =
+        size : 'c -> int
+        first : 'c -> 'e
+      end
+      instance Container (int list) int =
+        let size (xs: int list) =
+          let rec len acc ys = match ys with
+            | [] -> acc
+            | _ :: rest -> len (acc + 1) rest
+          in len 0 xs
+        let first (xs: int list) = match xs with
+          | x :: _ -> x
+          | [] -> 0
+      end
+      first [10; 20; 30] + size [1; 2; 3]
+--- expect: 13
+
+--- test: multi-param class with extra method tyvar
+      class Fold 'a 'e =
+        fold_left : ('b -> 'e -> 'b) -> 'b -> 'a -> 'b
+      end
+      instance Fold (int list) int =
+        let fold_left f init xs =
+          let rec go acc ys = match ys with
+            | [] -> acc
+            | y :: rest -> go (f acc y) rest
+          in go init xs
+      end
+      fold_left (fn a b -> a + b) 0 [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: multi-param fold to string
+      class Fold 'a 'e =
+        fold_left : ('b -> 'e -> 'b) -> 'b -> 'a -> 'b
+      end
+      instance Fold (int list) int =
+        let fold_left f init xs =
+          let rec go acc ys = match ys with
+            | [] -> acc
+            | y :: rest -> go (f acc y) rest
+          in go init xs
+      end
+      fold_left (fn acc n -> acc ^ string_of_int n) "" [1; 2; 3]
+--- expect: 123
+
+=== Operator Typeclass Tests ===
+
+--- test: float addition with +
+2.0 + 3.0
+--- expect: 5.
+
+--- test: float subtraction with -
+10.0 - 4.0
+--- expect: 6.
+
+--- test: float multiplication with *
+3.0 * 2.0
+--- expect: 6.
+
+--- test: float division with /
+10.0 / 4.0
+--- expect: 2.5
+
+--- test: float negation
+-(3.5)
+--- expect: -3.5
+
+--- test: bitwise land
+7 land 3
+--- expect: 3
+
+--- test: bitwise lor
+5 lor 3
+--- expect: 7
+
+--- test: bitwise lxor
+5 lxor 3
+--- expect: 6
+
+--- test: bitwise lsl
+1 lsl 3
+--- expect: 8
+
+--- test: bitwise lsr
+8 lsr 2
+--- expect: 2
+
+--- test: bitwise lnot
+lnot 0
+--- expect: -1
+
+--- test: first-class (+) int
+let f = (+) in f 3 4
+--- expect: 7
+
+--- test: first-class (*) int
+let f = (*) in f 5 6
+--- expect: 30
+
+--- test: first-class (=) int
+let f = (=) in f 3 3
+--- expect: true
+
+--- test: first-class (<) int
+let f = (<) in f 3 5
+--- expect: true
+
+--- test: first-class (land)
+let f = (land) in f 7 3
+--- expect: 3
+
+--- test: fold with (+)
+fold (+) 0 [1; 2; 3; 4]
+--- expect: 10
+
+--- test: string less than
+"abc" < "def"
+--- expect: true
+
+--- test: string greater than
+"xyz" > "abc"
+--- expect: true
+
+--- test: string le equal
+"abc" <= "abc"
+--- expect: true
+
+--- test: string ge
+"abc" >= "abd"
+--- expect: false
+
+--- test: custom Num instance
+      type vec2 = { x: int; y: int };;
+      instance Num vec2 =
+        let (+) a b = { x = a.x + b.x; y = a.y + b.y }
+        let (-) a b = { x = a.x - b.x; y = a.y - b.y }
+        let (*) a b = { x = a.x * b.x; y = a.y * b.y }
+        let (/) a b = { x = a.x / b.x; y = a.y / b.y }
+        let neg a = { x = 0 - a.x; y = 0 - a.y }
+      end
+      let v1 = { x = 1; y = 2 };;
+      let v2 = { x = 3; y = 4 };;
+      let v3 = v1 + v2;;
+      v3.x + v3.y
+--- expect: 10
+
+--- test: custom Eq instance
+      type point = { px: int; py: int };;
+      instance Eq point =
+        let (=) a b = a.px = b.px
+        let (<>) a b = a.px <> b.px
+      end
+      let p1 = { px = 1; py = 2 };;
+      let p2 = { px = 1; py = 99 };;
+      p1 = p2
+--- expect: true
+
+--- test: custom Ord instance
+      type score = { val_: int };;
+      instance Ord score =
+        let (<) a b = a.val_ < b.val_
+        let (>) a b = a.val_ > b.val_
+        let (<=) a b = a.val_ <= b.val_
+        let (>=) a b = a.val_ >= b.val_
+      end
+      let s1 = { val_ = 10 };;
+      let s2 = { val_ = 20 };;
+      s1 < s2
+--- expect: true
+
+--- test: structural equality list
+[1; 2; 3] = [1; 2; 3]
+--- expect: true
+
+--- test: structural equality tuple
+(1, "hello") = (1, "hello")
+--- expect: true
+
+--- test: structural inequality
+[1; 2] <> [1; 3]
+--- expect: true
+
+=== Typeclass Constraint Tests ===
+
+--- test: basic constrained function
+      let show_twice (x: 'a) : string where Show 'a = show x ^ show x
+      ;;
+      show_twice 42
+--- expect: 4242
+
+--- test: constrained function with string
+      let show_twice (x: 'a) : string where Show 'a = show x ^ show x
+      ;;
+      show_twice "hi"
+--- expect: hihi
+
+--- test: multiple constraints
+      let show_eq (a: 'a) (b: 'a) : string where Show 'a, Eq 'a =
+        if a = b do show a else show a ^ " <> " ^ show b
+      ;;
+      show_eq 1 2
+--- expect: 1 <> 2
+
+--- test: multiple constraints equal
+      let show_eq (a: 'a) (b: 'a) : string where Show 'a, Eq 'a =
+        if a = b do show a else show a ^ " <> " ^ show b
+      ;;
+      show_eq 3 3
+--- expect: 3
+
+--- test: constrained function calling constrained function
+      let show_twice (x: 'a) : string where Show 'a = show x ^ show x
+      ;;
+      let show_four (x: 'a) : string where Show 'a = show_twice x ^ show_twice x
+      ;;
+      show_four 1
+--- expect: 1111
+
+--- test: constrained Num operator
+      let add_twice (x: 'a) : 'a where Num 'a = x + x
+      ;;
+      add_twice 5
+--- expect: 10
+
+--- test: constrained Num with float
+      let add_twice (x: 'a) : 'a where Num 'a = x + x
+      ;;
+      add_twice 2.5
+--- expect: 5.
+
+--- test: constrained instance (dictionary factory)
+      type 'a box = Box of 'a
+      ;;
+      instance Show ('a box) where Show 'a =
+        let show b =
+          match b with
+          | Box x -> "Box(" ^ show x ^ ")"
+      end
+      show (Box 42)
+--- expect: Box(42)
+
+--- test: constrained instance nested
+      type 'a box = Box of 'a
+      ;;
+      instance Show ('a box) where Show 'a =
+        let show b =
+          match b with
+          | Box x -> "Box(" ^ show x ^ ")"
+      end
+      show (Box (Box 7))
+--- expect: Box(Box(7))
+
+=== Deriving Tests ===
+
+--- test: deriving Show simple variant
+      type color = Red | Green | Blue deriving Show
+      show Red
+--- expect: Red
+
+--- test: deriving Show variant with payload
+      type shape = Circle of int | Rect of int * int deriving Show
+      show (Circle 5)
+--- expect: Circle(5)
+
+--- test: deriving Show variant multi-field
+      type shape = Circle of int | Rect of int * int deriving Show
+      show (Rect (3, 4))
+--- expect: Rect(3, 4)
+
+--- test: deriving Show record
+      type point = { x: int; y: int } deriving Show
+      show { x = 10; y = 20 }
+--- expect: { x = 10; y = 20 }
+
+--- test: show anonymous record
+let r = { x = 1; y = 2 } in show r
+--- expect: { x = 1; y = 2 }
+
+--- test: show anonymous record concrete fields
+show { a = 10; b = "hello" }
+--- expect: { a = 10; b = hello }
+
+--- test: deriving Show parameterized type
+      type 'a box = Wrap of 'a deriving Show
+      show (Wrap 42)
+--- expect: Wrap(42)
+
+--- test: deriving Eq simple variant
+      type color = Red | Green | Blue deriving Eq
+      Red = Red
+--- expect: true
+
+--- test: deriving Eq variant different
+      type color = Red | Green | Blue deriving Eq
+      Red = Blue
+--- expect: false
+
+--- test: deriving Eq variant with payload
+      type shape = Circle of int | Rect of int * int deriving Eq
+      Circle 5 = Circle 5
+--- expect: true
+
+--- test: deriving Eq variant payload different
+      type shape = Circle of int | Rect of int * int deriving Eq
+      Circle 5 = Circle 3
+--- expect: false
+
+--- test: deriving Eq record
+      type point = { x: int; y: int } deriving Eq
+      { x = 1; y = 2 } = { x = 1; y = 2 }
+--- expect: true
+
+--- test: deriving Eq record different
+      type point = { x: int; y: int } deriving Eq
+      { x = 1; y = 2 } = { x = 1; y = 3 }
+--- expect: false
+
+--- test: deriving Show and Eq
+      type color = Red | Green | Blue deriving Show, Eq
+      show Red
+--- expect: Red
+
+--- test: deriving Show and Eq both work
+      type color = Red | Green | Blue deriving Show, Eq
+      if Red = Red do show Green else show Blue
+--- expect: Green
+
+--- test: deriving Eq neq method
+      type color = Red | Green | Blue deriving Eq
+      Red <> Blue
+--- expect: true
+
+=== Module-Scoped Type Class Tests ===
+
+--- test: class in module doesn't leak to global
+      module Foo =
+        pub class Computable 'a =
+          compute : 'a -> int
+        end
+        instance Computable int =
+          let compute x = x * 2
+        end
+      end
+
+      Foo.compute 21
+--- expect: 42
+
+--- test: module class instance works
+      module MyMod =
+        pub class Showable 'a =
+          display : 'a -> string
+        end
+        instance Showable int =
+          let display x = "int:" ^ string_of_int x
+        end
+      end
+
+      MyMod.display 42
+--- expect: int:42
+
+--- test: open module imports class
+      module MyMod =
+        pub class Stringify 'a =
+          to_str : 'a -> string
+        end
+        instance Stringify int =
+          let to_str x = string_of_int x
+        end
+      end
+
+      open MyMod
+      to_str 99
+--- expect: 99
+
+--- test: two modules same class name no conflict
+      module A =
+        pub class Processor 'a =
+          process_a : 'a -> int
+        end
+        instance Processor int =
+          let process_a x = x + 1
+        end
+      end
+
+      module B =
+        pub class Processor 'a =
+          process_b : 'a -> int
+        end
+        instance Processor int =
+          let process_b x = x * 10
+        end
+      end
+
+      A.process_a 5 + B.process_b 3
+--- expect: 36
+
+--- test: constrained function inside module
+      module PP =
+        pub class Pretty 'a =
+          pretty : 'a -> string
+        end
+        instance Pretty int =
+          let pretty x = "<" ^ string_of_int x ^ ">"
+        end
+
+        pub let show_pretty (x : 'a) : string where Pretty 'a =
+          pretty x
+      end
+
+      PP.show_pretty 42
+--- expect: <42>
+
+--- test: qualified instance declaration
+      module PP =
+        pub class Pretty 'a =
+          pretty : 'a -> string
+        end
+        instance Pretty int =
+          let pretty x = "[" ^ string_of_int x ^ "]"
+        end
+      end
+
+      instance PP.Pretty string =
+        let pretty s = "(" ^ s ^ ")"
+      end
+      PP.pretty "hello"
+--- expect: (hello)
+
+=== Show Compound Types Tests ===
+
+--- test: show int list
+show [1; 2; 3]
+--- expect: [1; 2; 3]
+
+--- test: show string list
+show ["a"; "b"; "c"]
+--- expect: [a; b; c]
+
+--- test: show bool list
+show [true; false]
+--- expect: [true; false]
+
+--- test: show empty list
+show ([] : int list)
+--- expect: []
+
+--- test: show int array
+show #[10; 20; 30]
+--- expect: #[10; 20; 30]
+
+--- test: show empty array
+show (#[] : int array)
+--- expect: #[]
+
+--- test: show option some
+show (Some 42)
+--- expect: Some 42
+
+--- test: show option none
+show (None : int option)
+--- expect: None
+
+--- test: show int pair
+show (1, 2)
+--- expect: (1, 2)
+
+--- test: show string pair
+show ("a", "b")
+--- expect: (a, b)
+
+--- test: show triple
+show (1, true, "x")
+--- expect: (1, true, x)
+
+--- test: show map
+show #{"a": 1}
+--- expect: #{a: 1}
+
+--- test: show set
+show (Set.of_list [1; 2; 3])
+--- expect: #{3; 2; 1}
+
+--- test: show nested list
+show [[1; 2]; [3; 4]]
+--- expect: [[1; 2]; [3; 4]]
+
+=== Implicit Constraint Inference Tests ===
+
+--- test: implicit show single param
+let f x = show x ;; f 42
+--- expect: 42
+
+--- test: implicit show two params
+let f a b = show a ^ show b ;; f 1 2
+--- expect: 12
+
+--- test: implicit show in module
+module M =
+  pub let display x = show x
+end
+;;
+M.display true
+--- expect: true
+
+--- test: implicit eq inferred
+let same a b = a = b ;; same 1 1
+--- expect: true
+
+--- test: implicit eq false
+let same a b = a = b ;; same 1 2
+--- expect: false
+
+--- test: implicit show with concat
+let describe x = show x ^ " is the value" ;; describe 5
+--- expect: 5 is the value
+
+--- test: implicit show let rec
+let rec repeat x n = if n <= 0 do "" else show x ^ repeat x (n - 1) ;; repeat 7 3
+--- expect: 777
+
+=== Class Method Detection Tests ===
+
+--- test: implicit show inferred on top-level function
+let f x = show x
+;;
+f 42
+--- expect: 42
+
+--- test: implicit show inferred with concatenation
+let f x = "value: " ^ show x
+;;
+f 99
+--- expect: value: 99
+
+--- test: implicit eq inferred on top-level function
+let same x y = x = y
+;;
+same 3 3
+--- expect: true
+
+--- test: implicit eq inferred returns false
+let same x y = x = y
+;;
+same 3 4
+--- expect: false
+
+--- test: implicit ord inferred
+let bigger x y = x > y
+;;
+bigger 5 3
+--- expect: true
+
+--- test: local binding different name no interference
+let f x =
+  let display n = string_of_int n ^ "!" in
+  display x
+;;
+f 42
+--- expect: 42!
+
+--- test: implicit inference on recursive function
+let rec show_list xs = match xs with
+  | [] -> ""
+  | [x] -> show x
+  | x :: rest -> show x ^ ", " ^ show_list rest
+;;
+show_list [1; 2; 3]
+--- expect: 1, 2, 3
+
+=== Multi-Param Class No False Positives Tests ===
+
+--- test: map get no spurious constraint
+let f () =
+  let m = #{"a": 1; "b": 2} in
+  match get "a" m with
+  | Some v -> v
+  | None -> 0
+;;
+f ()
+--- expect: 1
+
+--- test: map set no spurious constraint
+let f () =
+  let m = #{"x": 10} in
+  let m2 = set "y" 20 m in
+  match get "y" m2 with
+  | Some v -> v
+  | None -> 0
+;;
+f ()
+--- expect: 20
+
+--- test: map has no spurious constraint
+let f () =
+  let m = #{"a": 1} in
+  has "a" m
+;;
+f ()
+--- expect: true
+
+--- test: map keys no spurious constraint
+let f () =
+  let m = #{1: "one"; 2: "two"} in
+  List.length (keys m)
+;;
+f ()
+--- expect: 2
+
+--- test: set operations no spurious constraint
+let f () =
+  let s = Set.of_list [1; 2; 3] in
+  has 2 s
+;;
+f ()
+--- expect: true
+
+--- test: hashtbl usage no spurious constraint
+let f () =
+  let tbl = Hashtbl.create 4 in
+  Hashtbl.set tbl "a" 1;
+  Hashtbl.set tbl "b" 2;
+  match Hashtbl.get tbl "a" with
+  | Some v -> v
+  | None -> 0
+;;
+f ()
+--- expect: 1
+
+--- test: single-param class still inferred
+let f x = show x ^ "!" ;; f 42
+--- expect: 42!
+
+--- test: eq still inferred with operator
+let f a b = if a = b do "same" else "diff" ;; f 1 1
+--- expect: same
+
+=== Constraint Merging Tests ===
+
+--- test: show on two different type params explicit
+let f (a: 'a) (b: 'b) : string where Show 'a, Show 'b = show a ^ " " ^ show b
+;;
+f 42 true
+--- expect: 42 true
+
+--- test: show on two different type params strings
+let f (a: 'a) (b: 'b) : string where Show 'a, Show 'b = show a ^ " " ^ show b
+;;
+f "hello" 99
+--- expect: hello 99
+
+--- test: implicit show two different types
+let f a b = show a ^ show b ;; f 1 true
+--- expect: 1true
+
+--- test: implicit show three different types
+let f a b c = show a ^ show b ^ show c ;; f 1 true "x"
+--- expect: 1truex
+
+--- test: eq and show on same param no merge
+let f (x: 'a) (y: 'a) : string where Show 'a, Eq 'a =
+  if x = y do show x else show x ^ " <> " ^ show y
+;;
+f 1 2
+--- expect: 1 <> 2
+
+--- test: show on param and list
+let f (x: 'a) (xs: 'a list) : string where Show 'a =
+  show x ^ " in " ^ show xs
+;;
+f 1 [2; 3]
+--- expect: 1 in [2; 3]
+
+--- test: implicit show different types in module
+module M =
+  pub let display a b = show a ^ " and " ^ show b
+end
+;;
+M.display 42 "hello"
+--- expect: 42 and hello
+
+--- test: two eq constraints different params
+let f (a: 'a) (b: 'b) (a2: 'a) (b2: 'b) : bool where Eq 'a, Eq 'b =
+  a = a2 && b = b2
+;;
+f 1 "x" 1 "x"
+--- expect: true
+
+=== Qualified Class Method Access Tests ===
+
+--- test: Show.show qualified access
+Show.show 42
+--- expect: 42
+
+--- test: Show.show qualified with bool
+Show.show true
+--- expect: true
+
+--- test: Map.get qualified access
+Map.get "x" #{"x": 99}
+--- expect: Some 99
+
+--- test: Map.set qualified access
+Map.size (Map.set "b" 2 #{"a": 1})
+--- expect: 2
+
+--- test: Map.has qualified access
+Map.has 1 #{1: "one"}
+--- expect: true
+
+--- test: Map.size qualified access
+Map.size #{"a": 1; "b": 2; "c": 3}
+--- expect: 3
+
+--- test: Map.keys qualified access
+List.length (Map.keys #{"x": 1; "y": 2})
+--- expect: 2
+
+--- test: Map.remove qualified access
+Map.size (Map.remove "a" #{"a": 1; "b": 2})
+--- expect: 1
+
+--- test: Index.at qualified access
+Index.at 1 #[10; 20; 30]
+--- expect: 20
+
+--- test: Index.at qualified on string
+Byte.to_int (Index.at 0 "A")
+--- expect: 65
+
+--- test: Iter.fold qualified access
+Iter.fold (+) 0 [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: qualified access after shadowing
+let show _ = "shadowed" in
+Show.show 42
+--- expect: 42
+
+--- test: qualified access disambiguates shadowed get
+let get _ _ = "wrong" in
+match Map.get "x" #{"x": 42} with
+| Some v -> v
+| None -> 0
+--- expect: 42
+
+--- test: qualified method in higher order
+List.map (Show.show) [1; 2; 3]
+--- expect: [1; 2; 3]
+
+--- test: qualified fold with operator
+Iter.fold (+) 0 #[10; 20; 30]
+--- expect: 60
+
+--- test: Eq.(=) qualified operator
+Eq.(=) 1 1
+--- expect: true
+
+--- test: Eq.(<>) qualified operator
+Eq.(<>) 1 2
+--- expect: true
+
+--- test: Ord.(<) qualified operator
+Ord.(<) 3 5
+--- expect: true
+
+--- test: Ord.(>=) qualified operator
+Ord.(>=) 5 5
+--- expect: true
+
+--- test: Num.(+) qualified operator
+Num.(+) 10 20
+--- expect: 30
+
+--- test: Num.(*) qualified operator
+Num.(*) 3 4
+--- expect: 12
+
+--- test: qualified operator as higher order
+List.map (Num.(+) 1) [10; 20; 30]
+--- expect: [11; 21; 31]
+
+--- test: qualified operator in fold
+Iter.fold (Num.(+)) 0 [1; 2; 3; 4; 5]
+--- expect: 15
+
+--- test: module class qualified still works
+module Fmt =
+  pub class Pretty 'a =
+    pretty : 'a -> string
+  end
+  instance Pretty int =
+    let pretty x = "<" ^ string_of_int x ^ ">"
+  end
+end
+Fmt.pretty 42
+--- expect: <42>
+
+=== Expression-Level Implicit Constraint Tests ===
+
+--- test: expression-level let with implicit Show constraint
+let use_it () =
+  let g y = show y in
+  g 42
+;;
+use_it ()
+--- expect: 42
+
+--- test: expression-level let called with string
+let use_it () =
+  let g y = show y in
+  g "hello"
+;;
+use_it ()
+--- expect: hello
+
+--- test: expression-level let with polymorphic outer function
+let f x = let g y = show y in g x;;
+f 42
+--- expect: 42
+
+--- test: expression-level let polymorphic called with bool
+let f x = let g y = show y in g x;;
+f true
+--- expect: true
+
+--- test: nested expression-level constrained lets
+let f x =
+  let g y = show y in
+  let h z = g z in
+  h x
+;;
+f 42
+--- expect: 42
+
+--- test: expression-level let with Eq constraint
+let f x y =
+  let eq a b = a = b in
+  eq x y
+;;
+f 1 2
+--- expect: false
+
+--- test: expression-level let with Eq constraint true case
+let f x y =
+  let eq a b = a = b in
+  eq x y
+;;
+f 5 5
+--- expect: true
+
+--- test: expression-level let with Ord constraint
+let f x y =
+  let cmp a b = a < b in
+  cmp x y
+;;
+f 1 2
+--- expect: true
+
+--- test: expression-level let with Num constraint
+let f x y =
+  let add a b = a + b in
+  add x y
+;;
+f 3 4
+--- expect: 7
+
+--- test: expression-level let show in complex expression
+let f x =
+  let s y = show y in
+  s x ^ " is the value"
+;;
+f 99
+--- expect: 99 is the value
+
+--- test: expression-level let show used multiple times
+let f x y =
+  let s z = show z in
+  s x ^ " and " ^ s y
+;;
+f 1 2
+--- expect: 1 and 2
+
+--- test: expression-level let with user-defined class
+class Greet 'a =
+  greet : 'a -> string
+end
+instance Greet int =
+  let greet x = "Hello " ^ string_of_int x
+end
+instance Greet string =
+  let greet x = "Hi " ^ x
+end
+let f x =
+  let g y = greet y in
+  g x
+;;
+f 42
+--- expect: Hello 42
+
+--- test: expression-level let with user-defined class string instance
+class Greet2 'a =
+  greet2 : 'a -> string
+end
+instance Greet2 int =
+  let greet2 x = "Hello " ^ string_of_int x
+end
+instance Greet2 string =
+  let greet2 x = "Hi " ^ x
+end
+let f x =
+  let g y = greet2 y in
+  g x
+;;
+f "world"
+--- expect: Hi world
+
+--- test: expression-level let with constrained result used in outer
+let f x =
+  let wrap y = "[" ^ show y ^ "]" in
+  wrap x
+;;
+f 42 ^ f true
+--- expect: [42][true]
+
+--- test: expression-level constrained let inside match arm
+let f x =
+  match x with
+  | 0 -> let g y = show y in g 0
+  | n -> let g y = show y in g n
+;;
+f 5
+--- expect: 5
+
+--- test: deeply nested expression-level constraints
+let f x =
+  let a y =
+    let b z = show z in
+    b y
+  in
+  a x
+;;
+f 100
+--- expect: 100
+
+--- test: expression-level let with explicit where still works
+let f (x : 'a) : string where Show 'a =
+  let g y = show y in
+  g x
+;;
+f 42
+--- expect: 42
+
+--- test: expression-level let mixed constrained and unconstrained
+let f x =
+  let double n = n + n in
+  let display y = show y in
+  display (double x)
+;;
+f 5
+--- expect: 10
+
+--- test: expression-level let rec with implicit constraint
+let f x =
+  let rec show_list lst =
+    match lst with
+    | [] -> ""
+    | [x] -> show x
+    | x :: rest -> show x ^ ", " ^ show_list rest
+  in
+  show_list x
+;;
+f [1; 2; 3]
+--- expect: 1, 2, 3
+
+--- test: expression-level let constraint with concrete call
+let result =
+  let g y = show y in
+  g 42
+;;
+result
+--- expect: 42
+
+--- test: expression-level let constraint propagation through two functions
+let outer x =
+  let middle y =
+    let inner z = show z in
+    inner y
+  in
+  middle x
+;;
+outer 77
+--- expect: 77
+
+--- test: expression-level let with show on tuple
+let f x =
+  let s y = show y in
+  s x
+;;
+f (1, 2)
+--- expect: (1, 2)
+
+--- test: expression-level let with show on list
+let f x =
+  let s y = show y in
+  s x
+;;
+f [1; 2; 3]
+--- expect: [1; 2; 3]
+
+=== Multi-param Constraint Inference ===
+
+--- test: expression-level let with Index constraint
+let lookup m k = m.[k] in
+lookup #{"hello": 42} "hello"
+--- expect: 42
+
+--- test: expression-level let with Index on array
+let get_at arr i = arr.[i] in
+get_at #[10; 20; 30] 1
+--- expect: 20
+
+--- test: expression-level let with Index on string
+let char_at s i = s.[i] in
+char_at "abc" 0
+--- expect: #61
+
+=== Fundep Type Improvement ===
+
+--- test: show in anonymous lambda with fold on list
+fold (fn acc x -> acc ^ show x) "" [1; 2; 3]
+--- expect: 123
+
+--- test: show in anonymous lambda with fold on array
+fold (fn acc x -> acc ^ show x ^ ",") "" #[10; 20; 30]
+--- expect: 10,20,30,
+
+--- test: show in anonymous lambda with mutable fold
+let mut result = "" in
+fold (fn () x -> result := result ^ show x; ()) () [4; 5; 6];
+result
+--- expect: 456
+
+--- test: to_list with show resolves pair type via fundep
+let m = #{"only": 42} in
+match to_list m with
+| [(k, v)] -> k ^ "=" ^ show v
+| _ -> "wrong"
+--- expect: only=42
+
+=== Instance Method Annotation Tests ===
+
+--- test: instance method with full annotations
+class Updatable 'a =
+  update_x : 'a -> int -> 'a
+end
+type point = { x: int; y: int }
+instance Updatable point =
+  let update_x (p: point) (n: int) : point = { p with x = n }
+end
+(update_x { x = 0; y = 42 } 10).x + (update_x { x = 0; y = 42 } 10).y
+--- expect: 52
+
+--- test: instance method with return annotation only
+class Updatable 'a =
+  update_x : 'a -> int -> 'a
+end
+type point = { x: int; y: int }
+instance Updatable point =
+  let update_x p n : point = { p with x = n }
+end
+(update_x { x = 0; y = 42 } 10).x
+--- expect: 10
+
+--- test: instance method with param annotation only
+class Stringify 'a =
+  stringify : 'a -> string
+end
+instance Stringify int =
+  let stringify (x: int) = string_of_int x
+end
+stringify 42
+--- expect: 42

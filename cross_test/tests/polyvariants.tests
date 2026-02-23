@@ -1,0 +1,163 @@
+=== Polymorphic Variants ===
+
+--- test: nullary poly variant
+`Foo
+--- expect: `Foo
+
+--- test: poly variant with int payload
+`Bar 42
+--- expect: `Bar 42
+
+--- test: poly variant with string payload
+`Name "hello"
+--- expect: `Name hello
+
+--- test: poly variant with tuple payload
+`Pair (1, 2)
+--- expect: `Pair ((1, 2))
+
+--- test: match nullary poly variant
+match `A with
+| `A -> 1
+| `B -> 2
+--- expect: 1
+
+--- test: match with payload
+match `B 42 with
+| `A -> 0
+| `B n -> n + 1
+--- expect: 43
+
+--- test: match with wildcard
+match `C with
+| `A -> 1
+| _ -> 99
+--- expect: 99
+
+--- test: function taking poly variant
+let f x = match x with
+  | `Yes -> "yes"
+  | `No -> "no"
+in
+f `Yes
+--- expect: "yes"
+
+--- test: function returning poly variant
+let f x = if x do `True else `False
+in
+f true
+--- expect: `True
+
+--- test: poly variant in let binding
+let x = `Hello "world" in
+match x with
+| `Hello s -> s
+| _ -> "unknown"
+--- expect: "world"
+
+--- test: nested match
+let describe x = match x with
+  | `Color c -> match c with
+    | `Red -> "red"
+    | `Blue -> "blue"
+    | _ -> "other"
+  | _ -> "not a color"
+in
+describe (`Color `Red)
+--- expect: "red"
+
+--- test: poly variant equality
+`A = `A
+--- expect: true
+
+--- test: poly variant inequality
+`A = `B
+--- expect: false
+
+--- test: poly variant with payload equality
+`X 1 = `X 1
+--- expect: true
+
+--- test: poly variant with payload inequality
+`X 1 = `X 2
+--- expect: false
+
+--- test: different tags inequality
+`X 1 = `Y 1
+--- expect: false
+
+--- test: poly variants in list
+[`A; `B; `C]
+--- expect: [`A; `B; `C]
+
+--- test: poly variants with payloads in list
+[`X 1; `X 2; `X 3]
+--- expect: [`X 1; `X 2; `X 3]
+
+--- test: poly variant in tuple
+(`Left 1, `Right "x")
+--- expect: (`Left 1, `Right x)
+
+--- test: pattern match multiple tags with payloads
+let describe x = match x with
+  | `Int n -> show n
+  | `Str s -> s
+  | `Bool b -> show b
+in
+describe (`Int 42) ^ " " ^ describe (`Str "hi") ^ " " ^ describe (`Bool true)
+--- expect: "42 hi true"
+
+--- test: poly variant through function composition
+let wrap x = `Wrapped x in
+let unwrap v = match v with
+  | `Wrapped x -> x
+  | _ -> 0
+in
+unwrap (wrap 99)
+--- expect: 99
+
+--- test: match guard with poly variant
+match `X 5 with
+| `X n when n > 3 -> "big"
+| `X _ -> "small"
+--- expect: "big"
+
+--- test: coercion with poly variant
+let x = `A in
+(x :> [> `A | `B])
+--- expect: `A
+
+--- test: type annotation lower bound
+let f (x : [> `A | `B of int]) = match x with
+  | `A -> 0
+  | `B n -> n
+  | _ -> -1
+in
+f (`B 7)
+--- expect: 7
+
+--- test: type annotation exact
+let f (x : [`A | `B]) = match x with
+  | `A -> "a"
+  | `B -> "b"
+in
+f `A
+--- expect: "a"
+
+--- test: poly variant show
+show `Hello
+--- expect: "`Hello"
+
+--- test: poly variant with payload show
+show (`Tag 42)
+--- expect: "`Tag 42"
+
+--- test: row polymorphism multiple callers
+let get_name x = match x with
+  | `Named s -> s
+  | _ -> "unknown"
+in
+let a = get_name (`Named "alice") in
+let b = get_name (`Named "bob") in
+a ^ " " ^ b
+--- expect: "alice bob"

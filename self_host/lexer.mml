@@ -1,0 +1,619 @@
+module Lexer =
+  open Token
+  effect Lex_errorExn =
+    lex_error : string * Token.loc -> 'a
+  end
+
+  pub type t = {
+    source: string;
+    len: int;
+    mut cursor: int;
+    mut line: int;
+    mut col: int
+  }
+
+  pub let create source = {source; len = String.length source; cursor = 0; line = 1; col = 1}
+
+  pub let current_loc (l : t) : Token.loc = {line = l.line; col = l.col; offset = l.cursor}
+
+  pub let make_token l kind loc = {kind; loc; end_offset = l.cursor}
+
+  pub let at_end l = l.cursor >= l.len
+
+  pub let peek l =
+    if at_end l do
+      #00
+    else
+      String.get l.source l.cursor
+
+  pub let peek2 l =
+    if (l.cursor + 1) >= l.len do
+      #00
+    else
+      String.get l.source (l.cursor + 1)
+
+  pub let peek3 l =
+    if (l.cursor + 2) >= l.len do
+      #00
+    else
+      String.get l.source (l.cursor + 2)
+
+  pub let advance l =
+    let c = String.get l.source l.cursor in
+    l.cursor := l.cursor + 1;
+    if c = #0a do
+      l.line := l.line + 1;
+      l.col := 1
+    else
+      l.col := l.col + 1;
+    c
+
+  pub let error l msg = perform lex_error (msg, current_loc l)
+
+  pub let skip_whitespace l = for (not (at_end l)) && (((peek l) = #20) || (((peek l) = #09) || (((peek l) = #0a) || ((peek l) = #0d)))) do
+    (advance l; ())
+  end
+
+  pub let skip_comment l =
+    let depth = Ref.create 1 in
+    for (Ref.get depth) > 0 do
+      if at_end l do
+        error l "unterminated comment"
+      end;
+      if ((peek l) = #28) && ((peek2 l) = #2a) do
+        (advance l; ());
+        (advance l; ());
+        Ref.set depth ((Ref.get depth) + 1)
+      else if ((peek l) = #2a) && ((peek2 l) = #29) do
+        (advance l; ());
+        (advance l; ());
+        Ref.set depth ((Ref.get depth) - 1)
+      else
+        (advance l; ())
+    end
+
+  pub let skip_whitespace_and_comments l =
+    let changed = Ref.create true in
+    for Ref.get changed do
+      Ref.set changed false;
+      let p = l.cursor in
+      skip_whitespace l;
+      if (not (at_end l)) && (((peek l) = #28) && (((peek2 l) = #2a) && ((peek3 l) <> #29))) do
+        (advance l; ());
+        (advance l; ());
+        skip_comment l;
+        Ref.set changed true
+      end;
+      if l.cursor <> p do
+        Ref.set changed true
+      end
+    end
+
+  pub let is_digit c = (c >= #30) && (c <= #39)
+
+  pub let is_hex_digit c = (is_digit c) || (((c >= #61) && (c <= #66)) || ((c >= #41) && (c <= #46)))
+
+  pub let hex_val c =
+    if (c >= #30) && (c <= #39) do
+      (Byte.to_int c) - (Byte.to_int #30)
+    else if (c >= #61) && (c <= #66) do
+      ((Byte.to_int c) - (Byte.to_int #61)) + 10
+    else
+      ((Byte.to_int c) - (Byte.to_int #41)) + 10
+
+  pub let is_alpha c = ((c >= #61) && (c <= #7a)) || ((c >= #41) && (c <= #5a))
+
+  pub let is_ident_start c = (is_alpha c) || (c = #5f)
+
+  pub let is_ident_char c = (is_alpha c) || ((is_digit c) || ((c = #5f) || (c = #27)))
+
+  pub let keywords = ("let", Token.LET) :: ("rec", Token.REC) :: ("in", Token.IN) :: ("if", Token.IF) :: ("else", Token.ELSE) :: ("fn", Token.FN) :: ("match", Token.MATCH) :: ("with", Token.WITH) :: ("type", Token.TYPE) :: ("of", Token.OF) :: ("not", Token.NOT) :: ("mod", Token.MOD) :: ("true", Token.TRUE) :: ("false", Token.FALSE) :: ("class", Token.CLASS) :: ("instance", Token.INSTANCE) :: ("effect", Token.EFFECT) :: ("extern", Token.EXTERN) :: ("perform", Token.PERFORM) :: ("handle", Token.HANDLE) :: ("try", Token.TRY) :: ("resume", Token.RESUME) :: ("return", Token.RETURN) :: ("continue", Token.CONTINUE) :: ("mut", Token.MUT) :: ("for", Token.FOR) :: ("do", Token.DO) :: ("break", Token.BREAK) :: ("when", Token.WHEN) :: ("where", Token.WHERE) :: ("module", Token.MODULE) :: ("pub", Token.PUB) :: ("open", Token.OPEN) :: ("end", Token.END) :: ("opaque", Token.OPAQUE) :: ("and", Token.AND) :: ("deriving", Token.DERIVING) :: ("land", Token.LAND) :: ("lor", Token.LOR) :: ("lxor", Token.LXOR) :: ("lnot", Token.LNOT) :: ("lsl", Token.LSL) :: ("lsr", Token.LSR) :: []
+
+  pub let read_number l =
+    let loc = current_loc l in
+    let buf = Buffer.create 16 in
+    let c = advance l in
+    Buffer.add_byte buf c;
+    if (c = #30) && ((not (at_end l)) && (((peek l) = #78) || ((peek l) = #58))) do
+      Buffer.add_byte buf (advance l);
+      for (not (at_end l)) && (is_hex_digit (peek l)) do
+        Buffer.add_byte buf (advance l)
+      end;
+      let n = int_of_string (Buffer.contents buf) in
+      make_token l (INT n) loc
+    else if (c = #30) && ((not (at_end l)) && (((peek l) = #62) || ((peek l) = #42))) do
+      Buffer.add_byte buf (advance l);
+      for (not (at_end l)) && (((peek l) = #30) || ((peek l) = #31)) do
+        Buffer.add_byte buf (advance l)
+      end;
+      let n = int_of_string (Buffer.contents buf) in
+      make_token l (INT n) loc
+    else do
+      for (not (at_end l)) && (is_digit (peek l)) do
+        Buffer.add_byte buf (advance l)
+      end;
+      if (not (at_end l)) && ((peek l) = #2e) do
+        Buffer.add_byte buf (advance l);
+        for (not (at_end l)) && (is_digit (peek l)) do
+          Buffer.add_byte buf (advance l)
+        end;
+        let f = float_of_string (Buffer.contents buf) in
+        make_token l (FLOAT f) loc
+      else do
+        let n = int_of_string (Buffer.contents buf) in
+        make_token l (INT n) loc
+      end
+    end
+
+  pub let read_string l =
+    let loc = current_loc l in
+    (advance l; ());
+    let buf = Buffer.create 64 in
+    for (not (at_end l)) && ((peek l) <> #22) do
+      if (peek l) = #5c do
+        do
+          (advance l; ());
+          if at_end l do
+            error l "unterminated string"
+          end;
+          let c = advance l in
+          match c with
+          | _c when _c = #6e -> Buffer.add_byte buf #0a
+          | _c when _c = #74 -> Buffer.add_byte buf #09
+          | _c when _c = #5c -> Buffer.add_byte buf #5c
+          | _c when _c = #22 -> Buffer.add_byte buf #22
+          | _ -> error l ($"unknown escape: \\{c:c}")
+
+        end
+      else
+        Buffer.add_byte buf (advance l)
+    end;
+    if at_end l do
+      error l "unterminated string"
+    end;
+    (advance l; ());
+    make_token l (STRING (Buffer.contents buf)) loc
+
+  pub let dedent_raw s =
+    let lines = String.split "\n" s in
+    let lines =
+      match lines with
+      | first :: rest when (String.trim first) = "" -> rest
+      | _ -> lines
+     in
+    let lines =
+      match List.rev lines with
+      | last :: rest when (String.trim last) = "" -> List.rev rest
+      | _ -> lines
+     in
+    let indent = List.fold (fn acc line ->
+      do
+        match acc with
+        | Some _ -> acc
+        | None -> 
+          if (String.trim line) = "" do
+            None
+          else do
+            let len = String.length line in
+            let i = Ref.create 0 in
+            for ((Ref.get i) < len) && (((String.get line (Ref.get i)) = #20) || ((String.get line (Ref.get i)) = #09)) do
+              Ref.set i (Ref.get i + 1)
+            end;
+            Some (Ref.get i)
+          end
+
+      end) None lines in
+    let indent =
+      match indent with
+      | Some n -> n
+      | None -> 0
+     in
+    let lines = List.map (fn line -> let len = String.length line in
+    if len >= indent do
+      String.sub line indent (len - indent)
+    else
+      line) lines in
+    String.concat "\n" lines
+
+  pub let read_raw_string l =
+    let loc = current_loc l in
+    (advance l; ());
+    (advance l; ());
+    let buf = Buffer.create 256 in
+    for (not (at_end l)) && (not (((peek l) = #7c) && ((peek2 l) = #7d))) do
+      Buffer.add_byte buf (advance l)
+    end;
+    if at_end l do
+      error l "unterminated raw string"
+    end;
+    (advance l; ());
+    (advance l; ());
+    let raw = Buffer.contents buf in
+    make_token l (STRING (dedent_raw raw)) loc
+
+  pub let read_interp_string l =
+    let loc = current_loc l in
+    (advance l; ());
+    (advance l; ());
+    let parts = Ref.create [] in
+    let buf = Buffer.create 64 in
+    let flush_lit () =
+      if (Buffer.length buf) > 0 do
+        Ref.set parts (Token.IPLit (Buffer.contents buf) :: Ref.get parts);
+        Buffer.clear buf
+      end in
+    for (not (at_end l)) && ((peek l) <> #22) do
+      if (peek l) = #5c do
+        do
+          (advance l; ());
+          if at_end l do
+            error l "unterminated interpolated string"
+          end;
+          let c = advance l in
+          match c with
+          | _c when _c = #6e -> Buffer.add_byte buf #0a
+          | _c when _c = #74 -> Buffer.add_byte buf #09
+          | _c when _c = #5c -> Buffer.add_byte buf #5c
+          | _c when _c = #22 -> Buffer.add_byte buf #22
+          | _c when _c = #7b -> Buffer.add_byte buf #7b
+          | _c when _c = #7d -> Buffer.add_byte buf #7d
+          | _ -> error l ($"unknown escape: \\{c:c}")
+
+        end
+      else if (peek l) = #7b do
+        flush_lit ();
+        (advance l; ());
+        let expr_buf = Buffer.create 64 in
+        let fmt_buf = Buffer.create 16 in
+        let depth = Ref.create 1 in
+        let paren_depth = Ref.create 0 in
+        let in_fmt = Ref.create false in
+        for (Ref.get depth) > 0 do
+          if at_end l do
+            error l "unterminated interpolation expression"
+          end;
+          let c = peek l in
+          if c = #7b do
+            Ref.set depth (Ref.get depth + 1);
+            Buffer.add_byte (if Ref.get in_fmt do
+              fmt_buf
+            else
+              expr_buf) (advance l)
+          else if c = #7d do
+            Ref.set depth (Ref.get depth - 1);
+            if (Ref.get depth) > 0 do
+              Buffer.add_byte (if Ref.get in_fmt do
+                fmt_buf
+              else
+                expr_buf) (advance l)
+            else
+              (advance l; ())
+          else if c = #28 do
+            Ref.set paren_depth (Ref.get paren_depth + 1);
+            Buffer.add_byte (if Ref.get in_fmt do
+              fmt_buf
+            else
+              expr_buf) (advance l)
+          else if c = #29 do
+            if (Ref.get paren_depth) > 0 do
+              Ref.set paren_depth (Ref.get paren_depth - 1)
+            end;
+            Buffer.add_byte (if Ref.get in_fmt do
+              fmt_buf
+            else
+              expr_buf) (advance l)
+          else if (c = #3a) && (((Ref.get depth) = 1) && (((Ref.get paren_depth) = 0) && (not (Ref.get in_fmt)))) do
+            (advance l; ());
+            Ref.set in_fmt true
+          else if c = #22 do
+            let buf =
+              if Ref.get in_fmt do
+                fmt_buf
+              else
+                expr_buf in
+            Buffer.add_byte buf (advance l);
+            for (not (at_end l)) && ((peek l) <> #22) do
+              if (peek l) = #5c do
+                Buffer.add_byte buf (advance l);
+                if not (at_end l) do
+                  Buffer.add_byte buf (advance l)
+                end
+              else
+                Buffer.add_byte buf (advance l)
+            end;
+            if not (at_end l) do
+              Buffer.add_byte buf (advance l)
+            end
+          else
+            Buffer.add_byte (if Ref.get in_fmt do
+              fmt_buf
+            else
+              expr_buf) (advance l)
+        end;
+        let fmt =
+          if Ref.get in_fmt do
+            Some (Buffer.contents fmt_buf)
+          else
+            None in
+        Ref.set parts (Token.IPExpr (Buffer.contents expr_buf, fmt) :: Ref.get parts)
+      else
+        Buffer.add_byte buf (advance l)
+    end;
+    if at_end l do
+      error l "unterminated interpolated string"
+    end;
+    (advance l; ());
+    flush_lit ();
+    make_token l (INTERP_STRING (List.rev (Ref.get parts))) loc
+
+  pub let read_ident_or_keyword l =
+    let loc = current_loc l in
+    let buf = Buffer.create 32 in
+    for (not (at_end l)) && (is_ident_char (peek l)) do
+      Buffer.add_byte buf (advance l)
+    end;
+    let s = Buffer.contents buf in
+    let kind =
+      match List.assoc_opt s keywords with
+      | Some kw -> kw
+      | None -> 
+        if s = "_" do
+          Token.UNDERSCORE
+        else if ((Byte.to_upper (String.get s 0)) = (String.get s 0)) && ((String.get s 0) <> #5f) do
+          Token.UIDENT s
+        else
+          Token.IDENT s
+     in
+    make_token l kind loc
+
+  pub let rec next_token l =
+    skip_whitespace_and_comments l;
+    if at_end l do
+      make_token l EOF (current_loc l)
+    else do
+      let loc = current_loc l in
+      let c = peek l in
+      match c with
+      | _c when _c >= #30 && _c <= #39 -> read_number l
+      | _c when _c = #24 && (not (at_end l)) && ((peek2 l) = #22) -> read_interp_string l
+      | _c when _c = #22 -> read_string l
+      | _c when _c = #27 && ((peek2 l) >= #61) && (((peek2 l) <= #7a) && ((peek3 l) <> #27)) -> 
+        let loc = current_loc l in
+        (advance l; ());
+        let buf = Buffer.create 8 in
+        for (not (at_end l)) && (is_ident_char (peek l)) do
+          Buffer.add_byte buf (advance l)
+        end;
+        make_token l (TYVAR (Buffer.contents buf)) loc
+      | _ when is_ident_start c -> read_ident_or_keyword l
+      | _c when _c = #27 -> 
+        let loc = current_loc l in
+        (advance l; ());
+        if at_end l do
+          error l "unterminated rune literal"
+        end;
+        let cp =
+          if (peek l) = #5c do
+            do
+              (advance l; ());
+              if at_end l do
+                error l "unterminated rune escape"
+              end;
+              let c = advance l in
+              match c with
+              | _c when _c = #6e -> 10
+              | _c when _c = #74 -> 9
+              | _c when _c = #5c -> 92
+              | _c when _c = #27 -> 39
+              | _c when _c = #30 -> 0
+              | _ -> error l ($"unknown rune escape: \\{c:c}")
+
+            end
+          else do
+            let b = Byte.to_int (advance l) in
+            if b < 0x80 do
+              b
+            else do
+              let nbytes =
+                if (b land 0xE0) = 0xC0 do
+                  2
+                else if (b land 0xF0) = 0xE0 do
+                  3
+                else if (b land 0xF8) = 0xF0 do
+                  4
+                else
+                  error l "invalid UTF-8 leading byte in rune literal" in
+              let cp = Ref.create (b land (0xFF lsr (nbytes + 1))) in
+              let mut _loop_var = 2 in
+              for _loop_var <= nbytes do
+                if at_end l do
+                  error l "unterminated UTF-8 rune literal"
+                end;
+                let cont = Byte.to_int (advance l) in
+                if (cont land 0xC0) <> 0x80 do
+                  error l "invalid UTF-8 continuation byte"
+                end;
+                Ref.set cp (((Ref.get cp) lsl 6) lor (cont land 0x3F));
+                _loop_var := _loop_var + 1
+              end;
+              Ref.get cp
+            end
+          end in
+        if (at_end l) || ((peek l) <> #27) do
+          error l "unterminated rune literal"
+        end;
+        (advance l; ());
+        make_token l (RUNE cp) loc
+      | _c when _c = #28 -> 
+        (advance l; ());
+        make_token l LPAREN loc
+      | _c when _c = #29 -> 
+        (advance l; ());
+        make_token l RPAREN loc
+      | _c when _c = #23 -> 
+        (advance l; ());
+        if (not (at_end l)) && ((is_hex_digit (peek l)) && (((l.cursor + 1) < l.len) && (is_hex_digit (peek2 l)))) do
+          let c1 = peek l in
+          (advance l; ());
+          let c2 = advance l in
+          let v = ((hex_val c1) * 16) + (hex_val c2) in
+          make_token l (BYTE v) loc
+        else
+          make_token l HASH loc
+      | _c when _c = #7b -> 
+        if (peek2 l) = #7c do
+          read_raw_string l
+        else do
+          (advance l; ());
+          make_token l LBRACE loc
+        end
+      | _c when _c = #7d -> 
+        (advance l; ());
+        make_token l RBRACE loc
+      | _c when _c = #5b -> 
+        (advance l; ());
+        make_token l LBRACKET loc
+      | _c when _c = #5d -> 
+        (advance l; ());
+        make_token l RBRACKET loc
+      | _c when _c = #2c -> 
+        (advance l; ());
+        make_token l COMMA loc
+      | _c when _c = #2e -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #2e) do
+          (advance l; ());
+          make_token l DOTDOT loc
+        else
+          make_token l DOT loc
+      | _c when _c = #5e -> 
+        (advance l; ());
+        make_token l CARET loc
+      | _c when _c = #40 -> 
+        (advance l; ());
+        let buf = Buffer.create 16 in
+        for (not (at_end l)) && (let c = peek l in
+        ((c >= #61) && (c <= #7a)) || (c = #5f)) do
+          Buffer.add_byte buf (advance l)
+        end;
+        let name = Buffer.contents buf in
+        if name = "partial" do
+          make_token l PARTIAL loc
+        else
+          error l ($"unknown annotation @{name}")
+      | _c when _c = #2b -> 
+        (advance l; ());
+        make_token l PLUS loc
+      | _c when _c = #2a -> 
+        (advance l; ());
+        make_token l STAR loc
+      | _c when _c = #2f -> 
+        (advance l; ());
+        make_token l SLASH loc
+      | _c when _c = #2d -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #2d) do
+          (advance l; ());
+          let buf = Buffer.create 32 in
+          for (not (at_end l)) && ((peek l) <> #0a) do
+            Buffer.add_byte buf (advance l)
+          end;
+          let content = String.trim (Buffer.contents buf) in
+          if content = "@partial" do
+            make_token l PARTIAL loc
+          else
+            next_token l
+        else if (not (at_end l)) && ((peek l) = #3e) do
+          (advance l; ());
+          make_token l ARROW loc
+        else
+          make_token l MINUS loc
+      | _c when _c = #3b -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #3b) do
+          (advance l; ());
+          make_token l DOUBLE_SEMICOLON loc
+        else
+          make_token l SEMICOLON loc
+      | _c when _c = #3a -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #3d) do
+          (advance l; ());
+          make_token l COLONEQUAL loc
+        else if (not (at_end l)) && ((peek l) = #3a) do
+          (advance l; ());
+          make_token l COLONCOLON loc
+        else if (not (at_end l)) && ((peek l) = #3e) do
+          (advance l; ());
+          make_token l COLONGT loc
+        else
+          make_token l COLON loc
+      | _c when _c = #3d -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #3e) do
+          (advance l; ());
+          make_token l FATARROW loc
+        else
+          make_token l EQ loc
+      | _c when _c = #3c -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #3d) do
+          (advance l; ());
+          make_token l LE loc
+        else if (not (at_end l)) && ((peek l) = #3e) do
+          (advance l; ());
+          make_token l NEQ loc
+        else
+          make_token l LT loc
+      | _c when _c = #3e -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #3d) do
+          (advance l; ());
+          make_token l GE loc
+        else
+          make_token l GT loc
+      | _c when _c = #26 -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #26) do
+          (advance l; ());
+          make_token l AMPAMP loc
+        else
+          error l "unexpected '&', did you mean '&&'?"
+      | _c when _c = #7c -> 
+        (advance l; ());
+        if (not (at_end l)) && ((peek l) = #7c) do
+          (advance l; ());
+          make_token l PIPEPIPE loc
+        else if (not (at_end l)) && ((peek l) = #3e) do
+          (advance l; ());
+          make_token l PIPEARROW loc
+        else
+          make_token l PIPE loc
+      | _c when _c = #60 -> 
+        (advance l; ());
+        if (not (at_end l)) && (((peek l) >= #41) && ((peek l) <= #5a)) do
+          let buf = Buffer.create 16 in
+          for (not (at_end l)) && (is_ident_char (peek l)) do
+            Buffer.add_byte buf (advance l)
+          end;
+          make_token l (POLYTAG (Buffer.contents buf)) loc
+        else
+          error l "expected uppercase identifier after backtick"
+      | _ -> error l ($"unexpected character: {c:C}")
+
+    end
+
+  pub let tokenize source =
+    let l = create source in
+    let tokens = Ref.create [] in
+    let stop = Ref.create false in
+    for not (Ref.get stop) do
+      let tok = next_token l in
+      Ref.set tokens (tok :: Ref.get tokens);
+      if tok.kind = Token.EOF do
+        Ref.set stop true
+      end
+    end;
+    List.rev (Ref.get tokens)
+
+end

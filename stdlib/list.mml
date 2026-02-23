@@ -1,0 +1,260 @@
+module List =
+  pub let fold (f: 'b -> 'a -> 'b) (acc: 'b) (xs: 'a list) : 'b =
+    let rec go a l =
+      match l with
+      | [] -> a
+      | x :: rest -> go (f a x) rest
+    in go acc xs
+
+  pub let length xs = List.fold (fn acc _ -> acc + 1) 0 xs
+
+  pub let rev xs = List.fold (fn acc x -> x :: acc) [] xs
+
+  pub let hd xs =
+    -- @partial
+    match xs with
+    | x :: _ -> x
+
+  pub let tl xs =
+    -- @partial
+    match xs with
+    | _ :: rest -> rest
+
+  pub let nth xs n =
+    let rec go l i =
+      -- @partial
+      match l with
+      | x :: rest -> if i = 0 do x else go rest (i - 1)
+    in go xs n
+
+  pub let concat a b = List.fold (fn acc x -> x :: acc) b (List.rev a)
+
+  pub let is_empty xs = match xs with
+    | [] -> true
+    | _ -> false
+
+  pub let flatten xss = List.fold (fn acc xs -> List.concat acc xs) [] xss
+
+  pub let map (f: 'a -> 'b) (xs: 'a list) : 'b list =
+    let rec go acc l =
+      match l with
+      | [] -> List.rev acc
+      | x :: rest -> go (f x :: acc) rest
+    in go [] xs
+
+  pub let filter (f: 'a -> bool) (xs: 'a list) : 'a list =
+    let rec go acc l =
+      match l with
+      | [] -> List.rev acc
+      | x :: rest ->
+        if f x do go (x :: acc) rest
+        else go acc rest
+    in go [] xs
+
+  pub let find (f: 'a -> bool) (xs: 'a list) : 'a option =
+    let rec go l =
+      match l with
+      | [] -> None
+      | x :: rest -> if f x do Some x else go rest
+    in go xs
+
+  pub let exists (f: 'a -> bool) (xs: 'a list) : bool =
+    let rec go l =
+      match l with
+      | [] -> false
+      | x :: rest -> if f x do true else go rest
+    in go xs
+
+  pub let forall (f: 'a -> bool) (xs: 'a list) : bool =
+    let rec go l =
+      match l with
+      | [] -> true
+      | x :: rest -> if f x do go rest else false
+    in go xs
+
+  pub let zip (xs: 'a list) (ys: 'b list) : ('a * 'b) list =
+    let rec go acc a b =
+      match a with
+      | [] -> List.rev acc
+      | x :: ra ->
+        -- @partial
+        match b with
+        | y :: rb -> go ((x, y) :: acc) ra rb
+    in go [] xs ys
+
+  pub let mapi (f: int -> 'a -> 'b) (xs: 'a list) : 'b list =
+    let rec go i acc l =
+      match l with
+      | [] -> List.rev acc
+      | x :: rest -> go (i + 1) (f i x :: acc) rest
+    in go 0 [] xs
+
+  pub let sort (cmp: 'a -> 'a -> int) (xs: 'a list) : 'a list =
+    let rec insert x sorted =
+      match sorted with
+      | [] -> [x]
+      | y :: rest ->
+        if cmp x y < 1 do x :: sorted
+        else y :: insert x rest
+    in
+    List.fold (fn acc x -> insert x acc) [] xs
+
+  pub let fold_right (f: 'a -> 'b -> 'b) (xs: 'a list) (acc: 'b) : 'b =
+    let rec go l =
+      match l with
+      | [] -> acc
+      | x :: rest -> f x (go rest)
+    in go xs
+
+  pub let find_map (f: 'a -> 'b option) (xs: 'a list) : 'b option =
+    let rec go l =
+      match l with
+      | [] -> None
+      | x :: rest ->
+        match f x with
+        | Some _ as result -> result
+        | None -> go rest
+    in go xs
+
+  pub let assoc_opt key xs =
+    let rec go l =
+      match l with
+      | [] -> None
+      | (k, v) :: rest ->
+        if k = key do Some v else go rest
+    in go xs
+
+  pub let init n f =
+    let rec go i acc =
+      if i < 0 do acc
+      else go (i - 1) (f i :: acc)
+    in go (n - 1) []
+
+  pub let concat_map f xs =
+    List.flatten (List.map f xs)
+
+  pub let iter2 f xs ys =
+    let rec go a b =
+      match a with
+      | [] -> ()
+      | x :: ra ->
+        -- @partial
+        match b with
+        | y :: rb -> f x y; go ra rb
+    in go xs ys
+
+  pub let map2 (f: 'a -> 'b -> 'c) (xs: 'a list) (ys: 'b list) : 'c list =
+    let rec go acc a b =
+      match a with
+      | [] -> List.rev acc
+      | x :: ra ->
+        -- @partial
+        match b with
+        | y :: rb -> go (f x y :: acc) ra rb
+    in go [] xs ys
+
+  pub let fold2 (f: 'c -> 'a -> 'b -> 'c) (acc: 'c) (xs: 'a list) (ys: 'b list) : 'c =
+    let rec go a l1 l2 =
+      match l1 with
+      | [] -> a
+      | x :: r1 ->
+        -- @partial
+        match l2 with
+        | y :: r2 -> go (f a x y) r1 r2
+    in go acc xs ys
+
+  pub let forall2 (f: 'a -> 'b -> bool) (xs: 'a list) (ys: 'b list) : bool =
+    let rec go a b =
+      match a with
+      | [] -> true
+      | x :: ra ->
+        -- @partial
+        match b with
+        | y :: rb -> if f x y do go ra rb else false
+    in go xs ys
+
+  pub let iteri (f: int -> 'a -> unit) (xs: 'a list) : unit =
+    let rec go i l =
+      match l with
+      | [] -> ()
+      | x :: rest -> f i x; go (i + 1) rest
+    in go 0 xs
+
+  pub let mem_assoc key xs =
+    let rec go l =
+      match l with
+      | [] -> false
+      | (k, _) :: rest ->
+        if k = key do true else go rest
+    in go xs
+
+  pub let assoc key xs =
+    match List.assoc_opt key xs with
+    | Some v -> v
+    | None -> failwith "List.assoc: not found"
+
+  pub let iter (f: 'a -> unit) (xs: 'a list) : unit =
+    let rec go xs =
+      match xs with
+      | [] -> ()
+      | x :: rest -> f x; go rest
+    in go xs
+
+  pub let mem x xs =
+    let rec go xs =
+      match xs with
+      | [] -> false
+      | y :: rest -> if x = y do true else go rest
+    in go xs
+
+  pub let rev_append xs ys =
+    let rec go xs acc =
+      match xs with
+      | [] -> acc
+      | x :: rest -> go rest (x :: acc)
+    in go xs ys
+
+  pub let nth_opt xs n =
+    let rec go xs i =
+      match xs with
+      | [] -> None
+      | x :: rest -> if i = 0 do Some x else go rest (i - 1)
+    in go xs n
+
+  pub let find_index f xs =
+    let rec go xs i =
+      match xs with
+      | [] -> None
+      | x :: rest -> if f x do Some i else go rest (i + 1)
+    in go xs 0
+
+  pub let filteri f xs =
+    let rec go xs i acc =
+      match xs with
+      | [] -> List.rev acc
+      | x :: rest ->
+        if f i x do go rest (i + 1) (x :: acc)
+        else go rest (i + 1) acc
+    in go xs 0 []
+
+  pub let filter_map (f: 'a -> 'b option) (xs: 'a list) : 'b list =
+    let rec go xs acc =
+      match xs with
+      | [] -> List.rev acc
+      | x :: rest ->
+        match f x with
+        | Some y -> go rest (y :: acc)
+        | None -> go rest acc
+    in go xs []
+
+  pub let sort_uniq cmp xs =
+    let sorted = List.sort cmp xs in
+    let rec dedup xs =
+      match xs with
+      | [] -> []
+      | x :: [] -> x :: []
+      | x :: y :: rest ->
+        if cmp x y = 0 do dedup (y :: rest)
+        else x :: dedup (y :: rest)
+    in dedup sorted
+end

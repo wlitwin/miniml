@@ -1,0 +1,506 @@
+=== For Loop Tests ===
+
+--- test: unit for basic
+let mut n = 0 in
+for x in [1; 2; 3] do
+  n := n + x
+end;
+n
+--- expect: 6
+
+--- test: unit for returns unit
+for x in [1; 2; 3] do x end
+--- expect: ()
+
+--- test: unit for empty list
+for x in [] do x end
+--- expect: ()
+
+--- test: fold for sum
+for x in [1; 2; 3] with acc = 0 do
+  acc + x
+end
+--- expect: 6
+
+--- test: fold for string concat
+for x in [1; 2; 3] with s = "" do
+  s ^ string_of_int x
+end
+--- expect: 123
+
+--- test: fold for empty list
+let xs : int list = [] in
+for x in xs with acc = 0 do acc + x end
+--- expect: 0
+
+--- test: unit for break
+let mut n = 0 in
+for x in [1; 2; 3; 4; 5] do
+  if x = 4 do break
+  else n := n + x
+end;
+n
+--- expect: 6
+
+--- test: fold for break
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 4 do break
+  else acc + x
+end
+--- expect: 6
+
+--- test: fold break in if-do without else
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 4 do break acc end;
+  acc + x
+end
+--- expect: 6
+
+--- test: nested for loops
+let mut n = 0 in
+for x in [1; 2] do
+  for y in [10; 20] do
+    n := n + x * y
+  end
+end;
+n
+--- expect: 90
+
+--- test: user Iter implementation
+(* Define a binary tree type *)
+type tree = Leaf | Node of (int * tree * tree);;
+
+(* Make it iterable by implementing Iter — just define fold *)
+instance Iter tree int =
+  let fold f acc t =
+    let rec go a tr = match tr with
+      | Leaf -> a
+      | Node payload ->
+        let (v, left, right) = payload in
+        let a = go a left in
+        let a = f a v in
+        go a right
+    in go acc t
+end
+
+let my_tree = Node (2, Node (1, Leaf, Leaf), Node (3, Leaf, Leaf));;
+
+(* Now for loops just work: *)
+
+(* fold form — sum all elements *)
+for x in my_tree with sum = 0 do sum + x end
+--- expect: 6
+
+--- test: break outside loop error
+break
+--- expect-type-error
+
+=== While Loop Tests ===
+
+--- test: while loop basic
+let mut x = 0 in
+for x < 5 do
+  x := x + 1
+end;
+x
+--- expect: 5
+
+--- test: while loop zero iterations
+let mut x = 10 in
+for x < 5 do
+  x := x + 1
+end;
+x
+--- expect: 10
+
+--- test: while loop returns unit
+let mut x = 0 in
+for x < 3 do
+  x := x + 1
+end
+--- expect: ()
+
+--- test: while loop with accumulation
+let mut sum = 0 in
+let mut i = 1 in
+for i <= 10 do
+  sum := sum + i;
+  i := i + 1
+end;
+sum
+--- expect: 55
+
+=== Infinite Loop Tests ===
+
+--- test: infinite loop with break
+let mut x = 0 in
+for do
+  x := x + 1;
+  if x = 5 do break else ()
+end;
+x
+--- expect: 5
+
+=== While Break/Continue Tests ===
+
+--- test: while break
+let mut x = 0 in
+for true do
+  x := x + 1;
+  if x = 3 do break else ()
+end;
+x
+--- expect: 3
+
+--- test: while continue
+let mut sum = 0 in
+let mut i = 0 in
+for i < 10 do
+  i := i + 1;
+  if i mod 2 = 0 do continue else ();
+  sum := sum + i
+end;
+sum
+--- expect: 25
+
+--- test: while break and continue
+let mut sum = 0 in
+let mut i = 0 in
+for i < 100 do
+  i := i + 1;
+  if i mod 2 = 0 do continue else ();
+  if i > 10 do break else ();
+  sum := sum + i
+end;
+sum
+--- expect: 25
+
+=== While-let Tests ===
+
+--- test: while-let basic
+let mut xs = [1; 2; 3] in
+let mut sum = 0 in
+for let x :: rest = xs do
+  sum := sum + x;
+  xs := rest
+end;
+sum
+--- expect: 6
+
+--- test: while-let with option pattern
+let mut n = Some 3 in
+let mut sum = 0 in
+for let Some x = n do
+  sum := sum + x;
+  n := if x > 1 do Some (x - 1) else None
+end;
+sum
+--- expect: 6
+
+=== For-in Break/Continue Tests ===
+
+--- test: for-in break
+let mut sum = 0 in
+for x in [1; 2; 3; 4; 5] do
+  if x = 4 do break else ();
+  sum := sum + x
+end;
+sum
+--- expect: 6
+
+--- test: for-in continue
+let mut sum = 0 in
+for x in [1; 2; 3; 4; 5] do
+  if x mod 2 = 0 do continue else ();
+  sum := sum + x
+end;
+sum
+--- expect: 9
+
+=== Fold Break/Continue Tests ===
+
+--- test: fold break with value
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 4 do break acc else acc + x
+end
+--- expect: 6
+
+--- test: fold break with default
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 4 do break else acc + x
+end
+--- expect: 6
+
+--- test: fold continue
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x mod 2 = 0 do continue else acc + x
+end
+--- expect: 9
+
+--- test: fold break with custom value
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 3 do break 100 else acc + x
+end
+--- expect: 100
+
+=== Return Tests ===
+
+--- test: return from function
+let f x =
+  if x > 0 do return (x * 2) else ();
+  0 - 1
+in
+f 5
+--- expect: 10
+
+--- test: return from inside while loop
+let f () =
+  let mut i = 0 in
+  for i < 10 do
+    if i = 5 do return i else ();
+    i := i + 1
+  end;
+  0 - 1
+in
+f ()
+--- expect: 5
+
+--- test: return from inside for-in loop
+let f () =
+  let mut result = 0 - 1 in
+  for x in [1; 3; 4; 6] do
+    if x mod 2 = 0 do (result := x; return result) else ()
+  end;
+  result
+in
+f ()
+--- expect: 4
+
+--- test: return from nested context
+let f x =
+  let y = x + 1 in
+  if y > 5 do return y else ();
+  y * 2
+in
+f 10
+--- expect: 11
+
+=== Nested Loop Tests ===
+
+--- test: nested for loops with break
+let mut count = 0 in
+for x in [1; 2; 3] do
+  for y in [10; 20; 30] do
+    count := count + 1;
+    if y = 20 do break else ()
+  end
+end;
+count
+--- expect: 6
+
+--- test: nested while with break
+let mut outer = 0 in
+let mut i = 0 in
+for i < 3 do
+  let mut j = 0 in
+  for j < 5 do
+    if j = 2 do break else ();
+    j := j + 1
+  end;
+  outer := outer + 1;
+  i := i + 1
+end;
+outer
+--- expect: 3
+
+=== Loop Error Cases ===
+
+--- test: break outside of loop
+break
+--- expect-type-error: break outside of loop
+
+--- test: continue outside of loop
+continue
+--- expect-type-error: continue outside of loop
+
+--- test: break with value in while loop
+let mut x = 0 in
+for true do
+  x := break 42
+end
+--- expect-type-error: break with value only allowed in fold loops
+
+=== Underscore Loop Variable Tests ===
+
+--- test: for _ in fold
+for _ in [1; 2; 3] with acc = 0 do
+  acc + 1
+end
+--- expect: 3
+
+--- test: for _ in unit
+let mut n = 0 in
+for _ in [10; 20; 30] do
+  n := n + 1
+end;
+n
+--- expect: 3
+
+--- test: for _ in fold with break
+for _ in [1; 2; 3; 4; 5] with acc = 0 do
+  if acc >= 3 do break else acc + 1
+end
+--- expect: 3
+
+=== For-In Pattern Tests ===
+
+--- test: for-in tuple pattern
+let pairs = [(1, 10); (2, 20); (3, 30)] in
+let mut sum = 0 in
+for (k, v) in pairs do
+  sum := sum + k + v
+end;
+sum
+--- expect: 66
+
+--- test: for-in tuple pattern fold
+let pairs = [(1, 10); (2, 20); (3, 30)] in
+for (k, v) in pairs with acc = 0 do
+  acc + k * v
+end
+--- expect: 140
+
+--- test: for-in record pattern
+let points = [{x = 1; y = 2}; {x = 3; y = 4}; {x = 5; y = 6}] in
+let mut sum = 0 in
+for {x; y} in points do
+  sum := sum + x + y
+end;
+sum
+--- expect: 21
+
+--- test: for-in record pattern fold
+let points = [{x = 1; y = 2}; {x = 3; y = 4}] in
+for {x; y} in points with acc = 0 do
+  acc + x * y
+end
+--- expect: 14
+
+--- test: for-in nested tuple pattern
+let triples = [(1, (2, 3)); (4, (5, 6))] in
+let mut sum = 0 in
+for (a, (b, c)) in triples do
+  sum := sum + a + b + c
+end;
+sum
+--- expect: 21
+
+--- test: for-in cons pattern
+let lists = [[1; 2; 3]; [4; 5; 6]] in
+let mut sum = 0 in
+for (x :: _) in lists do
+  sum := sum + x
+end;
+sum
+--- expect: 5
+
+--- test: for-in constructor pattern
+let opts = [Some 10; Some 20; Some 30] in
+for (Some x) in opts with acc = 0 do
+  acc + x
+end
+--- expect: 60
+
+--- test: for-in pattern with break
+let pairs = [(1, 10); (2, 20); (3, 30); (4, 40)] in
+for (k, v) in pairs with acc = 0 do
+  if k = 3 do break else acc + v
+end
+--- expect: 30
+
+--- test: for-in pattern with continue
+let pairs = [(1, 10); (2, 20); (3, 30); (4, 40)] in
+for (k, v) in pairs with acc = 0 do
+  if k mod 2 = 0 do continue else acc + v
+end
+--- expect: 40
+
+--- test: for-in pattern with break value
+let pairs = [(1, 10); (2, 20); (3, 30)] in
+for (k, v) in pairs with acc = 0 do
+  if k = 2 do break 999 else acc + v
+end
+--- expect: 999
+
+--- test: for-in unit loop with tuple pattern
+let mut sum = 0 in
+for (x, y) in [(1, 2); (3, 4); (5, 6)] do
+  sum := sum + x * y
+end;
+sum
+--- expect: 44
+
+=== Accumulator Pattern Tests ===
+
+--- test: fold with tuple accumulator pattern
+let xs = [1; 2; 3; 4; 5] in
+let result = for x in xs with (sum, count) = (0, 0) do
+  (sum + x, count + 1)
+end in
+let (s, c) = result in
+s * 100 + c
+--- expect: 1505
+
+--- test: fold with tuple acc pattern break
+let result = for x in [1; 2; 3; 4; 5] with (sum, count) = (0, 0) do
+  if x = 4 do break else (sum + x, count + 1)
+end in
+let (s, c) = result in
+s * 100 + c
+--- expect: 603
+
+--- test: fold with tuple acc pattern continue
+let result = for x in [1; 2; 3; 4; 5] with (sum, count) = (0, 0) do
+  if x mod 2 = 0 do continue else (sum + x, count + 1)
+end in
+let (s, c) = result in
+s * 100 + c
+--- expect: 903
+
+--- test: fold with record accumulator pattern
+let result = for x in [10; 20; 30] with {total; n} = {total = 0; n = 0} do
+  {total = total + x; n = n + 1}
+end in
+result.total + result.n
+--- expect: 63
+
+--- test: both element and acc patterns
+let pairs = [(1, 10); (2, 20); (3, 30)] in
+let result = for (k, v) in pairs with (ks, vs) = (0, 0) do
+  (ks + k, vs + v)
+end in
+let (ks, vs) = result in
+ks + vs
+--- expect: 66
+
+--- test: nested pattern with fold
+let data = [(1, (2, 3)); (4, (5, 6))] in
+for (a, (b, c)) in data with sum = 0 do
+  sum + a + b + c
+end
+--- expect: 21
+
+--- test: tuple acc break returns current acc
+let result = for x in [1; 2; 3] with (a, b) = (0, 0) do
+  if x = 2 do break else (a + x, b + 1)
+end in
+let (a, b) = result in
+a * 10 + b
+--- expect: 11
+
+--- test: list pattern in for-in
+let xss = [[1; 2]; [3; 4]; [5; 6]] in
+for [a; b] in xss with sum = 0 do
+  sum + a + b
+end
+--- expect: 21
