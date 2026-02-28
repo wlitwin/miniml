@@ -257,7 +257,7 @@ Pt.get_x (Pt.make 10 20)
 
 --- test: module record type qualified annotation
 module Pt =
-  type t = { x: int; y: int }
+  pub type t = { x: int; y: int }
   pub let make (x: int) (y: int) : t = { x = x; y = y }
 end
 let get_y (p: Pt.t) : int = p.y in
@@ -268,7 +268,7 @@ get_y (Pt.make 10 20)
 
 --- test: parameterized qualified type annotation
 module Wrap =
-  type 'a t = Val of 'a | Empty
+  opaque type 'a t = Val of 'a | Empty
   pub let make (x: 'a) : 'a t = Val x
   pub let get (w: 'a t) : int =
     match w with
@@ -281,7 +281,7 @@ unwrap (Wrap.make 42)
 
 --- test: multi-param qualified type annotation
 module Pair =
-  type ('a, 'b) t = P of 'a * 'b | None
+  opaque type ('a, 'b) t = P of 'a * 'b | None
   pub let make (x: 'a) (y: 'b) : ('a, 'b) t = P (x, y)
   pub let fst (p: ('a, 'b) t) : 'a =
     match p with
@@ -1054,3 +1054,193 @@ end
 ;;
 A.f 10
 --- expect: v=10
+
+=== Module Type Visibility Tests ===
+
+--- test: private constructor not accessible outside module
+module M =
+  opaque type secret = Hidden of int
+  pub let make x = Hidden x
+  pub let get h = match h with Hidden n -> n
+end
+;;
+Hidden 99
+--- expect-type-error: unknown constructor
+
+--- test: private constructor not accessible in pattern
+module M =
+  opaque type secret = Hidden of int
+  pub let make x = Hidden x
+end
+;;
+match M.make 42 with Hidden n -> n
+--- expect-type-error: unknown constructor
+
+--- test: private type name not resolvable qualified
+module M =
+  type secret = Hidden of int
+end
+;;
+let f (x : M.secret) = x
+--- expect-type-error: unknown type
+
+--- test: private type not accessible as annotation
+module M =
+  type 'a box = Box of 'a
+end
+;;
+let f (x : int M.box) = x
+--- expect-type-error: unknown type
+
+--- test: pub function exposes private type error
+module M =
+  type secret = Hidden of int
+  pub let make x = Hidden x
+end
+--- expect-type-error: exposes private type
+
+--- test: pub function accepting private type error
+module M =
+  type secret = Hidden of int
+  pub let unwrap h = match h with Hidden n -> n
+end
+--- expect-type-error: exposes private type
+
+--- test: private helper using private type is fine
+module M =
+  type secret = Hidden of int
+  let make x = Hidden x
+  let get h = match h with Hidden n -> n
+  pub let roundtrip x = get (make x)
+end
+;;
+M.roundtrip 42
+--- expect: 42
+
+--- test: opaque type name accessible but constructor hidden
+module M =
+  opaque type 'a safe = Safe of 'a
+  pub let wrap x = Safe x
+  pub let unwrap (Safe x) = x
+end
+;;
+M.unwrap (M.wrap 42)
+--- expect: 42
+
+--- test: opaque type usable in annotation
+module M =
+  opaque type token = Token of int
+  pub let make x = Token x
+  pub let value (Token x) = x
+end
+;;
+let f (t : M.token) = M.value t in
+f (M.make 42)
+--- expect: 42
+
+--- test: opaque constructor rejected outside
+module M =
+  opaque type token = Token of int
+  pub let make x = Token x
+end
+;;
+M.Token 42
+--- expect-type-error: unknown constructor
+
+--- test: pub type fully accessible
+module Colors =
+  pub type color = Red | Green | Blue
+end
+;;
+match Colors.Red with Colors.Red -> 1 | Colors.Green -> 2 | Colors.Blue -> 3
+--- expect: 1
+
+--- test: pub type accessible with open
+module Colors =
+  pub type color = Red | Green | Blue
+end
+;;
+open Colors
+;;
+match Red with Red -> 1 | Green -> 2 | Blue -> 3
+--- expect: 1
+
+--- test: pub type annotation works qualified
+module Colors =
+  pub type color = Red | Green | Blue
+end
+;;
+let f (c : Colors.color) = match c with Colors.Red -> "r" | Colors.Green -> "g" | Colors.Blue -> "b" in
+f Colors.Red
+--- expect: r
+
+--- test: private type in nested module hidden
+module Outer =
+  pub module Inner =
+    opaque type secret = S of int
+    pub let make x = S x
+    pub let get (S x) = x
+  end
+end
+;;
+Outer.Inner.get (Outer.Inner.make 42)
+--- expect: 42
+
+--- test: opaque type in pub function signature allowed
+module M =
+  opaque type token = Token of int
+  pub let make x = Token x
+  pub let value (Token x) = x
+end
+;;
+let roundtrip (t : M.token) = M.value t in
+roundtrip (M.make 99)
+--- expect: 99
+
+--- test: private record type not accessible by name
+module M =
+  type point = { x: int; y: int }
+  pub let make x y = { x; y }
+  pub let get_x p = p.x
+end
+;;
+let f (p : M.point) = p
+--- expect-type-error: unknown type
+
+--- test: private record still usable via pub functions
+module M =
+  type point = { x: int; y: int }
+  pub let make x y = { x; y }
+  pub let sum p = p.x + p.y
+end
+;;
+M.sum (M.make 10 20)
+--- expect: 30
+
+--- test: two modules same opaque constructor not accessible
+module A =
+  opaque type t = X of int
+  pub let make n = X n
+  pub let get (X n) = n
+end
+;;
+module B =
+  opaque type t = X of string
+  pub let make s = X s
+  pub let get (X s) = s
+end
+;;
+A.get (A.make 42) + String.length (B.get (B.make "hi"))
+--- expect: 44
+
+--- test: open does not import opaque constructors
+module M =
+  opaque type secret = Hidden of int
+  pub let make x = Hidden x
+  pub let get h = match h with Hidden n -> n
+end
+;;
+open M
+;;
+Hidden 99
+--- expect-type-error: unknown constructor

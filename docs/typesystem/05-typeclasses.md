@@ -1071,7 +1071,6 @@ let inst_specificity (inst : instance_def) =
     | TInt | TFloat | TBool | TString | TByte | TRune | TUnit -> 1
     | TArrow (a, _, b) -> count a + count b
     | TList a | TArray a -> count a
-    | TMap (k, v) -> count k + count v
     | TTuple ts -> List.fold_left (fun acc t -> acc + count t) 0 ts
     | TRecord fs -> List.fold_left (fun acc (_, t) -> acc + count t) 0 fs
     | TVariant (_, ts) -> List.fold_left (fun acc t -> acc + count t) 0 ts

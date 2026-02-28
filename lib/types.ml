@@ -20,7 +20,6 @@ and ty =
   | TList of ty
   | TRecord of record_row
   | TVariant of string * ty list
-  | TMap of ty * ty
   | TArray of ty
   | TPolyVariant of pvrow
   | TVar of tvar ref
@@ -127,7 +126,6 @@ let rec is_concrete ty =
   | TArrow (a, eff, r) | TCont (a, eff, r) -> is_concrete a && is_concrete_eff eff && is_concrete r
   | TTuple ts -> List.for_all is_concrete ts
   | TList t | TArray t -> is_concrete t
-  | TMap (k, v) -> is_concrete k && is_concrete v
   | TVariant (_, args) -> List.for_all is_concrete args
   | TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _ -> true
   | TRecord row -> is_concrete_rrow row
@@ -228,6 +226,7 @@ type module_info = {
   mod_pub_mutable_vars: string list;
   mod_pub_types: string list;
   mod_opaque_types: string list;
+  mod_newtypes: string list;
   mod_pub_constructors: (string * ctor_info) list;
   mod_instances: instance_def list;
   mod_submodules: (string * module_info) list;
@@ -245,6 +244,9 @@ type type_env = {
   modules: (string * module_info) list;
   type_aliases: (string * string) list;  (* short_name -> qualified_name *)
   type_synonyms: (string * int * ty) list;  (* name, num_params, expanded_ty *)
+  newtypes: string list;  (* type names whose single constructor is erased at runtime *)
+  hidden_types: string list;  (* module-private type names not accessible from outer scope *)
+  hidden_ctor_types: string list;  (* type names whose constructors are hidden (private + opaque) *)
 }
 
 let empty_type_env = {
@@ -258,6 +260,9 @@ let empty_type_env = {
   modules = [];
   type_aliases = [];
   type_synonyms = [];
+  newtypes = [];
+  hidden_types = [];
+  hidden_ctor_types = [];
 }
 
 let find_effect_op type_env op_name =
@@ -280,7 +285,6 @@ let rec ty_to_str = function
   | TVariant (name, args) ->
     String.concat "_" (List.map ty_to_str args) ^ "_" ^ name
   | TList t -> ty_to_str t ^ "_list"
-  | TMap (k, v) -> ty_to_str k ^ "_" ^ ty_to_str v ^ "_map"
   | TArray t -> ty_to_str t ^ "_array"
   | TTuple ts -> String.concat "_" (List.map ty_to_str ts) ^ "_tup"
   | TPolyVariant _ -> "polyvar"
@@ -315,7 +319,6 @@ let rec occurs_check id level ty =
   | TTuple ts -> List.iter (occurs_check id level) ts
   | TList t -> occurs_check id level t
   | TArray t -> occurs_check id level t
-  | TMap (k, v) -> occurs_check id level k; occurs_check id level v
   | TRecord row -> occurs_check_rrow_for_ty id level row
   | TVariant (_, args) -> List.iter (occurs_check id level) args
   | TPolyVariant row -> occurs_check_pv_for_ty id level row
@@ -406,7 +409,6 @@ let try_match_synonym ty =
         | TCont (p1, _pe, p2), TCont (a1, _ae, a2) -> go p1 a1 && go p2 a2
         | TList p1, TList a1 -> go p1 a1
         | TArray p1, TArray a1 -> go p1 a1
-        | TMap (pk, pv), TMap (ak, av) -> go pk ak && go pv av
         | TTuple ps, TTuple acts when List.length ps = List.length acts ->
           List.for_all2 go ps acts
         | TVariant (pn, ps), TVariant (an, acts)
@@ -522,8 +524,6 @@ and pp_ty_raw ty =
       | _ -> pp_ty t
     ) ts)
   | TList t -> pp_ty_arg t ^ " list"
-  | TMap (k, v) ->
-    "(" ^ pp_ty k ^ ", " ^ pp_ty v ^ ") map"
   | TArray t -> pp_ty_arg t ^ " array"
   | TRecord row ->
     let rec collect r = match rrow_repr r with
@@ -758,8 +758,6 @@ and unify t1 t2 =
     unify t1' t2'
   | TArray t1', TArray t2' ->
     unify t1' t2'
-  | TMap (k1, v1), TMap (k2, v2) ->
-    unify k1 k2; unify v1 v2
   | TRecord r1, TRecord r2 ->
     unify_record_row r1 r2
   | TInt, TInt | TFloat, TFloat | TBool, TBool
@@ -801,7 +799,6 @@ let generalize level ty =
     | TTuple ts -> TTuple (List.map go ts)
     | TList t -> TList (go t)
     | TArray t -> TArray (go t)
-    | TMap (k, v) -> TMap (go k, go v)
     | TRecord row -> TRecord (go_rrow row)
     | TVariant (name, args) -> TVariant (name, List.map go args)
     | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -882,7 +879,6 @@ let generalize_with_map level ty =
     | TTuple ts -> TTuple (List.map go ts)
     | TList t -> TList (go t)
     | TArray t -> TArray (go t)
-    | TMap (k, v) -> TMap (go k, go v)
     | TRecord row -> TRecord (go_rrow row)
     | TVariant (name, args) -> TVariant (name, List.map go args)
     | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -951,7 +947,6 @@ let instantiate_with_mapping level (s : scheme) =
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap (k, v) -> TMap (go k, go v)
       | TRecord row -> TRecord (go_rrow row)
       | TVariant (name, args) -> TVariant (name, List.map go args)
       | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -989,7 +984,6 @@ let instantiate level (s : scheme) =
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap (k, v) -> TMap (go k, go v)
       | TRecord row -> TRecord (go_rrow row)
       | TVariant (name, args) -> TVariant (name, List.map go args)
       | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -1021,7 +1015,6 @@ let rec deep_repr ty =
   | TTuple ts -> TTuple (List.map deep_repr ts)
   | TList t -> TList (deep_repr t)
   | TArray t -> TArray (deep_repr t)
-  | TMap (k, v) -> TMap (deep_repr k, deep_repr v)
   | TRecord row -> TRecord (deep_repr_rrow row)
   | TVariant (name, args) -> TVariant (name, List.map deep_repr args)
   | TPolyVariant row -> TPolyVariant (deep_repr_pv row)
@@ -1057,7 +1050,6 @@ let rec types_compatible t1 t2 =
     List.length ts1 = List.length ts2 && List.for_all2 types_compatible ts1 ts2
   | TList t1, TList t2 -> types_compatible t1 t2
   | TArray t1, TArray t2 -> types_compatible t1 t2
-  | TMap (k1, v1), TMap (k2, v2) -> types_compatible k1 k2 && types_compatible v1 v2
   | TRecord r1, TRecord r2 ->
     let f1 = record_row_to_fields r1 in
     let f2 = record_row_to_fields r2 in
@@ -1110,7 +1102,6 @@ let rec subtype t1 t2 =
     ) f2
   | TList t1', TList t2' -> subtype t1' t2'
   | TArray t1', TArray t2' -> subtype t1' t2'
-  | TMap (k1, v1), TMap (k2, v2) -> subtype k1 k2 && subtype v1 v2
   | TTuple ts1, TTuple ts2 ->
     List.length ts1 = List.length ts2 &&
     List.for_all2 subtype ts1 ts2
@@ -1137,7 +1128,6 @@ let rec equal_ty t1 t2 =
     List.for_all2 (fun (n1, t1) (n2, t2) -> String.equal n1 n2 && equal_ty t1 t2) f1 f2
   | TList t1', TList t2' -> equal_ty t1' t2'
   | TArray t1', TArray t2' -> equal_ty t1' t2'
-  | TMap (k1, v1), TMap (k2, v2) -> equal_ty k1 k2 && equal_ty v1 v2
   | TTuple ts1, TTuple ts2 ->
     List.length ts1 = List.length ts2 &&
     List.for_all2 equal_ty ts1 ts2
@@ -1163,7 +1153,6 @@ let freshen_unbound ty =
     | TTuple ts -> TTuple (List.map go ts)
     | TList t -> TList (go t)
     | TArray t -> TArray (go t)
-    | TMap (k, v) -> TMap (go k, go v)
     | TRecord row -> TRecord (go_rrow row)
     | TPolyVariant row -> TPolyVariant (go_pv row)
     | TVariant (name, args) -> TVariant (name, List.map go args)
@@ -1198,10 +1187,6 @@ let match_partial_inst inst_tys partial =
     | TUnit -> (match repr conc with TUnit -> true | _ -> false)
     | TList a -> (match repr conc with TList b -> match_one a b | _ -> false)
     | TArray a -> (match repr conc with TArray b -> match_one a b | _ -> false)
-    | TMap (k1, v1) ->
-      (match repr conc with
-       | TMap (k2, v2) -> match_one k1 k2 && match_one v1 v2
-       | _ -> false)
     | TTuple ts1 ->
       (match repr conc with
        | TTuple ts2 when List.length ts1 = List.length ts2 ->
@@ -1246,7 +1231,6 @@ let inst_specificity (inst : instance_def) =
     | TArrow (a, _, b) | TCont (a, _, b) -> count a + count b
     | TTuple ts -> List.fold_left (fun acc t -> acc + count t) 0 ts
     | TList a | TArray a -> count a
-    | TMap (k, v) -> count k + count v
     | TRecord row -> List.fold_left (fun acc (_, t) -> acc + count t) 0 (record_row_to_fields row)
     | TVariant (_, ts) -> List.fold_left (fun acc t -> acc + count t) 0 ts
     | TPolyVariant _ -> 0
@@ -1338,8 +1322,6 @@ let improve_with_fundeps instances class_def partial =
             | TGen g, ty -> Hashtbl.replace subst g ty
             | TList a, TList b -> extract_bindings a b
             | TArray a, TArray b -> extract_bindings a b
-            | TMap (k1, v1), TMap (k2, v2) ->
-              extract_bindings k1 k2; extract_bindings v1 v2
             | TTuple ts1, TTuple ts2 when List.length ts1 = List.length ts2 ->
               List.iter2 extract_bindings ts1 ts2
             | TVariant (_, args1), TVariant (_, args2) when List.length args1 = List.length args2 ->
@@ -1357,7 +1339,6 @@ let improve_with_fundeps instances class_def partial =
           | TGen g -> (match Hashtbl.find_opt subst g with Some t -> t | None -> ty)
           | TList a -> TList (apply_subst a)
           | TArray a -> TArray (apply_subst a)
-          | TMap (k, v) -> TMap (apply_subst k, apply_subst v)
           | TTuple ts -> TTuple (List.map apply_subst ts)
           | TVariant (n, args) -> TVariant (n, List.map apply_subst args)
           | TArrow (a, e, r) -> TArrow (apply_subst a, e, apply_subst r)

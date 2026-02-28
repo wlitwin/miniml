@@ -1,0 +1,4 @@
+(executable
+ (name main)
+ (public_name mmlc)
+ (libraries interpreter interpreter_native unix))

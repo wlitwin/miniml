@@ -20,7 +20,6 @@ module Ast =
     | TyArray of ty_annot
     | TyTuple of ty_annot list
     | TyApp of ty_annot list * string
-    | TyMap of ty_annot * ty_annot
     | TyQualified of string list * string
     | TyPolyVariant of pv_annot_kind * (string * ty_annot option) list
     | TyWithEffect of ty_annot * eff_annot
@@ -151,6 +150,7 @@ module Ast =
     | TDVariant of (string * ty_annot option * ty_annot option) list
     | TDRecord of (bool * string * ty_annot) list
     | TDAlias of ty_annot
+    | TDNewtype of string * ty_annot
 
 
   pub type constraint_ = string * string list

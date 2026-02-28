@@ -28,7 +28,7 @@ let mark_dead_after_tail_call code targets actions =
   let i = ref 0 in
   while !i < len do
     (match code.(!i) with
-     | Bytecode.TAIL_CALL _ ->
+     | Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _ ->
        let j = ref (!i + 1) in
        while !j < len && not (is_jump_target targets !j) do
          actions.(!j) <- Remove;
@@ -48,7 +48,7 @@ let mark_jump_to_next code actions =
     | _ -> ()
   done
 
-(* === Optimization 3: SET_LOCAL n; GET_LOCAL n pair elimination === *)
+(* === Optimization 4: SET_LOCAL n; GET_LOCAL n pair elimination === *)
 
 (* Does this opcode read local slot n? *)
 let reads_slot op n =
@@ -83,9 +83,12 @@ let is_slot_dead code actions targets n start =
       else if writes_slot op n then done_ := true
       else begin
         match op with
+        (* Terminators: function ends, slot is guaranteed dead *)
+        | Bytecode.RETURN | Bytecode.FUNC_RETURN | Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _
+        | Bytecode.MATCH_FAIL _ | Bytecode.HALT ->
+          done_ := true (* result stays true: slot is dead *)
+        (* Branches and loops: might reach code that reads the slot *)
         | Bytecode.JUMP _ | Bytecode.JUMP_IF_FALSE _ | Bytecode.JUMP_IF_TRUE _
-        | Bytecode.RETURN | Bytecode.FUNC_RETURN | Bytecode.TAIL_CALL _
-        | Bytecode.MATCH_FAIL _ | Bytecode.HALT
         | Bytecode.LOOP_BREAK | Bytecode.LOOP_CONTINUE _ | Bytecode.FOLD_CONTINUE _
         | Bytecode.ENTER_LOOP _ | Bytecode.JUMP_TABLE _ ->
           result := false; done_ := true
@@ -119,7 +122,39 @@ let mark_set_get_pairs code targets actions =
       incr i
   done
 
-(* === Optimization 4: Superinstructions === *)
+(* === Optimization 3: Dead store elimination === *)
+let mark_dead_stores code targets actions =
+  let len = Array.length code in
+  let i = ref 0 in
+  while !i < len do
+    let handled = ref false in
+    (* Pattern A: DUP; SET_LOCAL n where slot n is dead → Remove both *)
+    if !i + 1 < len
+       && actions.(!i) = Keep && actions.(!i + 1) = Keep
+       && not (is_jump_target targets (!i + 1))
+    then begin
+      match code.(!i), code.(!i + 1) with
+      | Bytecode.DUP, Bytecode.SET_LOCAL n
+        when is_slot_dead code actions targets n (!i + 2) ->
+        actions.(!i) <- Remove;
+        actions.(!i + 1) <- Remove;
+        i := !i + 2;
+        handled := true
+      | _ -> ()
+    end;
+    (* Pattern B: standalone SET_LOCAL n where slot n is dead → POP *)
+    if not !handled then begin
+      match code.(!i) with
+      | Bytecode.SET_LOCAL n
+        when actions.(!i) = Keep
+             && is_slot_dead code actions targets n (!i + 1) ->
+        actions.(!i) <- ReplaceWith [Bytecode.POP];
+        incr i
+      | _ -> incr i
+    end
+  done
+
+(* === Optimization 5: Superinstructions === *)
 let mark_superinstructions code targets actions =
   let len = Array.length code in
   let i = ref 0 in
@@ -137,6 +172,14 @@ let mark_superinstructions code targets actions =
         i := !i + 2
       | Bytecode.GET_LOCAL slot, Bytecode.FIELD name ->
         actions.(!i) <- ReplaceWith [Bytecode.GET_LOCAL_FIELD (slot, name)];
+        actions.(!i + 1) <- Remove;
+        i := !i + 2
+      | Bytecode.GET_GLOBAL idx, Bytecode.CALL arity ->
+        actions.(!i) <- ReplaceWith [Bytecode.GET_GLOBAL_CALL (idx, arity)];
+        actions.(!i + 1) <- Remove;
+        i := !i + 2
+      | Bytecode.GET_GLOBAL idx, Bytecode.FIELD name ->
+        actions.(!i) <- ReplaceWith [Bytecode.GET_GLOBAL_FIELD (idx, name)];
         actions.(!i + 1) <- Remove;
         i := !i + 2
       | _ -> incr i
@@ -162,7 +205,7 @@ let detect_tag_chain code _targets start_pos scrut_slot =
     if !pos + 2 < len
        && (match code.(!pos) with Bytecode.GET_LOCAL s when s = scrut_slot -> true | _ -> false)
        && (match code.(!pos + 1) with Bytecode.TAG_EQ _ -> true | _ -> false)
-       && (match code.(!pos + 2) with Bytecode.JUMP_IF_FALSE _ -> true | _ -> false)
+       && (match code.(!pos + 2) with Bytecode.JUMP_IF_FALSE t -> t > !pos | _ -> false)
     then begin
       let tag = match code.(!pos + 1) with Bytecode.TAG_EQ t -> t | _ -> assert false in
       let next = match code.(!pos + 2) with Bytecode.JUMP_IF_FALSE t -> t | _ -> assert false in
@@ -253,6 +296,29 @@ let mark_jump_tables code targets actions =
       incr i
   done
 
+(* === Optimization 7: Push/pop cancellation === *)
+let mark_push_pop code targets actions =
+  let len = Array.length code in
+  let i = ref 0 in
+  while !i < len - 1 do
+    if actions.(!i) = Keep && actions.(!i + 1) = Keep
+       && not (is_jump_target targets (!i + 1))
+    then begin
+      let is_pure_push = match code.(!i) with
+        | Bytecode.CONST _ | Bytecode.GET_LOCAL _ | Bytecode.GET_GLOBAL _
+        | Bytecode.GET_UPVALUE _ | Bytecode.NIL | Bytecode.DUP -> true
+        | _ -> false
+      in
+      match code.(!i + 1) with
+      | Bytecode.POP when is_pure_push ->
+        actions.(!i) <- Remove;
+        actions.(!i + 1) <- Remove;
+        i := !i + 2
+      | _ -> incr i
+    end else
+      incr i
+  done
+
 (* === Rewrite pass === *)
 
 (* Build new code and line_table arrays from actions, computing offset mapping *)
@@ -307,6 +373,81 @@ let fixup_jumps code offset_map =
     code.(i) <- remapped
   ) code
 
+(* === Post-rewrite pass: jump threading and JUMP→RETURN === *)
+let thread_jumps code =
+  let len = Array.length code in
+  if len = 0 then ()
+  else begin
+    (* Follow a chain of unconditional JUMPs to find the final target *)
+    let resolve_target target =
+      let visited = Hashtbl.create 8 in
+      let t = ref target in
+      let continue = ref true in
+      while !continue do
+        if !t < 0 || !t >= len || Hashtbl.mem visited !t then
+          continue := false
+        else begin
+          match code.(!t) with
+          | Bytecode.JUMP next ->
+            Hashtbl.replace visited !t ();
+            t := next
+          | _ -> continue := false
+        end
+      done;
+      !t
+    in
+    (* Compute control depth for JUMP→RETURN safety.
+       Only ENTER_LOOP/EXIT_LOOP affect the control_stack. *)
+    let control_depth = Array.make len 0 in
+    let depth = ref 0 in
+    for i = 0 to len - 1 do
+      control_depth.(i) <- !depth;
+      (match code.(i) with
+       | Bytecode.ENTER_LOOP _ -> incr depth
+       | Bytecode.EXIT_LOOP -> if !depth > 0 then decr depth
+       | _ -> ())
+    done;
+    (* Thread all jump instructions *)
+    for i = 0 to len - 1 do
+      match code.(i) with
+      | Bytecode.JUMP target ->
+        let final_target = resolve_target target in
+        (* Check for JUMP→RETURN replacement (only at control depth 0) *)
+        if final_target >= 0 && final_target < len
+           && control_depth.(i) = 0 then begin
+          match code.(final_target) with
+          | Bytecode.RETURN ->
+            code.(i) <- Bytecode.RETURN
+          | _ ->
+            if final_target <> target then
+              code.(i) <- Bytecode.JUMP final_target
+        end else begin
+          if final_target <> target then
+            code.(i) <- Bytecode.JUMP final_target
+        end
+      | Bytecode.JUMP_IF_FALSE target ->
+        let final_target = resolve_target target in
+        if final_target <> target then
+          code.(i) <- Bytecode.JUMP_IF_FALSE final_target
+      | Bytecode.JUMP_IF_TRUE target ->
+        let final_target = resolve_target target in
+        if final_target <> target then
+          code.(i) <- Bytecode.JUMP_IF_TRUE final_target
+      | Bytecode.JUMP_TABLE (min_tag, targets, default_target) ->
+        let changed = ref false in
+        let new_targets = Array.map (fun t ->
+          let final_t = resolve_target t in
+          if final_t <> t then changed := true;
+          final_t
+        ) targets in
+        let new_default = resolve_target default_target in
+        if new_default <> default_target then changed := true;
+        if !changed then
+          code.(i) <- Bytecode.JUMP_TABLE (min_tag, new_targets, new_default)
+      | _ -> ()
+    done
+  end
+
 (* === Main optimizer for a single prototype === *)
 let optimize_code _constants code line_table =
   let len = Array.length code in
@@ -317,19 +458,25 @@ let optimize_code _constants code line_table =
     (* Run mark passes *)
     mark_dead_after_tail_call code targets actions;
     mark_jump_to_next code actions;
+    mark_dead_stores code targets actions;
     mark_set_get_pairs code targets actions;
-    (* mark_jump_tables disabled pending investigation of infinite loop *)
-    (* mark_jump_tables code targets actions; *)
+    mark_jump_tables code targets actions;
+    mark_push_pop code targets actions;
     mark_superinstructions code targets actions;
-    (* Check if any actions were taken *)
+    (* Check if any mark actions were taken *)
     let any_changes = ref false in
     Array.iter (fun a -> if a <> Keep then any_changes := true) actions;
-    if not !any_changes then (code, line_table)
-    else begin
-      let (new_code, new_lines, offset_map) = rewrite code line_table actions in
-      fixup_jumps new_code offset_map;
-      (new_code, new_lines)
-    end
+    let (final_code, final_lines) =
+      if not !any_changes then (code, line_table)
+      else begin
+        let (new_code, new_lines, offset_map) = rewrite code line_table actions in
+        fixup_jumps new_code offset_map;
+        (new_code, new_lines)
+      end
+    in
+    (* Post-rewrite: jump threading runs unconditionally *)
+    thread_jumps final_code;
+    (final_code, final_lines)
   end
 
 (* Recursively optimize a prototype and all nested prototypes in its constants *)

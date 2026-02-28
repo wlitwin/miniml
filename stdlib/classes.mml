@@ -1,0 +1,256 @@
+(* ---- Typeclass primitive externs ---- *)
+(* These are provided by each backend (OCaml VM, JS, native) *)
+
+(* Num primitives *)
+extern __num_add_int : int -> int -> int
+extern __num_sub_int : int -> int -> int
+extern __num_mul_int : int -> int -> int
+extern __num_div_int : int -> int -> int
+extern __num_neg_int : int -> int
+extern __num_add_float : float -> float -> float
+extern __num_sub_float : float -> float -> float
+extern __num_mul_float : float -> float -> float
+extern __num_div_float : float -> float -> float
+extern __num_neg_float : float -> float
+
+(* Eq primitives *)
+extern __eq_int : int -> int -> bool
+extern __neq_int : int -> int -> bool
+extern __eq_float : float -> float -> bool
+extern __neq_float : float -> float -> bool
+extern __eq_string : string -> string -> bool
+extern __neq_string : string -> string -> bool
+extern __eq_bool : bool -> bool -> bool
+extern __neq_bool : bool -> bool -> bool
+extern __eq_byte : byte -> byte -> bool
+extern __neq_byte : byte -> byte -> bool
+extern __eq_rune : rune -> rune -> bool
+extern __neq_rune : rune -> rune -> bool
+
+(* Ord primitives *)
+extern __lt_int : int -> int -> bool
+extern __gt_int : int -> int -> bool
+extern __le_int : int -> int -> bool
+extern __ge_int : int -> int -> bool
+extern __lt_float : float -> float -> bool
+extern __gt_float : float -> float -> bool
+extern __le_float : float -> float -> bool
+extern __ge_float : float -> float -> bool
+extern __lt_string : string -> string -> bool
+extern __gt_string : string -> string -> bool
+extern __le_string : string -> string -> bool
+extern __ge_string : string -> string -> bool
+extern __lt_byte : byte -> byte -> bool
+extern __gt_byte : byte -> byte -> bool
+extern __le_byte : byte -> byte -> bool
+extern __ge_byte : byte -> byte -> bool
+extern __lt_rune : rune -> rune -> bool
+extern __gt_rune : rune -> rune -> bool
+extern __le_rune : rune -> rune -> bool
+extern __ge_rune : rune -> rune -> bool
+
+(* Bitwise primitives *)
+extern __band_int : int -> int -> int
+extern __bor_int : int -> int -> int
+extern __bxor_int : int -> int -> int
+extern __bshl_int : int -> int -> int
+extern __bshr_int : int -> int -> int
+extern __bnot_int : int -> int
+
+(* Show primitives *)
+extern __show_int : int -> string
+extern __show_float : float -> string
+extern __show_bool : bool -> string
+extern __show_string : string -> string
+extern __show_unit : unit -> string
+extern __show_byte : byte -> string
+extern __show_rune : rune -> string
+
+(* Index primitives *)
+extern __index_at_array : int -> 'a array -> 'a
+extern __index_at_string : int -> string -> byte
+
+;;
+
+(* ---- Class definitions ---- *)
+
+class Num 'a =
+  (+) : 'a -> 'a -> 'a
+  (-) : 'a -> 'a -> 'a
+  (*) : 'a -> 'a -> 'a
+  (/) : 'a -> 'a -> 'a
+  neg : 'a -> 'a
+end
+;;
+class Eq 'a =
+  (=) : 'a -> 'a -> bool
+  (<>) : 'a -> 'a -> bool
+end
+;;
+class Ord 'a =
+  (<) : 'a -> 'a -> bool
+  (>) : 'a -> 'a -> bool
+  (<=) : 'a -> 'a -> bool
+  (>=) : 'a -> 'a -> bool
+end
+;;
+class Bitwise 'a =
+  (land) : 'a -> 'a -> 'a
+  (lor) : 'a -> 'a -> 'a
+  (lxor) : 'a -> 'a -> 'a
+  (lsl) : 'a -> 'a -> 'a
+  (lsr) : 'a -> 'a -> 'a
+  (lnot) : 'a -> 'a
+end
+;;
+class Show 'a =
+  show : 'a -> string
+end
+;;
+class Iter 'a 'b where 'a -> 'b =
+  fold : ('c -> 'b -> 'c) -> 'c -> 'a -> 'c
+end
+;;
+class Index 'c 'k 'v where 'c -> 'k 'v =
+  at : 'k -> 'c -> 'v
+end
+
+;;
+
+(* ---- Primitive instances ---- *)
+
+instance Num int =
+  let (+) = __num_add_int
+  let (-) = __num_sub_int
+  let (*) = __num_mul_int
+  let (/) = __num_div_int
+  let neg = __num_neg_int
+end
+;;
+instance Num float =
+  let (+) = __num_add_float
+  let (-) = __num_sub_float
+  let (*) = __num_mul_float
+  let (/) = __num_div_float
+  let neg = __num_neg_float
+end
+
+;;
+
+instance Eq int =
+  let (=) = __eq_int
+  let (<>) = __neq_int
+end
+;;
+instance Eq float =
+  let (=) = __eq_float
+  let (<>) = __neq_float
+end
+;;
+instance Eq string =
+  let (=) = __eq_string
+  let (<>) = __neq_string
+end
+;;
+instance Eq bool =
+  let (=) = __eq_bool
+  let (<>) = __neq_bool
+end
+;;
+instance Eq byte =
+  let (=) = __eq_byte
+  let (<>) = __neq_byte
+end
+;;
+instance Eq rune =
+  let (=) = __eq_rune
+  let (<>) = __neq_rune
+end
+
+;;
+
+instance Ord int =
+  let (<) = __lt_int
+  let (>) = __gt_int
+  let (<=) = __le_int
+  let (>=) = __ge_int
+end
+;;
+instance Ord float =
+  let (<) = __lt_float
+  let (>) = __gt_float
+  let (<=) = __le_float
+  let (>=) = __ge_float
+end
+;;
+instance Ord string =
+  let (<) = __lt_string
+  let (>) = __gt_string
+  let (<=) = __le_string
+  let (>=) = __ge_string
+end
+;;
+instance Ord byte =
+  let (<) = __lt_byte
+  let (>) = __gt_byte
+  let (<=) = __le_byte
+  let (>=) = __ge_byte
+end
+;;
+instance Ord rune =
+  let (<) = __lt_rune
+  let (>) = __gt_rune
+  let (<=) = __le_rune
+  let (>=) = __ge_rune
+end
+
+;;
+
+instance Bitwise int =
+  let (land) = __band_int
+  let (lor) = __bor_int
+  let (lxor) = __bxor_int
+  let (lsl) = __bshl_int
+  let (lsr) = __bshr_int
+  let (lnot) = __bnot_int
+end
+
+;;
+
+instance Show int =
+  let show = __show_int
+end
+;;
+instance Show float =
+  let show = __show_float
+end
+;;
+instance Show bool =
+  let show = __show_bool
+end
+;;
+instance Show string =
+  let show = __show_string
+end
+;;
+instance Show unit =
+  let show = __show_unit
+end
+;;
+instance Show byte =
+  let show = __show_byte
+end
+;;
+instance Show rune =
+  let show = __show_rune
+end
+
+;;
+
+instance Index ('a array) int 'a =
+  let at = __index_at_array
+end
+;;
+instance Index string int byte =
+  let at = __index_at_string
+end

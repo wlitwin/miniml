@@ -1,0 +1,353 @@
+=== Basic Newtype Declaration ===
+
+--- test: basic newtype construction
+newtype 'a wrapper = Wrap of 'a;;
+Wrap 42
+--- expect: 42
+
+--- test: newtype pattern match
+newtype 'a wrapper = Wrap of 'a;;
+match Wrap 42 with Wrap x -> x
+--- expect: 42
+
+--- test: non-parameterized newtype
+newtype age = Age of int;;
+Age 25
+--- expect: 25
+
+--- test: newtype let destructure
+newtype 'a wrapper = Wrap of 'a;;
+let (Wrap x) = Wrap 42 in x
+--- expect: 42
+
+--- test: newtype fn param destructure
+newtype 'a wrapper = Wrap of 'a;;
+let unwrap (Wrap x) = x;;
+unwrap (Wrap 99)
+--- expect: 99
+
+--- test: newtype with type annotation
+newtype 'a wrapper = Wrap of 'a;;
+let unwrap (w : int wrapper) = match w with Wrap x -> x;;
+unwrap (Wrap 99)
+--- expect: 99
+
+--- test: newtype preserves type through roundtrip
+newtype 'a wrapper = Wrap of 'a;;
+let f (w : int wrapper) = match w with Wrap x -> Wrap (x + 1);;
+match f (Wrap 41) with Wrap x -> x
+--- expect: 42
+
+=== Parameterized Newtypes ===
+
+--- test: multi-parameter newtype
+newtype ('a, 'b) pair = MkPair of ('a * 'b);;
+match MkPair (1, "hello") with MkPair (n, s) -> $"{s} {n}"
+--- expect: hello 1
+
+--- test: newtype wrapping list
+newtype 'a bag = Bag of 'a list;;
+match Bag [1; 2; 3] with Bag xs -> List.length xs
+--- expect: 3
+
+--- test: newtype wrapping tuple
+newtype 'a tagged = Tagged of (string * 'a);;
+match Tagged ("name", 42) with Tagged (s, n) -> $"{s}={n}"
+--- expect: name=42
+
+--- test: newtype wrapping option
+newtype 'a maybe = Maybe of 'a option;;
+match Maybe (Some 42) with Maybe (Some x) -> x | Maybe None -> 0
+--- expect: 42
+
+=== Nominal Typing ===
+
+--- test: different newtypes are incompatible
+newtype age = Age of int;;
+newtype year = Year of int;;
+Age 25 = Year 25
+--- expect-type-error: cannot unify age with year
+
+--- test: newtype not compatible with underlying type
+newtype age = Age of int;;
+let f (x : int) = x;;
+f (Age 25)
+--- expect-type-error
+
+=== Constructor Erasure ===
+
+--- test: constructor used as first-class function
+newtype 'a wrapper = Wrap of 'a;;
+List.map Wrap [1; 2; 3]
+--- expect: [1; 2; 3]
+
+--- test: constructor in higher-order context
+newtype 'a wrapper = Wrap of 'a;;
+let apply f x = f x;;
+match apply Wrap 42 with Wrap n -> n
+--- expect: 42
+
+--- test: nested newtypes
+newtype 'a inner = Inner of 'a;;
+newtype 'a outer = Outer of 'a inner;;
+match Outer (Inner 42) with Outer (Inner x) -> x
+--- expect: 42
+
+--- test: newtype wrapping function
+newtype 'a thunk = Thunk of (unit -> 'a);;
+let run (Thunk f) = f ();;
+run (Thunk (fn -> 42))
+--- expect: 42
+
+=== Deriving ===
+
+--- test: deriving Show
+newtype 'a wrapper = Wrap of 'a deriving Show;;
+show (Wrap 42)
+--- expect: Wrap(42)
+
+--- test: deriving Show string
+newtype 'a wrapper = Wrap of 'a deriving Show;;
+show (Wrap "hello")
+--- expect: Wrap(hello)
+
+--- test: deriving Eq equal
+newtype 'a wrapper = Wrap of 'a deriving Eq;;
+Wrap 1 = Wrap 1
+--- expect: true
+
+--- test: deriving Eq not equal
+newtype 'a wrapper = Wrap of 'a deriving Eq;;
+Wrap 1 = Wrap 2
+--- expect: false
+
+--- test: deriving Show and Eq
+newtype 'a wrapper = Wrap of 'a deriving Show, Eq;;
+let a = Wrap 42;;
+show a ^ " " ^ show (a = a)
+--- expect: Wrap(42) true
+
+--- test: deriving Show non-parameterized
+newtype age = Age of int deriving Show;;
+show (Age 25)
+--- expect: Age(25)
+
+--- test: deriving Eq non-parameterized
+newtype age = Age of int deriving Eq;;
+Age 25 = Age 25
+--- expect: true
+
+=== Custom Typeclass Instances ===
+
+--- test: custom Show instance
+newtype 'a wrapper = Wrap of 'a;;
+instance Show ('a wrapper) where Show 'a =
+  let show (Wrap x) = "Wrapped:" ^ show x
+end;;
+show (Wrap 42)
+--- expect: Wrapped:42
+
+--- test: Iter instance for newtype
+newtype 'a bag = Bag of 'a list;;
+instance Iter ('a bag) 'a =
+  let fold f acc (Bag xs) = List.fold f acc xs
+end;;
+for x in Bag [1; 2; 3] with sum = 0 do sum + x end
+--- expect: 6
+
+--- test: Iter instance with for unit loop
+newtype 'a bag = Bag of 'a list;;
+instance Iter ('a bag) 'a =
+  let fold f acc (Bag xs) = List.fold f acc xs
+end;;
+let mut sum = 0 in
+for x in Bag [10; 20; 30] do sum := sum + x end;
+sum
+--- expect: 60
+
+--- test: Eq instance for newtype
+newtype 'a wrapper = Wrap of 'a;;
+instance Eq ('a wrapper) where Eq 'a =
+  let (=) (Wrap a) (Wrap b) = a = b
+  let (<>) (Wrap a) (Wrap b) = a <> b
+end;;
+Wrap 1 = Wrap 1
+--- expect: true
+
+=== Modules ===
+
+--- test: pub newtype in module
+module M =
+  pub newtype 'a box = Box of 'a
+  pub let make x = Box x
+  pub let unwrap (Box x) = x
+end;;
+M.unwrap (M.make 42)
+--- expect: 42
+
+--- test: pub newtype constructor accessible
+module M =
+  pub newtype 'a box = Box of 'a
+end;;
+match M.Box 42 with M.Box x -> x
+--- expect: 42
+
+--- test: opaque newtype hides constructor
+module M =
+  opaque newtype token = Token of int
+  pub let make x = Token x
+  pub let get (Token x) = x
+end;;
+M.get (M.make 42)
+--- expect: 42
+
+--- test: opaque newtype constructor rejected
+module M =
+  opaque newtype token = Token of int
+  pub let make x = Token x
+end;;
+M.Token 42
+--- expect-type-error: unknown constructor
+
+--- test: opaque newtype preserves abstraction
+module M =
+  opaque newtype 'a safe = Safe of 'a
+  pub let wrap x = Safe x
+  pub let unwrap (Safe x) = x
+  pub let map f (Safe x) = Safe (f x)
+end;;
+M.unwrap (M.map (fn x -> x + 1) (M.wrap 41))
+--- expect: 42
+
+--- test: newtype in module with typeclass
+module Dollars =
+  pub newtype amount = Amount of int deriving Show, Eq
+  pub let make n = Amount n
+  pub let add (Amount a) (Amount b) = Amount (a + b)
+  pub let value (Amount a) = a
+end;;
+Dollars.value (Dollars.add (Dollars.make 10) (Dollars.make 32))
+--- expect: 42
+
+=== Complex Underlying Types ===
+
+--- test: newtype wrapping record destructure
+newtype point = Point of { x: int; y: int };;
+match Point {x = 10; y = 20} with Point {x; y} -> x + y
+--- expect: 30
+
+--- test: newtype wrapping record bind then access
+newtype point = Point of { x: int; y: int };;
+match Point {x = 10; y = 20} with Point r -> r.x + r.y
+--- expect: 30
+
+--- test: newtype wrapping nested tuple
+newtype 'a tree_path = Path of ('a * 'a list);;
+match Path (1, [2; 3; 4]) with Path (root, rest) -> root + List.length rest
+--- expect: 4
+
+=== Pattern Matching Edge Cases ===
+
+--- test: newtype in match with multiple arms
+newtype 'a wrapper = Wrap of 'a;;
+let describe w = match w with
+  | Wrap 0 -> "zero"
+  | Wrap 1 -> "one"
+  | Wrap _ -> "other"
+;;
+describe (Wrap 1)
+--- expect: one
+
+--- test: newtype in match fallthrough
+newtype 'a wrapper = Wrap of 'a;;
+let describe w = match w with
+  | Wrap 0 -> "zero"
+  | Wrap 1 -> "one"
+  | Wrap _ -> "other"
+;;
+describe (Wrap 99)
+--- expect: other
+
+--- test: newtype in or-pattern
+newtype 'a wrapper = Wrap of 'a;;
+match Wrap 2 with
+  | Wrap 1 | Wrap 2 -> "small"
+  | Wrap _ -> "big"
+--- expect: small
+
+--- test: newtype in as-pattern
+newtype 'a wrapper = Wrap of 'a;;
+match Wrap 42 with
+  | Wrap x as _w -> x
+--- expect: 42
+
+--- test: newtype in nested pattern
+newtype 'a wrapper = Wrap of 'a;;
+match (Wrap 1, Wrap 2) with
+  | (Wrap a, Wrap b) -> a + b
+--- expect: 3
+
+--- test: newtype in list pattern
+newtype 'a wrapper = Wrap of 'a;;
+match [Wrap 1; Wrap 2; Wrap 3] with
+  | Wrap x :: _ -> x
+  | [] -> 0
+--- expect: 1
+
+--- test: newtype match exhaustiveness
+newtype 'a wrapper = Wrap of 'a;;
+match Wrap true with
+  | Wrap true -> 1
+  | Wrap false -> 0
+--- expect: 1
+
+=== Newtype with Other Features ===
+
+--- test: newtype with pipe operator
+newtype 'a wrapper = Wrap of 'a;;
+let unwrap (Wrap x) = x;;
+let double (Wrap x) = Wrap (x * 2);;
+Wrap 21 |> double |> unwrap
+--- expect: 42
+
+--- test: newtype in recursive function
+newtype 'a stack = Stack of 'a list;;
+let rec sum_stack (Stack xs) = match xs with
+  | [] -> 0
+  | x :: rest -> x + sum_stack (Stack rest)
+;;
+sum_stack (Stack [1; 2; 3; 4; 5])
+--- expect: 15
+
+--- test: newtype with string interpolation
+newtype name = Name of string;;
+let greet (Name n) = $"Hello, {n}!";;
+greet (Name "Alice")
+--- expect: Hello, Alice!
+
+--- test: newtype in fold
+newtype 'a wrapper = Wrap of 'a;;
+let values = [Wrap 1; Wrap 2; Wrap 3];;
+List.fold (fn acc (Wrap x) -> acc + x) 0 values
+--- expect: 6
+
+--- test: newtype with mutable state
+newtype counter = Counter of int;;
+let mut c = Counter 0;;
+let inc (Counter n) = Counter (n + 1);;
+c := inc c;
+c := inc c;
+c := inc c;
+match c with Counter n -> n
+--- expect: 3
+
+--- test: newtype with effects
+effect Get = get : unit -> int end;;
+newtype 'a wrapper = Wrap of 'a;;
+handle
+  let x = perform get () in
+  match Wrap x with Wrap n -> n + 1
+with
+| return x -> x
+| get () k -> resume k 41
+--- expect: 42

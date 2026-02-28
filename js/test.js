@@ -399,7 +399,7 @@ testError("division by zero", "1 / 0", "division by zero");
 testError("match fail", `
   type ab = A | B | C
   let f x =
-    -- @partial
+    @partial
     match x with
     | A -> 1
     | B -> 2

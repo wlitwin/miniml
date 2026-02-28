@@ -1,0 +1,77 @@
+newtype ('k, 'v) map = MMap of ('k * 'v) list
+;;
+module Map =
+  pub let empty () : ('k, 'v) map = MMap []
+
+  pub let rec has k (MMap m) = match m with
+    | [] -> false
+    | (k2, _) :: rest -> if k = k2 do true else has k (MMap rest)
+
+  pub let rec get k (MMap m) = match m with
+    | [] -> None
+    | (k2, v) :: rest -> if k = k2 do Some v else get k (MMap rest)
+
+  pub let set k v (MMap m) =
+    let rec go acc lst = match lst with
+      | [] -> MMap (List.rev ((k, v) :: acc))
+      | (k2, _) :: rest when k = k2 -> MMap (List.rev_append ((k, v) :: acc) rest)
+      | entry :: rest -> go (entry :: acc) rest
+    in go [] m
+
+  pub let rec remove k (MMap m) = match m with
+    | [] -> MMap []
+    | (k2, _) :: rest when k = k2 -> MMap rest
+    | entry :: rest -> match remove k (MMap rest) with MMap r -> MMap (entry :: r)
+
+  pub let size (MMap m) = List.length m
+
+  pub let rec keys (MMap m) = match m with
+    | [] -> []
+    | (k, _) :: rest -> k :: keys (MMap rest)
+
+  pub let rec values (MMap m) = match m with
+    | [] -> []
+    | (_, v) :: rest -> v :: values (MMap rest)
+
+  pub let to_list (MMap m) : ('k * 'v) list = m
+
+  pub let of_list (pairs : ('k * 'v) list) : ('k, 'v) map =
+    List.fold (fn acc p -> match p with (k, v) -> set k v acc) (MMap []) pairs
+end
+;;
+instance Map (('k, 'v) map) 'k 'v =
+  let of_list = Map.of_list
+  let get = Map.get
+  let set = Map.set
+  let has = Map.has
+  let remove = Map.remove
+  let size = Map.size
+  let keys = Map.keys
+  let values = Map.values
+  let to_list = Map.to_list
+end
+;;
+instance Iter (('k, 'v) map) ('k * 'v) =
+  let fold f acc (MMap m) =
+    let rec go a l = match l with
+      | [] -> a
+      | x :: rest -> go (f a x) rest
+    in go acc m
+end
+;;
+instance Show (('k, 'v) map) where Show 'k, Show 'v =
+  let show (MMap m) = match m with
+    | [] -> "#{}"
+    | _ ->
+      let inner = List.fold (fn acc kv -> match kv with (k, v) ->
+        let entry = show k ^ ": " ^ show v in
+        if acc = "" do entry else acc ^ "; " ^ entry
+      ) "" m in
+      "#{" ^ inner ^ "}"
+end
+;;
+instance Index (('k, 'v) map) 'k 'v =
+  let at k m = match Map.get k m with
+    | Some v -> v
+    | None -> failwith "key not found in map"
+end

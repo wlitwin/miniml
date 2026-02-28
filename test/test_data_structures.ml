@@ -1045,18 +1045,18 @@ let () =
   Printf.printf "\n=== Map Tests ===\n";
 
   test "empty map" (fun () ->
-    expect_value {|#{}|}
-      (Interpreter.Bytecode.VMap []));
+    expect_stdlib_value {|#{}|}
+      (Interpreter.Bytecode.VList []));
 
   test "map get returns Some" (fun () ->
-    expect_value {|
+    expect_stdlib_value {|
       let m = #{"a": 1; "b": 2};;
       get "a" m
     |}
       (Interpreter.Bytecode.VVariant (1, "Some", Some (Interpreter.Bytecode.VInt 1))));
 
   test "map get pattern match" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = #{"a": 1; "b": 2};;
       match get "a" m with
         | Some v -> v
@@ -1064,7 +1064,7 @@ let () =
     |} 1);
 
   test "map get second key" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = #{"a": 1; "b": 2};;
       match get "b" m with
         | Some v -> v
@@ -1072,11 +1072,11 @@ let () =
     |} 2);
 
   test "map get missing returns None" (fun () ->
-    expect_value {|get "z" #{"a": 1}|}
+    expect_stdlib_value {|get "z" #{"a": 1}|}
       (Interpreter.Bytecode.VVariant (0, "None", None)));
 
   test "map set" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = #{"a": 1};;
       let m2 = set "b" 2 m;;
       match get "b" m2 with
@@ -1085,7 +1085,7 @@ let () =
     |} 2);
 
   test "map set overwrite" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = #{"a": 1};;
       let m2 = set "a" 42 m;;
       match get "a" m2 with
@@ -1094,33 +1094,33 @@ let () =
     |} 42);
 
   test "map has true" (fun () ->
-    expect_bool {|has "a" #{"a": 1}|} true);
+    expect_stdlib_bool {|has "a" #{"a": 1}|} true);
 
   test "map has false" (fun () ->
-    expect_bool {|has "z" #{"a": 1}|} false);
+    expect_stdlib_bool {|has "z" #{"a": 1}|} false);
 
   test "map size" (fun () ->
-    expect_int {|size #{"a": 1; "b": 2}|} 2);
+    expect_stdlib_int {|size #{"a": 1; "b": 2}|} 2);
 
   test "map size empty" (fun () ->
-    expect_int {|size #{}|} 0);
+    expect_stdlib_int {|size #{}|} 0);
 
   test "map remove" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = remove "a" #{"a": 1; "b": 2};;
       size m
     |} 1);
 
   test "map keys" (fun () ->
-    expect_value {|keys #{"a": 1}|}
+    expect_stdlib_value {|keys #{"a": 1}|}
       (Interpreter.Bytecode.VList [Interpreter.Bytecode.VString "a"]));
 
   test "map values" (fun () ->
-    expect_value {|values #{"a": 1}|}
+    expect_stdlib_value {|values #{"a": 1}|}
       (Interpreter.Bytecode.VList [Interpreter.Bytecode.VInt 1]));
 
   test "map to_list" (fun () ->
-    expect_value {|to_list #{"a": 1}|}
+    expect_stdlib_value {|to_list #{"a": 1}|}
       (Interpreter.Bytecode.VList [
         Interpreter.Bytecode.VTuple [|
           Interpreter.Bytecode.VString "a";
@@ -1129,7 +1129,7 @@ let () =
       ]));
 
   test "map int keys" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       match get 42 #{42: "answer"} with
         | Some v -> 1
         | None -> 0
@@ -1142,7 +1142,7 @@ let () =
     expect_type_error {|#{1: "a"; "b": "c"}|});
 
   test "map immutable update" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = #{"a": 1};;
       let _ = set "a" 99 m;;
       match get "a" m with
@@ -1151,7 +1151,7 @@ let () =
     |} 1);
 
   test "map with expressions" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let x = 10;;
       let m = #{x: x + 1; x + 1: x + 2};;
       match get 10 m with
@@ -1160,7 +1160,7 @@ let () =
     |} 11);
 
   test "map higher-order" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let lookup key m = match get key m with
         | Some v -> v
         | None -> 0;;
@@ -1168,7 +1168,7 @@ let () =
     |} 42);
 
   test "map of_list" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = of_list [("a", 1); ("b", 2)];;
       match get "a" m with
         | Some v -> v
@@ -1176,7 +1176,7 @@ let () =
     |} 1);
 
   test "map typed syntax" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = #{"x": 10; "y": 20};;
       match get "x" m with
         | Some v -> v
@@ -1184,10 +1184,10 @@ let () =
     |} 10);
 
   test "map typed syntax size" (fun () ->
-    expect_int {|size #{"a": 1; "b": 2}|} 2);
+    expect_stdlib_int {|size #{"a": 1; "b": 2}|} 2);
 
   test "map typed empty" (fun () ->
-    expect_int {|size #{}|} 0);
+    expect_stdlib_int {|size #{}|} 0);
 
   Printf.printf "\n=== Array Tests ===\n";
 

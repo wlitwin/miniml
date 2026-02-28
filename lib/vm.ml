@@ -36,6 +36,7 @@ let make_fiber () : Bytecode.fiber = {
   fiber_stack = Array.make fiber_stack_size Bytecode.VUnit;
   fiber_sp = 0;
   fiber_frames = [];
+  fiber_extra_args = [];
 }
 
 let push vm v =
@@ -163,20 +164,132 @@ let values_equal a b =
 let resolve_capture vm (cap : Bytecode.capture) : Bytecode.value =
   let f = frame vm in
   match cap with
-  | Bytecode.CaptureLocal slot -> f.frame_locals.(slot)
+  | Bytecode.CaptureLocal slot -> vm.current_fiber.fiber_stack.(f.frame_base_sp + slot)
   | Bytecode.CaptureUpvalue idx -> f.frame_closure.upvalues.(idx)
 
 (* Set up a call frame for a closure on the current fiber *)
 let internal_call vm (cls : Bytecode.closure) arg =
-  let new_locals = Array.make cls.fn_proto.num_locals Bytecode.VUnit in
-  new_locals.(0) <- arg;
+  let fiber = vm.current_fiber in
+  let base = fiber.fiber_sp in
+  let num_locals = cls.fn_proto.num_locals in
+  Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+  fiber.fiber_stack.(base) <- arg;
+  fiber.fiber_sp <- base + num_locals;
   let new_frame = Bytecode.{
     frame_closure = cls;
     frame_ip = 0;
-    frame_locals = new_locals;
-    frame_base_sp = vm.current_fiber.fiber_sp;
+    frame_base_sp = base;
   } in
-  vm.current_fiber.fiber_frames <- new_frame :: vm.current_fiber.fiber_frames
+  fiber.fiber_frames <- new_frame :: fiber.fiber_frames
+
+let rec split_at n lst =
+  if n = 0 then ([], lst)
+  else match lst with
+  | [] -> ([], [])
+  | x :: rest ->
+    let (first, second) = split_at (n - 1) rest in
+    (x :: first, second)
+
+(* Apply n args to a function value. For CALL_N.
+   Enters a frame (exact/over) or pushes VPartial (under).
+   Returns true if a frame was entered, false if result was pushed. *)
+let rec call_with_args vm fn_val args =
+  match fn_val with
+  | Bytecode.VClosure cls ->
+    let arity = cls.fn_proto.arity in
+    let n = List.length args in
+    if n = arity then begin
+      let fiber = vm.current_fiber in
+      let base = fiber.fiber_sp in
+      let num_locals = cls.fn_proto.num_locals in
+      Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+      List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) args;
+      fiber.fiber_sp <- base + num_locals;
+      let new_frame = Bytecode.{
+        frame_closure = cls; frame_ip = 0;
+        frame_base_sp = base;
+      } in
+      fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+      true
+    end else if n < arity then begin
+      push vm (Bytecode.VPartial (cls, args));
+      false
+    end else begin
+      let (use_args, extra) = split_at arity args in
+      vm.current_fiber.fiber_extra_args <- extra :: vm.current_fiber.fiber_extra_args;
+      let fiber = vm.current_fiber in
+      let base = fiber.fiber_sp in
+      let num_locals = cls.fn_proto.num_locals in
+      Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+      List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) use_args;
+      fiber.fiber_sp <- base + num_locals;
+      let new_frame = Bytecode.{
+        frame_closure = cls; frame_ip = 0;
+        frame_base_sp = base;
+      } in
+      fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+      true
+    end
+  | Bytecode.VPartial (cls, existing) ->
+    call_with_args vm (Bytecode.VClosure cls) (existing @ args)
+  | Bytecode.VExternal ext ->
+    let all = ext.ext_args @ args in
+    if List.length all >= ext.ext_arity then begin
+      let (use_args, remaining) = split_at ext.ext_arity all in
+      let result = ext.ext_fn use_args in
+      if remaining = [] then begin push vm result; false end
+      else call_with_args vm result remaining
+    end else begin
+      push vm (Bytecode.VExternal { ext with ext_args = all });
+      false
+    end
+  | _ -> error (Printf.sprintf "CALL_N: expected function, got %s" (Bytecode.pp_value fn_val))
+
+(* Process pending over-application args after a frame return.
+   Returns (result, entered_frame). *)
+let rec process_extra_args vm result =
+  match vm.current_fiber.fiber_extra_args with
+  | [] -> (result, false)
+  | pending :: rest ->
+    (match result with
+     | Bytecode.VClosure cls ->
+       let arity = cls.fn_proto.arity in
+       let n = List.length pending in
+       if n >= arity then begin
+         let (use_args, remaining) = split_at arity pending in
+         vm.current_fiber.fiber_extra_args <- (if remaining = [] then rest else remaining :: rest);
+         let fiber = vm.current_fiber in
+         let base = fiber.fiber_sp in
+         let num_locals = cls.fn_proto.num_locals in
+         Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+         List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) use_args;
+         fiber.fiber_sp <- base + num_locals;
+         let new_frame = Bytecode.{
+           frame_closure = cls; frame_ip = 0;
+           frame_base_sp = base;
+         } in
+         fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+         (Bytecode.VUnit, true)
+       end else begin
+         vm.current_fiber.fiber_extra_args <- rest;
+         process_extra_args vm (Bytecode.VPartial (cls, pending))
+       end
+     | Bytecode.VPartial (cls, existing) ->
+       vm.current_fiber.fiber_extra_args <- (existing @ pending) :: rest;
+       process_extra_args vm (Bytecode.VClosure cls)
+     | Bytecode.VExternal ext ->
+       let all = ext.ext_args @ pending in
+       if List.length all >= ext.ext_arity then begin
+         let (use_args, remaining) = split_at ext.ext_arity all in
+         vm.current_fiber.fiber_extra_args <- (if remaining = [] then rest else remaining :: rest);
+         let ext_result = ext.ext_fn use_args in
+         process_extra_args vm ext_result
+       end else begin
+         vm.current_fiber.fiber_extra_args <- rest;
+         process_extra_args vm (Bytecode.VExternal { ext with ext_args = all })
+       end
+     | _ ->
+       error (Printf.sprintf "expected function in over-application, got %s" (Bytecode.pp_value result)))
 
 (* Find a handler entry whose body fiber matches the given fiber *)
 let find_handler_for_fiber vm fiber =
@@ -199,10 +312,10 @@ let run vm =
       push vm (peek vm);
       loop ()
     | Bytecode.GET_LOCAL i ->
-      push vm (frame vm).frame_locals.(i);
+      push vm vm.current_fiber.fiber_stack.((frame vm).frame_base_sp + i);
       loop ()
     | Bytecode.SET_LOCAL i ->
-      (frame vm).frame_locals.(i) <- pop vm;
+      vm.current_fiber.fiber_stack.((frame vm).frame_base_sp + i) <- pop vm;
       loop ()
     | Bytecode.GET_UPVALUE i ->
       push vm (frame vm).frame_closure.upvalues.(i);
@@ -394,17 +507,43 @@ let run vm =
       let arg = pop vm in
       let fn_val = pop vm in
       (match fn_val with
-       | Bytecode.VClosure cls ->
-         let new_locals = Array.make cls.fn_proto.num_locals Bytecode.VUnit in
-         new_locals.(0) <- arg;
+       | Bytecode.VClosure cls when cls.fn_proto.arity = 1 ->
+         let fiber = vm.current_fiber in
+         let base = fiber.fiber_sp in
+         let num_locals = cls.fn_proto.num_locals in
+         Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+         fiber.fiber_stack.(base) <- arg;
+         fiber.fiber_sp <- base + num_locals;
          let new_frame = Bytecode.{
            frame_closure = cls;
            frame_ip = 0;
-           frame_locals = new_locals;
-           frame_base_sp = vm.current_fiber.fiber_sp;
+           frame_base_sp = base;
          } in
-         vm.current_fiber.fiber_frames <- new_frame :: vm.current_fiber.fiber_frames;
+         fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
          loop ()
+       | Bytecode.VClosure cls ->
+         push vm (Bytecode.VPartial (cls, [arg]));
+         loop ()
+       | Bytecode.VPartial (cls, args) ->
+         let new_args = args @ [arg] in
+         if List.length new_args = cls.fn_proto.arity then begin
+           let fiber = vm.current_fiber in
+           let base = fiber.fiber_sp in
+           let num_locals = cls.fn_proto.num_locals in
+           Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+           List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) new_args;
+           fiber.fiber_sp <- base + num_locals;
+           let new_frame = Bytecode.{
+             frame_closure = cls;
+             frame_ip = 0;
+             frame_base_sp = base;
+           } in
+           fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+           loop ()
+         end else begin
+           push vm (Bytecode.VPartial (cls, new_args));
+           loop ()
+         end
        | Bytecode.VExternal ext ->
          let new_args = ext.ext_args @ [arg] in
          if List.length new_args = ext.ext_arity then begin
@@ -419,22 +558,69 @@ let run vm =
     | Bytecode.TAIL_CALL _ ->
       let arg = pop vm in
       let fn_val = pop vm in
+      let tail_return result =
+        vm.current_fiber.fiber_sp <- (frame vm).Bytecode.frame_base_sp;
+        vm.current_fiber.fiber_frames <- List.tl vm.current_fiber.fiber_frames;
+        if vm.current_fiber.fiber_extra_args <> [] then begin
+          let (result, entered) = process_extra_args vm result in
+          if entered then loop ()
+          else if vm.current_fiber.fiber_frames = [] then begin
+            match find_handler_for_fiber vm vm.current_fiber with
+            | Some he ->
+              remove_handler vm he;
+              vm.current_fiber <- he.he_parent_fiber;
+              internal_call vm (as_closure he.he_return) result;
+              loop ()
+            | None -> result
+          end else begin
+            push vm result; loop ()
+          end
+        end else if vm.current_fiber.fiber_frames = [] then begin
+          match find_handler_for_fiber vm vm.current_fiber with
+          | Some he ->
+            remove_handler vm he;
+            vm.current_fiber <- he.he_parent_fiber;
+            internal_call vm (as_closure he.he_return) result;
+            loop ()
+          | None -> result
+        end else begin
+          push vm result; loop ()
+        end
+      in
       (match fn_val with
-       | Bytecode.VClosure cls ->
-         (* Replace current frame with new one — same stack depth *)
+       | Bytecode.VClosure cls when cls.fn_proto.arity = 1 ->
+         let fiber = vm.current_fiber in
          let base_sp = (frame vm).Bytecode.frame_base_sp in
-         let new_locals = Array.make cls.fn_proto.num_locals Bytecode.VUnit in
-         new_locals.(0) <- arg;
+         let num_locals = cls.fn_proto.num_locals in
+         Array.fill fiber.fiber_stack base_sp num_locals Bytecode.VUnit;
+         fiber.fiber_stack.(base_sp) <- arg;
+         fiber.fiber_sp <- base_sp + num_locals;
          let new_frame = Bytecode.{
-           frame_closure = cls;
-           frame_ip = 0;
-           frame_locals = new_locals;
+           frame_closure = cls; frame_ip = 0;
            frame_base_sp = base_sp;
          } in
-         vm.current_fiber.fiber_frames <- new_frame :: List.tl vm.current_fiber.fiber_frames;
+         fiber.fiber_frames <- new_frame :: List.tl fiber.fiber_frames;
          loop ()
+       | Bytecode.VClosure cls ->
+         tail_return (Bytecode.VPartial (cls, [arg]))
+       | Bytecode.VPartial (cls, args) ->
+         let new_args = args @ [arg] in
+         if List.length new_args = cls.fn_proto.arity then begin
+           let fiber = vm.current_fiber in
+           let base_sp = (frame vm).Bytecode.frame_base_sp in
+           let num_locals = cls.fn_proto.num_locals in
+           Array.fill fiber.fiber_stack base_sp num_locals Bytecode.VUnit;
+           List.iteri (fun i a -> fiber.fiber_stack.(base_sp + i) <- a) new_args;
+           fiber.fiber_sp <- base_sp + num_locals;
+           let new_frame = Bytecode.{
+             frame_closure = cls; frame_ip = 0;
+             frame_base_sp = base_sp;
+           } in
+           fiber.fiber_frames <- new_frame :: List.tl fiber.fiber_frames;
+           loop ()
+         end else
+           tail_return (Bytecode.VPartial (cls, new_args))
        | Bytecode.VExternal ext ->
-         (* For externals, do a proper tail return *)
          let new_args = ext.ext_args @ [arg] in
          let result =
            if List.length new_args = ext.ext_arity then
@@ -442,27 +628,29 @@ let run vm =
            else
              Bytecode.VExternal { ext with ext_args = new_args }
          in
-         vm.current_fiber.fiber_sp <- (frame vm).Bytecode.frame_base_sp;
-         vm.current_fiber.fiber_frames <- List.tl vm.current_fiber.fiber_frames;
-         if vm.current_fiber.fiber_frames = [] then begin
-           match find_handler_for_fiber vm vm.current_fiber with
-           | Some he ->
-             remove_handler vm he;
-             vm.current_fiber <- he.he_parent_fiber;
-             internal_call vm (as_closure he.he_return) result;
-             loop ()
-           | None ->
-             result
-         end else begin
-           push vm result;
-           loop ()
-         end
+         tail_return result
        | _ -> error (Printf.sprintf "expected function, got %s" (Bytecode.pp_value fn_val)))
     | Bytecode.RETURN ->
       let result = pop vm in
+      vm.current_fiber.fiber_sp <- (frame vm).Bytecode.frame_base_sp;
       vm.current_fiber.fiber_frames <- List.tl vm.current_fiber.fiber_frames;
-      if vm.current_fiber.fiber_frames = [] then begin
-        (* Last frame on fiber — check for handler *)
+      if vm.current_fiber.fiber_extra_args <> [] then begin
+        let (result, entered) = process_extra_args vm result in
+        if entered then loop ()
+        else if vm.current_fiber.fiber_frames = [] then begin
+          match find_handler_for_fiber vm vm.current_fiber with
+          | Some he ->
+            remove_handler vm he;
+            vm.current_fiber <- he.he_parent_fiber;
+            internal_call vm (as_closure he.he_return) result;
+            loop ()
+          | None ->
+            result
+        end else begin
+          push vm result;
+          loop ()
+        end
+      end else if vm.current_fiber.fiber_frames = [] then begin
         match find_handler_for_fiber vm vm.current_fiber with
         | Some he ->
           remove_handler vm he;
@@ -470,11 +658,103 @@ let run vm =
           internal_call vm (as_closure he.he_return) result;
           loop ()
         | None ->
-          (* Main fiber done *)
           result
       end else begin
         push vm result;
         loop ()
+      end
+    | Bytecode.CALL_N n ->
+      let args = Array.init n (fun _ -> pop vm) in
+      let args_list = List.rev (Array.to_list args) in
+      let fn_val = pop vm in
+      ignore (call_with_args vm fn_val args_list);
+      loop ()
+    | Bytecode.TAIL_CALL_N n ->
+      let args = Array.init n (fun _ -> pop vm) in
+      let args_list = List.rev (Array.to_list args) in
+      let fn_val = pop vm in
+      let entered = ref false in
+      let result_ref = ref Bytecode.VUnit in
+      let rec resolve fn remaining =
+        match fn with
+        | Bytecode.VClosure cls ->
+          let arity = cls.fn_proto.arity in
+          let n_args = List.length remaining in
+          if n_args = arity then begin
+            let fiber = vm.current_fiber in
+            let base_sp = (frame vm).Bytecode.frame_base_sp in
+            let num_locals = cls.fn_proto.num_locals in
+            Array.fill fiber.fiber_stack base_sp num_locals Bytecode.VUnit;
+            List.iteri (fun i a -> fiber.fiber_stack.(base_sp + i) <- a) remaining;
+            fiber.fiber_sp <- base_sp + num_locals;
+            let new_frame = Bytecode.{
+              frame_closure = cls; frame_ip = 0;
+              frame_base_sp = base_sp;
+            } in
+            fiber.fiber_frames <- new_frame :: List.tl fiber.fiber_frames;
+            entered := true
+          end else if n_args < arity then
+            result_ref := Bytecode.VPartial (cls, remaining)
+          else begin
+            let (use_args, extra) = split_at arity remaining in
+            vm.current_fiber.fiber_extra_args <- extra :: vm.current_fiber.fiber_extra_args;
+            let fiber = vm.current_fiber in
+            let base_sp = (frame vm).Bytecode.frame_base_sp in
+            let num_locals = cls.fn_proto.num_locals in
+            Array.fill fiber.fiber_stack base_sp num_locals Bytecode.VUnit;
+            List.iteri (fun i a -> fiber.fiber_stack.(base_sp + i) <- a) use_args;
+            fiber.fiber_sp <- base_sp + num_locals;
+            let new_frame = Bytecode.{
+              frame_closure = cls; frame_ip = 0;
+              frame_base_sp = base_sp;
+            } in
+            fiber.fiber_frames <- new_frame :: List.tl fiber.fiber_frames;
+            entered := true
+          end
+        | Bytecode.VPartial (cls, existing) ->
+          resolve (Bytecode.VClosure cls) (existing @ remaining)
+        | Bytecode.VExternal ext ->
+          let all = ext.ext_args @ remaining in
+          if List.length all >= ext.ext_arity then begin
+            let (use_args, rest) = split_at ext.ext_arity all in
+            let r = ext.ext_fn use_args in
+            if rest = [] then result_ref := r
+            else resolve r rest
+          end else
+            result_ref := Bytecode.VExternal { ext with ext_args = all }
+        | _ -> error (Printf.sprintf "TAIL_CALL_N: expected function, got %s" (Bytecode.pp_value fn))
+      in
+      resolve fn_val args_list;
+      if !entered then loop ()
+      else begin
+        let result = !result_ref in
+        vm.current_fiber.fiber_sp <- (frame vm).Bytecode.frame_base_sp;
+        vm.current_fiber.fiber_frames <- List.tl vm.current_fiber.fiber_frames;
+        if vm.current_fiber.fiber_extra_args <> [] then begin
+          let (result, extra_entered) = process_extra_args vm result in
+          if extra_entered then loop ()
+          else if vm.current_fiber.fiber_frames = [] then begin
+            match find_handler_for_fiber vm vm.current_fiber with
+            | Some he ->
+              remove_handler vm he;
+              vm.current_fiber <- he.he_parent_fiber;
+              internal_call vm (as_closure he.he_return) result;
+              loop ()
+            | None -> result
+          end else begin
+            push vm result; loop ()
+          end
+        end else if vm.current_fiber.fiber_frames = [] then begin
+          match find_handler_for_fiber vm vm.current_fiber with
+          | Some he ->
+            remove_handler vm he;
+            vm.current_fiber <- he.he_parent_fiber;
+            internal_call vm (as_closure he.he_return) result;
+            loop ()
+          | None -> result
+        end else begin
+          push vm result; loop ()
+        end
       end
     | Bytecode.MAKE_TUPLE n ->
       let values = Array.init n (fun _ -> Bytecode.VUnit) in
@@ -751,7 +1031,11 @@ let run vm =
       let base_sp = (frame vm).Bytecode.frame_base_sp in
       fiber.fiber_sp <- base_sp;
       fiber.fiber_frames <- List.tl fiber.fiber_frames;
-      if fiber.fiber_frames = [] then begin
+      (* Clear any extra_args from over-applications within the unwound frames *)
+      fiber.fiber_extra_args <- [];
+      let (result, entered) = process_extra_args vm result in
+      if entered then loop ()
+      else if fiber.fiber_frames = [] then begin
         match find_handler_for_fiber vm fiber with
         | Some he ->
           remove_handler vm he;
@@ -773,31 +1057,18 @@ let run vm =
          f.frame_ip <- target;
          loop ()
        | [] -> error "LOOP_CONTINUE: no control entry")
-    | Bytecode.FOLD_CONTINUE n_pops ->
+    | Bytecode.FOLD_CONTINUE _n_pops ->
       let continue_value = pop vm in
       let fiber = vm.current_fiber in
-      for _ = 1 to n_pops do
-        if fiber.fiber_sp > 0 then
-          fiber.fiber_sp <- fiber.fiber_sp - 1
-      done;
-      push vm continue_value;
-      (* Execute RETURN — return from fold callback *)
-      let result = pop vm in
-      (match vm.current_fiber.fiber_frames with
+      (* Restore sp to frame base (cleans up locals + temps) *)
+      fiber.fiber_sp <- (frame vm).Bytecode.frame_base_sp;
+      (* Pop the fold callback frame and push result *)
+      (match fiber.fiber_frames with
        | _ :: rest ->
-         vm.current_fiber.fiber_frames <- rest;
-         push vm result;
+         fiber.fiber_frames <- rest;
+         push vm continue_value;
          loop ()
        | [] -> error "FOLD_CONTINUE: no frame to return from")
-    | Bytecode.MAKE_MAP n ->
-      let pairs = ref [] in
-      for _ = 1 to n do
-        let v = pop vm in
-        let k = pop vm in
-        pairs := (k, v) :: !pairs
-      done;
-      push vm (Bytecode.VMap !pairs);
-      loop ()
     | Bytecode.MAKE_ARRAY n ->
       let elems = ref [] in
       for _ = 1 to n do
@@ -822,19 +1093,44 @@ let run vm =
        | _ -> error "index operation requires string or array")
     | Bytecode.GET_LOCAL_CALL (slot, _arity) ->
       let fn_val = pop vm in
-      let arg = (frame vm).frame_locals.(slot) in
+      let arg = vm.current_fiber.fiber_stack.((frame vm).frame_base_sp + slot) in
       (match fn_val with
-       | Bytecode.VClosure cls ->
-         let new_locals = Array.make cls.fn_proto.num_locals Bytecode.VUnit in
-         new_locals.(0) <- arg;
+       | Bytecode.VClosure cls when cls.fn_proto.arity = 1 ->
+         let fiber = vm.current_fiber in
+         let base = fiber.fiber_sp in
+         let num_locals = cls.fn_proto.num_locals in
+         Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+         fiber.fiber_stack.(base) <- arg;
+         fiber.fiber_sp <- base + num_locals;
          let new_frame = Bytecode.{
            frame_closure = cls;
            frame_ip = 0;
-           frame_locals = new_locals;
-           frame_base_sp = vm.current_fiber.fiber_sp;
+           frame_base_sp = base;
          } in
-         vm.current_fiber.fiber_frames <- new_frame :: vm.current_fiber.fiber_frames;
+         fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
          loop ()
+       | Bytecode.VClosure cls ->
+         push vm (Bytecode.VPartial (cls, [arg]));
+         loop ()
+       | Bytecode.VPartial (cls, args) ->
+         let new_args = args @ [arg] in
+         if List.length new_args = cls.fn_proto.arity then begin
+           let fiber = vm.current_fiber in
+           let base = fiber.fiber_sp in
+           let num_locals = cls.fn_proto.num_locals in
+           Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+           List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) new_args;
+           fiber.fiber_sp <- base + num_locals;
+           let new_frame = Bytecode.{
+             frame_closure = cls; frame_ip = 0;
+             frame_base_sp = base;
+           } in
+           fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+           loop ()
+         end else begin
+           push vm (Bytecode.VPartial (cls, new_args));
+           loop ()
+         end
        | Bytecode.VExternal ext ->
          let new_args = ext.ext_args @ [arg] in
          if List.length new_args = ext.ext_arity then begin
@@ -847,19 +1143,86 @@ let run vm =
          end
        | _ -> error (Printf.sprintf "expected function, got %s" (Bytecode.pp_value fn_val)))
     | Bytecode.GET_LOCAL_TUPLE_GET (slot, idx) ->
-      let tup = (frame vm).frame_locals.(slot) in
+      let tup = vm.current_fiber.fiber_stack.((frame vm).frame_base_sp + slot) in
       let arr = as_tuple tup in
       if idx >= Array.length arr then error "tuple index out of bounds";
       push vm arr.(idx);
       loop ()
     | Bytecode.GET_LOCAL_FIELD (slot, name) ->
-      let record = (frame vm).frame_locals.(slot) in
+      let record = vm.current_fiber.fiber_stack.((frame vm).frame_base_sp + slot) in
       (match record with
        | Bytecode.VRecord (shape, values) ->
          (match Hashtbl.find_opt shape.rs_index name with
           | Some idx -> push vm values.(idx); loop ()
           | None -> error (Printf.sprintf "record has no field: %s" name))
        | _ -> error (Printf.sprintf "GET_LOCAL_FIELD '%s': expected record, got %s" name (Bytecode.pp_value record)))
+    | Bytecode.GET_GLOBAL_CALL (idx, _arity) ->
+      let fn_val = pop vm in
+      let arg = (match Hashtbl.find_opt vm.globals idx with
+        | Some v -> v
+        | None ->
+          let name = if idx < Array.length vm.global_names then vm.global_names.(idx) else "?" in
+          error (Printf.sprintf "undefined global: %s" name)) in
+      (match fn_val with
+       | Bytecode.VClosure cls when cls.fn_proto.arity = 1 ->
+         let fiber = vm.current_fiber in
+         let base = fiber.fiber_sp in
+         let num_locals = cls.fn_proto.num_locals in
+         Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+         fiber.fiber_stack.(base) <- arg;
+         fiber.fiber_sp <- base + num_locals;
+         let new_frame = Bytecode.{
+           frame_closure = cls;
+           frame_ip = 0;
+           frame_base_sp = base;
+         } in
+         fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+         loop ()
+       | Bytecode.VClosure cls ->
+         push vm (Bytecode.VPartial (cls, [arg]));
+         loop ()
+       | Bytecode.VPartial (cls, args) ->
+         let new_args = args @ [arg] in
+         if List.length new_args = cls.fn_proto.arity then begin
+           let fiber = vm.current_fiber in
+           let base = fiber.fiber_sp in
+           let num_locals = cls.fn_proto.num_locals in
+           Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
+           List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) new_args;
+           fiber.fiber_sp <- base + num_locals;
+           let new_frame = Bytecode.{
+             frame_closure = cls; frame_ip = 0;
+             frame_base_sp = base;
+           } in
+           fiber.fiber_frames <- new_frame :: fiber.fiber_frames;
+           loop ()
+         end else begin
+           push vm (Bytecode.VPartial (cls, new_args));
+           loop ()
+         end
+       | Bytecode.VExternal ext ->
+         let new_args = ext.ext_args @ [arg] in
+         if List.length new_args = ext.ext_arity then begin
+           let result = ext.ext_fn new_args in
+           push vm result;
+           loop ()
+         end else begin
+           push vm (Bytecode.VExternal { ext with ext_args = new_args });
+           loop ()
+         end
+       | _ -> error (Printf.sprintf "expected function, got %s" (Bytecode.pp_value fn_val)))
+    | Bytecode.GET_GLOBAL_FIELD (idx, name) ->
+      let record = (match Hashtbl.find_opt vm.globals idx with
+        | Some v -> v
+        | None ->
+          let gname = if idx < Array.length vm.global_names then vm.global_names.(idx) else "?" in
+          error (Printf.sprintf "undefined global: %s" gname)) in
+      (match record with
+       | Bytecode.VRecord (shape, values) ->
+         (match Hashtbl.find_opt shape.rs_index name with
+          | Some i -> push vm values.(i); loop ()
+          | None -> error (Printf.sprintf "record has no field: %s" name))
+       | _ -> error (Printf.sprintf "GET_GLOBAL_FIELD '%s': expected record, got %s" name (Bytecode.pp_value record)))
     | Bytecode.JUMP_TABLE (min_tag, targets, default_target) ->
       let v = pop vm in
       let (vtag, _, _) = as_variant v in
@@ -868,6 +1231,32 @@ let run vm =
         (frame vm).frame_ip <- targets.(idx)
       else
         (frame vm).frame_ip <- default_target;
+      loop ()
+    | Bytecode.UPDATE_REC ->
+      let placeholder = pop vm in
+      let computed = pop vm in
+      (match placeholder, computed with
+       | Bytecode.VList _, Bytecode.VList _ ->
+         (* Backpatch the placeholder cons cell with computed list's head and tail *)
+         let p_obj = Obj.repr placeholder in
+         let c_obj = Obj.repr computed in
+         let p_list = Obj.field p_obj 0 in
+         let c_list = Obj.field c_obj 0 in
+         Obj.set_field p_list 0 (Obj.field c_list 0);
+         Obj.set_field p_list 1 (Obj.field c_list 1)
+       | Bytecode.VTuple p_arr, Bytecode.VTuple c_arr ->
+         Array.blit c_arr 0 p_arr 0 (Array.length c_arr)
+       | Bytecode.VRecord (_, p_arr), Bytecode.VRecord (_, c_arr) ->
+         Array.blit c_arr 0 p_arr 0 (Array.length c_arr)
+       | Bytecode.VArray p_arr, Bytecode.VArray c_arr ->
+         Array.blit c_arr 0 p_arr 0 (Array.length c_arr)
+       | Bytecode.VVariant _, Bytecode.VVariant _ ->
+         let p_obj = Obj.repr placeholder in
+         let c_obj = Obj.repr computed in
+         for i = 0 to Obj.size c_obj - 1 do
+           Obj.set_field p_obj i (Obj.field c_obj i)
+         done
+       | _ -> error "UPDATE_REC: type mismatch between placeholder and computed value");
       loop ()
     | Bytecode.HALT ->
       if vm.current_fiber.fiber_sp > 0 then peek vm
@@ -910,10 +1299,12 @@ let execute program =
     fn_proto = program.Bytecode.main;
     upvalues = [||];
   } in
+  let num_locals = program.main.num_locals in
+  Array.fill main_fiber.fiber_stack 0 num_locals Bytecode.VUnit;
+  main_fiber.fiber_sp <- num_locals;
   let main_frame = Bytecode.{
     frame_closure = main_closure;
     frame_ip = 0;
-    frame_locals = Array.make program.main.num_locals Bytecode.VUnit;
     frame_base_sp = 0;
   } in
   main_fiber.fiber_frames <- [main_frame];
@@ -933,10 +1324,12 @@ let execute_with_globals program (globals : (int, Bytecode.value) Hashtbl.t) =
     fn_proto = program.Bytecode.main;
     upvalues = [||];
   } in
+  let num_locals = program.main.num_locals in
+  Array.fill main_fiber.fiber_stack 0 num_locals Bytecode.VUnit;
+  main_fiber.fiber_sp <- num_locals;
   let main_frame = Bytecode.{
     frame_closure = main_closure;
     frame_ip = 0;
-    frame_locals = Array.make program.main.num_locals Bytecode.VUnit;
     frame_base_sp = 0;
   } in
   main_fiber.fiber_frames <- [main_frame];

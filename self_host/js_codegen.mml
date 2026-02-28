@@ -1,0 +1,1814 @@
+module Js_codegen =
+
+  effect Codegen_errorExn =
+    codegen_error : string -> 'a
+  end
+
+  pub let error msg = perform codegen_error msg
+
+  pub let js_runtime = "\"use strict\";\nfunction _call(f, args) {\n  while (args.length > 0) {\n    const a = f._arity !== undefined ? f._arity : f.length;\n    if (a === 0) { f = f(); continue; }\n    if (args.length < a) return _partial(f, a, args);\n    const taken = args.splice(0, a);\n    f = f.apply(null, taken);\n  }\n  return f;\n}\nfunction _partial(fn, arity, args) {\n  const p = function() {\n    return _call(fn, args.concat(Array.from(arguments)));\n  };\n  p._arity = arity - args.length;\n  return p;\n}\nfunction _eq(a, b) {\n  if (a === b) return true;\n  if (a == null || b == null) return a === b;\n  if (typeof a !== \"object\") return false;\n  if (Array.isArray(a)) {\n    if (!Array.isArray(b) || a.length !== b.length) return false;\n    for (let i = 0; i < a.length; i++) if (!_eq(a[i], b[i])) return false;\n    return true;\n  }\n  if (\"_arr\" in a && \"_arr\" in b) {\n    if (a._arr.length !== b._arr.length) return false;\n    for (let i = 0; i < a._arr.length; i++) if (!_eq(a._arr[i], b._arr[i])) return false;\n    return true;\n  }\n  if (\"_hd\" in a && \"_hd\" in b) {\n    let ca = a, cb = b;\n    while (ca !== null && cb !== null) {\n      if (!(\"_hd\" in ca) || !(\"_hd\" in cb)) return ca === cb;\n      if (!_eq(ca._hd, cb._hd)) return false;\n      ca = ca._tl; cb = cb._tl;\n    }\n    return ca === cb;\n  }\n  if (\"_tag\" in a) return a._tag === b._tag && _eq(a._val, b._val);\n  if (\"_ref\" in a) return _eq(a._ref, b._ref);\n  const ka = Object.keys(a), kb = Object.keys(b);\n  if (ka.length !== kb.length) return false;\n  for (const k of ka) if (!_eq(a[k], b[k])) return false;\n  return true;\n}\nfunction _compare(a, b) {\n  if (a < b) return -1;\n  if (a > b) return 1;\n  return 0;\n}\nfunction _match_fail(loc) { throw new Error(\"Match failure at \" + loc); }\nfunction _pp(v) {\n  if (v === undefined) return \"()\";\n  if (v === null) return \"[]\";\n  if (typeof v === \"number\") {\n    if (!Number.isInteger(v)) {\n      const s = String(v);\n      return s.includes(\".\") || s.includes(\"e\") ? s : s + \".\";\n    }\n    return String(v);\n  }\n  if (typeof v === \"boolean\") return String(v);\n  if (typeof v === \"string\") return v;\n  if (Array.isArray(v)) return \"(\" + v.map(_pp).join(\", \") + \")\";\n  if (v !== null && typeof v === \"object\") {\n    if (\"_arr\" in v) return \"#[\" + v._arr.map(_pp).join(\"; \") + \"]\";\n    if (\"_hd\" in v) {\n      const r = [];\n      let c = v;\n      while (c !== null && typeof c === \"object\" && \"_hd\" in c) { r.push(_pp(c._hd)); c = c._tl; }\n      return \"[\" + r.join(\"; \") + \"]\";\n    }\n    if (\"_tag\" in v) {\n      if (v._val !== undefined) {\n        const pv = _pp(v._val);\n        if (Array.isArray(v._val) || (typeof v._val === \"object\" && v._val !== null && \"_tag\" in v._val && v._val._val !== undefined))\n          return v._name + \" (\" + pv + \")\";\n        return v._name + \" \" + pv;\n      }\n      return v._name;\n    }\n    if (\"_ref\" in v) return \"ref(\" + _pp(v._ref) + \")\";\n    return \"{ \" + Object.entries(v).map(([k,val]) => k + \" = \" + _pp(val)).join(\"; \") + \" }\";\n  }\n  return String(v);\n}\nlet _h = {};\nfunction _bounce(fn) { fn._tramp = true; return fn; }\nconst _trampolining = new Set();\nfunction _trampoline(fn, tag) {\n  if (tag !== undefined && _trampolining.has(tag)) return fn();\n  if (tag !== undefined) _trampolining.add(tag);\n  try {\n    let result = fn();\n    while (typeof result === 'function' && result._tramp) {\n      result = result();\n    }\n    return result;\n  } finally { if (tag !== undefined) _trampolining.delete(tag); }\n}\nfunction _resolve(v) { while (typeof v === 'function' && v._tramp) v = v(); return v; }\n"
+
+  pub let js_reserved = "abstract" :: "arguments" :: "await" :: "boolean" :: "break" :: "byte" :: "case" :: "catch" :: "char" :: "class" :: "const" :: "continue" :: "debugger" :: "default" :: "delete" :: "do" :: "double" :: "else" :: "enum" :: "eval" :: "export" :: "extends" :: "false" :: "final" :: "finally" :: "float" :: "for" :: "function" :: "goto" :: "if" :: "implements" :: "import" :: "in" :: "instanceof" :: "int" :: "interface" :: "let" :: "long" :: "native" :: "new" :: "null" :: "package" :: "private" :: "protected" :: "public" :: "return" :: "short" :: "static" :: "super" :: "switch" :: "synchronized" :: "this" :: "throw" :: "throws" :: "transient" :: "true" :: "try" :: "typeof" :: "undefined" :: "var" :: "void" :: "volatile" :: "while" :: "with" :: "yield" :: "of" :: []
+
+  pub let is_js_reserved name = List.mem name js_reserved
+
+  pub let mangle_name name =
+    let buf = Buffer.create (String.length name) in
+    String.iter (fn c ->
+      do
+        match c with
+        | _c when _c = #2e -> Buffer.add_byte buf #24
+        | _c when _c = #27 -> Buffer.add_string buf "$p"
+        | _c when _c = #2b -> Buffer.add_string buf "$plus"
+        | _c when _c = #2d -> Buffer.add_string buf "$minus"
+        | _c when _c = #2a -> Buffer.add_string buf "$star"
+        | _c when _c = #2f -> Buffer.add_string buf "$slash"
+        | _c when _c = #5e -> Buffer.add_string buf "$caret"
+        | _c when _c = #3d -> Buffer.add_string buf "$eq"
+        | _c when _c = #3c -> Buffer.add_string buf "$lt"
+        | _c when _c = #3e -> Buffer.add_string buf "$gt"
+        | _c when _c = #21 -> Buffer.add_string buf "$bang"
+        | _c when _c = #3a -> Buffer.add_string buf "$colon"
+        | _c when _c = #7e -> Buffer.add_string buf "$tilde"
+        | _c when _c = #23 -> Buffer.add_string buf "$hash"
+        | c -> Buffer.add_byte buf c
+
+      end) name;
+    let result = Buffer.contents buf in
+    if is_js_reserved result do
+      "_mml$" ^ result
+    else
+      result
+
+  pub type ctx = {
+    buf: Buffer.t;
+    mut indent: int;
+    mut scopes: (string, string) Hashtbl.t list;
+    mut tmp_counter: int;
+    type_env: Types.type_env;
+    mut current_fn_name: string option;
+    mut current_fn_params: string list;
+    mut in_tail_position: bool;
+    mut tco_used: bool;
+    mut current_module: string option;
+    mut in_cps: bool;
+    mut handler_tail_resume: bool;
+    mut direct_dispatch_ops: (string * string) list;
+    mut trywith_ops: string list;
+    mut break_flag_name: string;
+    mut break_val_name: string;
+    mut top_level_exports: (string * string) list
+  }
+
+  pub let create_ctx type_env =
+    let tbl = Hashtbl.create 16 in
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; top_level_exports = []}
+
+  pub let push_scope ctx = ctx.scopes := Hashtbl.create 8 :: ctx.scopes
+
+  pub let pop_scope ctx =
+    match ctx.scopes with
+    | _ :: rest -> ctx.scopes := rest
+    | [] -> failwith "pop_scope: empty"
+
+
+  pub let bind_var ctx mml_name js_name =
+    match ctx.scopes with
+    | tbl :: _ -> Hashtbl.set tbl mml_name js_name
+    | [] -> failwith "bind_var: empty scope"
+
+
+  pub let lookup_var ctx name =
+    let rec search =
+      fn
+        | [] -> mangle_name name
+        | tbl :: rest -> 
+          do
+            match Hashtbl.get tbl name with
+            | Some js -> js
+            | None -> search rest
+
+          end
+     in
+    search ctx.scopes
+
+  pub let fresh_tmp ctx =
+    let n = ctx.tmp_counter in
+    ctx.tmp_counter := n + 1;
+    $"_t{n}"
+
+  pub let dedup_js_params params =
+    let seen = Hashtbl.create 8 in
+    List.map (fn p -> let count =
+      match Hashtbl.get seen p with
+      | Some n -> n
+      | None -> 0
+     in
+    Hashtbl.set seen p (count + 1);
+    if count = 0 do
+      p
+    else
+      p ^ ("_" ^ (string_of_int (count + 1)))) params
+
+  pub let emit ctx s = Buffer.add_string ctx.buf s
+
+  pub let emit_indent ctx = let mut _loop_var = 1 in
+  for _loop_var <= ctx.indent do
+    Buffer.add_string ctx.buf "  ";
+    _loop_var := _loop_var + 1
+  end
+
+  pub let emit_line ctx s =
+    emit_indent ctx;
+    emit ctx s;
+    emit ctx "\n"
+
+  pub let escape_js_string s =
+    let buf = Buffer.create ((String.length s) + 2) in
+    Buffer.add_byte buf #22;
+    String.iter (fn c ->
+      do
+        match c with
+        | _c when _c = #22 -> Buffer.add_string buf "\\\""
+        | _c when _c = #5c -> Buffer.add_string buf "\\\\"
+        | _c when _c = #0a -> Buffer.add_string buf "\\n"
+        | _c when _c = #0d -> Buffer.add_string buf "\\r"
+        | _c when _c = #09 -> Buffer.add_string buf "\\t"
+        | c when (Byte.to_int c) < 32 -> Buffer.add_string buf ($"\\x{Byte.to_int c:02x}")
+        | c -> Buffer.add_byte buf c
+
+      end) s;
+    Buffer.add_byte buf #22;
+    Buffer.contents buf
+
+  pub let tag_for_constructor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | None -> error ($"unknown constructor: {name}")
+    | Some info -> 
+      let (_, _, variant_def, _) = list_find (fn (n, _, _, _) -> n = info.ctor_type_name) type_env.variants in
+      let short_name =
+        match String.rindex_opt name #2e with
+        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+        | None -> name
+       in
+      let rec find_tag idx =
+        fn
+          | [] -> error ($"constructor {name} not found in variant")
+          | (cname, _) :: _ when cname = short_name -> idx
+          | _ :: rest -> find_tag (idx + 1) rest
+       in
+      find_tag 0 variant_def
+
+
+  pub let short_constructor_name name =
+    match String.rindex_opt name #2e with
+    | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+    | None -> name
+
+
+  pub let is_newtype_ctor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | Some info -> List.mem info.ctor_type_name type_env.newtypes
+    | None -> false
+
+
+  pub let rec expr_has_perform (te : Typechecker.texpr) =
+    match te.expr with
+    | Typechecker.TEPerform _ -> true
+    | Typechecker.TEResume _ -> true
+    | Typechecker.TELet ((_, _, e1, e2)) | Typechecker.TESeq ((e1, e2)) -> (expr_has_perform e1) || (expr_has_perform e2)
+    | Typechecker.TEIf ((cond, e1, e2)) -> (expr_has_perform cond) || ((expr_has_perform e1) || (expr_has_perform e2))
+    | Typechecker.TEMatch ((scrut, arms, _)) -> (expr_has_perform scrut) || (List.exists (fn (_, g, body) -> (expr_has_perform body) || (match g with
+    | Some g -> expr_has_perform g
+    | None -> false
+    )) arms)
+    | Typechecker.TELetRec ((_, _, fn_e, body)) -> (expr_has_perform fn_e) || (expr_has_perform body)
+    | Typechecker.TELetRecAnd ((bindings, body)) -> (List.exists (fn (_, e) -> expr_has_perform e) bindings) || (expr_has_perform body)
+    | Typechecker.TEFun ((_, body, _)) -> expr_has_perform body
+    | Typechecker.TEApp ((fn_, arg)) -> (expr_has_perform fn_) || (expr_has_perform arg)
+    | Typechecker.TEHandle ((body, arms)) -> (expr_has_perform body) || (List.exists (fn arm ->
+      do
+        match arm with
+        | Typechecker.THReturn ((_, e)) | Typechecker.THOp ((_, _, _, e)) | Typechecker.THOpProvide ((_, _, e)) | Typechecker.THOpTry ((_, _, e)) -> expr_has_perform e
+
+      end) arms)
+    | Typechecker.TELetMut ((_, e1, e2)) -> (expr_has_perform e1) || (expr_has_perform e2)
+    | Typechecker.TEWhile ((c, b)) -> (expr_has_perform c) || (expr_has_perform b)
+    | Typechecker.TECons ((e1, e2)) -> (expr_has_perform e1) || (expr_has_perform e2)
+    | Typechecker.TETuple es -> List.exists expr_has_perform es
+    | Typechecker.TERecord fields -> List.exists (fn (_, e) -> expr_has_perform e) fields
+    | Typechecker.TEBinop ((_, e1, e2)) -> (expr_has_perform e1) || (expr_has_perform e2)
+    | Typechecker.TEUnop ((_, e)) -> expr_has_perform e
+    | _ -> false
+
+
+  pub let rec all_resumes_are_tail (te : Typechecker.texpr) =
+    match te.expr with
+    | Typechecker.TEResume _ -> true
+    | Typechecker.TESeq ((_, e2)) -> all_resumes_are_tail e2
+    | Typechecker.TELet ((_, _, e1, e2)) -> (not (expr_has_perform e1)) && (all_resumes_are_tail e2)
+    | Typechecker.TELetRec ((_, _, _, e2)) -> all_resumes_are_tail e2
+    | Typechecker.TELetMut ((_, e1, e2)) -> (not (expr_has_perform e1)) && (all_resumes_are_tail e2)
+    | Typechecker.TEIf ((_, then_e, else_e)) -> (all_resumes_are_tail then_e) && (all_resumes_are_tail else_e)
+    | Typechecker.TEMatch ((_, arms, _)) -> List.forall (fn (_, _, body) -> all_resumes_are_tail body) arms
+    | _ -> true
+
+
+  pub let rec expr_has_unhandled_perform handled_ops (te : Typechecker.texpr) =
+    match te.expr with
+    | Typechecker.TEPerform ((op_name, _)) -> not (List.mem op_name handled_ops)
+    | Typechecker.TEResume _ -> true
+    | Typechecker.TELet ((_, _, e1, e2)) | Typechecker.TESeq ((e1, e2)) -> (expr_has_unhandled_perform handled_ops e1) || (expr_has_unhandled_perform handled_ops e2)
+    | Typechecker.TEIf ((cond, e1, e2)) -> (expr_has_unhandled_perform handled_ops cond) || ((expr_has_unhandled_perform handled_ops e1) || (expr_has_unhandled_perform handled_ops e2))
+    | Typechecker.TEMatch ((scrut, arms, _)) -> (expr_has_unhandled_perform handled_ops scrut) || (List.exists (fn (_, g, body) -> (expr_has_unhandled_perform handled_ops body) || (match g with
+    | Some g -> expr_has_unhandled_perform handled_ops g
+    | None -> false
+    )) arms)
+    | Typechecker.TELetRec ((_, _, fn_e, body)) -> (expr_has_unhandled_perform handled_ops fn_e) || (expr_has_unhandled_perform handled_ops body)
+    | Typechecker.TELetRecAnd ((bindings, body)) -> (List.exists (fn (_, e) -> expr_has_unhandled_perform handled_ops e) bindings) || (expr_has_unhandled_perform handled_ops body)
+    | Typechecker.TEFun ((_, body, _)) -> expr_has_unhandled_perform handled_ops body
+    | Typechecker.TEApp ((fn_, arg)) -> (expr_has_unhandled_perform handled_ops fn_) || (expr_has_unhandled_perform handled_ops arg)
+    | Typechecker.TEHandle ((body, arms)) -> (expr_has_unhandled_perform handled_ops body) || (List.exists (fn arm ->
+      do
+        match arm with
+        | Typechecker.THReturn ((_, e)) | Typechecker.THOp ((_, _, _, e)) | Typechecker.THOpProvide ((_, _, e)) | Typechecker.THOpTry ((_, _, e)) -> expr_has_unhandled_perform handled_ops e
+
+      end) arms)
+    | Typechecker.TELetMut ((_, e1, e2)) -> (expr_has_unhandled_perform handled_ops e1) || (expr_has_unhandled_perform handled_ops e2)
+    | Typechecker.TEWhile ((c, b)) -> (expr_has_unhandled_perform handled_ops c) || (expr_has_unhandled_perform handled_ops b)
+    | Typechecker.TECons ((e1, e2)) -> (expr_has_unhandled_perform handled_ops e1) || (expr_has_unhandled_perform handled_ops e2)
+    | Typechecker.TETuple es -> List.exists (expr_has_unhandled_perform handled_ops) es
+    | Typechecker.TERecord fields -> List.exists (fn (_, e) -> expr_has_unhandled_perform handled_ops e) fields
+    | Typechecker.TEBinop ((_, e1, e2)) -> (expr_has_unhandled_perform handled_ops e1) || (expr_has_unhandled_perform handled_ops e2)
+    | Typechecker.TEUnop ((_, e)) -> expr_has_unhandled_perform handled_ops e
+    | _ -> false
+
+
+  pub let is_exportable_name name = not (((String.length name) >= 2) && (((String.get name 0) = #5f) && ((String.get name 1) = #5f)))
+
+  pub let rec compile_non_tail ctx te =
+    let saved = ctx.in_tail_position in
+    ctx.in_tail_position := false;
+    let r = compile_expr ctx te in
+    ctx.in_tail_position := saved;
+    r
+  and compile_expr ctx (te : Typechecker.texpr) : string =
+    match te.expr with
+    | Typechecker.TEInt n -> 
+      if n < 0 do
+        $"({n})"
+      else
+        string_of_int n
+    | Typechecker.TEFloat f -> 
+      let s = $"{f:.17g}" in
+      if (String.contains "." s) || ((String.contains "e" s) || (String.contains "i" s)) do
+        s
+      else
+        s ^ ".0"
+    | Typechecker.TEBool true -> "true"
+    | Typechecker.TEBool false -> "false"
+    | Typechecker.TEString s -> escape_js_string s
+    | Typechecker.TEByte n -> string_of_int n
+    | Typechecker.TERune n -> string_of_int n
+    | Typechecker.TEUnit -> "undefined"
+    | Typechecker.TENil -> "null"
+    | Typechecker.TEVar name -> lookup_var ctx name
+    | Typechecker.TELet ((name, _scheme, e1, e2)) -> compile_let ctx name e1 e2
+    | Typechecker.TELetRec ((name, _scheme, fn_expr, body)) -> compile_letrec ctx name fn_expr body
+    | Typechecker.TELetRecAnd ((bindings, body)) -> compile_letrec_and ctx bindings body
+    | Typechecker.TEFun ((param, body, _has_return)) -> compile_fun ctx param body
+    | Typechecker.TEApp ((fn_, arg)) -> compile_app ctx te fn_ arg
+    | Typechecker.TEBinop ((op, e1, e2)) -> compile_binop ctx op e1 e2
+    | Typechecker.TEUnop ((op, e)) -> compile_unop ctx op e
+    | Typechecker.TEIf ((cond, then_e, else_e)) -> compile_if ctx cond then_e else_e
+    | Typechecker.TETuple exprs -> 
+      let elts = List.map (compile_non_tail ctx) exprs in
+      "[" ^ ((String.concat ", " elts) ^ "]")
+    | Typechecker.TERecord fields -> 
+      let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
+      let field_strs = List.map (fn (name, e) -> let js_name = mangle_name name in
+      let v = compile_non_tail ctx e in
+      if js_name = name do
+        name ^ (": " ^ v)
+      else
+        $"{js_name}: {v}") sorted in
+      "({" ^ ((String.concat ", " field_strs) ^ "})")
+    | Typechecker.TERecordUpdate ((base, overrides)) -> 
+      let base_js = compile_non_tail ctx base in
+      let field_strs = List.map (fn (name, e) -> let js_name = mangle_name name in
+      js_name ^ (": " ^ (compile_non_tail ctx e))) overrides in
+      "({..." ^ (base_js ^ (", " ^ ((String.concat ", " field_strs) ^ "})")))
+    | Typechecker.TERecordUpdateIdx ((base, pairs)) -> 
+      let tmp = fresh_tmp ctx in
+      let base_js = compile_non_tail ctx base in
+      let pair_strs = List.map (fn (idx_e, val_e) -> let idx_js = compile_non_tail ctx idx_e in
+      let val_js = compile_non_tail ctx val_e in
+      $"[{idx_js}]: {val_js}") pairs in
+      $"({tmp} = \{...{base_js}, {String.concat ", " pair_strs}\}, {tmp})"
+    | Typechecker.TEField ((e, field)) -> 
+      let base = compile_non_tail ctx e in
+      base ^ ("." ^ (mangle_name field))
+    | Typechecker.TEIndex ((base_e, idx_e)) -> 
+      do
+        let base = compile_non_tail ctx base_e in
+        let idx = compile_non_tail ctx idx_e in
+        let resolved = Types.repr base_e.ty in
+        match resolved with
+        | Types.TString -> base ^ (".charCodeAt(" ^ (idx ^ ")"))
+        | Types.TArray _ -> base ^ ("._arr[" ^ (idx ^ "]"))
+        | _ -> base ^ ("[" ^ (idx ^ "]"))
+
+      end
+    | Typechecker.TECons ((hd, tl)) -> 
+      let hd_js = compile_non_tail ctx hd in
+      let tl_js = compile_non_tail ctx tl in
+      "({_hd: " ^ (hd_js ^ (", _tl: " ^ (tl_js ^ "})")))
+    | Typechecker.TEConstruct ((name, arg)) -> 
+      do
+        if is_newtype_ctor ctx.type_env name do
+          do
+            match arg with
+            | Some e -> compile_non_tail ctx e
+            | None -> "undefined"
+
+          end
+        else do
+          let tag =
+            if ((String.length name) > 0) && ((String.get name 0) = #60) do
+              ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
+            else
+              tag_for_constructor ctx.type_env name in
+          let sname = short_constructor_name name in
+          match arg with
+          | Some e -> 
+            let v = compile_non_tail ctx e in
+            $"(\{_tag: {tag}, _name: {escape_js_string sname}, _val: {v}\})"
+          | None -> $"(\{_tag: {tag}, _name: {escape_js_string sname}\})"
+
+        end
+      end
+    | Typechecker.TEMatch ((scrut, arms, _partial)) -> compile_match ctx scrut arms te.loc
+    | Typechecker.TESeq ((e1, e2)) -> compile_seq ctx e1 e2
+    | Typechecker.TELetMut ((name, init, body)) -> compile_let_mut ctx name init body
+    | Typechecker.TEAssign ((name, e)) -> 
+      let js_name = lookup_var ctx name in
+      let v = compile_non_tail ctx e in
+      "(" ^ (js_name ^ (" = " ^ (v ^ ", undefined)")))
+    | Typechecker.TEFieldAssign ((record_e, field, value_e)) -> 
+      let base = compile_non_tail ctx record_e in
+      let v = compile_non_tail ctx value_e in
+      "(" ^ (base ^ ("." ^ ((mangle_name field) ^ (" = " ^ (v ^ ", undefined)")))))
+    | Typechecker.TEWhile ((cond, body)) -> compile_while ctx cond body
+    | Typechecker.TEBreak value_te -> 
+      let v = compile_non_tail ctx value_te in
+      "(" ^ (ctx.break_val_name ^ (" = " ^ (v ^ (", " ^ (ctx.break_flag_name ^ " = true, undefined)")))))
+    | Typechecker.TEContinueLoop -> "(_cont_flag = true, undefined)"
+    | Typechecker.TEFoldContinue value_te -> 
+      let v = compile_non_tail ctx value_te in
+      "(_fold_cont_val = " ^ (v ^ ", _fold_cont_flag = true, undefined)")
+    | Typechecker.TEForLoop fold_te -> compile_expr ctx fold_te
+    | Typechecker.TEArray elts -> 
+      let elt_strs = List.map (compile_non_tail ctx) elts in
+      "{_arr: [" ^ ((String.concat ", " elt_strs) ^ "]}")
+    | Typechecker.TEReturn value_te -> 
+      let v = compile_non_tail ctx value_te in
+      "(_ret_val = " ^ (v ^ ", _ret_flag = true, undefined)")
+    | Typechecker.TEPerform ((op_name, arg)) -> 
+      do
+        match List.assoc_opt op_name ctx.direct_dispatch_ops with
+        | Some direct_fn -> 
+          let arg_js = compile_non_tail ctx arg in
+          direct_fn ^ ("(" ^ (arg_js ^ ")"))
+        | None when List.mem op_name ctx.trywith_ops -> 
+          let arg_js = compile_non_tail ctx arg in
+          let result = fresh_tmp ctx in
+          emit_line ctx ($"throw \{_e: \"{op_name}\", _v: {arg_js}\};");
+          emit_line ctx ($"const {result} = undefined;");
+          result
+        | None -> 
+          let arg_js = compile_non_tail ctx arg in
+          let result = fresh_tmp ctx in
+          emit_line ctx ($"const {result} = _trampoline(function() \{ return _h[\"{op_name}\"]({arg_js}, function(_r) \{ return _r; \}); \});");
+          result
+
+      end
+    | Typechecker.TEHandle ((body, arms)) -> compile_handle ctx body arms
+    | Typechecker.TEResume ((k_expr, val_expr)) -> 
+      let k_js = compile_non_tail ctx k_expr in
+      let v_js = compile_non_tail ctx val_expr in
+      if ctx.handler_tail_resume do
+        k_js ^ ("(" ^ (v_js ^ ")"))
+      else
+        "_trampoline(function() { return " ^ (k_js ^ ("(" ^ (v_js ^ "); })")))
+
+  and compile_let ctx name e1 e2 =
+    let v1 = compile_non_tail ctx e1 in
+    let js_name = mangle_name name in
+    let actual_name =
+      if js_name = "_" do
+        fresh_tmp ctx
+      else
+        (js_name ^ ("_" ^ ((string_of_int ctx.tmp_counter) ^ ""))) |> (fn n -> ctx.tmp_counter := ctx.tmp_counter + 1;
+        n) in
+    push_scope ctx;
+    bind_var ctx name actual_name;
+    let result = fresh_tmp ctx in
+    emit_line ctx ($"const {actual_name} = {v1};");
+    let v2 = compile_expr ctx e2 in
+    emit_line ctx ($"const {result} = {v2};");
+    pop_scope ctx;
+    result
+  and emit_js_placeholder ctx js_name te =
+    let rec go te =
+      match te.expr with
+      | Typechecker.TECons _ -> emit_line ctx ($"let {js_name} = \{_hd: null, _tl: null\};")
+      | Typechecker.TETuple es -> 
+        let nulls = String.concat ", " (List.map (fn _ -> "null") es) in
+        emit_line ctx ($"let {js_name} = [{nulls}];")
+      | Typechecker.TERecord fields -> 
+        let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
+        let field_strs = List.map (fn (name, _) -> (mangle_name name) ^ ": null") sorted in
+        emit_line ctx ($"let {js_name} = \{{String.concat ", " field_strs}\};")
+      | Typechecker.TEConstruct ((name, payload_opt)) -> 
+        do
+          if is_newtype_ctor ctx.type_env name do
+            do
+              match payload_opt with
+              | Some inner -> go inner
+              | None -> error "cannot create placeholder for nullary newtype constructor"
+
+            end
+          else do
+            let tag =
+              if ((String.length name) > 0) && ((String.get name 0) = #60) do
+                ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
+              else
+                tag_for_constructor ctx.type_env name in
+            let sname = short_constructor_name name in
+            match payload_opt with
+            | Some _ -> emit_line ctx ($"let {js_name} = \{_tag: {tag}, _name: {escape_js_string sname}, _val: null\};")
+            | None -> emit_line ctx ($"let {js_name} = \{_tag: {tag}, _name: {escape_js_string sname}\};")
+
+          end
+        end
+      | Typechecker.TEArray es -> 
+        let nulls = String.concat ", " (List.map (fn _ -> "null") es) in
+        emit_line ctx ($"let {js_name} = \{_arr: [{nulls}]\};")
+      | Typechecker.TELet ((_, _, _, inner)) | Typechecker.TESeq ((_, inner)) -> go inner
+      | _ -> emit_line ctx ($"let {js_name} = null;")
+     in
+    go te
+  and emit_js_backpatch ctx js_name te =
+    let rec go te =
+      match te.expr with
+      | Typechecker.TECons _ -> 
+        let computed = compile_non_tail ctx te in
+        emit_line ctx ($"{js_name}._hd = {computed}._hd; {js_name}._tl = {computed}._tl;")
+      | Typechecker.TETuple _ -> 
+        let computed = compile_non_tail ctx te in
+        let tmp = fresh_tmp ctx in
+        emit_line ctx ($"const {tmp} = {computed};");
+        emit_line ctx ($"for (let _i = 0; _i < {tmp}.length; _i++) {js_name}[_i] = {tmp}[_i];")
+      | Typechecker.TERecord _ -> 
+        let computed = compile_non_tail ctx te in
+        emit_line ctx ($"Object.assign({js_name}, {computed});")
+      | Typechecker.TEConstruct ((name, _)) when is_newtype_ctor ctx.type_env name -> go te
+      | Typechecker.TEConstruct _ -> 
+        let computed = compile_non_tail ctx te in
+        let tmp = fresh_tmp ctx in
+        emit_line ctx ($"const {tmp} = {computed};");
+        emit_line ctx ($"{js_name}._tag = {tmp}._tag; {js_name}._name = {tmp}._name; if (\"_val\" in {tmp}) {js_name}._val = {tmp}._val;")
+      | Typechecker.TEArray _ -> 
+        let computed = compile_non_tail ctx te in
+        let tmp = fresh_tmp ctx in
+        emit_line ctx ($"const {tmp} = {computed};");
+        emit_line ctx ($"for (let _i = 0; _i < {tmp}._arr.length; _i++) {js_name}._arr[_i] = {tmp}._arr[_i];")
+      | Typechecker.TELet ((_, _, _, _inner)) | Typechecker.TESeq ((_, _inner)) -> 
+        let computed = compile_non_tail ctx te in
+        emit_line ctx ($"Object.assign({js_name}, {computed});")
+      | _ -> 
+        let computed = compile_non_tail ctx te in
+        emit_line ctx ($"Object.assign({js_name}, {computed});")
+     in
+    go te
+  and compile_letrec ctx name fn_expr body =
+    let js_name = mangle_name name in
+    push_scope ctx;
+    bind_var ctx name js_name;
+    do
+      match fn_expr.expr with
+      | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+      | _ -> 
+        emit_js_placeholder ctx js_name fn_expr;
+        emit_js_backpatch ctx js_name fn_expr
+
+    end;
+    let result = fresh_tmp ctx in
+    let v = compile_expr ctx body in
+    emit_line ctx ($"const {result} = {v};");
+    pop_scope ctx;
+    result
+  and compile_letrec_and ctx bindings body =
+    push_scope ctx;
+    List.iter (fn (name, te) -> let js_name = mangle_name name in
+    bind_var ctx name js_name;
+    match te.expr with
+    | Typechecker.TEFun _ -> ()
+    | _ -> emit_js_placeholder ctx js_name te
+    ) bindings;
+    List.iter (fn (name, fn_expr) -> let js_name = mangle_name name in
+    match fn_expr.expr with
+    | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+    | _ -> ()
+    ) bindings;
+    List.iter (fn (name, te) -> let js_name = mangle_name name in
+    match te.expr with
+    | Typechecker.TEFun _ -> ()
+    | _ -> emit_js_backpatch ctx js_name te
+    ) bindings;
+    let result = fresh_tmp ctx in
+    let v = compile_expr ctx body in
+    emit_line ctx ($"const {result} = {v};");
+    pop_scope ctx;
+    result
+  and compile_fun ctx param body =
+    let rec collect_params params body_expr =
+      match body_expr.expr with
+      | Typechecker.TEFun ((p, inner, _)) -> collect_params (p :: params) inner
+      | _ -> (List.rev params, body_expr)
+     in
+    let (all_params, final_body) = collect_params (param :: []) body in
+    let js_params = dedup_js_params (List.map mangle_name all_params) in
+    let fn_name = fresh_tmp ctx in
+    emit_indent ctx;
+    emit ctx ($"function {fn_name}({String.concat ", " js_params}) ");
+    emit ctx "{\n";
+    ctx.indent := ctx.indent + 1;
+    push_scope ctx;
+    List.iter2 (fn mml_name js_name -> bind_var ctx mml_name js_name) all_params js_params;
+    let saved_fn = ctx.current_fn_name in
+    let saved_params = ctx.current_fn_params in
+    let saved_tco = ctx.tco_used in
+    ctx.current_fn_name := None;
+    ctx.current_fn_params := [];
+    ctx.tco_used := false;
+    let saved_ddo = ctx.direct_dispatch_ops in
+    let saved_two = ctx.trywith_ops in
+    ctx.direct_dispatch_ops := [];
+    ctx.trywith_ops := [];
+    if expr_has_perform final_body do
+      emit_line ctx "return _trampoline(function() {";
+      ctx.indent := ctx.indent + 1;
+      compile_cps ctx final_body (fn v -> emit_line ctx ($"return {v};"));
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});"
+    else do
+      let v = compile_expr ctx final_body in
+      emit_line ctx ($"return {v};")
+    end;
+    ctx.direct_dispatch_ops := saved_ddo;
+    ctx.trywith_ops := saved_two;
+    ctx.current_fn_name := saved_fn;
+    ctx.current_fn_params := saved_params;
+    ctx.tco_used := saved_tco;
+    pop_scope ctx;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    fn_name
+  and compile_named_function ctx js_name fn_expr =
+    let rec collect_params params body_expr =
+      match body_expr.expr with
+      | Typechecker.TEFun ((p, inner, _)) -> collect_params (p :: params) inner
+      | _ -> (List.rev params, body_expr)
+     in
+    match fn_expr.expr with
+    | Typechecker.TEFun ((param, body, has_return)) -> 
+      let (all_params, final_body) = collect_params (param :: []) body in
+      let js_params = dedup_js_params (List.map mangle_name all_params) in
+      emit_indent ctx;
+      emit ctx ($"function {js_name}({String.concat ", " js_params}) ");
+      emit ctx "{\n";
+      ctx.indent := ctx.indent + 1;
+      push_scope ctx;
+      List.iter2 (fn mml_name js_nm -> bind_var ctx mml_name js_nm) all_params js_params;
+      let saved_fn = ctx.current_fn_name in
+      let saved_params = ctx.current_fn_params in
+      let saved_tco = ctx.tco_used in
+      ctx.current_fn_name := Some js_name;
+      ctx.current_fn_params := js_params;
+      ctx.tco_used := false;
+      ctx.in_tail_position := true;
+      let saved_ddo = ctx.direct_dispatch_ops in
+      let saved_two = ctx.trywith_ops in
+      ctx.direct_dispatch_ops := [];
+      ctx.trywith_ops := [];
+      let body_code_start = Buffer.length ctx.buf in
+      if expr_has_perform final_body do
+        emit_line ctx ($"return _trampoline(function() \{");
+        ctx.indent := ctx.indent + 1;
+        compile_cps ctx final_body (fn v -> emit_line ctx ($"return {v};"));
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx ($"\}, {js_name});")
+      else if has_return do
+        emit_line ctx "let _ret_flag = false, _ret_val;";
+        let v = compile_expr ctx final_body in
+        emit_line ctx ($"return _ret_flag ? _ret_val : {v};")
+      else do
+        let v = compile_expr ctx final_body in
+        emit_line ctx ($"return {v};")
+      end;
+      let tco_was_used = ctx.tco_used in
+      ctx.direct_dispatch_ops := saved_ddo;
+      ctx.trywith_ops := saved_two;
+      ctx.current_fn_name := saved_fn;
+      ctx.current_fn_params := saved_params;
+      ctx.tco_used := saved_tco;
+      ctx.in_tail_position := false;
+      pop_scope ctx;
+      ctx.indent := ctx.indent - 1;
+      if tco_was_used do
+        let full_code = Buffer.contents ctx.buf in
+        let body_code = String.sub full_code body_code_start ((String.length full_code) - body_code_start) in
+        let before_body = String.sub full_code 0 body_code_start in
+        Buffer.clear ctx.buf;
+        Buffer.add_string ctx.buf before_body;
+        let indent_str = String.make ((ctx.indent + 1) * 2) #20 in
+        Buffer.add_string ctx.buf (indent_str ^ "while (true) {\n");
+        let body_lines = String.split "\n" body_code in
+        List.iter (fn line -> if (String.length line) > 0 do
+          Buffer.add_string ctx.buf ("  " ^ (line ^ "\n"))
+        end) body_lines;
+        Buffer.add_string ctx.buf (indent_str ^ "}\n")
+      end;
+      emit_line ctx "}"
+    | _ -> 
+      let v = compile_expr ctx fn_expr in
+      emit_line ctx ($"const {js_name} = {v};")
+
+  and compile_app ctx _te fn_ arg =
+    let rec collect_args expr acc =
+      match expr.expr with
+      | Typechecker.TEApp ((inner_fn, inner_arg)) -> collect_args inner_fn (inner_arg :: acc)
+      | _ -> (expr, acc)
+     in
+    let (base_fn, all_args) = collect_args fn_ (arg :: []) in
+    let n = List.length all_args in
+    let is_self_call =
+      match (ctx.current_fn_name, base_fn.expr) with
+      | (Some fn_name, Typechecker.TEVar var_name) -> ((mangle_name var_name) = fn_name) && (n = (List.length ctx.current_fn_params))
+      | _ -> false
+     in
+    if is_self_call && ctx.in_tail_position do
+      ctx.tco_used := true;
+      let arg_tmps = List.map (fn a -> let tmp = fresh_tmp ctx in
+      let v = compile_non_tail ctx a in
+      emit_line ctx ($"const {tmp} = {v};");
+      tmp) all_args in
+      List.iter2 (fn param tmp -> emit_line ctx ($"{param} = {tmp};")) ctx.current_fn_params arg_tmps;
+      emit_line ctx "continue;";
+      "undefined"
+    else do
+      let fn_js = compile_non_tail ctx base_fn in
+      let args_js = List.map (compile_non_tail ctx) all_args in
+      let known_arity = count_arrows base_fn.ty in
+      let has_implicit_args = List.exists (fn (a : Typechecker.texpr) ->
+        do
+          match a.expr with
+          | Typechecker.TEVar name -> (((String.length name) >= 7) && ((String.sub name 0 7) = "__dict_")) || (((String.length name) >= 5) && ((String.sub name 0 5) = "__ev_"))
+          | _ -> false
+
+        end) all_args in
+      if (known_arity = (Some n)) && (not has_implicit_args) do
+        fn_js ^ ("(" ^ ((String.concat ", " args_js) ^ ")"))
+      else
+        "_call(" ^ (fn_js ^ (", [" ^ ((String.concat ", " args_js) ^ "])")))
+    end
+  and count_arrows ty =
+    let rec go ty n =
+      match Types.repr ty with
+      | Types.TArrow ((_, _, ret)) -> go ret (n + 1)
+      | _ -> n
+     in
+    let n = go ty 0 in
+    if n > 0 do
+      Some n
+    else
+      None
+  and compile_binop ctx op e1 e2 =
+    match op with
+    | Ast.And -> 
+      let a = compile_non_tail ctx e1 in
+      let buf_before = Buffer.length ctx.buf in
+      let b = compile_non_tail ctx e2 in
+      if (Buffer.length ctx.buf) = buf_before do
+        "(" ^ (a ^ (" && " ^ (b ^ ")")))
+      else do
+        let stmts = Buffer.sub ctx.buf buf_before ((Buffer.length ctx.buf) - buf_before) in
+        Buffer.truncate ctx.buf buf_before;
+        let result = fresh_tmp ctx in
+        emit_line ctx ($"let {result};");
+        emit_line ctx ($"if ({a}) \{");
+        ctx.indent := ctx.indent + 1;
+        Buffer.add_string ctx.buf stmts;
+        emit_line ctx ($"{result} = {b};");
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "} else {";
+        ctx.indent := ctx.indent + 1;
+        emit_line ctx ($"{result} = false;");
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "}";
+        result
+      end
+    | Ast.Or -> 
+      let a = compile_non_tail ctx e1 in
+      let buf_before = Buffer.length ctx.buf in
+      let b = compile_non_tail ctx e2 in
+      if (Buffer.length ctx.buf) = buf_before do
+        "(" ^ (a ^ (" || " ^ (b ^ ")")))
+      else do
+        let stmts = Buffer.sub ctx.buf buf_before ((Buffer.length ctx.buf) - buf_before) in
+        Buffer.truncate ctx.buf buf_before;
+        let result = fresh_tmp ctx in
+        emit_line ctx ($"let {result};");
+        emit_line ctx ($"if ({a}) \{");
+        ctx.indent := ctx.indent + 1;
+        emit_line ctx ($"{result} = true;");
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "} else {";
+        ctx.indent := ctx.indent + 1;
+        Buffer.add_string ctx.buf stmts;
+        emit_line ctx ($"{result} = {b};");
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "}";
+        result
+      end
+    | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> 
+      do
+        let resolved = Types.repr e1.ty in
+        match resolved with
+        | Types.TInt | Types.TFloat -> 
+          let a = compile_non_tail ctx e1 in
+          let b = compile_non_tail ctx e2 in
+          let js_op =
+            match op with
+            | Ast.Add -> "+"
+            | Ast.Sub -> "-"
+            | Ast.Mul -> "*"
+            | Ast.Div -> "/"
+            | _ -> failwith "assert false"
+           in
+          if (resolved = Types.TInt) && (op = Ast.Div) do
+            "((" ^ (a ^ (" " ^ (js_op ^ (" " ^ (b ^ ") | 0)")))))
+          else
+            "(" ^ (a ^ (" " ^ (js_op ^ (" " ^ (b ^ ")")))))
+        | _ -> 
+          let method_name =
+            match op with
+            | Ast.Add -> "+"
+            | Ast.Sub -> "-"
+            | Ast.Mul -> "*"
+            | Ast.Div -> "/"
+            | _ -> failwith "assert false"
+           in
+          compile_class_binop ctx "Num" method_name e1 e2
+
+      end
+    | Ast.Mod -> 
+      let a = compile_non_tail ctx e1 in
+      let b = compile_non_tail ctx e2 in
+      "(" ^ (a ^ (" % " ^ (b ^ ")")))
+    | Ast.Eq | Ast.Neq -> 
+      let resolved = Types.repr e1.ty in
+      let is_primitive =
+        match resolved with
+        | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte | Types.TRune | Types.TUnit -> true
+        | _ -> false
+       in
+      let a = compile_non_tail ctx e1 in
+      let b = compile_non_tail ctx e2 in
+      if is_primitive do
+        let js_op =
+          if op = Ast.Eq do
+            "==="
+          else
+            "!==" in
+        "(" ^ (a ^ (" " ^ (js_op ^ (" " ^ (b ^ ")")))))
+      else do
+        let eq_call = "_eq(" ^ (a ^ (", " ^ (b ^ ")"))) in
+        if op = Ast.Eq do
+          eq_call
+        else
+          "!" ^ eq_call
+      end
+    | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> 
+      let resolved = Types.repr e1.ty in
+      let is_builtin =
+        match resolved with
+        | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune | Types.TVar {contents = Types.Unbound _} -> true
+        | _ -> false
+       in
+      if is_builtin do
+        let a = compile_non_tail ctx e1 in
+        let b = compile_non_tail ctx e2 in
+        let js_op =
+          match op with
+          | Ast.Lt -> "<"
+          | Ast.Gt -> ">"
+          | Ast.Le -> "<="
+          | Ast.Ge -> ">="
+          | _ -> failwith "assert false"
+         in
+        "(" ^ (a ^ (" " ^ (js_op ^ (" " ^ (b ^ ")")))))
+      else do
+        let method_name =
+          match op with
+          | Ast.Lt -> "<"
+          | Ast.Gt -> ">"
+          | Ast.Le -> "<="
+          | Ast.Ge -> ">="
+          | _ -> failwith "assert false"
+         in
+        compile_class_binop ctx "Ord" method_name e1 e2
+      end
+    | Ast.Concat -> 
+      let a = compile_non_tail ctx e1 in
+      let b = compile_non_tail ctx e2 in
+      "(" ^ (a ^ (" + " ^ (b ^ ")")))
+    | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> 
+      do
+        let resolved = Types.repr e1.ty in
+        match resolved with
+        | Types.TInt -> 
+          let a = compile_non_tail ctx e1 in
+          let b = compile_non_tail ctx e2 in
+          let js_op =
+            match op with
+            | Ast.Land -> "&"
+            | Ast.Lor -> "|"
+            | Ast.Lxor -> "^"
+            | Ast.Lsl -> "<<"
+            | Ast.Lsr -> ">>"
+            | _ -> failwith "assert false"
+           in
+          "(" ^ (a ^ (" " ^ (js_op ^ (" " ^ (b ^ ")")))))
+        | _ -> 
+          let method_name =
+            match op with
+            | Ast.Land -> "land"
+            | Ast.Lor -> "lor"
+            | Ast.Lxor -> "lxor"
+            | Ast.Lsl -> "lsl"
+            | Ast.Lsr -> "lsr"
+            | _ -> failwith "assert false"
+           in
+          compile_class_binop ctx "Bitwise" method_name e1 e2
+
+      end
+    | Ast.Pipe -> 
+      let fn_js = compile_non_tail ctx e2 in
+      let arg_js = compile_non_tail ctx e1 in
+      "_call(" ^ (fn_js ^ (", [" ^ (arg_js ^ "])")))
+
+  and compile_class_binop ctx class_name method_name e1 e2 =
+    let conc_ty = Types.repr e1.ty in
+    let class_def =
+      match List.find (fn (c : Types.class_def) -> c.class_name = class_name) ctx.type_env.classes with
+      | Some cd -> cd
+      | None -> error ($"class {class_name} not found")
+     in
+    let num_params = List.length class_def.class_params in
+    let partial = List.init num_params (fn _ -> Some conc_ty) in
+    let concrete_partial = List.map (fn opt ->
+      do
+        match opt with
+        | Some ty -> 
+          do
+            match Types.repr ty with
+            | Types.TVar {contents = Types.Unbound _} -> None
+            | _ -> Some (Types.repr ty)
+
+          end
+        | None -> None
+
+      end) partial in
+    let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = num_params) && (Types.match_partial_inst inst.inst_tys concrete_partial))) ctx.type_env.instances in
+    match matching with
+    | inst :: [] -> 
+      let dict_access = (mangle_name inst.inst_dict_name) ^ ("." ^ (mangle_name method_name)) in
+      let a = compile_non_tail ctx e1 in
+      let b = compile_non_tail ctx e2 in
+      "_call(" ^ (dict_access ^ (", [" ^ (a ^ (", " ^ (b ^ "])")))))
+    | [] -> error ($"no instance of {class_name} for type {Types.pp_ty conc_ty}")
+    | _ -> 
+      do
+        match Types.most_specific_inst matching with
+        | Some inst -> 
+          let dict_access =
+            if inst.inst_constraints = [] do
+              mangle_name (inst.inst_dict_name ^ ("$" ^ method_name))
+            else
+              (mangle_name inst.inst_dict_name) ^ ("." ^ (mangle_name method_name)) in
+          let a = compile_non_tail ctx e1 in
+          let b = compile_non_tail ctx e2 in
+          "_call(" ^ (dict_access ^ (", [" ^ (a ^ (", " ^ (b ^ "])")))))
+        | None -> error ($"ambiguous instance for {class_name} method {method_name}")
+
+      end
+
+  and compile_unop ctx op (e : Typechecker.texpr) =
+    match op with
+    | Ast.Neg -> 
+      do
+        let resolved = Types.repr e.ty in
+        match resolved with
+        | Types.TInt | Types.TFloat -> 
+          let v = compile_non_tail ctx e in
+          "(-" ^ (v ^ ")")
+        | _ -> compile_class_unop ctx "Num" "neg" e
+
+      end
+    | Ast.Not -> 
+      let v = compile_non_tail ctx e in
+      "(!" ^ (v ^ ")")
+    | Ast.Lnot -> 
+      do
+        let resolved = Types.repr e.ty in
+        match resolved with
+        | Types.TInt -> 
+          let v = compile_non_tail ctx e in
+          "(~" ^ (v ^ ")")
+        | _ -> compile_class_unop ctx "Bitwise" "lnot" e
+
+      end
+
+  and compile_class_unop ctx class_name method_name (e : Typechecker.texpr) =
+    let conc_ty = Types.repr e.ty in
+    let class_def =
+      match List.find (fn (c : Types.class_def) -> c.class_name = class_name) ctx.type_env.classes with
+      | Some cd -> cd
+      | None -> error ($"class {class_name} not found")
+     in
+    let num_params = List.length class_def.class_params in
+    let partial = List.init num_params (fn _ -> Some conc_ty) in
+    let concrete_partial = List.map (fn opt ->
+      do
+        match opt with
+        | Some ty -> 
+          do
+            match Types.repr ty with
+            | Types.TVar {contents = Types.Unbound _} -> None
+            | _ -> Some (Types.repr ty)
+
+          end
+        | None -> None
+
+      end) partial in
+    let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = num_params) && (Types.match_partial_inst inst.inst_tys concrete_partial))) ctx.type_env.instances in
+    match matching with
+    | inst :: [] -> 
+      let dict_access = (mangle_name inst.inst_dict_name) ^ ("." ^ (mangle_name method_name)) in
+      let v = compile_non_tail ctx e in
+      "_call(" ^ (dict_access ^ (", [" ^ (v ^ "])")))
+    | [] -> error ($"no instance of {class_name} for type {Types.pp_ty conc_ty}")
+    | _ -> error ($"ambiguous instance for {class_name}")
+
+  and compile_if ctx cond then_e else_e =
+    let c = compile_expr ctx cond in
+    let result = fresh_tmp ctx in
+    emit_line ctx ($"let {result};");
+    emit_line ctx ($"if ({c}) \{");
+    ctx.indent := ctx.indent + 1;
+    let t = compile_expr ctx then_e in
+    emit_line ctx ($"{result} = {t};");
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "} else {";
+    ctx.indent := ctx.indent + 1;
+    let e = compile_expr ctx else_e in
+    emit_line ctx ($"{result} = {e};");
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    result
+  and compile_seq ctx e1 e2 =
+    let v1 = compile_non_tail ctx e1 in
+    emit_line ctx (v1 ^ ";");
+    compile_expr ctx e2
+  and compile_let_mut ctx name init body =
+    let v = compile_expr ctx init in
+    let js_name = mangle_name name in
+    let actual_name = js_name ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+    ctx.tmp_counter := ctx.tmp_counter + 1;
+    push_scope ctx;
+    bind_var ctx name actual_name;
+    emit_line ctx ($"let {actual_name} = {v};");
+    let result = fresh_tmp ctx in
+    let b = compile_expr ctx body in
+    emit_line ctx ($"const {result} = {b};");
+    pop_scope ctx;
+    result
+  and compile_while ctx cond body =
+    let result = fresh_tmp ctx in
+    let break_flag = fresh_tmp ctx in
+    let break_val = fresh_tmp ctx in
+    let saved_break_flag = ctx.break_flag_name in
+    let saved_break_val = ctx.break_val_name in
+    ctx.break_flag_name := break_flag;
+    ctx.break_val_name := break_val;
+    emit_line ctx ($"let {result} = undefined;");
+    emit_line ctx ($"let {break_flag} = false, {break_val};");
+    emit_line ctx "while (true) {";
+    ctx.indent := ctx.indent + 1;
+    let c = compile_expr ctx cond in
+    emit_line ctx ($"if (!({c})) break;");
+    let v_body = compile_expr ctx body in
+    emit_line ctx (v_body ^ ";");
+    emit_line ctx ($"if ({break_flag}) break;");
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    emit_line ctx ($"{result} = {break_flag} ? {break_val} : undefined;");
+    ctx.break_flag_name := saved_break_flag;
+    ctx.break_val_name := saved_break_val;
+    result
+  and compile_match ctx scrut arms loc =
+    let scrut_js = compile_non_tail ctx scrut in
+    let scrut_tmp = fresh_tmp ctx in
+    let result = fresh_tmp ctx in
+    let label = fresh_tmp ctx in
+    emit_line ctx ($"let {result};");
+    emit_line ctx ($"const {scrut_tmp} = {scrut_js};");
+    emit_line ctx ($"{label}: \{");
+    ctx.indent := ctx.indent + 1;
+    List.iter (fn (pat, guard, body) -> let (conds, bindings) = compile_pattern ctx scrut_tmp pat in
+    let cond_str =
+      match conds with
+      | [] -> "true"
+      | _ -> String.concat " && " conds
+     in
+    emit_line ctx ($"if ({cond_str}) \{");
+    ctx.indent := ctx.indent + 1;
+    push_scope ctx;
+    List.iter (fn (mml_name, js_expr) -> let js_name = mangle_name mml_name in
+    bind_var ctx mml_name js_name;
+    emit_line ctx ($"const {js_name} = {js_expr};")) bindings;
+    do
+      match guard with
+      | Some g -> 
+        let guard_js = compile_expr ctx g in
+        emit_line ctx ($"if ({guard_js}) \{");
+        ctx.indent := ctx.indent + 1;
+        let b = compile_expr ctx body in
+        emit_line ctx ($"{result} = {b};");
+        emit_line ctx ($"break {label};");
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "}"
+      | None -> 
+        let b = compile_expr ctx body in
+        emit_line ctx ($"{result} = {b};");
+        emit_line ctx ($"break {label};")
+
+    end;
+    pop_scope ctx;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}") arms;
+    emit_line ctx ($"_match_fail(\"line {loc.line}\");");
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    result
+  and compile_pattern ctx scrutinee (pat : Ast.pattern) : string list * (string * string) list =
+    match pat with
+    | Ast.PatWild -> ([], [])
+    | Ast.PatVar name -> ([], (name, scrutinee) :: [])
+    | Ast.PatInt n -> ($"{scrutinee} === {n}" :: [], [])
+    | Ast.PatFloat f -> ($"{scrutinee} === {$"{f:.17g}"}" :: [], [])
+    | Ast.PatBool true -> (scrutinee :: [], [])
+    | Ast.PatBool false -> ("!" ^ scrutinee :: [], [])
+    | Ast.PatString s -> ($"{scrutinee} === {escape_js_string s}" :: [], [])
+    | Ast.PatUnit -> ([], [])
+    | Ast.PatNil -> (scrutinee ^ " === null" :: [], [])
+    | Ast.PatCons ((hd_pat, tl_pat)) -> 
+      let hd_expr = scrutinee ^ "._hd" in
+      let tl_expr = scrutinee ^ "._tl" in
+      let (hd_conds, hd_binds) = compile_pattern ctx hd_expr hd_pat in
+      let (tl_conds, tl_binds) = compile_pattern ctx tl_expr tl_pat in
+      let conds = List.concat (scrutinee ^ " !== null" :: hd_conds) tl_conds in
+      (conds, List.concat hd_binds tl_binds)
+    | Ast.PatTuple pats -> 
+      let all_conds = Ref.create [] in
+      let all_binds = Ref.create [] in
+      List.iteri (fn i sub_pat -> let elem_expr = $"{scrutinee}[{i}]" in
+      let (c, b) = compile_pattern ctx elem_expr sub_pat in
+      Ref.set all_conds (List.concat (Ref.get all_conds) c);
+      Ref.set all_binds (List.concat (Ref.get all_binds) b)) pats;
+      (Ref.get all_conds, Ref.get all_binds)
+    | Ast.PatConstruct ((name, arg_pat)) when is_newtype_ctor ctx.type_env name -> 
+      do
+        match arg_pat with
+        | Some sub_pat -> compile_pattern ctx scrutinee sub_pat
+        | None -> ([], [])
+
+      end
+    | Ast.PatConstruct ((name, arg_pat)) -> 
+      do
+        let tag =
+          if ((String.length name) > 0) && ((String.get name 0) = #60) do
+            ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
+          else
+            tag_for_constructor ctx.type_env name in
+        let conds = $"{scrutinee}._tag === {tag}" :: [] in
+        match arg_pat with
+        | None -> (conds, [])
+        | Some sub_pat -> 
+          let payload_expr = scrutinee ^ "._val" in
+          let (sub_conds, sub_binds) = compile_pattern ctx payload_expr sub_pat in
+          (List.concat conds sub_conds, sub_binds)
+
+      end
+    | Ast.PatRecord field_pats -> 
+      let all_conds = Ref.create [] in
+      let all_binds = Ref.create [] in
+      List.iter (fn (fname, sub_pat) -> let field_expr = scrutinee ^ ("." ^ (mangle_name fname)) in
+      let (c, b) = compile_pattern ctx field_expr sub_pat in
+      Ref.set all_conds (List.concat (Ref.get all_conds) c);
+      Ref.set all_binds (List.concat (Ref.get all_binds) b)) field_pats;
+      (Ref.get all_conds, Ref.get all_binds)
+    | Ast.PatAs ((inner_pat, name)) -> 
+      let (conds, binds) = compile_pattern ctx scrutinee inner_pat in
+      (conds, List.concat binds ((name, scrutinee) :: []))
+    | Ast.PatOr ((p1, p2)) -> 
+      let (conds1, binds1) = compile_pattern ctx scrutinee p1 in
+      let (conds2, binds2) = compile_pattern ctx scrutinee p2 in
+      let cond1 =
+        match conds1 with
+        | [] -> "true"
+        | cs -> String.concat " && " cs
+       in
+      let cond2 =
+        match conds2 with
+        | [] -> "true"
+        | cs -> String.concat " && " cs
+       in
+      let or_cond = "(" ^ (cond1 ^ (" || " ^ (cond2 ^ ")"))) in
+      let binds =
+        if binds1 = binds2 do
+          binds1
+        else
+          List.map (fn (name, expr1) -> let expr2 = List.assoc name binds2 in
+          if expr1 = expr2 do
+            (name, expr1)
+          else
+            (name, $"({cond1} ? {expr1} : {expr2})")) binds1 in
+      (or_cond :: [], binds)
+    | Ast.PatArray pats -> 
+      let len_cond = $"{scrutinee}._arr.length === {List.length pats}" in
+      let all_conds = Ref.create (len_cond :: []) in
+      let all_binds = Ref.create [] in
+      List.iteri (fn i sub_pat -> let elem_expr = $"{scrutinee}._arr[{i}]" in
+      let (c, b) = compile_pattern ctx elem_expr sub_pat in
+      Ref.set all_conds (List.concat (Ref.get all_conds) c);
+      Ref.set all_binds (List.concat (Ref.get all_binds) b)) pats;
+      (Ref.get all_conds, Ref.get all_binds)
+    | Ast.PatPolyVariant ((tag, arg_pat)) -> 
+      do
+        let num_tag = ((hash (tag))) land 0x3FFFFFFF in
+        let conds = $"{scrutinee}._tag === {num_tag}" :: [] in
+        match arg_pat with
+        | None -> (conds, [])
+        | Some sub_pat -> 
+          let payload_expr = scrutinee ^ "._val" in
+          let (sub_conds, sub_binds) = compile_pattern ctx payload_expr sub_pat in
+          (List.concat conds sub_conds, sub_binds)
+
+      end
+    | Ast.PatPin name -> 
+      let js_name = lookup_var ctx name in
+      ($"_eq({scrutinee}, {js_name})" :: [], [])
+    | Ast.PatAnnot ((inner_pat, _)) -> compile_pattern ctx scrutinee inner_pat
+    | Ast.PatMap entries -> 
+      let all_conds = Ref.create [] in
+      let all_binds = Ref.create [] in
+      let emit_key_expr key_pat =
+        match key_pat with
+        | Ast.PatInt n -> string_of_int n
+        | Ast.PatString s -> escape_js_string s
+        | Ast.PatBool b -> 
+          if b do
+            "true"
+          else
+            "false"
+        | Ast.PatFloat f -> $"{f:g}"
+        | Ast.PatPin name -> lookup_var ctx name
+        | _ -> error "map pattern keys must be literals or pin patterns"
+       in
+      List.iter (fn (key_pat, val_pat) -> let key_expr = emit_key_expr key_pat in
+      Ref.set all_conds (List.concat (Ref.get all_conds) ($"{mangle_name "Map.has"}({key_expr})({scrutinee})" :: []));
+      let val_expr = $"{mangle_name "Map.get"}({key_expr})({scrutinee})._val" in
+      let (c, b) = compile_pattern ctx val_expr val_pat in
+      Ref.set all_conds (List.concat (Ref.get all_conds) c);
+      Ref.set all_binds (List.concat (Ref.get all_binds) b)) entries;
+      (Ref.get all_conds, Ref.get all_binds)
+
+  and compile_handle_trywith ctx body op_arms return_arm result =
+    emit_line ctx ($"const {result} = (function() \{");
+    ctx.indent := ctx.indent + 1;
+    let h_saved = fresh_tmp ctx in
+    emit_line ctx ($"const {h_saved} = _h;");
+    emit_line ctx ($"_h = Object.assign(\{\}, {h_saved}, \{");
+    ctx.indent := ctx.indent + 1;
+    List.iter (fn (op_name, arg_name, k_name, _) -> let arg_js = mangle_name arg_name in
+    let k_js = mangle_name k_name in
+    emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{ throw \{_e: \"{op_name}\", _v: {arg_js}\}; \},")) op_arms;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "});";
+    emit_line ctx "try {";
+    ctx.indent := ctx.indent + 1;
+    let saved_two = ctx.trywith_ops in
+    let handled_op_names = List.map (fn (op, _, _, _) -> op) op_arms in
+    ctx.trywith_ops := List.concat handled_op_names ctx.trywith_ops;
+    let body_needs_cps = expr_has_unhandled_perform handled_op_names body in
+    if body_needs_cps do
+      emit_line ctx "return _trampoline(function() {";
+      ctx.indent := ctx.indent + 1;
+      compile_cps ctx body (fn body_result ->
+        do
+          match return_arm with
+          | Some ((ret_name, ret_body)) -> 
+            let ret_js = mangle_name ret_name in
+            let actual_ret = ret_js ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+            ctx.tmp_counter := ctx.tmp_counter + 1;
+            push_scope ctx;
+            bind_var ctx ret_name actual_ret;
+            emit_line ctx ($"const {actual_ret} = {body_result};");
+            let v = compile_non_tail ctx ret_body in
+            emit_line ctx ($"return {v};");
+            pop_scope ctx
+          | None -> emit_line ctx ($"return {body_result};")
+
+        end);
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});"
+    else do
+      let body_v = compile_non_tail ctx body in
+      match return_arm with
+      | Some ((ret_name, ret_body)) -> 
+        let ret_js = mangle_name ret_name in
+        let actual_ret = ret_js ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+        ctx.tmp_counter := ctx.tmp_counter + 1;
+        push_scope ctx;
+        bind_var ctx ret_name actual_ret;
+        emit_line ctx ($"const {actual_ret} = {body_v};");
+        let rv = compile_non_tail ctx ret_body in
+        emit_line ctx ($"return {rv};");
+        pop_scope ctx
+      | None -> emit_line ctx ($"return {body_v};")
+
+    end;
+    ctx.trywith_ops := saved_two;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "} catch (_exc) {";
+    ctx.indent := ctx.indent + 1;
+    let first = Ref.create true in
+    List.iter (fn (op_name, arg_name, _k_name, handler_body) -> let prefix =
+      if Ref.get first do
+        "if"
+      else
+        "} else if" in
+    Ref.set first false;
+    emit_line ctx ($"{prefix} (_exc && _exc._e === \"{op_name}\") \{");
+    ctx.indent := ctx.indent + 1;
+    push_scope ctx;
+    let arg_js = mangle_name arg_name in
+    bind_var ctx arg_name arg_js;
+    emit_line ctx ($"const {arg_js} = _exc._v;");
+    let v = compile_non_tail ctx handler_body in
+    emit_line ctx ($"return {v};");
+    pop_scope ctx;
+    ctx.indent := ctx.indent - 1) op_arms;
+    emit_line ctx "} else { throw _exc; }";
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx ($"\} finally \{ _h = {h_saved}; \}");
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "})();"
+  and compile_handle ctx body arms =
+    let result = fresh_tmp ctx in
+    let return_arm = Ref.create None in
+    let provide_ops = Ref.create [] in
+    let try_ops = Ref.create [] in
+    let full_ops = Ref.create [] in
+    List.iter (fn arm ->
+      do
+        match arm with
+        | Typechecker.THReturn ((name, body)) -> Ref.set return_arm (Some (name, body))
+        | Typechecker.THOp ((op, arg, k, body)) -> Ref.set full_ops ((op, arg, k, body) :: Ref.get full_ops)
+        | Typechecker.THOpProvide ((op, arg, body)) -> Ref.set provide_ops ((op, arg, body) :: Ref.get provide_ops)
+        | Typechecker.THOpTry ((op, arg, body)) -> Ref.set try_ops ((op, arg, body) :: Ref.get try_ops)
+
+      end) arms;
+    let provide_ops = List.rev (Ref.get provide_ops) in
+    let try_ops = List.rev (Ref.get try_ops) in
+    let full_ops = List.rev (Ref.get full_ops) in
+    let return_arm_pure =
+      match Ref.get return_arm with
+      | Some ((_, rb)) -> not (expr_has_perform rb)
+      | None -> true
+     in
+    if (full_ops = []) && ((provide_ops = []) && ((try_ops <> []) && return_arm_pure)) do
+      let trywith_arms = List.map (fn (op, arg, body) -> (op, arg, "__k_try", body)) try_ops in
+      compile_handle_trywith ctx body trywith_arms (Ref.get return_arm) result
+    else do
+      let simple_ops = List.map (fn (op, _, _) -> op) provide_ops in
+      emit_line ctx ($"const {result} = (function() \{");
+      ctx.indent := ctx.indent + 1;
+      let h_saved = fresh_tmp ctx in
+      emit_line ctx ($"const {h_saved} = _h;");
+      let saved_direct_ops = ctx.direct_dispatch_ops in
+      List.iter (fn (op_name, arg_name, value_body) -> let direct_fn = fresh_tmp ctx in
+      let arg_js = mangle_name arg_name in
+      emit_line ctx ($"function {direct_fn}({arg_js}) \{");
+      ctx.indent := ctx.indent + 1;
+      push_scope ctx;
+      bind_var ctx arg_name arg_js;
+      let v = compile_non_tail ctx value_body in
+      emit_line ctx ($"return {v};");
+      pop_scope ctx;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "}";
+      ctx.direct_dispatch_ops := (op_name, direct_fn) :: ctx.direct_dispatch_ops) provide_ops;
+      let shadowed_ops = List.concat (List.map (fn (op, _, _, _) -> op) full_ops) (List.map (fn (op, _, _) -> op) try_ops) in
+      if shadowed_ops <> [] do
+        ctx.direct_dispatch_ops := List.filter (fn (op, _) -> not (List.mem op shadowed_ops)) ctx.direct_dispatch_ops
+      end;
+      emit_line ctx ($"_h = Object.assign(\{\}, {h_saved}, \{");
+      ctx.indent := ctx.indent + 1;
+      List.iter (fn (op_name, arg_name, _) -> let arg_js = mangle_name arg_name in
+      let k_js = "_k" in
+      let direct_fn = List.assoc op_name ctx.direct_dispatch_ops in
+      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{ return _bounce(function() \{ return {k_js}({direct_fn}({arg_js})); \}); \},")) provide_ops;
+      List.iter (fn (op_name, arg_name, fallback_body) -> let arg_js = mangle_name arg_name in
+      let k_js = "_k" in
+      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{");
+      ctx.indent := ctx.indent + 1;
+      push_scope ctx;
+      bind_var ctx arg_name arg_js;
+      let v = compile_non_tail ctx fallback_body in
+      emit_line ctx ($"return _bounce(function() \{ return {v}; \});");
+      pop_scope ctx;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "},") try_ops;
+      List.iter (fn (op_name, arg_name, k_name, handler_body) -> let arg_js = mangle_name arg_name in
+      let k_js = mangle_name k_name in
+      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{");
+      ctx.indent := ctx.indent + 1;
+      push_scope ctx;
+      bind_var ctx arg_name arg_js;
+      bind_var ctx k_name k_js;
+      let saved_htr = ctx.handler_tail_resume in
+      ctx.handler_tail_resume := all_resumes_are_tail handler_body;
+      let v = compile_non_tail ctx handler_body in
+      ctx.handler_tail_resume := saved_htr;
+      emit_line ctx ($"return _bounce(function() \{ return {v}; \});");
+      pop_scope ctx;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "},") full_ops;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});";
+      let body_needs_cps =
+        if simple_ops = [] do
+          expr_has_perform body
+        else
+          expr_has_unhandled_perform simple_ops body in
+      emit_line ctx "try {";
+      ctx.indent := ctx.indent + 1;
+      if body_needs_cps do
+        emit_line ctx "return _trampoline(function() {";
+        ctx.indent := ctx.indent + 1;
+        compile_cps ctx body (fn body_result ->
+          do
+            match Ref.get return_arm with
+            | Some ((ret_name, ret_body)) -> 
+              let ret_js = mangle_name ret_name in
+              let actual_ret = ret_js ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+              ctx.tmp_counter := ctx.tmp_counter + 1;
+              push_scope ctx;
+              bind_var ctx ret_name actual_ret;
+              emit_line ctx ($"const {actual_ret} = {body_result};");
+              let v = compile_non_tail ctx ret_body in
+              emit_line ctx ($"return {v};");
+              pop_scope ctx
+            | None -> emit_line ctx ($"return {body_result};")
+
+          end);
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "});"
+      else do
+        let body_v = compile_non_tail ctx body in
+        match Ref.get return_arm with
+        | Some ((ret_name, ret_body)) -> 
+          let ret_js = mangle_name ret_name in
+          let actual_ret = ret_js ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+          ctx.tmp_counter := ctx.tmp_counter + 1;
+          push_scope ctx;
+          bind_var ctx ret_name actual_ret;
+          emit_line ctx ($"const {actual_ret} = {body_v};");
+          let rv = compile_non_tail ctx ret_body in
+          emit_line ctx ($"return {rv};");
+          pop_scope ctx
+        | None -> emit_line ctx ($"return {body_v};")
+
+      end;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx ($"\} finally \{ _h = {h_saved}; \}");
+      ctx.direct_dispatch_ops := saved_direct_ops;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "})();"
+    end;
+    result
+  and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
+    if not (expr_has_perform te) do
+      let v = compile_non_tail ctx te in
+      cont v
+    else
+      match te.expr with
+      | Typechecker.TEPerform ((op_name, arg)) -> compile_perform_cps ctx op_name arg cont
+      | Typechecker.TEHandle _ -> 
+        let v = compile_non_tail ctx te in
+        cont v
+      | Typechecker.TEResume ((k_expr, val_expr)) -> 
+        let k_js = compile_non_tail ctx k_expr in
+        let v_js = compile_non_tail ctx val_expr in
+        emit_line ctx ($"return _bounce(function() \{ return {k_js}({v_js}); \});")
+      | Typechecker.TELet ((name, _, e1, e2)) -> compile_let_cps ctx name e1 e2 cont
+      | Typechecker.TELetRec ((name, _, fn_expr, body)) -> compile_letrec_cps ctx name fn_expr body cont
+      | Typechecker.TESeq ((e1, e2)) -> compile_seq_cps ctx e1 e2 cont
+      | Typechecker.TEIf ((cond, then_e, else_e)) -> compile_if_cps ctx cond then_e else_e cont
+      | Typechecker.TEMatch ((scrut, arms, _partial)) -> compile_match_cps ctx scrut arms te.loc cont
+      | Typechecker.TEApp ((fn_, arg)) -> compile_app_cps ctx te fn_ arg cont
+      | Typechecker.TEFun _ -> 
+        let v = compile_non_tail ctx te in
+        cont v
+      | Typechecker.TELetMut ((name, init, body)) -> 
+        if expr_has_perform init do
+          compile_cps ctx init (fn init_v -> let js_name = mangle_name name in
+          let actual_name = js_name ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+          ctx.tmp_counter := ctx.tmp_counter + 1;
+          push_scope ctx;
+          bind_var ctx name actual_name;
+          emit_line ctx ($"let {actual_name} = _resolve({init_v});");
+          compile_cps ctx body cont;
+          pop_scope ctx)
+        else do
+          let v = compile_non_tail ctx init in
+          let js_name = mangle_name name in
+          let actual_name = js_name ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+          ctx.tmp_counter := ctx.tmp_counter + 1;
+          push_scope ctx;
+          bind_var ctx name actual_name;
+          emit_line ctx ($"let {actual_name} = _resolve({v});");
+          compile_cps ctx body cont;
+          pop_scope ctx
+        end
+      | Typechecker.TEWhile ((cond, body)) -> compile_while_cps ctx cond body cont
+      | _ -> 
+        let v = compile_non_tail ctx te in
+        cont v
+
+  and compile_while_cps ctx cond body cont =
+    let loop_fn = fresh_tmp ctx in
+    let break_flag = fresh_tmp ctx in
+    let break_val = fresh_tmp ctx in
+    let saved_break_flag = ctx.break_flag_name in
+    let saved_break_val = ctx.break_val_name in
+    ctx.break_flag_name := break_flag;
+    ctx.break_val_name := break_val;
+    emit_line ctx ($"let {break_flag} = false, {break_val};");
+    emit_line ctx ($"function {loop_fn}() \{");
+    ctx.indent := ctx.indent + 1;
+    let c = compile_non_tail ctx cond in
+    emit_line ctx ($"if (!({c})) \{");
+    ctx.indent := ctx.indent + 1;
+    cont "undefined";
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    compile_cps ctx body (fn body_val -> emit_line ctx ($"{body_val};");
+    emit_line ctx ($"if ({break_flag}) \{");
+    ctx.indent := ctx.indent + 1;
+    cont break_val;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    emit_line ctx ($"return _bounce({loop_fn});"));
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    emit_line ctx ($"return _bounce({loop_fn});");
+    ctx.break_flag_name := saved_break_flag;
+    ctx.break_val_name := saved_break_val
+  and compile_perform_cps ctx op_name (arg : Typechecker.texpr) cont =
+    match List.assoc_opt op_name ctx.direct_dispatch_ops with
+    | Some direct_fn -> 
+      let arg_js = compile_non_tail ctx arg in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx ($"const {result_var} = {direct_fn}({arg_js});");
+      cont result_var
+    | None when List.mem op_name ctx.trywith_ops -> 
+      let arg_js = compile_non_tail ctx arg in
+      emit_line ctx ($"throw \{_e: \"{op_name}\", _v: {arg_js}\};")
+    | None -> 
+      let arg_js = compile_non_tail ctx arg in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx ($"return _h[\"{op_name}\"]({arg_js}, function({result_var}) \{");
+      ctx.indent := ctx.indent + 1;
+      emit_line ctx "return _bounce(function() {";
+      ctx.indent := ctx.indent + 1;
+      cont result_var;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});";
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});"
+
+  and compile_let_cps ctx name e1 e2 cont =
+    if expr_has_perform e1 do
+      compile_cps ctx e1 (fn v1 -> let js_name = mangle_name name in
+      let actual_name =
+        if js_name = "_" do
+          fresh_tmp ctx
+        else
+          (js_name ^ ("_" ^ (string_of_int ctx.tmp_counter))) |> (fn n -> ctx.tmp_counter := ctx.tmp_counter + 1;
+          n) in
+      push_scope ctx;
+      bind_var ctx name actual_name;
+      emit_line ctx ($"const {actual_name} = _resolve({v1});");
+      compile_cps ctx e2 cont;
+      pop_scope ctx)
+    else do
+      let v1 = compile_non_tail ctx e1 in
+      let js_name = mangle_name name in
+      let actual_name =
+        if js_name = "_" do
+          fresh_tmp ctx
+        else
+          (js_name ^ ("_" ^ (string_of_int ctx.tmp_counter))) |> (fn n -> ctx.tmp_counter := ctx.tmp_counter + 1;
+          n) in
+      push_scope ctx;
+      bind_var ctx name actual_name;
+      emit_line ctx ($"const {actual_name} = _resolve({v1});");
+      compile_cps ctx e2 cont;
+      pop_scope ctx
+    end
+  and compile_letrec_cps ctx name fn_expr body cont =
+    let js_name = mangle_name name in
+    push_scope ctx;
+    bind_var ctx name js_name;
+    do
+      match fn_expr.expr with
+      | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+      | _ -> 
+        emit_js_placeholder ctx js_name fn_expr;
+        emit_js_backpatch ctx js_name fn_expr
+
+    end;
+    compile_cps ctx body cont;
+    pop_scope ctx
+  and compile_seq_cps ctx e1 e2 cont =
+    if expr_has_perform e1 do
+      compile_cps ctx e1 (fn v1 -> emit_line ctx ($"_resolve({v1});");
+      compile_cps ctx e2 cont)
+    else do
+      let v1 = compile_non_tail ctx e1 in
+      emit_line ctx ($"_resolve({v1});");
+      compile_cps ctx e2 cont
+    end
+  and compile_if_cps ctx cond then_e else_e cont =
+    let c = compile_non_tail ctx cond in
+    emit_line ctx ($"if ({c}) \{");
+    ctx.indent := ctx.indent + 1;
+    compile_cps ctx then_e cont;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "} else {";
+    ctx.indent := ctx.indent + 1;
+    compile_cps ctx else_e cont;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}"
+  and compile_match_cps ctx scrut arms loc cont =
+    let scrut_js = compile_non_tail ctx scrut in
+    let scrut_tmp = fresh_tmp ctx in
+    emit_line ctx ($"const {scrut_tmp} = {scrut_js};");
+    let matched = fresh_tmp ctx in
+    emit_line ctx ($"let {matched} = false;");
+    List.iter (fn (pat, guard, body) -> let (conds, bindings) = compile_pattern ctx scrut_tmp pat in
+    let cond_str =
+      match conds with
+      | [] -> "true"
+      | _ -> String.concat " && " conds
+     in
+    emit_line ctx ($"if (!{matched} && {cond_str}) \{");
+    ctx.indent := ctx.indent + 1;
+    push_scope ctx;
+    List.iter (fn (mml_name, js_expr) -> let js_nm = mangle_name mml_name in
+    bind_var ctx mml_name js_nm;
+    emit_line ctx ($"const {js_nm} = {js_expr};")) bindings;
+    do
+      match guard with
+      | Some g -> 
+        let guard_js = compile_non_tail ctx g in
+        emit_line ctx ($"if ({guard_js}) \{");
+        ctx.indent := ctx.indent + 1;
+        emit_line ctx ($"{matched} = true;");
+        compile_cps ctx body cont;
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "}"
+      | None -> 
+        emit_line ctx ($"{matched} = true;");
+        compile_cps ctx body cont
+
+    end;
+    pop_scope ctx;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}") arms;
+    emit_line ctx ($"if (!{matched}) _match_fail(\"line {loc.line}\");")
+  and compile_app_cps ctx _te fn_ arg cont =
+    let rec collect_args expr acc =
+      match expr.expr with
+      | Typechecker.TEApp ((inner_fn, inner_arg)) -> collect_args inner_fn (inner_arg :: acc)
+      | _ -> (expr, acc)
+     in
+    let (base_fn, all_args) = collect_args fn_ (arg :: []) in
+    let fn_js = compile_non_tail ctx base_fn in
+    let args_js = List.map (compile_non_tail ctx) all_args in
+    let n = List.length all_args in
+    let known_arity = count_arrows base_fn.ty in
+    let call_expr =
+      if known_arity = (Some n) do
+        fn_js ^ ("(" ^ ((String.concat ", " args_js) ^ ")"))
+      else
+        "_call(" ^ (fn_js ^ (", [" ^ ((String.concat ", " args_js) ^ "])"))) in
+    let result_var = fresh_tmp ctx in
+    emit_line ctx ($"const {result_var} = _resolve({call_expr});");
+    cont result_var
+  and compile_decl ctx (decl : Typechecker.tdecl) =
+    match decl with
+    | Typechecker.TDLet ((name, te)) -> 
+      if name = "_" do
+        let v = compile_expr ctx te in
+        emit_line ctx ($"{v};")
+      else do
+        let base_name = mangle_name name in
+        let js_name =
+          match ctx.scopes with
+          | tbl :: _ when Hashtbl.has tbl name -> (fresh_tmp ctx) ^ ("_" ^ base_name)
+          | _ -> base_name
+         in
+        do
+          match te.expr with
+          | Typechecker.TEFun _ -> 
+            compile_named_function ctx js_name te;
+            bind_var ctx name js_name
+          | _ -> 
+            let v = compile_expr ctx te in
+            emit_line ctx ($"const {js_name} = {v};");
+            bind_var ctx name js_name
+
+        end;
+        if ((List.length ctx.scopes) = 1) && (is_exportable_name name) do
+          ctx.top_level_exports := (name, js_name) :: ctx.top_level_exports
+        end
+      end
+    | Typechecker.TDLetMut ((name, te)) -> 
+      let base_name = mangle_name name in
+      let js_name =
+        match ctx.scopes with
+        | tbl :: _ when Hashtbl.has tbl name -> (fresh_tmp ctx) ^ ("_" ^ base_name)
+        | _ -> base_name
+       in
+      let v = compile_expr ctx te in
+      emit_line ctx ($"let {js_name} = {v};");
+      bind_var ctx name js_name;
+      if ((List.length ctx.scopes) = 1) && (is_exportable_name name) do
+        ctx.top_level_exports := (name, js_name) :: ctx.top_level_exports
+      end
+    | Typechecker.TDLetRec ((name, te)) -> 
+      let base_name = mangle_name name in
+      let js_name =
+        match ctx.scopes with
+        | tbl :: _ when Hashtbl.has tbl name -> (fresh_tmp ctx) ^ ("_" ^ base_name)
+        | _ -> base_name
+       in
+      bind_var ctx name js_name;
+      do
+        match te.expr with
+        | Typechecker.TEFun _ -> compile_named_function ctx js_name te
+        | _ -> 
+          emit_js_placeholder ctx js_name te;
+          emit_js_backpatch ctx js_name te
+
+      end;
+      if ((List.length ctx.scopes) = 1) && (is_exportable_name name) do
+        ctx.top_level_exports := (name, js_name) :: ctx.top_level_exports
+      end
+    | Typechecker.TDLetRecAnd bindings -> 
+      let named_bindings = List.map (fn (name, te) -> let base_name = mangle_name name in
+      let js_name =
+        match ctx.scopes with
+        | tbl :: _ when Hashtbl.has tbl name -> (fresh_tmp ctx) ^ ("_" ^ base_name)
+        | _ -> base_name
+       in
+      (name, js_name, te)) bindings in
+      List.iter (fn (name, js_name, te) -> bind_var ctx name js_name;
+      if ((List.length ctx.scopes) = 1) && (is_exportable_name name) do
+        ctx.top_level_exports := (name, js_name) :: ctx.top_level_exports
+      end;
+      match te.expr with
+      | Typechecker.TEFun _ -> ()
+      | _ -> emit_js_placeholder ctx js_name te
+      ) named_bindings;
+      List.iter (fn (_name, js_name, fn_expr) ->
+        do
+          match fn_expr.expr with
+          | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+          | _ -> ()
+
+        end) named_bindings;
+      List.iter (fn (_name, js_name, te) ->
+        do
+          match te.expr with
+          | Typechecker.TEFun _ -> ()
+          | _ -> emit_js_backpatch ctx js_name te
+
+        end) named_bindings
+    | Typechecker.TDType _ -> ()
+    | Typechecker.TDClass _ -> ()
+    | Typechecker.TDEffect _ -> ()
+    | Typechecker.TDExpr te -> 
+      let v = compile_expr ctx te in
+      emit_line ctx ($"_last_val = {v};")
+    | Typechecker.TDExtern ((name, _scheme)) -> 
+      let js_name = mangle_name name in
+      emit_line ctx ($"if (typeof {js_name} === \"undefined\") \{ if (globalThis._mmlExterns && globalThis._mmlExterns[{escape_js_string name}]) var {js_name} = globalThis._mmlExterns[{escape_js_string name}]; else throw new Error(\"extern \" + {escape_js_string name} + \" not provided\"); \}");
+      bind_var ctx name js_name
+    | Typechecker.TDModule ((mod_name, decls)) -> 
+      let saved_module = ctx.current_module in
+      ctx.current_module := Some mod_name;
+      push_scope ctx;
+      List.iter (compile_decl ctx) decls;
+      ctx.current_module := saved_module;
+      do
+        match ctx.scopes with
+        | current :: _ -> Hashtbl.iter (fn mml_name js_name -> let qualified = mod_name ^ ("." ^ mml_name) in
+        match ctx.scopes with
+        | _ :: parent :: _ -> 
+          Hashtbl.set parent qualified js_name;
+          Hashtbl.set parent mml_name js_name
+        | _ -> ()
+        ) current
+        | [] -> ()
+
+      end;
+      pop_scope ctx
+    | Typechecker.TDOpen aliases -> List.iter (fn (short_name, qualified_name) -> let js_name = lookup_var ctx qualified_name in
+    bind_var ctx short_name js_name) aliases
+
+
+  pub let js_builtins = "// --- Builtins ---\nfunction print(v) {\n  const s = (typeof v === \"string\") ? v : _pp(v);\n  if (typeof globalThis._jsOutput === \"function\") globalThis._jsOutput(s);\n  else if (typeof process !== \"undefined\") process.stdout.write(s);\n  return undefined;\n}\nfunction println(v) {\n  const s = (typeof v === \"string\") ? v : _pp(v);\n  if (typeof globalThis._jsOutput === \"function\") globalThis._jsOutput(s + \"\\n\");\n  else if (typeof process !== \"undefined\") process.stdout.write(s + \"\\n\");\n  return undefined;\n}\nfunction string_of_int(n) { return String(n); }\nfunction int_of_string(s) { const n = parseInt(s, 10); if (isNaN(n)) throw new Error(\"int_of_string: \" + s); return n; }\nfunction float_of_int(n) { return n; }\nfunction int_of_float(f) { return Math.trunc(f); }\nfunction float_of_string(s) { const f = parseFloat(s); if (isNaN(f)) throw new Error(\"float_of_string: \" + s); return f; }\nfunction string_of_float(f) {\n  const s = String(f);\n  return s.includes(\".\") || s.includes(\"e\") ? s : s + \".\";\n}\nfunction string_of_bool(b) { return String(b); }\nfunction failwith(msg) { throw new Error(msg); }\nconst not = (b) => !b;\nfunction $caret(a, b) { return a + b; }\nfunction $mod(a, b) { return a % b; }\nfunction __show_value(v) { return _pp(v); }\nfunction copy_continuation(k) { return k; }\nconst ignore = (_) => undefined;\nfunction fst(t) { return t[0]; }\nfunction snd(t) { return t[1]; }\nfunction string_length(s) { return s.length; }\nfunction string_sub(s, start, len) { return s.substring(start, start + len); }\nfunction string_get(s, i) { return s.charCodeAt(i); }\nfunction string_contains(s, sub) { return s.includes(sub); }\nfunction string_concat(sep, parts) {\n  const arr = [];\n  let c = parts;\n  while (c !== null) { arr.push(c._hd); c = c._tl; }\n  return arr.join(sep);\n}\nfunction array_length(a) { return a._arr.length; }\nfunction array_get(a, i) { return a._arr[i]; }\nfunction array_set(a, i, v) { a._arr[i] = v; return undefined; }\nfunction array_make(n, v) { return {_arr: new Array(n).fill(v)}; }\nfunction array_of_list(lst) {\n  const arr = [];\n  let c = lst;\n  while (c !== null) { arr.push(c._hd); c = c._tl; }\n  return {_arr: arr};\n}\nfunction array_to_list(arr) {\n  const a = arr._arr;\n  let result = null;\n  for (let i = a.length - 1; i >= 0; i--) result = {_hd: a[i], _tl: result};\n  return result;\n}\nfunction array_copy(a) { return {_arr: a._arr.slice()}; }\nfunction array_sub(a, start, len) { return {_arr: a._arr.slice(start, start + len)}; }\nfunction __math_pow(a, b) { return Math.pow(a, b); }\nfunction __math_sqrt(x) { return Math.sqrt(x); }\nfunction __math_floor(x) { return Math.floor(x); }\nfunction __math_ceil(x) { return Math.ceil(x); }\nfunction __math_round(x) { return Math.round(x); }\nfunction __math_abs(x) { return Math.abs(x); }\nfunction __math_sin(x) { return Math.sin(x); }\nfunction __math_cos(x) { return Math.cos(x); }\nfunction __math_abs_float(x) { return Math.abs(x); }\nfunction __byte_to_char(b) { return String.fromCharCode(b); }\nfunction __byte_to_int(b) { return b; }\nfunction __byte_of_int(n) { return n & 0xFF; }\nfunction __byte_to_string(b) { return String.fromCharCode(b); }\nfunction __char_to_byte(s) { return s.charCodeAt(0); }\nfunction __rune_to_string(cp) {\n  return String.fromCodePoint(cp);\n}\nfunction __string_to_runes(s) {\n  const cps = Array.from(s).map(c => c.codePointAt(0));\n  let result = null;\n  for (let i = cps.length - 1; i >= 0; i--) result = {_hd: cps[i], _tl: result};\n  return result;\n}\nfunction __rune_to_int(r) { return r; }\nfunction __rune_of_int(n) { return n; }\nfunction __int_to_hex(n) { return n.toString(16); }\nfunction __int_to_oct(n) { return n.toString(8); }\nfunction __int_to_bin(n) { return n.toString(2); }\nfunction __fmt_float(prec, f) { return f.toFixed(prec); }\nfunction __fmt_hex(n) { return n.toString(16); }\nfunction __fmt_hex_upper(n) { return n.toString(16).toUpperCase(); }\nfunction __fmt_oct(n) { return n.toString(8); }\nfunction __fmt_bin(n) { return n.toString(2); }\nfunction __fmt_zero_pad(width, s) { return s.padStart(width, \"0\"); }\nfunction __fmt_pad_left(width, s) { return s.padStart(width, \" \"); }\nfunction __fmt_pad_right(width, s) { return s.padEnd(width, \" \"); }\nfunction __sys_time() { return Date.now() / 1000.0; }\nfunction __sys_exit(code) { if (typeof process !== \"undefined\") process.exit(code); throw new Error(\"exit: \" + code); }\n// --- Module extern stubs ---\n// String module\nfunction String$length(s) { return s.length; }\nfunction String$sub(s, start, len) {\n  if (start < 0 || len < 0 || start + len > s.length)\n    throw new Error(\"String.sub: index out of bounds\");\n  return s.substring(start, start + len);\n}\nfunction String$split(delim, input) {\n  if (delim.length === 0) {\n    let r = null;\n    for (let i = input.length - 1; i >= 0; i--) r = {_hd: input[i], _tl: r};\n    return r;\n  }\n  const parts = input.split(delim);\n  let r = null;\n  for (let i = parts.length - 1; i >= 0; i--) r = {_hd: parts[i], _tl: r};\n  return r;\n}\nfunction String$trim(s) { return s.trim(); }\nfunction String$starts_with(prefix, s) { return s.startsWith(prefix); }\nfunction String$contains(sub, s) { return s.includes(sub); }\nfunction String$replace(old_s, new_s, input) {\n  if (old_s.length === 0) return input;\n  return input.split(old_s).join(new_s);\n}\nfunction String$to_int(s) { const n = parseInt(s,10); return isNaN(n) ? {_tag:0,_name:\"None\"} : {_tag:1,_name:\"Some\",_val:n}; }\nfunction String$to_float(s) { const f = parseFloat(s); return isNaN(f) ? {_tag:0,_name:\"None\"} : {_tag:1,_name:\"Some\",_val:f}; }\nfunction String$uppercase(s) { return s.toUpperCase(); }\nfunction String$lowercase(s) { return s.toLowerCase(); }\nfunction String$get(s, i) {\n  if (i < 0 || i >= s.length) throw new Error(\"String.get: index \" + i + \" out of bounds (length \" + s.length + \")\");\n  return s.charCodeAt(i);\n}\nfunction String$to_bytes(s) {\n  let r = null;\n  for (let i = s.length - 1; i >= 0; i--) r = {_hd: s.charCodeAt(i), _tl: r};\n  return r;\n}\nfunction String$of_bytes(lst) {\n  let r = \"\";\n  let c = lst;\n  while (c !== null) { r += String.fromCharCode(c._hd); c = c._tl; }\n  return r;\n}\nfunction String$to_byte_array(s) {\n  const a = new Array(s.length);\n  for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);\n  return {_arr: a};\n}\nfunction String$of_byte_array(a) {\n  let r = \"\";\n  for (let i = 0; i < a._arr.length; i++) r += String.fromCharCode(a._arr[i]);\n  return r;\n}\nfunction String$to_runes(s) { return __string_to_runes(s); }\nfunction String$of_runes(lst) {\n  let r = \"\";\n  let c = lst;\n  while (c !== null) { r += String.fromCodePoint(c._hd); c = c._tl; }\n  return r;\n}\nfunction String$get_rune(s, n) {\n  const cps = Array.from(s);\n  if (n < 0 || n >= cps.length) throw new Error(\"String.get_rune: index \" + n + \" out of bounds\");\n  return cps[n].codePointAt(0);\n}\nfunction String$of_byte(b) { return String.fromCharCode(b); }\nfunction String$rune_length(s) { return Array.from(s).length; }\nfunction String$make(n, b) {\n  if (n < 0) throw new Error(\"String.make: negative length\");\n  return String.fromCharCode(b).repeat(n);\n}\nfunction String$index_opt(s, b) { const i=s.indexOf(String.fromCharCode(b)); return i<0?{_tag:0,_name:\"None\"}:{_tag:1,_name:\"Some\",_val:i}; }\nfunction String$rindex_opt(s, b) { const i=s.lastIndexOf(String.fromCharCode(b)); return i<0?{_tag:0,_name:\"None\"}:{_tag:1,_name:\"Some\",_val:i}; }\nfunction String$concat(sep, lst) { return string_concat(sep, lst); }\nfunction String$compare(a, b) { return a < b ? -1 : a > b ? 1 : 0; }\n// Array module\nfunction Array$make(n, v) { return array_make(n, v); }\nfunction Array$get(a, i) { return array_get(a, i); }\nfunction Array$set(a, i, v) { return array_set(a, i, v); }\nfunction Array$length(a) { return array_length(a); }\nfunction Array$to_list(a) { return array_to_list(a); }\nfunction Array$of_list(l) { return array_of_list(l); }\nfunction Array$copy(a) { return array_copy(a); }\nfunction Array$sub(a, s, l) { return array_sub(a, s, l); }\n// IO module\nfunction IO$read_file(path) {\n  if (typeof globalThis._jsReadFile === \"function\") return globalThis._jsReadFile(path);\n  if (typeof require !== \"undefined\") return require(\"fs\").readFileSync(path,\"utf8\");\n  throw new Error(\"IO.read_file: not available in this environment\");\n}\nfunction IO$write_file(path, data) {\n  if (typeof require !== \"undefined\") { require(\"fs\").writeFileSync(path,data); return undefined; }\n  throw new Error(\"IO.write_file: not available in this environment\");\n}\nfunction IO$append_file(path, data) {\n  if (typeof require !== \"undefined\") { require(\"fs\").appendFileSync(path,data); return undefined; }\n  throw new Error(\"IO.append_file: not available in this environment\");\n}\nfunction IO$read_line(u) {\n  if (typeof require !== \"undefined\") {\n    const buf = Buffer.alloc(1);\n    let line = \"\";\n    const fd = require(\"fs\").openSync(\"/dev/stdin\", \"rs\");\n    while (true) {\n      const n = require(\"fs\").readSync(fd, buf, 0, 1);\n      if (n === 0 || buf[0] === 10) break;\n      line += String.fromCharCode(buf[0]);\n    }\n    return line;\n  }\n  return \"\";\n}\nfunction IO$file_exists(path) {\n  if (typeof require !== \"undefined\") return require(\"fs\").existsSync(path);\n  return false;\n}\n// Sys module\nfunction Sys$args(u) {\n  if (globalThis._jsSysArgs) {\n    const a = globalThis._jsSysArgs;\n    let r = null;\n    for (let i = a.length - 1; i >= 0; i--) r = {_hd: a[i], _tl: r};\n    return r;\n  }\n  if (typeof process !== \"undefined\") {\n    const a = process.argv.slice(1);\n    let r = null;\n    for (let i = a.length - 1; i >= 0; i--) r = {_hd: a[i], _tl: r};\n    return r;\n  }\n  return null;\n}\nfunction Sys$getenv(name) {\n  if (typeof process !== \"undefined\") {\n    const v = process.env[name];\n    return v === undefined ? {_tag:0,_name:\"None\"} : {_tag:1,_name:\"Some\",_val:v};\n  }\n  return {_tag:0,_name:\"None\"};\n}\nfunction Sys$exit(code) { __sys_exit(code); }\nfunction Sys$time(u) { return __sys_time(); }\n// Runtime module (stubs — eval not supported in compiled JS)\nfunction Runtime$eval(s) { throw new Error(\"Runtime.eval: not supported in compiled JS\"); }\nfunction Runtime$eval_file(s) { throw new Error(\"Runtime.eval_file: not supported in compiled JS\"); }\n// --- Typeclass primitive externs ---\nfunction __num_add_int(a, b) { return a + b; }\nfunction __num_sub_int(a, b) { return a - b; }\nfunction __num_mul_int(a, b) { return a * b; }\nfunction __num_div_int(a, b) { if (b === 0) throw new Error(\"division by zero\"); return (a / b) | 0; }\nfunction __num_neg_int(a) { return -a; }\nfunction __num_add_float(a, b) { return a + b; }\nfunction __num_sub_float(a, b) { return a - b; }\nfunction __num_mul_float(a, b) { return a * b; }\nfunction __num_div_float(a, b) { return a / b; }\nfunction __num_neg_float(a) { return -a; }\nfunction __eq_int(a, b) { return a === b; }\nfunction __neq_int(a, b) { return a !== b; }\nfunction __eq_float(a, b) { return a === b; }\nfunction __neq_float(a, b) { return a !== b; }\nfunction __eq_string(a, b) { return a === b; }\nfunction __neq_string(a, b) { return a !== b; }\nfunction __eq_bool(a, b) { return a === b; }\nfunction __neq_bool(a, b) { return a !== b; }\nfunction __eq_byte(a, b) { return a === b; }\nfunction __neq_byte(a, b) { return a !== b; }\nfunction __eq_rune(a, b) { return a === b; }\nfunction __neq_rune(a, b) { return a !== b; }\nfunction __lt_int(a, b) { return a < b; }\nfunction __gt_int(a, b) { return a > b; }\nfunction __le_int(a, b) { return a <= b; }\nfunction __ge_int(a, b) { return a >= b; }\nfunction __lt_float(a, b) { return a < b; }\nfunction __gt_float(a, b) { return a > b; }\nfunction __le_float(a, b) { return a <= b; }\nfunction __ge_float(a, b) { return a >= b; }\nfunction __lt_string(a, b) { return a < b; }\nfunction __gt_string(a, b) { return a > b; }\nfunction __le_string(a, b) { return a <= b; }\nfunction __ge_string(a, b) { return a >= b; }\nfunction __lt_byte(a, b) { return a < b; }\nfunction __gt_byte(a, b) { return a > b; }\nfunction __le_byte(a, b) { return a <= b; }\nfunction __ge_byte(a, b) { return a >= b; }\nfunction __lt_rune(a, b) { return a < b; }\nfunction __gt_rune(a, b) { return a > b; }\nfunction __le_rune(a, b) { return a <= b; }\nfunction __ge_rune(a, b) { return a >= b; }\nfunction __band_int(a, b) { return a & b; }\nfunction __bor_int(a, b) { return a | b; }\nfunction __bxor_int(a, b) { return a ^ b; }\nfunction __bshl_int(a, b) { return a << b; }\nfunction __bshr_int(a, b) { return a >> b; }\nfunction __bnot_int(a) { return ~a; }\nfunction __show_int(a) { return String(a); }\nfunction __show_float(a) { return string_of_float(a); }\nfunction __show_bool(a) { return String(a); }\nfunction __show_string(a) { return a; }\nfunction __show_unit(_) { return \"()\"; }\nfunction __show_byte(a) { return \"#\" + a.toString(16).padStart(2, \"0\"); }\nfunction __show_rune(a) { return String.fromCodePoint(a); }\nfunction __index_at_array(i, arr) { if (i < 0 || i >= arr.length) throw new Error(\"array index out of bounds: \" + i + \" (length \" + arr.length + \")\"); return arr[i]; }\nfunction __index_at_string(i, s) { if (i < 0 || i >= s.length) throw new Error(\"string index out of bounds: \" + i + \" (length \" + s.length + \")\"); return s.charCodeAt(i); }\n// --- Canvas builtins (browser only) ---\nfunction Canvas$init(w, h) {\n  if (typeof globalThis._canvasInit === \"function\") globalThis._canvasInit(w, h);\n  return undefined;\n}\nfunction Canvas$clear(color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); }\n  return undefined;\n}\nfunction Canvas$fill_rect(x, y, w, h, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }\n  return undefined;\n}\nfunction Canvas$stroke_rect(x, y, w, h, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h); }\n  return undefined;\n}\nfunction Canvas$fill_circle(x, y, r, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 2*Math.PI); ctx.fill(); }\n  return undefined;\n}\nfunction Canvas$draw_text(text, x, y, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.textBaseline = \"top\"; ctx.fillText(text, x, y); }\n  return undefined;\n}\nfunction Canvas$set_font(font) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.font = font; }\n  return undefined;\n}\nfunction Canvas$mouse_x(_) { return globalThis._canvasMouseX || 0; }\nfunction Canvas$mouse_y(_) { return globalThis._canvasMouseY || 0; }\nfunction Canvas$mouse_down(_) { return !!globalThis._canvasMouseDown; }\nfunction Canvas$mouse_clicked(_) { return !!globalThis._canvasMouseClicked; }\nfunction Canvas$key_down(key) { return !!(globalThis._canvasKeysDown && globalThis._canvasKeysDown[key]); }\nfunction Canvas$key_pressed(key) { return !!(globalThis._canvasKeysPressed && globalThis._canvasKeysPressed[key]); }\nfunction Canvas$start_app(init_fn, frame_fn) {\n  globalThis._canvasApp = { initFn: init_fn, frameFn: frame_fn, jsMode: true, call: _call };\n  return undefined;\n}\n"
+
+  pub let emit_exports ctx =
+    emit ctx "var _mml_exports = {\"_result\": _last_val, \"_call\": _call, \"_pp\": _pp";
+    List.iter (fn (mml_name, js_name) -> emit ctx ($", {escape_js_string mml_name}: {js_name}")) (List.rev ctx.top_level_exports);
+    emit ctx "};\n";
+    emit ctx "if (typeof globalThis !== \"undefined\") globalThis._mmlExports = _mml_exports;\n"
+
+  pub let compile_program type_env (program : Typechecker.tprogram) : string =
+    let ctx = create_ctx type_env in
+    emit ctx js_runtime;
+    emit ctx js_builtins;
+    emit ctx "// --- Compiled MiniML ---\n";
+    emit ctx "let _last_val;\n";
+    List.iter (compile_decl ctx) program;
+    emit ctx "if (_last_val !== undefined) println(_pp(_last_val));\n";
+    emit_exports ctx;
+    Buffer.contents ctx.buf
+
+  pub let compile_program_with_stdlib type_env (stdlib_programs : (Types.type_env * Typechecker.tprogram) list) (user_program : Typechecker.tprogram) : string =
+    let ctx = create_ctx type_env in
+    emit ctx js_runtime;
+    emit ctx js_builtins;
+    emit ctx "// --- Stdlib ---\n";
+    List.iter (fn (_te, prog) -> List.iter (fn decl -> let saved_pos = Buffer.length ctx.buf in
+    let saved_indent = ctx.indent in
+    do try
+      compile_decl ctx decl
+    with
+    | codegen_error _ -> 
+      let full = Buffer.contents ctx.buf in
+      Buffer.clear ctx.buf;
+      Buffer.add_string ctx.buf (String.sub full 0 saved_pos);
+      ctx.indent := saved_indent
+    end) prog) stdlib_programs;
+    emit ctx "// --- Compiled MiniML ---\n";
+    emit ctx "let _last_val;\n";
+    let stdlib_exports = ctx.top_level_exports in
+    ctx.top_level_exports := [];
+    List.iter (compile_decl ctx) user_program;
+    emit ctx "if (_last_val !== undefined) println(_pp(_last_val));\n";
+    let user_exports = ctx.top_level_exports in
+    ctx.top_level_exports := user_exports;
+    (stdlib_exports; ());
+    emit_exports ctx;
+    Buffer.contents ctx.buf
+
+end

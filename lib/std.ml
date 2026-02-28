@@ -319,6 +319,11 @@ let register_byte state =
 let register_rune state =
   Interp.eval_setup state Stdlib_sources.rune
 
+(* ---- Map module ---- *)
+
+let register_map state =
+  Interp.eval_setup state Stdlib_sources.map
+
 (* ---- Set module ---- *)
 
 let register_set state =
@@ -571,6 +576,7 @@ let register_all state =
     |> register_result
     |> register_byte
     |> register_rune
+    |> register_map
     |> register_set
     |> register_enum
     |> register_seq

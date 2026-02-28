@@ -8,7 +8,7 @@ module Option =
     | Some x -> f x
     | None -> None
   pub let unwrap (opt: 'a option) : 'a =
-    -- @partial
+    @partial
     match opt with
     | Some x -> x
   pub let unwrap_or (default: 'a) (opt: 'a option) : 'a =

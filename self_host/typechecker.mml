@@ -47,13 +47,14 @@ module Typechecker =
     | TEFoldContinue of texpr
     | TEForLoop of texpr
     | TELetRecAnd of (string * texpr) list * texpr
-    | TEMap of (texpr * texpr) list
     | TEArray of texpr list
     | TEReturn of texpr
 
   and thandle_arm =
     | THReturn of string * texpr
     | THOp of string * string * string * texpr
+    | THOpProvide of string * string * texpr
+    | THOpTry of string * string * texpr
 
 
   pub type tdecl =
@@ -101,6 +102,38 @@ module Typechecker =
     | e -> e
 
 
+  pub let rec is_constructive (expr : Ast.expr) =
+    match strip_loc expr with
+    | Ast.EInt _ | Ast.EFloat _ | Ast.EBool _ | Ast.EString _ | Ast.EByte _ | Ast.ERune _ | Ast.EUnit | Ast.ENil -> true
+    | Ast.EVar _ -> true
+    | Ast.EFun _ -> true
+    | Ast.ECons ((hd, tl)) -> (is_constructive hd) && (is_constructive tl)
+    | Ast.ETuple es | Ast.EList es | Ast.EArray es | Ast.ESet es -> List.forall is_constructive es
+    | Ast.ERecord fields -> List.forall (fn (_, e) -> is_constructive e) fields
+    | Ast.EConstruct ((_, None)) | Ast.EPolyVariant ((_, None)) -> true
+    | Ast.EConstruct ((_, Some e)) | Ast.EPolyVariant ((_, Some e)) -> is_constructive e
+    | Ast.EAnnot ((e, _)) -> is_constructive e
+    | Ast.ELet ((_, e1, e2)) -> (is_constructive e1) && (is_constructive e2)
+    | Ast.EMap entries -> List.forall (fn (k, v) -> (is_constructive k) && (is_constructive v)) entries
+    | Ast.EMapTyped ((_, entries)) -> List.forall (fn (k, v) -> (is_constructive k) && (is_constructive v)) entries
+    | Ast.ECollTyped ((_, entries)) -> List.forall is_constructive entries
+    | Ast.ERecordUpdate ((base, fields)) -> (is_constructive base) && (List.forall (fn (_, e) -> is_constructive e) fields)
+    | _ -> false
+
+
+  pub let is_immediately_linked name (expr : Ast.expr) =
+    match strip_loc expr with
+    | Ast.EVar n -> n = name
+    | Ast.EAnnot ((e, _)) -> 
+      do
+        match strip_loc e with
+        | Ast.EVar n -> n = name
+        | _ -> false
+
+      end
+    | _ -> false
+
+
   pub let try_unify t1 t2 = do try
     Types.unify t1 t2
   with
@@ -127,7 +160,6 @@ module Typechecker =
       | Types.TList t -> max_tgen_in_ty t
       | Types.TRecord row -> max_tgen_in_rrow row
       | Types.TVariant ((_, args)) -> List.fold (fn acc t -> max acc (max_tgen_in_ty t)) (-1) args
-      | Types.TMap ((k, v)) -> max (max_tgen_in_ty k) (max_tgen_in_ty v)
       | Types.TArray t -> max_tgen_in_ty t
       | _ -> (-1)
 
@@ -214,7 +246,6 @@ module Typechecker =
         | Types.TRecord row -> Types.TRecord (go_rrow row)
         | Types.TVariant ((name, args)) -> Types.TVariant (name, List.map go args)
         | Types.TPolyVariant row -> Types.TPolyVariant (go_pv row)
-        | Types.TMap ((k, v)) -> Types.TMap (go k, go v)
         | t -> t
 
     and go_eff =
@@ -257,7 +288,6 @@ module Typechecker =
         | Types.TRecord row -> Types.TRecord (go_rrow row)
         | Types.TVariant ((name, args)) -> Types.TVariant (name, List.map go args)
         | Types.TPolyVariant row -> Types.TPolyVariant (go_pv row)
-        | Types.TMap ((k, v)) -> Types.TMap (go k, go v)
         | t -> t
 
     and go_pv =
@@ -295,7 +325,6 @@ module Typechecker =
         | Types.TRecord row -> Types.TRecord (go_rrow row)
         | Types.TVariant ((name, args)) -> Types.TVariant (name, List.map go args)
         | Types.TPolyVariant row -> Types.TPolyVariant (go_pv row)
-        | Types.TMap ((k, v)) -> Types.TMap (go k, go v)
         | t -> t
 
     and go_eff =
@@ -342,6 +371,9 @@ module Typechecker =
         | Ast.TyName name -> 
           do
             let canonical = resolve_type_alias ctx.type_env name in
+            if List.mem canonical ctx.type_env.hidden_types do
+              error ($"unknown type: {name}")
+            end;
             match List.find (fn (n, _, _) -> n = canonical) ctx.type_env.type_synonyms with
             | Some ((_, 0, ty)) -> freshen_tvars level (freshen_arrow_effects level ty)
             | Some ((_, n, _)) -> error ($"type {name} expects {n} type argument(s)")
@@ -374,10 +406,12 @@ module Typechecker =
         | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
         | Ast.TyList t -> Types.TList (go t)
         | Ast.TyArray t -> Types.TArray (go t)
-        | Ast.TyMap ((k, v)) -> Types.TMap (go k, go v)
         | Ast.TyApp ((args, name)) -> 
           do
             let canonical = resolve_type_alias ctx.type_env name in
+            if List.mem canonical ctx.type_env.hidden_types do
+              error ($"unknown type constructor: {name}")
+            end;
             let arg_tys = List.map go args in
             match List.find (fn (n, _, _) -> n = canonical) ctx.type_env.type_synonyms with
             | Some ((_, np, ty)) -> 
@@ -536,8 +570,6 @@ module Typechecker =
           go t;
           go e
         | TETuple es | TEArray es -> List.iter go es
-        | TEMap kvs -> List.iter (fn (k, v) -> go k;
-        go v) kvs
         | TERecord fields -> List.iter (fn (_, e) -> go e) fields
         | TERecordUpdate ((base, overrides)) -> 
           go base;
@@ -556,8 +588,7 @@ module Typechecker =
           List.iter (fn arm ->
             do
               match arm with
-              | THReturn ((_, e)) -> go e
-              | THOp ((_, _, _, e)) -> go e
+              | THReturn ((_, e)) | THOp ((_, _, _, e)) | THOpProvide ((_, _, e)) | THOpTry ((_, _, e)) -> go e
 
             end) arms
         | TELetRecAnd ((bindings, body)) -> 
@@ -618,15 +649,6 @@ module Typechecker =
           do
             match a with
             | Types.TArray a1 -> build_map s1 a1
-            | _ -> ()
-
-          end
-        | Types.TMap ((sk, sv)) -> 
-          do
-            match a with
-            | Types.TMap ((ak, av)) -> 
-              build_map sk ak;
-              build_map sv av
             | _ -> ()
 
           end
@@ -742,15 +764,6 @@ module Typechecker =
             do
               match a with
               | Types.TArray a1 -> map_tgens s1 a1
-              | _ -> ()
-
-            end
-          | Types.TMap ((sk, sv)) -> 
-            do
-              match a with
-              | Types.TMap ((ak, av)) -> 
-                map_tgens sk ak;
-                map_tgens sv av
               | _ -> ()
 
             end
@@ -894,9 +907,6 @@ module Typechecker =
                   | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
                   | (Types.TList s1, Types.TList r1) -> go s1 r1
                   | (Types.TArray s1, Types.TArray r1) -> go s1 r1
-                  | (Types.TMap ((sk, sv)), Types.TMap ((rk, rv))) -> 
-                    go sk rk;
-                    go sv rv
                   | (Types.TVariant ((_, ss)), Types.TVariant ((_, rs))) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
                   | _ -> ()
                  in
@@ -1038,8 +1048,6 @@ module Typechecker =
           walk locals t;
           walk locals e
         | TETuple es | TEArray es -> List.iter (walk locals) es
-        | TEMap kvs -> List.iter (fn (k, v) -> walk locals k;
-        walk locals v) kvs
         | TERecord fields -> List.iter (fn (_, e) -> walk locals e) fields
         | TERecordUpdate ((base, overrides)) -> 
           walk locals base;
@@ -1058,8 +1066,7 @@ module Typechecker =
           List.iter (fn arm ->
             do
               match arm with
-              | THReturn ((_, e)) -> walk locals e
-              | THOp ((_, _, _, e)) -> walk locals e
+              | THReturn ((_, e)) | THOp ((_, _, _, e)) | THOpProvide ((_, _, e)) | THOpTry ((_, _, e)) -> walk locals e
 
             end) arms
         | TELetRecAnd ((bindings, body)) -> 
@@ -1177,15 +1184,6 @@ module Typechecker =
           | _ -> ()
 
         end
-      | Types.TMap ((sk, sv)) -> 
-        do
-          match a with
-          | Types.TMap ((ak, av)) -> 
-            walk sk ak;
-            walk sv av
-          | _ -> ()
-
-        end
       | Types.TVariant ((_, ss)) -> 
         do
           match a with
@@ -1271,15 +1269,6 @@ module Typechecker =
             | _ -> ()
 
           end
-        | Types.TMap ((sk, sv)) -> 
-          do
-            match a with
-            | Types.TMap ((ak, av)) -> 
-              walk_rmap sk ak;
-              walk_rmap sv av
-            | _ -> ()
-
-          end
         | Types.TVariant ((_, ss)) -> 
           do
             match a with
@@ -1335,6 +1324,44 @@ module Typechecker =
                     do
                       match Hashtbl.get rvar_to_rgen id with
                       | Some rgen_idx -> add_evidence rgen_idx (List.map fst overrides)
+                      | None -> ()
+
+                    end
+                  | _ -> ()
+
+                end
+              | _ -> ()
+
+            end
+          | TEField ((base_e, field_name)) -> 
+            do
+              match Types.repr base_e.ty with
+              | Types.TRecord row -> 
+                do
+                  match get_row_tail row with
+                  | Types.RVar {contents = Types.RUnbound ((id, _))} -> 
+                    do
+                      match Hashtbl.get rvar_to_rgen id with
+                      | Some rgen_idx -> add_evidence rgen_idx (field_name :: [])
+                      | None -> ()
+
+                    end
+                  | _ -> ()
+
+                end
+              | _ -> ()
+
+            end
+          | TEFieldAssign ((base_e, field_name, _)) -> 
+            do
+              match Types.repr base_e.ty with
+              | Types.TRecord row -> 
+                do
+                  match get_row_tail row with
+                  | Types.RVar {contents = Types.RUnbound ((id, _))} -> 
+                    do
+                      match Hashtbl.get rvar_to_rgen id with
+                      | Some rgen_idx -> add_evidence rgen_idx (field_name :: [])
                       | None -> ()
 
                     end
@@ -1401,8 +1428,6 @@ module Typechecker =
           walk t;
           walk e
         | TETuple es | TEArray es -> List.iter walk es
-        | TEMap kvs -> List.iter (fn (k, v) -> walk k;
-        walk v) kvs
         | TERecord fields -> List.iter (fn (_, e) -> walk e) fields
         | TERecordUpdate ((base, overrides)) -> 
           walk base;
@@ -1421,8 +1446,7 @@ module Typechecker =
           List.iter (fn arm ->
             do
               match arm with
-              | THReturn ((_, e)) -> walk e
-              | THOp ((_, _, _, e)) -> walk e
+              | THReturn ((_, e)) | THOp ((_, _, _, e)) | THOpProvide ((_, _, e)) | THOpTry ((_, _, e)) -> walk e
 
             end) arms
         | TELetRecAnd ((bindings, body)) -> 
@@ -1487,15 +1511,6 @@ module Typechecker =
           do
             match a with
             | Types.TArray a1 -> map_tgens s1 a1
-            | _ -> ()
-
-          end
-        | Types.TMap ((sk, sv)) -> 
-          do
-            match a with
-            | Types.TMap ((ak, av)) -> 
-              map_tgens sk ak;
-              map_tgens sv av
             | _ -> ()
 
           end
@@ -1601,9 +1616,6 @@ module Typechecker =
           | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
           | (Types.TList s1, Types.TList r1) -> go s1 r1
           | (Types.TArray s1, Types.TArray r1) -> go s1 r1
-          | (Types.TMap ((sk, sv)), Types.TMap ((rk, rv))) -> 
-            go sk rk;
-            go sv rv
           | (Types.TVariant ((_, ss)), Types.TVariant ((_, rs))) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
           | _ -> ()
          in
@@ -1721,8 +1733,6 @@ module Typechecker =
         walk locals e1;
         walk locals e2
       | TEArray es -> List.iter (walk locals) es
-      | TEMap kvs -> List.iter (fn (k, v) -> walk locals k;
-      walk locals v) kvs
       | TEWhile ((c, b)) -> 
         walk locals c;
         walk locals b
@@ -1736,8 +1746,7 @@ module Typechecker =
         List.iter (fn arm ->
           do
             match arm with
-            | THReturn ((_, body)) -> walk locals body
-            | THOp ((_, _, _, body)) -> walk locals body
+            | THReturn ((_, body)) | THOp ((_, _, _, body)) | THOpProvide ((_, _, body)) | THOpTry ((_, _, body)) -> walk locals body
 
           end) arms
       | TEResume ((e1, e2)) -> 
@@ -1915,7 +1924,19 @@ module Typechecker =
             let e2_te = synth ctx'' level e2 in
             mk (TELetRec (name, stored_scheme, e1_te, e2_te)) e2_te.ty
           end
-        | _ -> error "let rec binding must be a function"
+        | _ when (is_constructive e1) && (not (is_immediately_linked name e1)) -> 
+          if type_params <> [] do
+            error "recursive value binding does not support polymorphic type parameters"
+          end;
+          let val_var = Types.new_tvar (level + 1) in
+          let ctx' = extend_var_mono ctx name val_var in
+          let e1_te = synth ctx' (level + 1) e1 in
+          try_unify val_var e1_te.ty;
+          let scheme = Types.generalize level e1_te.ty in
+          let ctx'' = extend_var ctx name scheme in
+          let e2_te = synth ctx'' level e2 in
+          mk (TELetRec (name, None, e1_te, e2_te)) e2_te.ty
+        | _ -> error "let rec binding must be a function or constructive expression"
 
       end
     | Ast.EIf ((cond, then_e, else_e)) -> 
@@ -2184,17 +2205,10 @@ module Typechecker =
       try_unify k_te.ty (Types.TCont (v_te.ty, call_eff, ret_ty));
       try_subeffect call_eff ctx.current_eff;
       mk (TEResume (k_te, v_te)) ret_ty
-    | Ast.EMap [] -> 
-      let kt = Types.new_tvar level in
-      let vt = Types.new_tvar level in
-      mk (TEMap []) (Types.TMap (kt, vt))
-    | Ast.EMap ((k1, v1) :: rest) -> 
-      let k1_te = synth ctx level k1 in
-      let v1_te = synth ctx level v1 in
-      let rest_tes = List.map (fn (k, v) -> let kt = check ctx level k k1_te.ty in
-      let vt = check ctx level v v1_te.ty in
-      (kt, vt)) rest in
-      mk (TEMap ((k1_te, v1_te) :: rest_tes)) (Types.TMap (k1_te.ty, v1_te.ty))
+    | Ast.EMap pairs -> 
+      let pair_list = Ast.EList (List.map (fn (k, v) -> Ast.ETuple (k :: v :: [])) pairs) in
+      let desugared = Ast.EApp (Ast.EVar "Map.of_list", pair_list) in
+      synth ctx level desugared
     | Ast.EMapTyped ((mod_name, pairs)) -> 
       let pair_list = Ast.EList (List.map (fn (k, v) -> Ast.ETuple (k :: v :: [])) pairs) in
       let desugared = Ast.EApp (Ast.EVar (mod_name ^ ".of_list"), pair_list) in
@@ -2267,6 +2281,16 @@ module Typechecker =
         let typed_bindings = List.map2 (fn (name, _, _, _, _) te -> (name, te)) infos body_tes in
         mk (TELetRecAnd (typed_bindings, body_te)) body_te.ty
       else do
+        let all_names = List.map (fn (name, _, _) -> name) bindings in
+        List.iter (fn (name, _, fn_expr) ->
+          do
+            match strip_loc fn_expr with
+            | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> ()
+            | _ when (is_constructive fn_expr) && (not (is_immediately_linked name fn_expr)) -> ()
+            | _ -> error ($"let rec binding for '{name}' must be a function or constructive expression")
+
+          end) bindings;
+        (all_names; ());
         let fn_vars = List.map (fn (name, _, _) -> (name, Types.new_tvar (level + 1))) bindings in
         let ctx' = List.fold (fn ctx (name, tv) -> extend_var_mono ctx name tv) ctx fn_vars in
         let body_tes = List.map2 (fn (_, _, fn_expr) (_, tv) -> let te = synth ctx' (level + 1) fn_expr in
@@ -2473,7 +2497,7 @@ module Typechecker =
       end
 
   and qualify_ctor_name type_env name info =
-    if String.contains name "." do
+    if String.contains "." name do
       name
     else
       match String.rindex_opt info.ctor_type_name #2e with
@@ -2511,6 +2535,9 @@ module Typechecker =
     | None -> error ($"unknown constructor: {name}")
     | Some info -> 
       do
+        if List.mem info.ctor_type_name ctx.type_env.hidden_ctor_types do
+          error ($"unknown constructor: {name}")
+        end;
         let qname = qualify_ctor_name ctx.type_env name info in
         let num_fresh = info.ctor_num_params + info.ctor_existentials in
         let all_fresh = List.init num_fresh (fn _ -> Types.new_tvar level) in
@@ -2567,6 +2594,8 @@ module Typechecker =
           match arm with
           | THReturn ((n, b)) -> THReturn (n, freeze_texpr b)
           | THOp ((eff, x, k, b)) -> THOp (eff, x, k, freeze_texpr b)
+          | THOpProvide ((eff, x, b)) -> THOpProvide (eff, x, freeze_texpr b)
+          | THOpTry ((eff, x, b)) -> THOpTry (eff, x, freeze_texpr b)
 
         end) arms)
       | TEResume ((k, v)) -> TEResume (freeze_texpr k, freeze_texpr v)
@@ -2576,7 +2605,6 @@ module Typechecker =
       | TEFoldContinue e -> TEFoldContinue (freeze_texpr e)
       | TEForLoop e -> TEForLoop (freeze_texpr e)
       | TELetRecAnd ((binds, body)) -> TELetRecAnd (List.map (fn (n, e) -> (n, freeze_texpr e)) binds, freeze_texpr body)
-      | TEMap pairs -> TEMap (List.map (fn (k, v) -> (freeze_texpr k, freeze_texpr v)) pairs)
       | TEArray es -> TEArray (List.map freeze_texpr es)
       | TEReturn e -> TEReturn (freeze_texpr e)
      in
@@ -2588,6 +2616,9 @@ module Typechecker =
         match List.assoc_opt name ctx.type_env.constructors with
         | None -> error ($"unknown constructor in pattern: {name}")
         | Some info -> 
+          if List.mem info.ctor_type_name ctx.type_env.hidden_ctor_types do
+            error ($"unknown constructor in pattern: {name}")
+          end;
           let num_fresh = info.ctor_num_params + info.ctor_existentials in
           let all_fresh = List.init num_fresh (fn _ -> Types.new_tvar level) in
           let existential_refs = List.filter_map (fn i -> if i >= info.ctor_num_params do
@@ -2633,7 +2664,6 @@ module Typechecker =
       | Types.TTuple ts -> List.fold collect_tvar_refs acc ts
       | Types.TList t -> collect_tvar_refs acc t
       | Types.TArray t -> collect_tvar_refs acc t
-      | Types.TMap ((k, v)) -> collect_tvar_refs (collect_tvar_refs acc k) v
       | Types.TRecord row -> List.fold (fn a (_, t) -> collect_tvar_refs a t) acc (Types.record_row_to_fields row)
       | Types.TVariant ((_, args)) -> List.fold collect_tvar_refs acc args
       | Types.TPolyVariant row -> 
@@ -2836,6 +2866,9 @@ module Typechecker =
         | None -> error ($"unknown constructor in pattern: {name}")
         | Some info -> 
           do
+            if List.mem info.ctor_type_name ctx.type_env.hidden_ctor_types do
+              error ($"unknown constructor in pattern: {name}")
+            end;
             let fresh_args = List.init info.ctor_num_params (fn _ -> Types.new_tvar level) in
             let expected_variant = Types.TVariant (info.ctor_type_name, fresh_args) in
             try_unify ty expected_variant;
@@ -2913,7 +2946,7 @@ module Typechecker =
     | Ast.PatMap entries -> 
       let key_ty = Types.new_tvar level in
       let val_ty = Types.new_tvar level in
-      try_unify ty (Types.TMap (key_ty, val_ty));
+      try_unify ty (Types.TVariant ("map", key_ty :: val_ty :: []));
       List.concat_map (fn (kpat, vpat) -> List.concat (check_pattern ctx level kpat key_ty) (check_pattern ctx level vpat val_ty)) entries
     | Ast.PatPolyVariant ((tag, None)) -> 
       let tail = Types.new_pvvar level in
@@ -3141,7 +3174,6 @@ module Typechecker =
           else
             "#[" ^ ((String.concat "; " (List.init missing_len (fn _ -> "_"))) ^ "]") in
         missing_pat :: []
-      | Types.TMap _ -> "_" :: []
       | Types.TInt | Types.TFloat | Types.TString -> "_" :: []
       | Types.TUnit -> 
         let has_unit = List.exists (fn p ->
@@ -3258,7 +3290,6 @@ module Typechecker =
             | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
             | Ast.TyList t -> Types.TList (go t)
             | Ast.TyArray t -> Types.TArray (go t)
-            | Ast.TyMap ((k, v)) -> Types.TMap (go k, go v)
             | Ast.TyApp ((args, tname)) -> 
               do
                 let canonical = resolve_type_alias pre_ctx.type_env tname in
@@ -3311,7 +3342,6 @@ module Typechecker =
           | Ast.TyArrow ((a, b, _)) -> collect_annot_vars (collect_annot_vars acc a) b
           | Ast.TyTuple ts -> List.fold collect_annot_vars acc ts
           | Ast.TyList t | Ast.TyArray t -> collect_annot_vars acc t
-          | Ast.TyMap ((k, v)) -> collect_annot_vars (collect_annot_vars acc k) v
           | Ast.TyApp ((args, _)) -> List.fold collect_annot_vars acc args
           | Ast.TyRecord ((fs, _)) -> List.fold (fn a (_, t) -> collect_annot_vars a t) acc fs
           | Ast.TyQualified _ | Ast.TyName _ -> acc
@@ -3413,7 +3443,6 @@ module Typechecker =
               | Ast.TyTuple ts -> Types.TTuple (List.map gadt_resolve ts)
               | Ast.TyList t -> Types.TList (gadt_resolve t)
               | Ast.TyArray t -> Types.TArray (gadt_resolve t)
-              | Ast.TyMap ((k, v)) -> Types.TMap (gadt_resolve k, gadt_resolve v)
               | Ast.TyApp ((args, tname)) -> 
                 do
                   let canonical = resolve_type_alias pre_ctx.type_env tname in
@@ -3496,7 +3525,6 @@ module Typechecker =
           | Ast.TyTuple ts -> Types.TTuple (List.map resolve_field ts)
           | Ast.TyList t -> Types.TList (resolve_field t)
           | Ast.TyArray t -> Types.TArray (resolve_field t)
-          | Ast.TyMap ((k, v)) -> Types.TMap (resolve_field k, resolve_field v)
           | Ast.TyApp ((args, n)) -> 
             do
               let arg_tys = List.map resolve_field args in
@@ -3599,7 +3627,6 @@ module Typechecker =
           | Ast.TyTuple ts -> Types.TTuple (List.map resolve_alias ts)
           | Ast.TyList t -> Types.TList (resolve_alias t)
           | Ast.TyArray t -> Types.TArray (resolve_alias t)
-          | Ast.TyMap ((k, v)) -> Types.TMap (resolve_alias k, resolve_alias v)
           | Ast.TyApp ((args, tname)) -> 
             do
               let canonical = resolve_type_alias ctx.type_env tname in
@@ -3642,6 +3669,106 @@ module Typechecker =
        in
       let resolved_ty = resolve_alias annot in
       let type_env = {ctx.type_env with type_synonyms = (type_name, num_params, resolved_ty) :: ctx.type_env.type_synonyms} in
+      {ctx with type_env}
+    | Ast.TDNewtype ((ctor_name, underlying_annot)) -> 
+      let param_tbl = Hashtbl.create 4 in
+      List.iteri (fn i name -> Hashtbl.set param_tbl name i) type_params;
+      let tvars = Hashtbl.create 4 in
+      let rec resolve_nt =
+        fn
+          | Ast.TyVar name -> 
+            do
+              match Hashtbl.get param_tbl name with
+              | Some idx -> Types.TGen idx
+              | None -> 
+                do
+                  match Hashtbl.get tvars name with
+                  | Some tv -> tv
+                  | None -> 
+                    let tv = Types.new_tvar 0 in
+                    Hashtbl.set tvars name tv;
+                    tv
+
+                end
+
+            end
+          | Ast.TyName "int" -> Types.TInt
+          | Ast.TyName "float" -> Types.TFloat
+          | Ast.TyName "bool" -> Types.TBool
+          | Ast.TyName "string" -> Types.TString
+          | Ast.TyName "unit" -> Types.TUnit
+          | Ast.TyName name -> 
+            do
+              let canonical = resolve_type_alias ctx.type_env name in
+              match List.find (fn (n, _, _) -> n = canonical) ctx.type_env.type_synonyms with
+              | Some ((_, 0, ty)) -> ty
+              | Some ((_, n, _)) -> error ($"type {name} expects {n} type argument(s)")
+              | None -> 
+                do
+                  match find_variant_info ctx.type_env name with
+                  | Some ((_, 0, _, _)) -> Types.TVariant (canonical, [])
+                  | Some ((_, n, _, _)) -> error ($"type {name} expects {n} type argument(s)")
+                  | None -> 
+                    if (List.assoc_opt canonical ctx.type_env.records) <> None do
+                      let fields = List.assoc canonical ctx.type_env.records in
+                      if fields = [] do
+                        Types.TRecord Types.RWild
+                      else
+                        Types.TRecord (Types.fields_to_closed_row fields)
+                    else
+                      error ($"unknown type: {name}")
+
+                end
+
+            end
+          | Ast.TyArrow ((a, b, _)) -> Types.TArrow (resolve_nt a, Types.EffEmpty, resolve_nt b)
+          | Ast.TyTuple ts -> Types.TTuple (List.map resolve_nt ts)
+          | Ast.TyList t -> Types.TList (resolve_nt t)
+          | Ast.TyArray t -> Types.TArray (resolve_nt t)
+          | Ast.TyApp ((args, tname)) -> 
+            do
+              let canonical = resolve_type_alias ctx.type_env tname in
+              let arg_tys = List.map resolve_nt args in
+              match List.find (fn (n, _, _) -> n = canonical) ctx.type_env.type_synonyms with
+              | Some ((_, np, ty)) -> 
+                if (List.length arg_tys) <> np do
+                  error ($"type {tname} expects {np} type argument(s), got {List.length arg_tys}")
+                end;
+                subst_tgens arg_tys ty
+              | None -> 
+                do
+                  match find_variant_info ctx.type_env tname with
+                  | Some ((_, np, _, _)) -> 
+                    if (List.length arg_tys) <> np do
+                      error ($"type {tname} expects {np} type argument(s), got {List.length arg_tys}")
+                    end;
+                    Types.TVariant (canonical, arg_tys)
+                  | None -> error ($"unknown type constructor: {tname}")
+
+                end
+
+            end
+          | Ast.TyRecord ((fields, is_open)) -> 
+            let fields = List.map (fn (n, t) -> (n, resolve_nt t)) fields in
+            let fields = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
+            let tail =
+              if is_open do
+                Types.new_rvar 0
+              else
+                Types.REmpty in
+            Types.TRecord (List.fold_right (fn (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
+          | Ast.TyQualified ((path, name)) -> 
+            let qualified = (String.concat "." path) ^ ("." ^ name) in
+            resolve_nt (Ast.TyName qualified)
+          | Ast.TyPolyVariant ((_kind, tags)) -> 
+            let row = List.fold_right (fn (tag, payload_annot) acc -> Types.PVRow (tag, Option.map resolve_nt payload_annot, acc)) tags Types.PVEmpty in
+            Types.TPolyVariant row
+          | Ast.TyWithEffect ((ty, _)) -> resolve_nt ty
+       in
+      let underlying_ty = resolve_nt underlying_annot in
+      let variant_def = (ctor_name, Some underlying_ty) :: [] in
+      let ctor_info = {ctor_type_name = type_name; ctor_arg_ty = Some underlying_ty; ctor_num_params = num_params; ctor_return_ty_params = None; ctor_existentials = 0} in
+      let type_env = {ctx.type_env with variants = (type_name, num_params, variant_def, false) :: ctx.type_env.variants; constructors = (ctor_name, ctor_info) :: ctx.type_env.constructors; newtypes = type_name :: ctx.type_env.newtypes} in
       {ctx with type_env}
 
 
@@ -3736,7 +3863,6 @@ module Typechecker =
         | Ast.TyTuple ts -> Types.TTuple (List.map resolve ts)
         | Ast.TyList t -> Types.TList (resolve t)
         | Ast.TyArray t -> Types.TArray (resolve t)
-        | Ast.TyMap ((k, v)) -> Types.TMap (resolve k, resolve v)
         | Ast.TyApp ((args, name)) -> 
           do
             let canonical = resolve_type_alias ctx.type_env name in
@@ -3840,7 +3966,6 @@ module Typechecker =
         | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
         | Ast.TyList t -> Types.TList (go t)
         | Ast.TyArray t -> Types.TArray (go t)
-        | Ast.TyMap ((k, v)) -> Types.TMap (go k, go v)
         | Ast.TyApp ((args, name)) -> 
           do
             let canonical = resolve_type_alias ctx.type_env name in
@@ -3959,9 +4084,6 @@ module Typechecker =
       | (Ast.TyTuple anns, Types.TTuple tys) when (List.length anns) = (List.length tys) -> List.iter2 walk anns tys
       | (Ast.TyList a, Types.TList t) -> walk a t
       | (Ast.TyArray a, Types.TArray t) -> walk a t
-      | (Ast.TyMap ((k1, v1)), Types.TMap ((k2, v2))) -> 
-        walk k1 k2;
-        walk v1 v2
       | (Ast.TyApp ((args, _)), Types.TVariant ((_, tys))) when (List.length args) = (List.length tys) -> List.iter2 walk args tys
       | (Ast.TyWithEffect ((a, _)), _) -> walk a ty
       | _ -> ()
@@ -4103,9 +4225,6 @@ module Typechecker =
                   | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
                   | (Types.TList s1, Types.TList r1) -> go s1 r1
                   | (Types.TArray s1, Types.TArray r1) -> go s1 r1
-                  | (Types.TMap ((sk, sv)), Types.TMap ((rk, rv))) -> 
-                    go sk rk;
-                    go sv rv
                   | (Types.TVariant ((_, ss)), Types.TVariant ((_, rs))) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
                   | _ -> ()
                  in
@@ -4211,8 +4330,6 @@ module Typechecker =
         walk cond;
         walk body
       | TEForLoop body -> walk body
-      | TEMap kvs -> List.iter (fn (k, v) -> walk k;
-      walk v) kvs
       | TEArray es -> List.iter walk es
       | TEReturn e -> walk e
       | TEBreak e -> walk e
@@ -4352,6 +4469,10 @@ module Typechecker =
         te
       else
         te) type_env minfo.mod_pub_types in
+      let type_env = List.fold (fn te qname -> if List.mem qname te.newtypes do
+        te
+      else
+        {te with newtypes = qname :: te.newtypes}) type_env minfo.mod_newtypes in
       let type_env = List.fold (fn te (sub_name, sub_info) -> if filter sub_name do
         {te with modules = (sub_name, sub_info) :: te.modules}
       else
@@ -4379,7 +4500,6 @@ module Typechecker =
       | Ast.TyTuple ts -> List.concat_map collect_tyvars_annot ts
       | Ast.TyList t | Ast.TyArray t -> collect_tyvars_annot t
       | Ast.TyApp ((args, _)) -> List.concat_map collect_tyvars_annot args
-      | Ast.TyMap ((k, v)) -> List.concat (collect_tyvars_annot k) (collect_tyvars_annot v)
       | Ast.TyRecord ((fs, _)) -> List.concat_map (fn (_, t) -> collect_tyvars_annot t) fs
       | Ast.TyName _ | Ast.TyQualified _ -> []
       | Ast.TyPolyVariant ((_, tags)) -> List.concat_map (fn (_, ty_opt) ->
@@ -4504,8 +4624,10 @@ module Typechecker =
     | (_, Ast.TDVariant ctors) when List.exists (fn (_, _, ret) -> ret <> None) ctors -> error ($"cannot derive {class_name} for GADT type {name}")
     | ("Show", Ast.TDVariant ctors) -> Some (gen_show_variant type_params name ctors)
     | ("Show", Ast.TDRecord fields) -> Some (gen_show_record type_params name fields)
+    | ("Show", Ast.TDNewtype ((ctor_name, underlying))) -> Some (gen_show_variant type_params name ((ctor_name, Some underlying, None) :: []))
     | ("Eq", Ast.TDVariant ctors) -> Some (gen_eq_variant type_params name ctors)
     | ("Eq", Ast.TDRecord fields) -> Some (gen_eq_record type_params name fields)
+    | ("Eq", Ast.TDNewtype ((ctor_name, underlying))) -> Some (gen_eq_variant type_params name ((ctor_name, Some underlying, None) :: []))
     | _ -> None
 
 
@@ -4520,17 +4642,62 @@ module Typechecker =
     let pub_mutable_vars = Ref.create [] in
     let pub_types = Ref.create [] in
     let opaque_types = Ref.create [] in
+    let newtypes = Ref.create [] in
     let pub_constructors = Ref.create [] in
     let all_instances = Ref.create [] in
     let submodules = Ref.create [] in
     let pub_classes = Ref.create [] in
     let typed_decls = Ref.create [] in
-    let sub_ctx = List.fold (fn sub_ctx (item : Ast.module_decl) -> let (sub_ctx', tdecl) = check_module_item sub_ctx level prefix item pub_vars pub_mutable_vars pub_types opaque_types pub_constructors all_instances submodules pub_classes typed_decls in
+    let sub_ctx = List.fold (fn sub_ctx (item : Ast.module_decl) -> let (sub_ctx', tdecl) = check_module_item sub_ctx level prefix item pub_vars pub_mutable_vars pub_types opaque_types newtypes pub_constructors all_instances submodules pub_classes typed_decls in
     Ref.set typed_decls (tdecl :: Ref.get typed_decls);
     sub_ctx') sub_ctx items in
-    let minfo = {mod_name; mod_pub_vars = Ref.get pub_vars; mod_pub_mutable_vars = Ref.get pub_mutable_vars; mod_pub_types = Ref.get pub_types; mod_opaque_types = Ref.get opaque_types; mod_pub_constructors = Ref.get pub_constructors; mod_instances = Ref.get all_instances; mod_submodules = Ref.get submodules; mod_pub_classes = Ref.get pub_classes} in
+    let minfo = {mod_name; mod_pub_vars = Ref.get pub_vars; mod_pub_mutable_vars = Ref.get pub_mutable_vars; mod_pub_types = Ref.get pub_types; mod_opaque_types = Ref.get opaque_types; mod_newtypes = Ref.get newtypes; mod_pub_constructors = Ref.get pub_constructors; mod_instances = Ref.get all_instances; mod_submodules = Ref.get submodules; mod_pub_classes = Ref.get pub_classes} in
     let outer_type_env = {sub_ctx.type_env with modules = (mod_name, minfo) :: ctx.type_env.modules} in
     let outer_type_env = {outer_type_env with type_aliases = ctx.type_env.type_aliases} in
+    let new_variants = List.filter (fn (name, _, _, _) -> not (List.exists (fn (n, _, _, _) -> n = name) ctx.type_env.variants)) sub_ctx.type_env.variants in
+    let new_records = List.filter (fn (name, _) -> not (List.exists (fn (n, _) -> n = name) ctx.type_env.records)) sub_ctx.type_env.records in
+    let new_synonyms = List.filter (fn (name, _, _) -> not (List.exists (fn (n, _, _) -> n = name) ctx.type_env.type_synonyms)) sub_ctx.type_env.type_synonyms in
+    let rec submodule_types (info : Types.module_info) = List.concat info.mod_pub_types (List.concat_map (fn (_, sub) -> submodule_types sub) info.mod_submodules) in
+    let submod_type_names = List.concat_map (fn (_, info) -> submodule_types info) (Ref.get submodules) in
+    let is_exported name = (List.mem name (Ref.get pub_types)) || (List.mem name submod_type_names) in
+    let private_type_names = List.concat (List.filter_map (fn (name, _, _, _) -> if is_exported name do
+      None
+    else
+      Some name) new_variants) (List.concat (List.filter_map (fn (name, _) -> if is_exported name do
+      None
+    else
+      Some name) new_records) (List.filter_map (fn (name, _, _) -> if is_exported name do
+      None
+    else
+      Some name) new_synonyms)) in
+    let outer_type_env = {outer_type_env with hidden_types = List.concat private_type_names outer_type_env.hidden_types} in
+    let hidden_ctor_type_names = List.concat private_type_names (Ref.get opaque_types) in
+    let outer_type_env = {outer_type_env with hidden_ctor_types = List.concat hidden_ctor_type_names outer_type_env.hidden_ctor_types} in
+    let rec collect_type_names acc ty =
+      match Types.repr ty with
+      | Types.TVariant ((name, args)) -> List.fold collect_type_names (name :: acc) args
+      | Types.TArrow ((a, _, b)) -> collect_type_names (collect_type_names acc a) b
+      | Types.TTuple ts -> List.fold collect_type_names acc ts
+      | Types.TList t | Types.TArray t -> collect_type_names acc t
+      | Types.TRecord row -> collect_row_names acc row
+      | _ -> acc
+
+    and collect_row_names acc =
+      fn
+        | Types.RRow ((_, ty, rest)) -> collect_row_names (collect_type_names acc ty) rest
+        | _ -> acc
+     in
+    if private_type_names <> [] do
+      List.iter (fn (short, scheme) -> let type_names = collect_type_names [] scheme.body in
+      List.iter (fn tname -> if List.mem tname private_type_names do
+        let short_tname =
+          match String.rindex_opt tname #2e with
+          | Some i -> String.sub tname (i + 1) (((String.length tname) - i) - 1)
+          | None -> tname
+         in
+        error ($"public binding '{short}' exposes private type '{short_tname}'. Use 'pub type' or 'opaque type' to export it")
+      end) type_names) (Ref.get pub_vars)
+    end;
     let outer_vars = List.fold (fn vars (short, scheme) -> let qualified = prefix ^ short in
     (qualified, scheme) :: vars) ctx.vars (Ref.get pub_vars) in
     let outer_type_env = List.fold (fn te (short, info) -> let qualified = prefix ^ short in
@@ -4542,7 +4709,7 @@ module Typechecker =
     qualified :: mvs) ctx.mutable_vars (Ref.get pub_mutable_vars) in
     let outer_ctx = {ctx with vars = outer_vars; mutable_vars = outer_mutable_vars; type_env = outer_type_env} in
     (outer_ctx, TDModule (mod_name, List.rev (Ref.get typed_decls)))
-  and check_module_item sub_ctx level prefix (item : Ast.module_decl) pub_vars pub_mutable_vars pub_types opaque_types pub_constructors all_instances submodules pub_classes typed_decls =
+  and check_module_item sub_ctx level prefix (item : Ast.module_decl) pub_vars pub_mutable_vars pub_types opaque_types newtypes pub_constructors all_instances submodules pub_classes typed_decls =
     let decl = item.decl in
     match decl with
     | Ast.DModule ((inner_name, inner_items)) -> 
@@ -4568,6 +4735,12 @@ module Typechecker =
       let sub_ctx_with_alias = {sub_ctx with type_env = {sub_ctx.type_env with type_aliases = (name, qualified_name) :: sub_ctx.type_env.type_aliases}} in
       let sub_ctx' = process_type_def sub_ctx_with_alias type_params qualified_name def in
       do
+        match def with
+        | Ast.TDNewtype _ -> Ref.set newtypes (qualified_name :: Ref.get newtypes)
+        | _ -> ()
+
+      end;
+      do
         match item.vis with
         | Ast.Public -> 
           do
@@ -4582,6 +4755,15 @@ module Typechecker =
                 | None -> ()
 
               end) ctors
+            | Ast.TDNewtype ((ctor_name, _)) -> 
+              do
+                match List.assoc_opt ctor_name sub_ctx'.type_env.constructors with
+                | Some info -> 
+                  let qual_info = {info with ctor_type_name = qualified_name} in
+                  Ref.set pub_constructors ((ctor_name, qual_info) :: Ref.get pub_constructors)
+                | None -> ()
+
+              end
             | Ast.TDRecord _ | Ast.TDAlias _ -> ()
 
           end
@@ -4854,6 +5036,7 @@ module Typechecker =
       | Ast.TDVariant _ -> {ctx with type_env = {ctx.type_env with variants = (qualified_name, num_params, [], false) :: ctx.type_env.variants}}
       | Ast.TDRecord _ -> {ctx with type_env = {ctx.type_env with records = (qualified_name, []) :: ctx.type_env.records}}
       | Ast.TDAlias _ -> ctx
+      | Ast.TDNewtype _ -> {ctx with type_env = {ctx.type_env with variants = (qualified_name, num_params, [], false) :: ctx.type_env.variants}}
       ) sub_ctx type_defs in
       let sub_ctx' = List.fold (fn ctx (type_params, name, def, _deriving) ->
         do
@@ -4888,13 +5071,35 @@ module Typechecker =
               | None -> ()
 
             end) ctors
+          | Ast.TDNewtype ((ctor_name, _)) -> 
+            do
+              Ref.set newtypes (qualified_name :: Ref.get newtypes);
+              match List.assoc_opt ctor_name sub_ctx'.type_env.constructors with
+              | Some info -> 
+                let qual_info = {info with ctor_type_name = qualified_name} in
+                Ref.set pub_constructors ((ctor_name, qual_info) :: Ref.get pub_constructors)
+              | None -> ()
+
+            end
           | Ast.TDRecord _ | Ast.TDAlias _ -> ()
 
         end
       | Ast.Opaque -> 
-        Ref.set pub_types (qualified_name :: Ref.get pub_types);
-        Ref.set opaque_types (qualified_name :: Ref.get opaque_types)
-      | Ast.Private -> ()
+        do
+          Ref.set pub_types (qualified_name :: Ref.get pub_types);
+          Ref.set opaque_types (qualified_name :: Ref.get opaque_types);
+          match def with
+          | Ast.TDNewtype _ -> Ref.set newtypes (qualified_name :: Ref.get newtypes)
+          | _ -> ()
+
+        end
+      | Ast.Private -> 
+        do
+          match def with
+          | Ast.TDNewtype _ -> Ref.set newtypes (qualified_name :: Ref.get newtypes)
+          | _ -> ()
+
+        end
       ) type_defs;
       let sub_ctx' = List.fold (fn ctx (type_params, name, def, deriving_) -> List.fold (fn ctx cls ->
         do
@@ -5001,6 +5206,13 @@ module Typechecker =
         let ctx' = extend_var ctx name scheme in
         (ctx', TDLetRec (name, te) :: [])
       else do
+        if params = [] do
+          match strip_loc body with
+          | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> ()
+          | _ when (is_constructive body) && (not (is_immediately_linked name body)) -> ()
+          | _ -> error "let rec binding must be a function or constructive expression"
+
+        end;
         let eff = Types.new_effvar level in
         let eff_ctx = {ctx with current_eff = eff} in
         let full_body = wrap_params_decl params ret_annot body in
@@ -5102,6 +5314,13 @@ module Typechecker =
         let typed_bindings = List.map2 (fn (name, _, _, _, _, _) te -> (name, te)) bindings body_tes in
         (ctx'', TDLetRecAnd typed_bindings :: [])
       else do
+        List.iter (fn (name, _, params, _, _, body) -> if params = [] do
+          match strip_loc body with
+          | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> ()
+          | _ when (is_constructive body) && (not (is_immediately_linked name body)) -> ()
+          | _ -> error ($"let rec binding for '{name}' must be a function or constructive expression")
+
+        end) bindings;
         let fn_vars = List.map (fn (name, _, _, _, _, _) -> (name, Types.new_tvar (level + 1))) bindings in
         let ctx' = List.fold (fn ctx (name, tv) -> extend_var_mono ctx name tv) ctx fn_vars in
         let body_tes = List.map2 (fn (name, _, params, ret_annot, constraints, body) (_, tv) -> (name; ());
@@ -5130,6 +5349,9 @@ module Typechecker =
         let type_env = {ctx.type_env with records = (name, []) :: ctx.type_env.records} in
         {ctx with type_env}
       | Ast.TDAlias _ -> ctx
+      | Ast.TDNewtype _ -> 
+        let type_env = {ctx.type_env with variants = (name, num_params, [], false) :: ctx.type_env.variants} in
+        {ctx with type_env}
       ) ctx type_defs in
       let ctx' = List.fold (fn ctx (type_params, name, def, _deriving) ->
         do
@@ -5214,15 +5436,6 @@ module Typechecker =
         do
           match a with
           | Types.TArray a1 -> walk s1 a1
-          | _ -> ()
-
-        end
-      | Types.TMap ((sk, sv)) -> 
-        do
-          match a with
-          | Types.TMap ((ak, av)) -> 
-            walk sk ak;
-            walk sv av
           | _ -> ()
 
         end
@@ -5469,15 +5682,6 @@ module Typechecker =
           | _ -> ()
 
         end
-      | Types.TMap ((sk, sv)) -> 
-        do
-          match a with
-          | Types.TMap ((ak, av)) -> 
-            walk sk ak;
-            walk sv av
-          | _ -> ()
-
-        end
       | Types.TVariant ((_, ss)) -> 
         do
           match a with
@@ -5615,11 +5819,16 @@ module Typechecker =
           | THOp ((op, p, k, e)) -> 
             let xctx' = {xctx with xf_locals = k :: p :: xctx.xf_locals} in
             THOp (op, p, k, xform_expr xctx' e)
+          | THOpProvide ((op, p, e)) -> 
+            let xctx' = {xctx with xf_locals = p :: xctx.xf_locals} in
+            THOpProvide (op, p, xform_expr xctx' e)
+          | THOpTry ((op, p, e)) -> 
+            let xctx' = {xctx with xf_locals = p :: xctx.xf_locals} in
+            THOpTry (op, p, xform_expr xctx' e)
 
         end) arms in
       mk (TEHandle (xform_expr xctx body, arms')) te.ty
     | TEResume ((k, e)) -> mk (TEResume (xform_expr xctx k, xform_expr xctx e)) te.ty
-    | TEMap pairs -> mk (TEMap (List.map (fn (k, v) -> (xform_expr xctx k, xform_expr xctx v)) pairs)) te.ty
     | TEArray es -> mk (TEArray (List.map (xform_expr xctx) es)) te.ty
     | TEIndex ((base, idx)) -> mk (TEIndex (xform_expr xctx base, xform_expr xctx idx)) te.ty
     | TEBreak e -> mk (TEBreak (xform_expr xctx e)) te.ty
@@ -5681,9 +5890,6 @@ module Typechecker =
               | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
               | (Types.TList s1, Types.TList r1) -> go s1 r1
               | (Types.TArray s1, Types.TArray r1) -> go s1 r1
-              | (Types.TMap ((sk, sv)), Types.TMap ((rk, rv))) -> 
-                go sk rk;
-                go sv rv
               | (Types.TVariant ((_, ss)), Types.TVariant ((_, rs))) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
               | _ -> ()
              in
@@ -5725,42 +5931,90 @@ module Typechecker =
             match constrained_match with
             | Some dp -> mk (TEField (mk (TEVar dp) Types.TUnit, method_name)) te.ty
             | None -> 
-              let type_args = List.init num_params (fn i -> Hashtbl.get found i) in
-              let partial_args = List.map (fn opt ->
-                do
-                  match opt with
-                  | Some ty -> 
-                    do
-                      match Types.repr ty with
-                      | Types.TVar {contents = Types.Unbound _} -> None
-                      | _ -> Some ty
+              do
+                let type_args = List.init num_params (fn i -> Hashtbl.get found i) in
+                let partial_args = List.map (fn opt ->
+                  do
+                    match opt with
+                    | Some ty -> 
+                      do
+                        match Types.repr ty with
+                        | Types.TVar {contents = Types.Unbound _} -> None
+                        | _ -> Some ty
 
-                    end
-                  | None -> None
+                      end
+                    | None -> None
 
-                end) type_args in
-              let has_info = List.exists (fn opt -> opt <> None) partial_args in
-              if has_info do
-                do
-                  let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_def.class_name) && (((List.length inst.inst_tys) = (List.length partial_args)) && (Types.match_partial_inst inst.inst_tys partial_args))) xctx.xf_type_env.instances in
-                  let all_concrete = List.forall (fn opt -> opt <> None) partial_args in
-                  let resolved =
-                    match matching with
+                  end) type_args in
+                let has_info = List.exists (fn opt -> opt <> None) partial_args in
+                if has_info do
+                  do
+                    let matching = List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_def.class_name) && (((List.length inst.inst_tys) = (List.length partial_args)) && (Types.match_partial_inst inst.inst_tys partial_args))) xctx.xf_type_env.instances in
+                    let all_concrete = List.forall (fn opt -> opt <> None) partial_args in
+                    let resolved =
+                      match matching with
+                      | inst :: [] -> Some inst
+                      | _ :: _ -> Types.most_specific_inst matching
+                      | [] -> None
+                     in
+                    let resolve_method_type inst =
+                      match List.find (fn (n, _) -> n = method_name) class_def.class_methods with
+                      | Some ((_, method_ty)) -> 
+                        let concrete_ty = List.fold (fn ty (i, inst_ty) -> let rec subst t =
+                          match t with
+                          | Types.TGen j when j = i -> inst_ty
+                          | Types.TArrow ((a, e, r)) -> Types.TArrow (subst a, e, subst r)
+                          | Types.TTuple ts -> Types.TTuple (List.map subst ts)
+                          | Types.TList t -> Types.TList (subst t)
+                          | Types.TArray t -> Types.TArray (subst t)
+                          | _ -> t
+                         in
+                        subst ty) method_ty (List.mapi (fn i t -> (i, t)) inst.inst_tys) in
+                        concrete_ty
+                      | None -> te.ty
+                     in
+                    match resolved with
+                    | Some inst when (inst.inst_constraints <> []) && all_concrete -> 
+                      let arg_types = List.filter_map (fn x -> x) type_args in
+                      let factory = resolve_factory_dict xctx inst arg_types in
+                      let resolved_ty = resolve_method_type inst in
+                      mk (TEField (factory, method_name)) resolved_ty
+                    | Some inst when inst.inst_constraints = [] -> 
+                      let resolved_ty = resolve_method_type inst in
+                      mk (TEField (mk (TEVar (inst.inst_dict_name)) Types.TUnit, method_name)) resolved_ty
+                    | _ -> te
+
+                  end
+                else do
+                  let singleton_inst =
+                    match List.filter (fn (inst : Types.instance_def) -> (inst.inst_class = class_def.class_name) && (inst.inst_constraints = [])) xctx.xf_type_env.instances with
                     | inst :: [] -> Some inst
-                    | _ :: _ -> Types.most_specific_inst matching
-                    | [] -> None
+                    | _ -> None
                    in
-                  match resolved with
-                  | Some inst when (inst.inst_constraints <> []) && all_concrete -> 
-                    let arg_types = List.filter_map (fn x -> x) type_args in
-                    let factory = resolve_factory_dict xctx inst arg_types in
-                    mk (TEField (factory, method_name)) te.ty
-                  | Some inst when inst.inst_constraints = [] -> mk (TEField (mk (TEVar (inst.inst_dict_name)) Types.TUnit, method_name)) te.ty
-                  | _ -> te
+                  match singleton_inst with
+                  | Some inst -> 
+                    let resolve_method_type inst =
+                      match List.find (fn (n, _) -> n = method_name) class_def.class_methods with
+                      | Some ((_, method_ty)) -> 
+                        let concrete_ty = List.fold (fn ty (i, inst_ty) -> let rec subst t =
+                          match t with
+                          | Types.TGen j when j = i -> inst_ty
+                          | Types.TArrow ((a, e, r)) -> Types.TArrow (subst a, e, subst r)
+                          | Types.TTuple ts -> Types.TTuple (List.map subst ts)
+                          | Types.TList t -> Types.TList (subst t)
+                          | Types.TArray t -> Types.TArray (subst t)
+                          | _ -> t
+                         in
+                        subst ty) method_ty (List.mapi (fn i t -> (i, t)) inst.inst_tys) in
+                        concrete_ty
+                      | None -> te.ty
+                     in
+                    let resolved_ty = resolve_method_type inst in
+                    mk (TEField (mk (TEVar (inst.inst_dict_name)) Types.TUnit, method_name)) resolved_ty
+                  | None -> te
 
                 end
-              else
-                te
+              end
 
           end
         end
@@ -6027,15 +6281,6 @@ module Typechecker =
                     | _ -> ()
 
                   end
-                | Types.TMap ((sk, sv)) -> 
-                  do
-                    match a with
-                    | Types.TMap ((ak, av)) -> 
-                      walk_class sk ak;
-                      walk_class sv av
-                    | _ -> ()
-
-                  end
                 | Types.TVariant ((_, ss)) -> 
                   do
                     match a with
@@ -6101,15 +6346,6 @@ module Typechecker =
                   do
                     match a with
                     | Types.TArray a1 -> walk_inst s1 a1
-                    | _ -> ()
-
-                  end
-                | Types.TMap ((sk, sv)) -> 
-                  do
-                    match a with
-                    | Types.TMap ((ak, av)) -> 
-                      walk_inst sk ak;
-                      walk_inst sv av
                     | _ -> ()
 
                   end
@@ -6252,5 +6488,145 @@ module Typechecker =
     let (ctx, decls) = List.fold (fn (ctx, decls) decl -> let (ctx', tdecls) = check_decl ctx 0 decl in
     (ctx', List.rev_append tdecls decls)) (ctx, []) program in
     (ctx, List.rev decls)
+
+  pub let rec handler_body_has_resume (te : texpr) =
+    match te.expr with
+    | TEResume _ -> true
+    | TELet ((_, _, e1, e2)) | TESeq ((e1, e2)) | TELetMut ((_, e1, e2)) -> (handler_body_has_resume e1) || (handler_body_has_resume e2)
+    | TEIf ((_, e1, e2)) -> (handler_body_has_resume e1) || (handler_body_has_resume e2)
+    | TEMatch ((_, arms, _)) -> List.exists (fn (_, _, body) -> handler_body_has_resume body) arms
+    | TELetRec ((_, _, _, e2)) -> handler_body_has_resume e2
+    | TELetRecAnd ((_, e2)) -> handler_body_has_resume e2
+    | _ -> false
+
+
+  pub let rec handler_body_has_perform (te : texpr) =
+    match te.expr with
+    | TEPerform _ -> true
+    | TEResume _ -> true
+    | TELet ((_, _, e1, e2)) | TESeq ((e1, e2)) | TELetMut ((_, e1, e2)) -> (handler_body_has_perform e1) || (handler_body_has_perform e2)
+    | TEIf ((cond, e1, e2)) -> (handler_body_has_perform cond) || ((handler_body_has_perform e1) || (handler_body_has_perform e2))
+    | TEMatch ((scrut, arms, _)) -> (handler_body_has_perform scrut) || (List.exists (fn (_, g, body) -> (handler_body_has_perform body) || (match g with
+    | Some g -> handler_body_has_perform g
+    | None -> false
+    )) arms)
+    | TELetRec ((_, _, _, e2)) -> handler_body_has_perform e2
+    | TELetRecAnd ((_, e2)) -> handler_body_has_perform e2
+    | TEApp ((fn_, arg)) -> (handler_body_has_perform fn_) || (handler_body_has_perform arg)
+    | TEBinop ((_, e1, e2)) -> (handler_body_has_perform e1) || (handler_body_has_perform e2)
+    | TEUnop ((_, e)) -> handler_body_has_perform e
+    | TECons ((e1, e2)) -> (handler_body_has_perform e1) || (handler_body_has_perform e2)
+    | TETuple es -> List.exists handler_body_has_perform es
+    | TERecord fields -> List.exists (fn (_, e) -> handler_body_has_perform e) fields
+    | _ -> false
+
+
+  pub let rec classify_all_branches_resume (te : texpr) =
+    match te.expr with
+    | TEResume _ -> true
+    | TELet ((_, _, _, e2)) | TELetRec ((_, _, _, e2)) | TELetRecAnd ((_, e2)) | TELetMut ((_, _, e2)) | TESeq ((_, e2)) -> classify_all_branches_resume e2
+    | TEIf ((_, then_e, else_e)) -> (classify_all_branches_resume then_e) && (classify_all_branches_resume else_e)
+    | TEMatch ((_, arms, _)) -> List.forall (fn (_, _, body) -> classify_all_branches_resume body) arms
+    | _ -> false
+
+
+  pub let rec classify_all_resumes_tail (te : texpr) =
+    match te.expr with
+    | TEResume _ -> true
+    | TESeq ((_, e2)) -> classify_all_resumes_tail e2
+    | TELet ((_, _, e1, e2)) -> (not (handler_body_has_perform e1)) && (classify_all_resumes_tail e2)
+    | TELetRec ((_, _, _, e2)) -> classify_all_resumes_tail e2
+    | TELetMut ((_, e1, e2)) -> (not (handler_body_has_perform e1)) && (classify_all_resumes_tail e2)
+    | TEIf ((_, then_e, else_e)) -> (classify_all_resumes_tail then_e) && (classify_all_resumes_tail else_e)
+    | TEMatch ((_, arms, _)) -> List.forall (fn (_, _, body) -> classify_all_resumes_tail body) arms
+    | _ -> true
+
+
+  pub let rec strip_tail_resume (te : texpr) =
+    match te.expr with
+    | TEResume ((_, value)) -> value
+    | TELet ((r, n, e1, e2)) -> {te with expr = TELet (r, n, e1, strip_tail_resume e2)}
+    | TELetRec ((r, n, fn_e, e2)) -> {te with expr = TELetRec (r, n, fn_e, strip_tail_resume e2)}
+    | TELetRecAnd ((binds, e2)) -> {te with expr = TELetRecAnd (binds, strip_tail_resume e2)}
+    | TELetMut ((n, e1, e2)) -> {te with expr = TELetMut (n, e1, strip_tail_resume e2)}
+    | TESeq ((e1, e2)) -> {te with expr = TESeq (e1, strip_tail_resume e2)}
+    | TEIf ((c, t, f)) -> {te with expr = TEIf (c, strip_tail_resume t, strip_tail_resume f)}
+    | TEMatch ((s, arms, p)) -> 
+      let arms' = List.map (fn (pat, g, body) -> (pat, g, strip_tail_resume body)) arms in
+      {te with expr = TEMatch (s, arms', p)}
+    | _ -> te
+
+
+  pub let classify_arm arm =
+    match arm with
+    | THOp ((op, arg, _k, body)) -> 
+      if (not (handler_body_has_resume body)) && (not (handler_body_has_perform body)) do
+        THOpTry (op, arg, body)
+      else if (handler_body_has_resume body) && ((classify_all_branches_resume body) && (classify_all_resumes_tail body)) do
+        THOpProvide (op, arg, strip_tail_resume body)
+      else
+        arm
+    | _ -> arm
+
+
+  pub let rec classify_texpr (te : texpr) : texpr =
+    let mk e = {te with expr = e} in
+    match te.expr with
+    | TEHandle ((body, arms)) -> 
+      let body' = classify_texpr body in
+      let arms' = List.map (fn arm ->
+        do
+          match arm with
+          | THReturn ((n, e)) -> THReturn (n, classify_texpr e)
+          | THOp ((op, arg, k, e)) -> classify_arm (THOp (op, arg, k, classify_texpr e))
+          | THOpProvide ((op, arg, e)) -> THOpProvide (op, arg, classify_texpr e)
+          | THOpTry ((op, arg, e)) -> THOpTry (op, arg, classify_texpr e)
+
+        end) arms in
+      mk (TEHandle (body', arms'))
+    | TELet ((r, n, e1, e2)) -> mk (TELet (r, n, classify_texpr e1, classify_texpr e2))
+    | TELetRec ((r, n, fn_e, body)) -> mk (TELetRec (r, n, classify_texpr fn_e, classify_texpr body))
+    | TELetRecAnd ((binds, body)) -> mk (TELetRecAnd (List.map (fn (n, e) -> (n, classify_texpr e)) binds, classify_texpr body))
+    | TEFun ((p, body, f)) -> mk (TEFun (p, classify_texpr body, f))
+    | TEApp ((fn_, arg)) -> mk (TEApp (classify_texpr fn_, classify_texpr arg))
+    | TEIf ((c, t, f)) -> mk (TEIf (classify_texpr c, classify_texpr t, classify_texpr f))
+    | TESeq ((e1, e2)) -> mk (TESeq (classify_texpr e1, classify_texpr e2))
+    | TELetMut ((n, e1, e2)) -> mk (TELetMut (n, classify_texpr e1, classify_texpr e2))
+    | TEMatch ((scrut, arms, p)) -> mk (TEMatch (classify_texpr scrut, List.map (fn (pat, g, body) -> (pat, Option.map classify_texpr g, classify_texpr body)) arms, p))
+    | TEBinop ((op, e1, e2)) -> mk (TEBinop (op, classify_texpr e1, classify_texpr e2))
+    | TEUnop ((op, e)) -> mk (TEUnop (op, classify_texpr e))
+    | TETuple es -> mk (TETuple (List.map classify_texpr es))
+    | TERecord fields -> mk (TERecord (List.map (fn (n, e) -> (n, classify_texpr e)) fields))
+    | TERecordUpdate ((base, fields)) -> mk (TERecordUpdate (classify_texpr base, List.map (fn (n, e) -> (n, classify_texpr e)) fields))
+    | TERecordUpdateIdx ((base, pairs)) -> mk (TERecordUpdateIdx (classify_texpr base, List.map (fn (i, v) -> (classify_texpr i, classify_texpr v)) pairs))
+    | TEField ((e, f)) -> mk (TEField (classify_texpr e, f))
+    | TEIndex ((e1, e2)) -> mk (TEIndex (classify_texpr e1, classify_texpr e2))
+    | TECons ((e1, e2)) -> mk (TECons (classify_texpr e1, classify_texpr e2))
+    | TEConstruct ((name, arg)) -> mk (TEConstruct (name, Option.map classify_texpr arg))
+    | TEAssign ((n, e)) -> mk (TEAssign (n, classify_texpr e))
+    | TEFieldAssign ((e1, f, e2)) -> mk (TEFieldAssign (classify_texpr e1, f, classify_texpr e2))
+    | TEPerform ((name, e)) -> mk (TEPerform (name, classify_texpr e))
+    | TEResume ((k, v)) -> mk (TEResume (classify_texpr k, classify_texpr v))
+    | TEWhile ((c, b)) -> mk (TEWhile (classify_texpr c, classify_texpr b))
+    | TEBreak e -> mk (TEBreak (classify_texpr e))
+    | TEFoldContinue e -> mk (TEFoldContinue (classify_texpr e))
+    | TEForLoop e -> mk (TEForLoop (classify_texpr e))
+    | TEArray es -> mk (TEArray (List.map classify_texpr es))
+    | TEReturn e -> mk (TEReturn (classify_texpr e))
+    | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> te
+
+
+  pub let rec classify_handlers (program : tprogram) : tprogram = List.map (fn decl ->
+    do
+      match decl with
+      | TDLet ((n, e)) -> TDLet (n, classify_texpr e)
+      | TDLetMut ((n, e)) -> TDLetMut (n, classify_texpr e)
+      | TDLetRec ((n, e)) -> TDLetRec (n, classify_texpr e)
+      | TDExpr e -> TDExpr (classify_texpr e)
+      | TDLetRecAnd binds -> TDLetRecAnd (List.map (fn (n, e) -> (n, classify_texpr e)) binds)
+      | TDModule ((name, decls)) -> TDModule (name, classify_handlers decls)
+      | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDOpen _ -> decl
+
+    end) program
 
 end

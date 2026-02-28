@@ -1,0 +1,11 @@
+class Map 'm 'k 'v where 'm -> 'k 'v =
+  of_list : ('k * 'v) list -> 'm
+  get     : 'k -> 'm -> 'v option
+  set     : 'k -> 'v -> 'm -> 'm
+  has     : 'k -> 'm -> bool
+  remove  : 'k -> 'm -> 'm
+  size    : 'm -> int
+  keys    : 'm -> 'k list
+  values  : 'm -> 'v list
+  to_list : 'm -> ('k * 'v) list
+end

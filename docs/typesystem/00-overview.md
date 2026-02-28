@@ -3,8 +3,9 @@
 ## Introduction
 
 MiniML is a statically-typed functional language with Hindley-Milner type inference,
-Haskell-style type classes, structural record subtyping, algebraic effects, and
-GADTs (generalized algebraic data types). The type system infers types for nearly
+Haskell-style type classes, row-polymorphic records, polymorphic variants, algebraic
+effects, and GADTs (generalized algebraic data types). The type system infers types
+for nearly
 every expression with no annotations required -- you write `let f x = x + 1` and
 the typechecker figures out that `f : int -> int`.
 
@@ -116,15 +117,16 @@ Every type in MiniML is represented as a value of type `ty`:
 ```ocaml
 type ty =
   | TInt | TFloat | TBool | TString | TByte | TRune | TUnit
-  | TArrow of ty * eff * ty     (* function types: a -[eff]-> b *)
-  | TTuple of ty list            (* tuples: a * b * c *)
-  | TList of ty                  (* lists: 'a list *)
-  | TRecord of (string * ty) list  (* records: { x: int; y: string } *)
-  | TVariant of string * ty list   (* named variants: 'a option, 'a list, etc. *)
-  | TMap of ty * ty              (* maps: (k, v) map *)
-  | TArray of ty                 (* arrays: 'a array *)
-  | TVar of tvar ref             (* mutable type variable cell *)
-  | TGen of int                  (* quantified variable in a scheme *)
+  | TArrow of ty * eff * ty        (* function types: a -[eff]-> b *)
+  | TCont of ty * eff * ty         (* continuation types: arg -[eff]-> result *)
+  | TTuple of ty list              (* tuples: a * b * c *)
+  | TList of ty                    (* lists: 'a list *)
+  | TRecord of record_row          (* row-typed records: { x: int; y: string; .. } *)
+  | TVariant of string * ty list   (* named variants: 'a option, ('k,'v) map, etc. *)
+  | TArray of ty                   (* arrays: 'a array *)
+  | TPolyVariant of pvrow          (* polymorphic variants: [`Foo | `Bar of int] *)
+  | TVar of tvar ref               (* mutable type variable cell *)
+  | TGen of int                    (* quantified variable in a scheme *)
 ```
 
 The two most important constructors for understanding inference are `TVar` and
@@ -164,17 +166,20 @@ and what constraints apply:
 
 ```ocaml
 type scheme = {
-  quant: int;                          (* number of quantified type variables *)
-  equant: int;                         (* number of quantified effect variables *)
-  constraints: class_constraint list;  (* typeclass constraints *)
-  body: ty;                            (* body containing TGen 0..quant-1 *)
+  quant: int;                              (* number of quantified type variables *)
+  equant: int;                             (* number of quantified effect variables *)
+  pvquant: int;                            (* number of quantified poly variant row variables *)
+  rquant: int;                             (* number of quantified record row variables *)
+  constraints: class_constraint list;      (* typeclass constraints *)
+  record_evidences: record_evidence list;  (* field offset evidence for row-polymorphic updates *)
+  body: ty;                                (* body containing TGen 0..quant-1 *)
 }
 ```
 
 For example, `map : ('a -> 'b) -> 'a list -> 'b list` is represented as:
 ```
-{ quant = 2; equant = 0;
-  constraints = [];
+{ quant = 2; equant = 0; pvquant = 0; rquant = 0;
+  constraints = []; record_evidences = [];
   body = TArrow(TArrow(TGen 0, EffEmpty, TGen 1), EffEmpty,
          TArrow(TList(TGen 0), EffEmpty, TList(TGen 1))) }
 ```
@@ -206,6 +211,53 @@ is represented as `EffRow("State", [TInt], tail)`.
 Effect row variables allow effect polymorphism -- a higher-order function like `map`
 can accept callbacks with any effects. Effects are fully inferred by default;
 users can optionally write explicit effect annotations using `/` syntax.
+
+### `pvrow` -- Polymorphic Variant Row Types
+
+Polymorphic variants (e.g., `` `Foo ``, `` `Bar 42 ``) use Rémy-style row types,
+similar to effects. A poly variant type is a chain of tags with an optional tail
+variable for extensibility:
+
+```ocaml
+and pvrow =
+  | PVRow of string * ty option * pvrow  (* tag, optional payload type, tail *)
+  | PVVar of pvvar ref                   (* row variable — open variant *)
+  | PVEmpty                              (* closed row — exact type *)
+  | PVGen of int                         (* quantified row variable *)
+
+and pvvar =
+  | PVUnbound of int * int               (* id, level *)
+  | PVLink of pvrow                      (* linked by unification *)
+```
+
+For example, `` [`Foo | `Bar of int] `` is
+`PVRow("Foo", None, PVRow("Bar", Some TInt, PVEmpty))`. An open variant like
+`` [> `Foo] `` uses a `PVVar` tail instead of `PVEmpty`, allowing additional tags.
+
+### `record_row` -- Record Row Types
+
+Records use row types for structural subtyping. Instead of a flat field list,
+record types are represented as a chain of field entries with a row tail:
+
+```ocaml
+and record_row =
+  | RRow of string * ty * record_row  (* field name, type, tail *)
+  | RVar of rvar ref                  (* row variable — "and more fields" *)
+  | REmpty                            (* closed — exact record *)
+  | RGen of int                       (* quantified row variable *)
+  | RWild                             (* recursive self-reference *)
+
+and rvar =
+  | RUnbound of int * int             (* id, level *)
+  | RLink of record_row               (* linked by unification *)
+```
+
+A closed record `{ x: int; y: string }` is
+`RRow("x", TInt, RRow("y", TString, REmpty))`. A function like `let get_x r = r.x`
+infers an open record type `{ x: 'a; .. }` represented as
+`RRow("x", TVar(...), RVar(...))`, where the `RVar` tail allows records with
+additional fields. This enables row-polymorphic record operations -- a function
+that accesses field `x` accepts any record containing that field.
 
 ### `texpr` -- Typed Expressions
 
@@ -262,6 +314,7 @@ type type_env = {
   modules: (string * module_info) list;           (* loaded modules *)
   type_aliases: (string * string) list;           (* short -> qualified name *)
   type_synonyms: (string * int * ty) list;        (* type synonyms *)
+  newtypes: string list;                           (* newtype names for constructor erasure *)
 }
 ```
 
@@ -329,9 +382,10 @@ let rec unify t1 t2 =
 ```
 
 The `occurs_check` prevents infinite types (like `'a = 'a -> 'a`) and adjusts
-levels for correct generalization. The actual implementation also handles structural
-record subtyping -- a record with fields `{x; y; z}` can unify with `{x; y}`, as
-long as the shared fields match.
+levels for correct generalization. The actual implementation also handles row-based
+unification for records and polymorphic variants -- record rows and poly variant
+rows are unified using Rémy-style row rewriting, enabling structural subtyping
+where a record with fields `{x; y; z}` can unify with the open type `{x; y; ..}`.
 
 ### Generalization and Instantiation
 
@@ -361,7 +415,8 @@ let generalize level ty =
     (* ... recurse into other type constructors ... *)
   in
   let body = go ty in
-  { quant = !counter; constraints = []; body }
+  { quant = !counter; equant = ...; pvquant = ...; rquant = ...;
+    constraints = []; record_evidences = []; body }
 ```
 
 **Instantiation** is the reverse: when a polymorphic name is used, each `TGen` is

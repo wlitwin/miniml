@@ -1,0 +1,99 @@
+=== Recursive Value Definitions ===
+
+--- test: cyclic list single element
+let rec l = 1 :: l in
+Enum.take 5 l
+--- expect: [1; 1; 1; 1; 1]
+
+--- test: cyclic list two elements
+let rec l = 1 :: 2 :: l in
+Enum.take 6 l
+--- expect: [1; 2; 1; 2; 1; 2]
+
+--- test: cyclic list three elements
+let rec l = 1 :: 2 :: 3 :: l in
+Enum.take 9 l
+--- expect: [1; 2; 3; 1; 2; 3; 1; 2; 3]
+
+--- test: recursive record infinite type error
+type node = { value: int; next: node option };;
+let rec n = { value = 42; next = Some n };;
+n.value
+--- expect-type-error: infinite type
+
+--- test: recursive variant
+type tree = Leaf | Node of int * tree;;
+let rec t = Node (1, t);;
+match t with
+| Node (_, Node (x, _)) -> x
+| _ -> 0
+--- expect: 1
+
+--- test: recursive variant deeper
+type dtree = DLeaf | DNode of int * dtree;;
+let rec t = DNode (5, t);;
+match t with
+| DNode (_, DNode (_, DNode (x, _))) -> x
+| _ -> 0
+--- expect: 5
+
+--- test: mutual recursive values
+let rec a = 1 :: b
+and b = 2 :: a
+in
+Enum.take 6 a
+--- expect: [1; 2; 1; 2; 1; 2]
+
+--- test: mutual recursive values other direction
+let rec a = 1 :: b
+and b = 2 :: a
+in
+Enum.take 6 b
+--- expect: [2; 1; 2; 1; 2; 1]
+
+--- test: top-level cyclic list
+let rec l = 1 :: 2 :: l;;
+Enum.take 4 l
+--- expect: [1; 2; 1; 2]
+
+--- test: top-level mutual recursive values
+let rec a = 10 :: b
+and b = 20 :: a;;
+Enum.take 6 a
+--- expect: [10; 20; 10; 20; 10; 20]
+
+--- test: head of cyclic list
+let rec l = 99 :: l in
+match l with
+| x :: _ -> x
+| [] -> 0
+--- expect: 99
+
+--- test: tail of cyclic list
+let rec l = 3 :: 4 :: l in
+match l with
+| _ :: rest -> Enum.take 4 rest
+| [] -> []
+--- expect: [4; 3; 4; 3]
+
+--- test: recursive value non-constructive error
+let rec x = x + 1 in x
+--- expect-type-error: constructive
+
+--- test: recursive value self-alias error
+let rec x = x in x
+--- expect-type-error: constructive
+
+--- test: recursive tuple infinite type error
+let rec t = (1, t) in
+match t with
+| (_, (x, _)) -> x
+--- expect-type-error: infinite type
+
+--- test: recursive value with let binding
+let rec l =
+  let x = 42 in
+  x :: l
+in
+Enum.take 3 l
+--- expect: [42; 42; 42]

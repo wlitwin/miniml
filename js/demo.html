@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MiniML Harness Demo</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    h1 {
+      color: #FFCC66;
+      font-size: 1.8rem;
+      margin-bottom: 0.5rem;
+    }
+    .subtitle {
+      color: #8b949e;
+      margin-bottom: 2rem;
+    }
+    .subtitle a { color: #58a6ff; text-decoration: none; }
+    .subtitle a:hover { text-decoration: underline; }
+    .columns {
+      display: flex;
+      gap: 2rem;
+      align-items: flex-start;
+    }
+    .canvas-col {
+      flex: 0 0 auto;
+    }
+    .info-col {
+      flex: 1;
+      min-width: 0;
+    }
+    canvas {
+      border: 2px solid #30363d;
+      border-radius: 8px;
+      cursor: crosshair;
+      display: block;
+    }
+    .controls {
+      margin-top: 1rem;
+      display: flex;
+      gap: 0.5rem;
+    }
+    button {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid #30363d;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: #30363d; border-color: #58a6ff; }
+    button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+    .section {
+      margin-top: 1.5rem;
+    }
+    .section h2 {
+      color: #e6edf3;
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .badge {
+      font-size: 0.7rem;
+      background: #238636;
+      color: #fff;
+      padding: 0.15rem 0.5rem;
+      border-radius: 10px;
+      font-weight: normal;
+    }
+    pre {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      tab-size: 2;
+    }
+    code { font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace; }
+    .kw { color: #ff7b72; }
+    .str { color: #a5d6ff; }
+    .num { color: #79c0ff; }
+    .cmt { color: #8b949e; font-style: italic; }
+    .fn { color: #d2a8ff; }
+    .op { color: #FFCC66; }
+    #status {
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+      color: #8b949e;
+    }
+    .detail {
+      font-size: 0.85rem;
+      color: #8b949e;
+    }
+    .detail code {
+      background: #161b22;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+    @media (max-width: 800px) {
+      .columns { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MiniML Harness Demo</h1>
+    <p class="subtitle">
+      A MiniML canvas app compiled to standalone JS, running via
+      <a href="https://github.com/wlitwin/miniml/js/miniml-harness.js">miniml-harness.js</a>
+      &mdash; view page source to see the integration code
+    </p>
+
+    <div class="columns">
+      <div class="canvas-col">
+        <canvas id="canvas"></canvas>
+        <div class="controls">
+          <button id="stopBtn">Stop</button>
+          <button id="restartBtn">Restart</button>
+        </div>
+        <div id="status"></div>
+      </div>
+
+      <div class="info-col">
+        <div class="section">
+          <h2>How it works</h2>
+          <p class="detail">
+            The MiniML source below is compiled to JavaScript with
+            <code>--emit-js</code>, producing a self-contained
+            <code>canvas_gui_demo.js</code>. The page loads it via
+            <code>MiniML.runCanvas()</code> which sets up the canvas,
+            hooks, and animation loop &mdash; no VM needed.
+          </p>
+        </div>
+
+        <div class="section">
+          <h2>Integration code <span class="badge">~10 lines</span></h2>
+<pre><code><span class="cmt">&lt;!-- Load the harness --&gt;</span>
+<span class="op">&lt;script</span> src=<span class="str">"miniml-harness.js"</span><span class="op">&gt;&lt;/script&gt;</span>
+
+<span class="op">&lt;script&gt;</span>
+<span class="kw">const</span> canvas = document.getElementById(<span class="str">"canvas"</span>);
+<span class="kw">let</span> handle;
+
+<span class="kw">async function</span> <span class="fn">start</span>() {
+  <span class="kw">if</span> (handle) handle.stop();
+  <span class="kw">const</span> js = <span class="kw">await</span> fetch(<span class="str">"canvas_gui_demo.js"</span>)
+    .then(r =&gt; r.text());
+  handle = MiniML.runCanvas(js, canvas);
+}
+
+start();
+<span class="op">&lt;/script&gt;</span></code></pre>
+        </div>
+
+        <div class="section">
+          <h2>MiniML source</h2>
+<pre><code id="sourceCode"></code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="miniml-harness.js"></script>
+  <script>
+    const canvas = document.getElementById("canvas");
+    const statusEl = document.getElementById("status");
+    let handle;
+
+    async function start() {
+      if (handle) handle.stop();
+      statusEl.textContent = "Loading...";
+
+      try {
+        const js = await fetch("canvas_gui_demo.js").then(r => r.text());
+        const t0 = performance.now();
+        handle = MiniML.runCanvas(js, canvas, {
+          onOutput: (s) => console.log("[MiniML]", s)
+        });
+        const elapsed = (performance.now() - t0).toFixed(1);
+        statusEl.textContent = "Running (" + elapsed + "ms startup)";
+
+        document.getElementById("stopBtn").className = "";
+      } catch (e) {
+        statusEl.textContent = "Error: " + e.message;
+        console.error(e);
+      }
+    }
+
+    document.getElementById("stopBtn").addEventListener("click", () => {
+      if (handle) {
+        handle.stop();
+        statusEl.textContent = "Stopped";
+        document.getElementById("stopBtn").className = "active";
+      }
+    });
+
+    document.getElementById("restartBtn").addEventListener("click", start);
+
+    start();
+
+    // Load and display the MiniML source with syntax highlighting
+    const SOURCE = `\
+-- Interactive Canvas Demo
+-- Elm architecture (init/frame), immediate-mode widgets,
+-- records, string interpolation, closures, extern declarations
+
+-- Canvas API declarations (browser-provided externs)
+extern Canvas.init : int -> int -> unit
+extern Canvas.clear : string -> unit
+extern Canvas.fill_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.stroke_rect : float -> float -> float -> float -> string -> unit
+extern Canvas.fill_circle : float -> float -> float -> string -> unit
+extern Canvas.draw_text : string -> float -> float -> string -> unit
+extern Canvas.set_font : string -> unit
+extern Canvas.mouse_x : unit -> float
+extern Canvas.mouse_y : unit -> float
+extern Canvas.mouse_down : unit -> bool
+extern Canvas.mouse_clicked : unit -> bool
+extern Canvas.start_app : (unit -> 'a) -> ('a -> 'a) -> unit
+extern __math_sin : float -> float
+extern __math_cos : float -> float
+
+let pi = 3.14159265
+
+-- Immediate-mode button: draws itself, returns true if clicked
+let button x y w h label =
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  let hover = mx >= x && mx < x + w && my >= y && my < y + h in
+  Canvas.fill_rect x y w h (if hover do "#3D4555" else "#2A3040");
+  if hover do Canvas.stroke_rect x y w h "#FFCC66" end;
+  Canvas.set_font "15px monospace";
+  Canvas.draw_text label (x + 10.0) (y + 8.0)
+    (if hover do "#FFCC66" else "#CCCAC2");
+  hover && Canvas.mouse_clicked ()
+
+-- Application state
+type state = {
+  count: int;
+  frame: int;
+  message: string
+}
+
+-- Initialize canvas and return starting state
+let init () =
+  Canvas.init 500 400;
+  { count = 0; frame = 0; message = "Click the buttons!" }
+
+-- Frame function: draws UI, handles input, returns new state
+let frame s =
+  Canvas.clear "#1a202c";
+
+  -- Title
+  Canvas.set_font "bold 24px sans-serif";
+  Canvas.draw_text "MiniML Canvas Demo" 20.0 16.0 "#FFCC66";
+
+  -- Counter display
+  Canvas.set_font "20px monospace";
+  Canvas.draw_text $"Count: {s.count}" 20.0 60.0 "#E2E8F0";
+
+  -- Buttons (immediate mode: draw + detect click in one call)
+  let inc = button 20.0 92.0 100.0 32.0 "  + Add" in
+  let dec = button 130.0 92.0 100.0 32.0 "  - Sub" in
+  let rst = button 240.0 92.0 100.0 32.0 "  Reset" in
+
+  -- Progress bar
+  let bar_w = 340.0 in
+  let fill = float_of_int (s.count mod 21) / 20.0 in
+  let fill = if fill < 0.0 do 0.0 - fill else fill in
+  Canvas.fill_rect 20.0 140.0 bar_w 16.0 "#2D3748";
+  Canvas.fill_rect 20.0 140.0 (bar_w * fill) 16.0
+    (if s.count >= 0 do "#48BB78" else "#FC8181");
+  Canvas.stroke_rect 20.0 140.0 bar_w 16.0 "#4A5568";
+
+  -- Animated orbiting circles
+  let t = float_of_int s.frame / 60.0 in
+  let cx = 250.0 in
+  let cy = 250.0 in
+  Canvas.stroke_rect (cx - 80.0) (cy - 80.0) 160.0 160.0 "#2D3748";
+  Canvas.fill_circle
+    (cx + 70.0 * __math_cos (t * 2.0))
+    (cy + 70.0 * __math_sin (t * 2.0))
+    8.0 "#63B3ED";
+  Canvas.fill_circle
+    (cx + 70.0 * __math_cos (t * 2.0 + 2.094))
+    (cy + 70.0 * __math_sin (t * 2.0 + 2.094))
+    8.0 "#FC8181";
+  Canvas.fill_circle
+    (cx + 70.0 * __math_cos (t * 2.0 + 4.189))
+    (cy + 70.0 * __math_sin (t * 2.0 + 4.189))
+    8.0 "#68D391";
+
+  -- Mouse cursor follower
+  let mx = Canvas.mouse_x () in
+  let my = Canvas.mouse_y () in
+  Canvas.fill_circle mx my 6.0 "#FFCC66";
+  Canvas.set_font "11px monospace";
+  Canvas.draw_text $"({int_of_float mx}, {int_of_float my})"
+    (mx + 10.0) (my - 14.0) "#A0AEC0";
+
+  -- Status message
+  Canvas.set_font "13px sans-serif";
+  Canvas.draw_text s.message 20.0 375.0 "#718096";
+
+  -- Compute updated state
+  let new_count =
+    if inc do s.count + 1
+    else if dec do s.count - 1
+    else if rst do 0
+    else s.count
+  in
+  let new_msg =
+    if inc do $"Incremented to {new_count}"
+    else if dec do $"Decremented to {new_count}"
+    else if rst do "Reset to zero"
+    else s.message
+  in
+  { count = new_count; frame = s.frame + 1; message = new_msg }
+
+-- Wire it up
+let () = Canvas.start_app init frame`;
+
+    // Single-pass syntax highlighting (avoids regexes matching inside generated HTML)
+    function highlight(src) {
+      const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      const escaped = esc(src);
+      const keywords = new Set(["let","rec","in","if","do","else","end","match","with","type","extern","fun","fn","and","module","pub","open","mut"]);
+      return escaped.replace(/(--[^\n]*)|(\$"[^"]*")|("[^"]*")|\b(\d+\.\d+|\d+)\b|\b(\w+)\b/g,
+        function(m, cmt, istr, str, num, word) {
+          if (cmt) return '<span class="cmt">' + cmt + '</span>';
+          if (istr) return '<span class="str">' + istr + '</span>';
+          if (str) return '<span class="str">' + str + '</span>';
+          if (num) return '<span class="num">' + num + '</span>';
+          if (word && keywords.has(word)) return '<span class="kw">' + word + '</span>';
+          return m;
+        });
+    }
+
+    document.getElementById("sourceCode").innerHTML = highlight(SOURCE);
+  </script>
+</body>
+</html>

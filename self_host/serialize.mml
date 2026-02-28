@@ -101,14 +101,18 @@ module Serialize =
       | LOOP_BREAK -> "[\"LOOP_BREAK\"]"
       | LOOP_CONTINUE n -> $"[\"LOOP_CONTINUE\",{n}]"
       | FOLD_CONTINUE n -> $"[\"FOLD_CONTINUE\",{n}]"
-      | MAKE_MAP n -> $"[\"MAKE_MAP\",{n}]"
       | MAKE_ARRAY n -> $"[\"MAKE_ARRAY\",{n}]"
       | INDEX -> "[\"INDEX\"]"
       | HALT -> "[\"HALT\"]"
       | GET_LOCAL_CALL ((slot, arity)) -> $"[\"GET_LOCAL_CALL\",{slot},{arity}]"
       | GET_LOCAL_TUPLE_GET ((slot, idx)) -> $"[\"GET_LOCAL_TUPLE_GET\",{slot},{idx}]"
       | GET_LOCAL_FIELD ((slot, name)) -> $"[\"GET_LOCAL_FIELD\",{slot},{json_escape_string name}]"
+      | GET_GLOBAL_CALL ((idx, arity)) -> $"[\"GET_GLOBAL_CALL\",{idx},{arity}]"
+      | GET_GLOBAL_FIELD ((idx, name)) -> $"[\"GET_GLOBAL_FIELD\",{idx},{json_escape_string name}]"
       | JUMP_TABLE ((min_tag, targets, default)) -> $"[\"JUMP_TABLE\",{min_tag},[{String.concat "," (Array.to_list (Array.map string_of_int targets))}],{default}]"
+      | CALL_N n -> $"[\"CALL_N\",{n}]"
+      | TAIL_CALL_N n -> $"[\"TAIL_CALL_N\",{n}]"
+      | UPDATE_REC -> "[\"UPDATE_REC\"]"
 
 
   pub let rec serialize_value =
@@ -116,6 +120,12 @@ module Serialize =
       | Bytecode.VInt n -> $"\{\"t\":\"i\",\"v\":{n}\}"
       | VFloat f -> 
         let s = $"{f:.17g}" in
+        let len = String.length s in
+        let s =
+          if (len > 0) && ((String.get s (len - 1)) = #2e) do
+            String.sub s 0 (len - 1)
+          else
+            s in
         $"\{\"t\":\"f\",\"v\":{s}\}"
       | VBool b -> $"\{\"t\":\"b\",\"v\":{b}\}"
       | VString s -> $"\{\"t\":\"s\",\"v\":{json_escape_string s}\}"

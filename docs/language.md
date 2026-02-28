@@ -81,8 +81,10 @@ let rec (type 'a) eval (e : 'a expr) : 'a =
 - **Type inference** — Types are inferred; annotations are optional and only needed for disambiguation
 - **Type classes** — `Num`, `Eq`, `Ord`, `Show`, `Iter`, `Index`, and more, with `where` constraints, `deriving`, and functional dependencies
 - **GADTs** — Generalized Algebraic Data Types for encoding richer invariants in constructors, with polymorphic recursion via `(type 'a)` for type-safe evaluators, formatters, and more
-- **Algebraic effects** — First-class effect handlers with one-shot and multi-shot continuations; effects are tracked in the type system with optional explicit annotations (`/ IO`, `/ pure`) and unhandled effects are caught at compile time
+- **Algebraic effects** — First-class effect handlers (`handle/with`, `try/with`, `provide/with`) with one-shot and multi-shot continuations; effects are tracked in the type system with optional explicit annotations (`/ IO`, `/ pure`) and unhandled effects are caught at compile time
 - **Pattern matching** — Exhaustiveness-checked, with guards, or-patterns, as-patterns, pin patterns (`^x`), and destructuring
+- **Newtypes** — Zero-cost type wrappers (`newtype email = Email of string`) with constructor erasure, `deriving`, and `opaque newtype` in modules for abstract types
+- **Recursive values** — `let rec l = 1 :: 2 :: l` creates true cyclic data structures via pre-allocation and backpatching
 - **Structural records** — Row polymorphism with width subtyping: a function expecting `{x: int; ..}` accepts any record with an `x` field
 - **Polymorphic variants** — Structural variant types (`` `Foo ``, `` `Bar 42 ``) that work without type declarations, with exact, lower-bound, and upper-bound type annotations
 - **Modules** — Namespacing with `pub`/private visibility, opaque types, selective `open`
@@ -101,4 +103,4 @@ let rec (type 'a) eval (e : 'a expr) : 'a =
 - **[Algebraic Effects](effects.md)** — Effect declarations, handlers, continuations, and practical patterns
 - **[Standard Library](stdlib.md)** — Built-in functions, type classes, and module reference
 - **[Module System](modules.md)** — Defining modules, visibility, opaque types, and open declarations
-- **[JavaScript VM](js-vm.md)** — Running MiniML programs in Node.js or the browser
+- **[JavaScript VM & JS Backend](js-vm.md)** — Running MiniML in Node.js or the browser via the bytecode VM or standalone JS compilation

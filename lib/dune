@@ -6,6 +6,9 @@
  (target stdlib_sources.ml)
  (deps
   ../tools/gen_stdlib_sources.ml
+  ../stdlib/classes.mml
+  ../stdlib/option_type.mml
+  ../stdlib/map_class.mml
   ../stdlib/byte.mml
   ../stdlib/rune.mml
   ../stdlib/math.mml
@@ -19,16 +22,19 @@
   ../stdlib/hashtbl.mml
   ../stdlib/ref.mml
   ../stdlib/dynarray.mml
+  ../stdlib/map.mml
   ../stdlib/set.mml
   ../stdlib/enum.mml
   ../stdlib/seq.mml
   ../stdlib/iter.mml
   ../stdlib/show.mml
-  ../stdlib/iter_map.mml
   ../stdlib/compat.mml)
  (action
   (with-stdout-to %{target}
    (run ocaml ../tools/gen_stdlib_sources.ml
+    ../stdlib/classes.mml
+    ../stdlib/option_type.mml
+    ../stdlib/map_class.mml
     ../stdlib/byte.mml
     ../stdlib/rune.mml
     ../stdlib/math.mml
@@ -42,10 +48,10 @@
     ../stdlib/hashtbl.mml
     ../stdlib/ref.mml
     ../stdlib/dynarray.mml
+    ../stdlib/map.mml
     ../stdlib/set.mml
     ../stdlib/enum.mml
     ../stdlib/seq.mml
     ../stdlib/iter.mml
     ../stdlib/show.mml
-    ../stdlib/iter_map.mml
     ../stdlib/compat.mml))))

@@ -98,6 +98,7 @@ let keywords = [
   "match", Token.MATCH;
   "with", Token.WITH;
   "type", Token.TYPE;
+  "newtype", Token.NEWTYPE;
   "of", Token.OF;
   "not", Token.NOT;
   "mod", Token.MOD;
@@ -110,6 +111,7 @@ let keywords = [
   "perform", Token.PERFORM;
   "handle", Token.HANDLE;
   "try", Token.TRY;
+  "provide", Token.PROVIDE;
   "resume", Token.RESUME;
   "return", Token.RETURN;
   "continue", Token.CONTINUE;
@@ -204,17 +206,16 @@ let dedent_raw s =
     | last :: rest when String.trim last = "" -> List.rev rest
     | _ -> lines
   in
-  (* Find indent of first non-blank line *)
+  (* Find minimum indent across all non-blank lines *)
   let indent = List.fold_left (fun acc line ->
-    match acc with
-    | Some _ -> acc
-    | None ->
-      if String.trim line = "" then None
-      else
-        let len = String.length line in
-        let i = ref 0 in
-        while !i < len && (line.[!i] = ' ' || line.[!i] = '\t') do incr i done;
-        Some !i
+    if String.trim line = "" then acc
+    else
+      let len = String.length line in
+      let i = ref 0 in
+      while !i < len && (line.[!i] = ' ' || line.[!i] = '\t') do incr i done;
+      match acc with
+      | None -> Some !i
+      | Some prev -> Some (min prev !i)
   ) None lines in
   let indent = match indent with Some n -> n | None -> 0 in
   (* Remove indent from each line *)
@@ -435,15 +436,10 @@ let rec next_token l =
       if not (at_end l) && peek l = '-' then begin
         (* Single-line comment *)
         ignore (advance l);
-        let buf = Buffer.create 32 in
         while not (at_end l) && peek l <> '\n' do
-          Buffer.add_char buf (advance l)
+          ignore (advance l)
         done;
-        let content = String.trim (Buffer.contents buf) in
-        if content = "@partial" then
-          make_token l PARTIAL loc
-        else
-          next_token l
+        next_token l
       end else if not (at_end l) && peek l = '>' then begin
         ignore (advance l);
         make_token l ARROW loc

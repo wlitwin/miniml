@@ -85,7 +85,7 @@ with
 
 ## Performing Effects
 
-Use `perform` to invoke an effect operation. The operation name and its argument are required:
+Use `perform` to invoke an effect operation:
 
 ```
 perform yield 42
@@ -93,6 +93,13 @@ perform yield 42
 
 ```
 let x = perform get () in
+x + 1
+```
+
+When an effect operation takes `unit`, the argument can be elided:
+
+```
+let x = perform get in    -- shorthand for perform get ()
 x + 1
 ```
 
@@ -123,6 +130,13 @@ with
 | return x -> <transform x>
 | op1 arg k -> <handle op1>
 | op2 arg k -> <handle op2>
+```
+
+The argument in an operation arm can be elided when not needed -- the parser inserts a wildcard `_`. If only one name appears before the arrow, it is the continuation:
+
+```
+| op k -> <handle op>           -- shorthand for  | op _ k -> <handle op>
+| op -> <handle op>             -- shorthand for  | op _ __k -> <handle op>
 ```
 
 ### A Complete Example
@@ -203,6 +217,13 @@ Key differences from `handle/with`:
 - There is no continuation parameter `k` -- the handler cannot resume the computation.
 - The handler arms only receive the operation argument.
 
+The argument in an arm can be elided when not needed -- the parser inserts a wildcard `_`:
+
+```
+try body with
+| raise -> "error"              -- shorthand for  | raise _ -> "error"
+```
+
 ### Exception-Style Error Handling
 
 ```
@@ -253,6 +274,100 @@ with
 ```
 
 Result: `"invalid: bad data"`.
+
+## Dependency Injection with `provide/with`
+
+MiniML provides a `provide/with` syntax for the common case where a handler always resumes with a value — like supplying configuration, context, or capabilities. The handler arm's result is automatically passed back to the performer; there is no continuation parameter.
+
+```
+provide <body> with
+| op1 arg -> <value>
+| op2 arg -> <value>
+```
+
+Key differences from `handle/with`:
+
+- There is no `return` arm — the body's return value passes through unchanged.
+- There is no continuation parameter `k` — the handler always resumes with the arm's result.
+- The handler cannot abandon the computation — it always continues.
+
+The argument in an arm can be elided when not needed:
+
+```
+provide body with
+| get_name -> "world"              -- shorthand for  | get_name _ -> "world"
+```
+
+### Configuration / Context
+
+```
+effect Config =
+  db_host : unit -> string
+  db_port : unit -> int
+end
+
+let connect () =
+  let host = perform db_host () in
+  let port = perform db_port () in
+  $"{host}:{port}"
+
+-- Provide development config
+provide connect () with
+| db_host () -> "localhost"
+| db_port () -> 5432
+-- Result: "localhost:5432"
+
+-- Same code, production config
+provide connect () with
+| db_host () -> "db.prod.example.com"
+| db_port () -> 5432
+-- Result: "db.prod.example.com:5432"
+```
+
+The body doesn't know where the values come from — `provide` acts as a pure dependency injection point. Different callers can supply different configurations without changing the computation.
+
+### Desugaring
+
+`provide/with` desugars to `handle/with` with an implicit `return x -> x` arm and each operation arm wrapping its result in `resume k`:
+
+```
+-- This:
+provide body with
+| op arg -> value
+
+-- Desugars to:
+handle body with
+| return x -> x
+| op arg k -> resume k value
+```
+
+### Comparison of Handler Forms
+
+| Form | Resume? | Continuation? | Use case |
+|------|---------|---------------|----------|
+| `handle/with` | Controlled by handler | Explicit `k` parameter | Coroutines, generators, backtracking |
+| `provide/with` | Always (once) | Implicit — arm result is resumed | Dependency injection, config, context |
+| `try/with` | Never | None | Exceptions, early return, abort |
+
+### Nested `provide`
+
+Handlers nest naturally — inner handlers shadow outer ones:
+
+```
+effect Theme =
+  color : unit -> string
+end
+
+provide
+  let outer = perform color () in
+  let inner = provide perform color () with
+    | color () -> "red"
+  in
+  (outer, inner)
+with
+| color () -> "blue"
+-- Result: ("blue", "red")
+```
 
 ## Continuing with a Value
 

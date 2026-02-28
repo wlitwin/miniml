@@ -79,6 +79,27 @@ Token.Wrap 42               -- type error: constructor is hidden
 
 The module controls all creation and access, enforcing any invariants it needs.
 
+### Opaque Newtypes
+
+The `opaque` keyword also works with newtypes. This hides the constructor
+while keeping the type visible — useful for zero-cost abstract types:
+
+```
+module UserId =
+  opaque newtype t = UserId of int
+  pub let make n = UserId n
+  pub let to_int (UserId n) = n
+  pub let compare (UserId a) (UserId b) = a - b
+end
+
+UserId.make 42              -- works
+UserId.to_int (UserId.make 42)  -- 42
+UserId.UserId 42            -- type error: constructor is hidden
+```
+
+Since newtypes have zero runtime overhead (the constructor is erased), opaque
+newtypes give you type-safe abstraction with no performance cost.
+
 ### Instances Are Always Public
 
 Type class instances defined inside a module are always exported, regardless of whether they have `pub`. This matches the behavior you would expect -- instances are global and incoherent if hidden:

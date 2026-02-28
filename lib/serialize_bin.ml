@@ -197,7 +197,6 @@ let write_opcode buf st = function
   | Bytecode.LOOP_BREAK -> write_u8 buf 68
   | Bytecode.LOOP_CONTINUE n -> write_u8 buf 69; write_u32 buf n
   | Bytecode.FOLD_CONTINUE n -> write_u8 buf 70; write_u32 buf n
-  | Bytecode.MAKE_MAP n -> write_u8 buf 71; write_u32 buf n
   | Bytecode.MAKE_ARRAY n -> write_u8 buf 72; write_u32 buf n
   | Bytecode.INDEX -> write_u8 buf 73
   | Bytecode.HALT -> write_u8 buf 74
@@ -213,12 +212,19 @@ let write_opcode buf st = function
     write_u8 buf 78; write_u32 buf slot; write_u32 buf idx
   | Bytecode.GET_LOCAL_FIELD (slot, name) ->
     write_u8 buf 79; write_u32 buf slot; write_u32 buf (strtab_intern st name)
+  | Bytecode.GET_GLOBAL_CALL (idx, arity) ->
+    write_u8 buf 81; write_u32 buf idx; write_u32 buf arity
+  | Bytecode.GET_GLOBAL_FIELD (idx, name) ->
+    write_u8 buf 82; write_u32 buf idx; write_u32 buf (strtab_intern st name)
   | Bytecode.JUMP_TABLE (min_tag, targets, default) ->
     write_u8 buf 80;
     write_u32 buf min_tag;
     write_u32 buf (Array.length targets);
     Array.iter (fun t -> write_u32 buf t) targets;
     write_u32 buf default
+  | Bytecode.CALL_N n -> write_u8 buf 83; write_u32 buf n
+  | Bytecode.TAIL_CALL_N n -> write_u8 buf 84; write_u32 buf n
+  | Bytecode.UPDATE_REC -> write_u8 buf 85
 
 let rec write_value buf st = function
   | Bytecode.VInt n -> write_u8 buf 0; write_i64 buf n

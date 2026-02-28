@@ -73,20 +73,7 @@ reg("string_of_float", 1, (args) => {
 reg("string_of_bool", 1, (args) =>
   vm.vstring(vm.asBool(args[0]) ? "true" : "false"));
 
-// Map pattern matching helpers
-reg("__map_has", 2, (args) => {
-  const pairs = vm.asMap(args[0]);
-  const key = args[1];
-  return vm.vbool(pairs.some(([k]) => vm.valuesEqual(k, key)));
-});
-
-reg("__map_get", 2, (args) => {
-  const pairs = vm.asMap(args[0]);
-  const key = args[1];
-  const entry = pairs.find(([k]) => vm.valuesEqual(k, key));
-  if (!entry) vm.error("key not found in map");
-  return entry[1];
-});
+// Map pattern matching now uses Map.has/Map.get from stdlib
 
 // Array operations
 reg("array_get", 2, (args) => {
@@ -202,9 +189,9 @@ reg("copy_continuation", 1, (args) => {
 // Show value (polymorphic)
 reg("__show_value", 1, (args) => vm.vstring(vm.ppValue(args[0])));
 
-// --- Index class instances ---
+// --- Typeclass primitive externs (referenced by stdlib/classes.mml) ---
 
-reg("index_at_array", 2, (args) => {
+reg("__index_at_array", 2, (args) => {
   const idx = vm.asInt(args[0]);
   const arr = vm.asArray(args[1]);
   if (idx < 0 || idx >= arr.length)
@@ -212,7 +199,7 @@ reg("index_at_array", 2, (args) => {
   return arr[idx];
 });
 
-reg("index_at_string", 2, (args) => {
+reg("__index_at_string", 2, (args) => {
   const idx = vm.asInt(args[0]);
   const s = vm.asString(args[1]);
   if (idx < 0 || idx >= s.length)
@@ -220,209 +207,122 @@ reg("index_at_string", 2, (args) => {
   return vm.vbyte(s.charCodeAt(idx));
 });
 
-reg("index_at_map", 2, (args) => {
-  const key = args[0];
-  const pairs = vm.asMap(args[1]);
-  for (const [k, v] of pairs) {
-    if (vm.valuesEqual(k, key)) return v;
-  }
-  vm.error(`key not found: ${vm.ppValue(key)}`);
-});
-
-// --- Num class instances ---
-
-reg("num_add_int", 2, (args) =>
+reg("__num_add_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) + vm.asInt(args[1])));
-reg("num_sub_int", 2, (args) =>
+reg("__num_sub_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) - vm.asInt(args[1])));
-reg("num_mul_int", 2, (args) =>
+reg("__num_mul_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) * vm.asInt(args[1])));
-reg("num_div_int", 2, (args) => {
+reg("__num_div_int", 2, (args) => {
   const b = vm.asInt(args[1]);
   if (b === 0) vm.error("division by zero");
   return vm.vint(Math.trunc(vm.asInt(args[0]) / b));
 });
-reg("num_neg_int", 1, (args) =>
+reg("__num_neg_int", 1, (args) =>
   vm.vint(-vm.asInt(args[0])));
 
-reg("num_add_float", 2, (args) =>
+reg("__num_add_float", 2, (args) =>
   vm.vfloat(vm.asFloat(args[0]) + vm.asFloat(args[1])));
-reg("num_sub_float", 2, (args) =>
+reg("__num_sub_float", 2, (args) =>
   vm.vfloat(vm.asFloat(args[0]) - vm.asFloat(args[1])));
-reg("num_mul_float", 2, (args) =>
+reg("__num_mul_float", 2, (args) =>
   vm.vfloat(vm.asFloat(args[0]) * vm.asFloat(args[1])));
-reg("num_div_float", 2, (args) =>
+reg("__num_div_float", 2, (args) =>
   vm.vfloat(vm.asFloat(args[0]) / vm.asFloat(args[1])));
-reg("num_neg_float", 1, (args) =>
+reg("__num_neg_float", 1, (args) =>
   vm.vfloat(-vm.asFloat(args[0])));
 
-// --- Eq class instances ---
-
-reg("eq_int", 2, (args) =>
+reg("__eq_int", 2, (args) =>
   vm.vbool(vm.asInt(args[0]) === vm.asInt(args[1])));
-reg("neq_int", 2, (args) =>
+reg("__neq_int", 2, (args) =>
   vm.vbool(vm.asInt(args[0]) !== vm.asInt(args[1])));
-
-reg("eq_float", 2, (args) =>
+reg("__eq_float", 2, (args) =>
   vm.vbool(vm.asFloat(args[0]) === vm.asFloat(args[1])));
-reg("neq_float", 2, (args) =>
+reg("__neq_float", 2, (args) =>
   vm.vbool(vm.asFloat(args[0]) !== vm.asFloat(args[1])));
-
-reg("eq_string", 2, (args) =>
+reg("__eq_string", 2, (args) =>
   vm.vbool(vm.asString(args[0]) === vm.asString(args[1])));
-reg("neq_string", 2, (args) =>
+reg("__neq_string", 2, (args) =>
   vm.vbool(vm.asString(args[0]) !== vm.asString(args[1])));
-
-reg("eq_bool", 2, (args) =>
+reg("__eq_bool", 2, (args) =>
   vm.vbool(vm.asBool(args[0]) === vm.asBool(args[1])));
-reg("neq_bool", 2, (args) =>
+reg("__neq_bool", 2, (args) =>
   vm.vbool(vm.asBool(args[0]) !== vm.asBool(args[1])));
-
-reg("eq_byte", 2, (args) =>
+reg("__eq_byte", 2, (args) =>
   vm.vbool(vm.asByte(args[0]) === vm.asByte(args[1])));
-reg("neq_byte", 2, (args) =>
+reg("__neq_byte", 2, (args) =>
   vm.vbool(vm.asByte(args[0]) !== vm.asByte(args[1])));
-
-reg("eq_rune", 2, (args) =>
+reg("__eq_rune", 2, (args) =>
   vm.vbool(vm.asRune(args[0]) === vm.asRune(args[1])));
-reg("neq_rune", 2, (args) =>
+reg("__neq_rune", 2, (args) =>
   vm.vbool(vm.asRune(args[0]) !== vm.asRune(args[1])));
 
-// --- Ord class instances ---
-
-reg("lt_int", 2, (args) =>
+reg("__lt_int", 2, (args) =>
   vm.vbool(vm.asInt(args[0]) < vm.asInt(args[1])));
-reg("gt_int", 2, (args) =>
+reg("__gt_int", 2, (args) =>
   vm.vbool(vm.asInt(args[0]) > vm.asInt(args[1])));
-reg("le_int", 2, (args) =>
+reg("__le_int", 2, (args) =>
   vm.vbool(vm.asInt(args[0]) <= vm.asInt(args[1])));
-reg("ge_int", 2, (args) =>
+reg("__ge_int", 2, (args) =>
   vm.vbool(vm.asInt(args[0]) >= vm.asInt(args[1])));
-
-reg("lt_float", 2, (args) =>
+reg("__lt_float", 2, (args) =>
   vm.vbool(vm.asFloat(args[0]) < vm.asFloat(args[1])));
-reg("gt_float", 2, (args) =>
+reg("__gt_float", 2, (args) =>
   vm.vbool(vm.asFloat(args[0]) > vm.asFloat(args[1])));
-reg("le_float", 2, (args) =>
+reg("__le_float", 2, (args) =>
   vm.vbool(vm.asFloat(args[0]) <= vm.asFloat(args[1])));
-reg("ge_float", 2, (args) =>
+reg("__ge_float", 2, (args) =>
   vm.vbool(vm.asFloat(args[0]) >= vm.asFloat(args[1])));
-
-reg("lt_string", 2, (args) =>
+reg("__lt_string", 2, (args) =>
   vm.vbool(vm.asString(args[0]) < vm.asString(args[1])));
-reg("gt_string", 2, (args) =>
+reg("__gt_string", 2, (args) =>
   vm.vbool(vm.asString(args[0]) > vm.asString(args[1])));
-reg("le_string", 2, (args) =>
+reg("__le_string", 2, (args) =>
   vm.vbool(vm.asString(args[0]) <= vm.asString(args[1])));
-reg("ge_string", 2, (args) =>
+reg("__ge_string", 2, (args) =>
   vm.vbool(vm.asString(args[0]) >= vm.asString(args[1])));
-
-reg("lt_byte", 2, (args) =>
+reg("__lt_byte", 2, (args) =>
   vm.vbool(vm.asByte(args[0]) < vm.asByte(args[1])));
-reg("gt_byte", 2, (args) =>
+reg("__gt_byte", 2, (args) =>
   vm.vbool(vm.asByte(args[0]) > vm.asByte(args[1])));
-reg("le_byte", 2, (args) =>
+reg("__le_byte", 2, (args) =>
   vm.vbool(vm.asByte(args[0]) <= vm.asByte(args[1])));
-reg("ge_byte", 2, (args) =>
+reg("__ge_byte", 2, (args) =>
   vm.vbool(vm.asByte(args[0]) >= vm.asByte(args[1])));
-
-reg("lt_rune", 2, (args) =>
+reg("__lt_rune", 2, (args) =>
   vm.vbool(vm.asRune(args[0]) < vm.asRune(args[1])));
-reg("gt_rune", 2, (args) =>
+reg("__gt_rune", 2, (args) =>
   vm.vbool(vm.asRune(args[0]) > vm.asRune(args[1])));
-reg("le_rune", 2, (args) =>
+reg("__le_rune", 2, (args) =>
   vm.vbool(vm.asRune(args[0]) <= vm.asRune(args[1])));
-reg("ge_rune", 2, (args) =>
+reg("__ge_rune", 2, (args) =>
   vm.vbool(vm.asRune(args[0]) >= vm.asRune(args[1])));
 
-// --- Bitwise class instances ---
-
-reg("band_int", 2, (args) =>
+reg("__band_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) & vm.asInt(args[1])));
-reg("bor_int", 2, (args) =>
+reg("__bor_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) | vm.asInt(args[1])));
-reg("bxor_int", 2, (args) =>
+reg("__bxor_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) ^ vm.asInt(args[1])));
-reg("bshl_int", 2, (args) =>
+reg("__bshl_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) << vm.asInt(args[1])));
-reg("bshr_int", 2, (args) =>
+reg("__bshr_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) >>> vm.asInt(args[1])));
-reg("bnot_int", 1, (args) =>
+reg("__bnot_int", 1, (args) =>
   vm.vint(~vm.asInt(args[0])));
 
-// --- Show class instances ---
-
-reg("show_int", 1, (args) =>
+reg("__show_int", 1, (args) =>
   vm.vstring(String(vm.asInt(args[0]))));
-
-reg("show_float", 1, (args) =>
+reg("__show_float", 1, (args) =>
   vm.vstring(formatFloat(vm.asFloat(args[0]))));
-
-reg("show_bool", 1, (args) =>
+reg("__show_bool", 1, (args) =>
   vm.vstring(vm.asBool(args[0]) ? "true" : "false"));
-
-reg("show_string", 1, (args) => args[0]);
-
-reg("show_unit", 1, () => vm.vstring("()"));
-
-reg("show_byte", 1, (args) =>
+reg("__show_string", 1, (args) => args[0]);
+reg("__show_unit", 1, () => vm.vstring("()"));
+reg("__show_byte", 1, (args) =>
   vm.vstring("#" + vm.asByte(args[0]).toString(16).padStart(2, "0")));
-
-reg("show_rune", 1, (args) =>
+reg("__show_rune", 1, (args) =>
   vm.vstring(vm.ppValue(args[0])));
-
-reg("show_map", 1, (args) =>
-  vm.vstring(vm.ppValue(args[0])));
-
-// --- Map class instances ---
-
-reg("map_of_list", 1, (args) => {
-  const lst = vm.asList(args[0]);
-  const pairs = lst.map((v) => {
-    const t = vm.asTuple(v);
-    return [t[0], t[1]];
-  });
-  return vm.vmap(pairs);
-});
-
-reg("map_get", 2, (args) => {
-  const key = args[0];
-  const pairs = vm.asMap(args[1]);
-  const entry = pairs.find(([k]) => vm.valuesEqual(k, key));
-  if (entry) return vm.vvariant(1, "Some", entry[1]);
-  return vm.vvariant(0, "None", null);
-});
-
-reg("map_set", 3, (args) => {
-  const k = args[0], v = args[1];
-  const pairs = vm.asMap(args[2]);
-  const updated = [[k, v], ...pairs.filter(([k2]) => !vm.valuesEqual(k2, k))];
-  return vm.vmap(updated);
-});
-
-reg("map_has", 2, (args) => {
-  const key = args[0];
-  const pairs = vm.asMap(args[1]);
-  return vm.vbool(pairs.some(([k]) => vm.valuesEqual(k, key)));
-});
-
-reg("map_remove", 2, (args) => {
-  const key = args[0];
-  const pairs = vm.asMap(args[1]);
-  return vm.vmap(pairs.filter(([k]) => !vm.valuesEqual(k, key)));
-});
-
-reg("map_size", 1, (args) =>
-  vm.vint(vm.asMap(args[0]).length));
-
-reg("map_keys", 1, (args) =>
-  vm.vlist(vm.asMap(args[0]).map(([k]) => k)));
-
-reg("map_values", 1, (args) =>
-  vm.vlist(vm.asMap(args[0]).map(([, v]) => v)));
-
-reg("map_to_list", 1, (args) =>
-  vm.vlist(vm.asMap(args[0]).map(([k, v]) => vm.vtuple([k, v]))));
 
 // --- String module (std.ml register_string) ---
 
@@ -507,7 +407,7 @@ reg("String.to_bytes", 1, (args) => {
 });
 
 reg("String.of_bytes", 1, (args) => {
-  const lst = vm.asList(args[0]);
+  const lst = vm.listToArray(args[0]);
   const bytes = new Uint8Array(lst.map(vm.asByte));
   return vm.vstring(utf8BytesToString(bytes));
 });
@@ -533,7 +433,7 @@ reg("String.to_runes", 1, (args) => {
 });
 
 reg("String.of_runes", 1, (args) => {
-  const lst = vm.asList(args[0]);
+  const lst = vm.listToArray(args[0]);
   return vm.vstring(lst.map((r) => vm.runeToUtf8(vm.asRune(r))).join(""));
 });
 
@@ -580,7 +480,7 @@ reg("String.rindex_opt", 2, (args) => {
 
 reg("String.concat", 2, (args) => {
   const sep = vm.asString(args[0]);
-  const lst = vm.asList(args[1]);
+  const lst = vm.listToArray(args[1]);
   const strs = lst.map(v => vm.asString(v));
   return vm.vstring(strs.join(sep));
 });
@@ -624,7 +524,7 @@ reg("Array.to_list", 1, (args) =>
   vm.vlist(Array.from(vm.asArray(args[0]))));
 
 reg("Array.of_list", 1, (args) =>
-  vm.varray(vm.asList(args[0]).slice()));
+  vm.varray(vm.listToArray(args[0])));
 
 reg("Array.copy", 1, (args) =>
   vm.varray(vm.asArray(args[0]).slice()));

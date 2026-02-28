@@ -62,13 +62,13 @@ Block comments use `(* ... *)` and are nestable.
    still inside outer comment *)
 ```
 
-### Special comment annotations
+### Annotations
 
-The `-- @partial` annotation suppresses exhaustiveness checking on the
-immediately following `match` expression.
+The `@partial` annotation suppresses exhaustiveness checking on the
+immediately following `match` expression:
 
 ```
--- @partial
+@partial
 match some_option with
 | Some x -> x
 ```
@@ -244,6 +244,38 @@ let rec fact n =
   if n <= 1 do 1 else n * fact (n - 1)
 in fact 10
 ```
+
+### Recursive value definitions
+
+`let rec` can also bind non-function values to create cyclic data structures.
+The expression must be *constructive* — built from data constructors (`::``,
+tuples, records, variants, arrays) rather than arbitrary function calls.
+
+```
+-- Infinite cyclic list: 1, 2, 1, 2, ...
+let rec cycle = 1 :: 2 :: cycle
+
+-- Mutual recursive values
+let rec ping = 1 :: pong
+and pong = 2 :: ping
+
+-- Cyclic variant
+type tree = Leaf | Node of int * tree
+let rec t = Node (1, t)
+
+-- Cyclic record
+type node = { value: string; next: node option }
+;;
+let rec self = { value = "loop"; next = Some self }
+```
+
+Under the hood, a placeholder value of the correct shape is allocated first,
+the recursive name is bound to it, the expression is compiled (with references
+to the name getting the placeholder), and then the placeholder is backpatched
+in-place — creating true cyclic structures.
+
+Non-constructive expressions like `let rec x = x + 1` or `let rec x = x` are
+rejected as type errors.
 
 ### Polymorphic recursion (`let rec (type 'a)`)
 
@@ -484,10 +516,10 @@ match n with
 
 ### Partial annotation
 
-The `-- @partial` annotation suppresses exhaustiveness checking:
+The `@partial` annotation suppresses exhaustiveness checking:
 
 ```
--- @partial
+@partial
 match opt with
 | Some x -> x
 ```
@@ -1058,7 +1090,8 @@ Array.of_list [1; 2; 3]        -- #[1; 2; 3]
 
 ## Maps
 
-Maps are immutable associative data structures with key-value pairs.
+Maps are immutable associative data structures with key-value pairs, defined as
+a newtype in the standard library: `newtype ('k, 'v) map = MMap of ('k * 'v) list`.
 
 ### Creation
 
@@ -1122,7 +1155,8 @@ end
 
 ## Sets
 
-Sets are built on top of maps (as `('a, unit) map`).
+Sets are immutable collections of unique values, defined as a newtype in the
+standard library: `newtype 'a set = MSet of ('a, unit) map`.
 
 ### Creation
 
@@ -1327,6 +1361,43 @@ type 'a tree = Leaf | Node of 'a * 'a forest
 and 'a forest = Empty | Trees of 'a tree list
 ```
 
+### Newtypes
+
+Newtypes create distinct types from existing ones with a single constructor
+that is erased at runtime — zero overhead. They provide type safety without
+performance cost.
+
+```
+newtype email = Email of string
+newtype meters = Meters of float
+newtype ('k, 'v) map = MMap of ('k * 'v) list
+```
+
+Newtypes can derive type class instances:
+
+```
+newtype age = Age of int deriving Show, Eq
+```
+
+In modules, `opaque newtype` hides the constructor:
+
+```
+module Token =
+  opaque newtype t = Token of int
+  pub let make n = Token n
+  pub let unwrap (Token n) = n
+end
+
+Token.make 42          -- works
+Token.Token 42         -- type error: constructor is hidden
+```
+
+Pattern matching on newtypes works like any single-constructor variant:
+
+```
+let unwrap (Email s) = s
+```
+
 ### Deriving
 
 Automatically derive type class instances:
@@ -1335,9 +1406,11 @@ Automatically derive type class instances:
 type color = Red | Green | Blue deriving Show
 type point = {x: int; y: int} deriving Show, Eq
 type 'a box = Wrap of 'a deriving Show
+newtype age = Age of int deriving Show, Eq
 
 show Red                -- "Red"
 show {x = 1; y = 2}    -- "{ x = 1; y = 2 }"
+show (Age 25)           -- "Age(25)"
 ```
 
 Supported derivable classes: `Show`, `Eq`.
@@ -1638,6 +1711,12 @@ perform ask ()
 perform get_val 42
 ```
 
+When an effect operation takes `unit`, the argument can be elided:
+
+```
+perform ask                     -- shorthand for perform ask ()
+```
+
 ### Handling effects with handle/with
 
 The `handle ... with` form provides full control over the continuation:
@@ -1653,6 +1732,14 @@ with
 
 The `return` arm processes the final value. Effect operation arms receive the
 argument and a continuation `k` which can be resumed with `resume k value`.
+
+Handler arms support wildcard elision — if the argument is not needed, it can
+be omitted and the parser inserts a wildcard `_`:
+
+```
+| get_val k -> resume k 10      -- shorthand for  | get_val _ k -> resume k 10
+| get_val -> resume __k 10      -- shorthand for  | get_val _ __k -> resume __k 10
+```
 
 ### Handler without resume (aborting)
 
@@ -1700,6 +1787,13 @@ try 42 with
 | raise msg -> 0
 ```
 
+The argument in an arm can be elided when not needed — the parser inserts a
+wildcard `_`:
+
+```
+| raise -> "error"              -- shorthand for  | raise _ -> "error"
+```
+
 Multiple operations can be handled:
 
 ```
@@ -1709,6 +1803,89 @@ with
 | file_not_found path -> "missing: " ^ path
 | invalid_input msg -> "invalid: " ^ msg
 ```
+
+### Provide/with (simplified capability-style form)
+
+`provide/with` is the dual of `try/with` — it handles effects that **always
+resume** with a value. The continuation is implicit and each arm's result is
+the value to resume with.
+
+```
+effect Config = get_db : unit -> string; get_port : unit -> int end
+
+provide
+  let db = perform get_db () in
+  let port = perform get_port () in
+  db ^ ":" ^ show port
+with
+| get_db () -> "localhost"
+| get_port () -> 5432
+```
+
+The argument in an arm can be elided when not needed — the parser inserts a
+wildcard `_`:
+
+```
+provide
+  perform get_db ^ ":" ^ show (perform get_port)
+with
+| get_db -> "localhost"         -- shorthand for  | get_db _ -> "localhost"
+| get_port -> 5432
+```
+
+This desugars to:
+
+```
+handle ... with
+| return x -> x
+| get_db () k -> resume k "localhost"
+| get_port () k -> resume k 5432
+```
+
+Arms that take arguments work the same way — the result is resumed:
+
+```
+effect Lookup = find : string -> int end
+
+provide
+  perform find "a" + perform find "b"
+with
+| find key -> if key = "a" do 1 else 2
+```
+
+Side-effecting operations that return unit:
+
+```
+effect Logger = log : string -> unit end
+
+provide
+  perform log "hello";
+  perform log "world"
+with
+| log msg -> print msg
+```
+
+`provide/with` can be freely nested and mixed with `try/with` and
+`handle/with`:
+
+```
+provide
+  try
+    let user = perform get_user () in
+    if user = "admin" do perform fail "nope" else user
+  with
+  | fail msg -> "fallback"
+with
+| get_user () -> "admin"
+```
+
+Summary of the three handler forms:
+
+| Form | Resume? | Use case |
+|------|---------|----------|
+| `try/with` | Never | Exceptions, early return, abort |
+| `provide/with` | Always (once) | DI, config, logging, context |
+| `handle/with` | Controlled | Coroutines, generators, backtracking |
 
 ---
 

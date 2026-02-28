@@ -9,7 +9,9 @@ module Result =
     | Ok v -> f v
     | Err e -> Err e
   pub let unwrap (r: ('a, 'b) t) : 'a =
-    -- @partial
+    @partial
     match r with
     | Ok v -> v
 end
+;;
+open Result

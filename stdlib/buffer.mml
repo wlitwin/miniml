@@ -42,6 +42,12 @@ module Buffer =
     copy 0;
     buf.len := buf.len + n
 
+  pub let sub (buf: t) (pos: int) (len: int) : string =
+    String.of_byte_array (Array.sub buf.data pos len)
+
+  pub let truncate (buf: t) (n: int) : unit =
+    buf.len := n
+
   pub let contents (buf: t) : string =
     String.of_byte_array (Array.sub buf.data 0 buf.len)
 

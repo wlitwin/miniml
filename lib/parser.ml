@@ -149,7 +149,7 @@ let at_expr_start p =
   | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACE
   | Token.LBRACKET | Token.FN | Token.IF | Token.LET | Token.MATCH
   | Token.MINUS | Token.NOT | Token.LNOT
-  | Token.PERFORM | Token.HANDLE | Token.TRY | Token.RESUME
+  | Token.PERFORM | Token.HANDLE | Token.TRY | Token.PROVIDE | Token.RESUME
   | Token.FOR | Token.BREAK | Token.CONTINUE | Token.RETURN
   | Token.HASH | Token.DO | Token.POLYTAG _ -> true
   | _ -> false
@@ -244,11 +244,6 @@ and parse_ty_postfix p =
     | Token.IDENT "array" ->
       ignore (advance p);
       loop (Ast.TyArray ty)
-    | Token.IDENT "map" ->
-      ignore (advance p);
-      (match ty with
-       | Ast.TyTuple [k; v] -> loop (Ast.TyMap (k, v))
-       | _ -> error p "map type requires two type arguments: (k, v) map")
     | Token.IDENT name when peek_kind_at p 1 <> Token.COLON ->
       ignore (advance p);
       let args = match ty with
@@ -899,10 +894,12 @@ and parse_atom_inner p =
   | Token.PERFORM ->
     ignore (advance p);
     let op_name = expect_ident p in
-    let arg = parse_postfix p in
+    (* Unit elision: perform op  =>  perform op () *)
+    let arg = if at_atom_start p then parse_postfix p else Ast.EUnit in
     Ast.EPerform (op_name, arg)
   | Token.HANDLE -> parse_handle_expr p
   | Token.TRY -> parse_try_expr p
+  | Token.PROVIDE -> parse_provide_expr p
   | Token.RESUME ->
     ignore (advance p);
     let k = parse_atom p in
@@ -986,7 +983,7 @@ and parse_app p =
 and is_keyword_expr_start p =
   match peek_kind p with
   | Token.FN | Token.IF | Token.LET | Token.MATCH
-  | Token.PERFORM | Token.HANDLE | Token.TRY | Token.RESUME
+  | Token.PERFORM | Token.HANDLE | Token.TRY | Token.PROVIDE | Token.RESUME
   | Token.FOR | Token.BREAK | Token.CONTINUE | Token.RETURN -> true
   | _ -> false
 
@@ -1388,13 +1385,26 @@ and parse_handle_expr p =
       else continue_parsing := false
     | Token.IDENT s ->
       ignore (advance p);
-      let arg_name = match peek_kind p with
+      (* Unit/wildcard elision for handle arms:
+         | op ->           =>  | op _ __k ->   (no arg, no k)
+         | op () ->        =>  | op _ __k ->   (explicit unit, no k)
+         | op k ->         =>  | op _ k ->     (no arg, named k)
+         | op () k ->      =>  | op _ k ->     (explicit unit, named k)
+         | op arg k ->     =>  unchanged       (named arg and k) *)
+      let (arg_name, k_name) = match peek_kind p with
+        | Token.ARROW ->
+          ("_", "__k")
         | Token.LPAREN when peek_kind_at p 1 = Token.RPAREN ->
           ignore (advance p); ignore (advance p);
-          "_"
-        | _ -> expect_ident p
+          if peek_kind p = Token.ARROW then ("_", "__k")
+          else ("_", expect_ident p)
+        | Token.IDENT _ when peek_kind_at p 1 = Token.ARROW ->
+          ("_", expect_ident p)
+        | _ ->
+          let arg = expect_ident p in
+          let k = expect_ident p in
+          (arg, k)
       in
-      let k_name = expect_ident p in
       expect p Token.ARROW;
       let handler_body = parse_expr p in
       arms := Ast.HOp (s, arg_name, k_name, handler_body) :: !arms;
@@ -1416,7 +1426,9 @@ and parse_try_expr p =
     match peek_kind p with
     | Token.IDENT s ->
       ignore (advance p);
+      (* Wildcard elision: | op -> body  =>  | op _ -> body *)
       let arg_name = match peek_kind p with
+        | Token.ARROW -> "_"
         | Token.LPAREN when peek_kind_at p 1 = Token.RPAREN ->
           ignore (advance p); ignore (advance p);
           "_"
@@ -1425,6 +1437,37 @@ and parse_try_expr p =
       expect p Token.ARROW;
       let handler_body = parse_expr p in
       arms := Ast.HOp (s, arg_name, "__k", handler_body) :: !arms;
+      if peek_kind p = Token.PIPE then ignore (advance p)
+      else continue_parsing := false
+    | _ -> continue_parsing := false
+  done;
+  Ast.EHandle (body, List.rev !arms)
+
+and parse_provide_expr p =
+  expect p Token.PROVIDE;
+  let body = parse_expr p in
+  expect p Token.WITH;
+  (* Optional leading pipe *)
+  if peek_kind p = Token.PIPE then ignore (advance p);
+  let arms = ref [Ast.HReturn ("__x", Ast.EVar "__x")] in
+  let continue_parsing = ref true in
+  while !continue_parsing do
+    match peek_kind p with
+    | Token.IDENT s ->
+      ignore (advance p);
+      (* Wildcard elision: | op -> body  =>  | op _ -> body *)
+      let arg_name = match peek_kind p with
+        | Token.ARROW -> "_"
+        | Token.LPAREN when peek_kind_at p 1 = Token.RPAREN ->
+          ignore (advance p); ignore (advance p);
+          "_"
+        | _ -> expect_ident p
+      in
+      expect p Token.ARROW;
+      let handler_body = parse_expr p in
+      (* Desugar: wrap body in resume __k (body) *)
+      let resume_expr = Ast.EResume (Ast.EVar "__k", handler_body) in
+      arms := Ast.HOp (s, arg_name, "__k", resume_expr) :: !arms;
       if peek_kind p = Token.PIPE then ignore (advance p)
       else continue_parsing := false
     | _ -> continue_parsing := false
@@ -1796,6 +1839,47 @@ let parse_type_decl p =
     Ast.DTypeAnd (List.rev !defs)
   end
 
+let parse_newtype_decl p =
+  expect p Token.NEWTYPE;
+  (* Parse optional type parameters — same as parse_type_decl *)
+  let type_params = match peek_kind p with
+    | Token.TYVAR s ->
+      ignore (advance p);
+      [s]
+    | Token.LPAREN when is_tyvar_token (peek_kind_at p 1) ->
+      ignore (advance p);
+      let params = ref [] in
+      let first = ref true in
+      while peek_kind p <> Token.RPAREN do
+        if not !first then expect p Token.COMMA;
+        first := false;
+        (match peek_kind p with
+         | Token.TYVAR s -> ignore (advance p); params := s :: !params
+         | _ -> error p "expected type variable in type parameter list")
+      done;
+      expect p Token.RPAREN;
+      List.rev !params
+    | _ -> []
+  in
+  let name = expect_ident p in
+  expect p Token.EQ;
+  let ctor_name = expect_uident p in
+  expect p Token.OF;
+  let underlying = parse_ty p in
+  let deriving = if peek_kind p = Token.DERIVING then begin
+    ignore (advance p);
+    let classes = ref [] in
+    let continue = ref true in
+    while !continue && (match peek_kind p with Token.UIDENT _ -> true | _ -> false) do
+      let cls = expect_uident p in
+      classes := cls :: !classes;
+      if peek_kind p = Token.COMMA then ignore (advance p)
+      else continue := false
+    done;
+    List.rev !classes
+  end else [] in
+  Ast.DType (type_params, name, Ast.TDNewtype (ctor_name, underlying), deriving)
+
 let rec extract_pat_vars = function
   | Ast.PatVar name -> [name]
   | Ast.PatWild | Ast.PatInt _ | Ast.PatFloat _ | Ast.PatBool _
@@ -2045,7 +2129,33 @@ let parse_class_decl p =
   expect p Token.EQ;
   let methods = ref [] in
   while peek_kind p <> Token.END do
-    let s = expect_ident p in
+    let s = if peek_kind p = Token.LPAREN then begin
+      ignore (advance p);
+      let name = match peek_kind p with
+        | Token.PLUS -> "+"
+        | Token.MINUS -> "-"
+        | Token.STAR -> "*"
+        | Token.SLASH -> "/"
+        | Token.LT -> "<"
+        | Token.GT -> ">"
+        | Token.LE -> "<="
+        | Token.GE -> ">="
+        | Token.EQ -> "="
+        | Token.NEQ -> "<>"
+        | Token.LAND -> "land"
+        | Token.LOR -> "lor"
+        | Token.LXOR -> "lxor"
+        | Token.LNOT -> "lnot"
+        | Token.LSL -> "lsl"
+        | Token.LSR -> "lsr"
+        | _ -> error p "expected operator"
+      in
+      ignore (advance p);
+      expect p Token.RPAREN;
+      name
+    end else
+      expect_ident p
+    in
     expect p Token.COLON;
     let ty = parse_ty p in
     methods := (s, ty) :: !methods;
@@ -2179,8 +2289,9 @@ let rec parse_module_body_item p : Ast.module_decl list =
     List.map (fun d -> Ast.{ vis = Public; decl = d }) decls
   | Token.OPAQUE ->
     ignore (advance p);
-    (* opaque only applies to type declarations *)
-    let decl = parse_type_decl p in
+    (* opaque only applies to type/newtype declarations *)
+    let decl = if peek_kind p = Token.NEWTYPE then parse_newtype_decl p
+               else parse_type_decl p in
     [Ast.{ vis = Opaque; decl }]
   | _ ->
     let decls = parse_inner_decl p in
@@ -2189,6 +2300,7 @@ let rec parse_module_body_item p : Ast.module_decl list =
 and parse_inner_decl p =
   match peek_kind p with
   | Token.TYPE -> [parse_type_decl p]
+  | Token.NEWTYPE -> [parse_newtype_decl p]
   | Token.LET -> parse_let_decl p
   | Token.CLASS -> [parse_class_decl p]
   | Token.INSTANCE -> [parse_instance_decl p]
@@ -2235,6 +2347,7 @@ and parse_open_decl p =
 and parse_decl p =
   match peek_kind p with
   | Token.TYPE -> [parse_type_decl p]
+  | Token.NEWTYPE -> [parse_newtype_decl p]
   | Token.LET -> parse_let_decl p
   | Token.CLASS -> [parse_class_decl p]
   | Token.INSTANCE -> [parse_instance_decl p]

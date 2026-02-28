@@ -34,22 +34,16 @@ let rec unify t1 t2 =
   | ty, TVar ({ contents = Unbound (id, level) } as r) ->
     occurs_check id level ty;
     r := Link ty
-  | TArrow (a1, e1, r1), TArrow (a2, e2, r2) ->
+  | TArrow (a1, e1, r1), TArrow (a2, e2, r2)
+  | TCont (a1, e1, r1), TCont (a2, e2, r2) ->
     unify a1 a2; unify_eff e1 e2; unify r1 r2
   | TTuple ts1, TTuple ts2 ->
     if List.length ts1 <> List.length ts2 then unify_error t1 t2;
     List.iter2 unify ts1 ts2
   | TList t1', TList t2' -> unify t1' t2'
   | TArray t1', TArray t2' -> unify t1' t2'
-  | TMap (k1, v1), TMap (k2, v2) -> unify k1 k2; unify v1 v2
-  | TRecord f1, TRecord f2 ->
-    let (smaller, larger) =
-      if List.length f1 <= List.length f2 then (f1, f2) else (f2, f1) in
-    List.iter (fun (name, ty_s) ->
-      match List.assoc_opt name larger with
-      | Some ty_l -> unify ty_s ty_l
-      | None -> unify_error t1 t2
-    ) smaller
+  | TRecord r1, TRecord r2 -> unify_record_row r1 r2
+  | TPolyVariant r1, TPolyVariant r2 -> unify_pv_row r1 r2
   | TInt, TInt | TFloat, TFloat | TBool, TBool
   | TString, TString | TByte, TByte | TRune, TRune | TUnit, TUnit -> ()
   | TVariant (a, args_a), TVariant (b, args_b) when String.equal a b ->
@@ -111,14 +105,19 @@ Any other type linked to this ref cell will now resolve to `TInt` via
 
 For compound types, recursively unify components:
 
-- **Arrow types**: unify parameter with parameter, return with return.
-  Unifying `'a -> bool` with `int -> 'b` gives `'a = int`, `'b = bool`.
+- **Arrow types** (and **continuation types**): unify parameter with
+  parameter, effect with effect, return with return. Unifying `'a -> bool`
+  with `int -> 'b` gives `'a = int`, `'b = bool`.
 - **Tuples**: must have same arity; unify element-wise.
 - **Lists, arrays**: unify element types. `string list` unifies with
   `'a list` by binding `'a = string`.
 - **Maps**: unify key types, then value types.
-- **Variants**: must have same name and same number of type args.
+- **Named variants**: must have same name and same number of type args.
   `int option` unifies with `'a option` but never with `int list`.
+- **Records**: delegated to `unify_record_row`, which uses Rémy-style row
+  rewriting (see below).
+- **Poly variants**: delegated to `unify_pv_row`, which uses the same
+  row rewriting approach (see below).
 
 ### Step 5: Primitives
 
@@ -151,15 +150,20 @@ let rec occurs_check id level ty =
   | TVar ({ contents = Unbound (id2, level2) } as r) ->
     if level2 > level then r := Unbound (id2, level)
   | TVar { contents = Link _ } -> assert false
-  | TArrow (a, _eff, b) -> occurs_check id level a; occurs_check id level b
+  | TArrow (a, _eff, b) | TCont (a, _eff, b) ->
+    occurs_check id level a; occurs_check id level b
   | TTuple ts -> List.iter (occurs_check id level) ts
   | TList t -> occurs_check id level t
   | TArray t -> occurs_check id level t
-  | TMap (k, v) -> occurs_check id level k; occurs_check id level v
-  | TRecord fields -> List.iter (fun (_, t) -> occurs_check id level t) fields
+  | TRecord row -> occurs_check_rrow id level row
+  | TPolyVariant row -> occurs_check_pvrow id level row
   | TVariant (_, args) -> List.iter (occurs_check id level) args
   | TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _ -> ()
 ```
+
+The occurs check also recurses into record rows (`occurs_check_rrow`) and
+poly variant rows (`occurs_check_pvrow`), walking their field/tag chains
+and adjusting levels on any row variables found inside.
 
 ### Preventing Infinite Types
 
@@ -210,39 +214,71 @@ adjustment prevents this.
 Intuition: **if a variable escapes its scope, it must not be generalized
 at that scope.**
 
-## Structural Record Subtyping
+## Row Unification: Records and Polymorphic Variants
 
-Most `unify` cases demand exact structural match. Records are the
-exception -- MiniML implements *width subtyping* directly in `unify`:
+Most `unify` cases demand exact structural match. Records and polymorphic
+variants are different -- they use Rémy-style row unification to enable
+structural subtyping and extensibility.
+
+### Record Row Unification
+
+Record rows are unified by `unify_record_row`, which uses row rewriting
+to match fields by name regardless of order:
 
 ```ocaml
-| TRecord f1, TRecord f2 ->
-    let (smaller, larger) =
-      if List.length f1 <= List.length f2 then (f1, f2) else (f2, f1) in
-    List.iter (fun (name, ty_s) ->
-      match List.assoc_opt name larger with
-      | Some ty_l -> unify ty_s ty_l
-      | None -> unify_error t1 t2
-    ) smaller
+and unify_record_row r1 r2 =
+  let r1 = rrow_repr r1 in
+  let r2 = rrow_repr r2 in
+  if r1 == r2 then ()
+  else match r1, r2 with
+  | RVar ({ contents = RUnbound (id, level) } as r), row
+  | row, RVar ({ contents = RUnbound (id, level) } as r) ->
+    occurs_check_rrow id level row;
+    r := RLink row
+  | RWild, _ | _, RWild -> ()
+  | REmpty, REmpty -> ()
+  | RRow (field, ty1, tail1), _ ->
+    let (ty2, tail2) = rewrite_record_row field r2 in
+    unify ty1 ty2;
+    unify_record_row tail1 tail2
+  | _, RRow _ -> unify_record_row r2 r1  (* symmetric *)
+  | _ -> unify_error ...
 ```
 
-### How It Works
+The key operation is `rewrite_record_row`, which searches a row for a
+specific field and returns the field's type and the remaining row:
 
-1. Identify which record has fewer fields (the "smaller" one).
-2. Every field in the smaller must exist in the larger.
-3. Matching fields are recursively unified.
-4. Extra fields in the larger are ignored.
+```ocaml
+and rewrite_record_row field row =
+  match rrow_repr row with
+  | RRow (f, ty, tail) when String.equal f field -> (ty, tail)
+  | RRow (f, ty, tail) ->
+    let (found, rest) = rewrite_record_row field tail in
+    (found, RRow (f, ty, rest))
+  | RVar ({ contents = RUnbound (id, level) } as r) ->
+    (* Open row: create a new field entry and link the variable *)
+    let new_tail = new_rvar level in
+    let field_ty = new_tvar level in
+    let new_row = RRow (field, field_ty, new_tail) in
+    r := RLink new_row;
+    (field_ty, new_tail)
+  | REmpty -> error "record has no field"
+  | ...
+```
 
-A record with more fields is accepted anywhere fewer are expected, as
-long as the overlapping fields agree.
+This is the Rémy-style approach: when looking for a field in an open row
+(one ending with an `RVar`), the variable is extended to include the
+missing field with a fresh type. This is how `let get_x r = r.x` infers
+the type `{ x: 'a; .. } -> 'a` -- the row variable is extended with an
+`x` field.
 
-### Why This Is Useful
+### How Row Subtyping Works
 
 ```
-let get_x r = r.x       -- inferred: {x: 'a} -> 'a
+let get_x r = r.x       -- inferred: {x: 'a; ..} -> 'a
 
-get_x {x = 1; y = 2}           -- ok: has x
-get_x {x = 1; y = 2; z = 3}   -- ok: has x
+get_x {x = 1; y = 2}           -- ok: has x (row var absorbs y)
+get_x {x = 1; y = 2; z = 3}   -- ok: has x (row var absorbs y, z)
 get_x {name = "hi"}            -- error: no x field
 ```
 
@@ -254,23 +290,57 @@ discovers the minimal record type from usage.
 
 Tracing `get_x {x = 1; y = 2}`:
 
-1. `get_x` is instantiated to `{x: 'b} -> 'b`.
-2. The argument has type `{x: int; y: int}`.
-3. Unify parameter: `{x: 'b}` vs `{x: int; y: int}`.
-4. Smaller is `{x: 'b}` (1 field), larger is `{x: int; y: int}` (2).
-5. Field `x`: unify `'b` with `int` -- `'b = int`.
-6. Field `y` in larger: not in smaller, ignored.
+1. `get_x` is instantiated to `{x: 'b; ..ρ} -> 'b` (where `ρ` is a
+   fresh row variable from instantiating the quantified `RGen`).
+2. The argument has type `{x: int; y: int}` (closed: `RRow("x", TInt,
+   RRow("y", TInt, REmpty))`).
+3. Unify parameter row with argument row.
+4. Rewrite: find `x` in both rows -- unify `'b` with `int`.
+5. Remaining tails: `RVar(ρ)` vs `RRow("y", TInt, REmpty)`.
+6. The row variable `ρ` links to `RRow("y", TInt, REmpty)` -- absorbing
+   the extra field.
 7. Return type `'b` is now `int`.
 
-### Symmetry
+### Polymorphic Variant Row Unification
 
-The code picks the smaller record regardless of argument order, so
-record unification is *symmetric*. Both of these succeed:
+Poly variant rows (`pvrow`) use the same Rémy-style approach.
+`unify_pv_row` matches tags by name, unifies their payloads, and handles
+row variable extensibility:
+
+```ocaml
+and unify_pv_row r1 r2 =
+  let r1 = pv_repr r1 in
+  let r2 = pv_repr r2 in
+  if r1 == r2 then ()
+  else match r1, r2 with
+  | PVVar ({ contents = PVUnbound (id, level) } as r), row
+  | row, PVVar ({ contents = PVUnbound (id, level) } as r) ->
+    occurs_check_pvrow id level row;
+    r := PVLink row
+  | PVEmpty, PVEmpty -> ()
+  | PVRow (tag, payload1, tail1), _ ->
+    let (payload2, tail2) = rewrite_pv_row tag r2 in
+    unify_pv_payload payload1 payload2;
+    unify_pv_row tail1 tail2
+  | _, PVRow _ -> unify_pv_row r2 r1
+  | _ -> unify_error ...
+```
+
+The `rewrite_pv_row` function works like `rewrite_record_row`: it
+searches for a tag by name, returns its payload and the remaining row,
+and extends open rows (those ending with `PVVar`) as needed.
+
+This enables poly variant expressions to be used flexibly:
 
 ```
-unify {x: int}          {x: int; y: bool}    -- ok
-unify {x: int; y: bool} {x: int}             -- also ok
+let describe x = match x with
+  | `Circle r -> "circle"
+  | `Square s -> "square"
+-- inferred: [> `Circle of 'a | `Square of 'b] -> string
 ```
+
+The open row variable in the input type means this function accepts
+any poly variant with at least the `Circle` and `Square` tags.
 
 ## Unification vs Subtyping
 
@@ -387,8 +457,9 @@ Unification is a three-part algorithm:
 3. **Recurse structurally** into compound types, demanding shapes match.
 
 The occurs check prevents infinite types and adjusts levels for correct
-generalization. Record width subtyping is the one place where unification
-relaxes the "exact match" rule, enabling flexible structural typing.
+generalization. Row-based unification for records and polymorphic variants
+uses Rémy-style row rewriting to enable flexible structural typing without
+requiring exact field/tag order or count.
 
 The next chapter covers generalization and instantiation: how the
 typechecker decides which type variables become polymorphic and which

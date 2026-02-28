@@ -126,3 +126,229 @@ if true do 1 else 2
 let classify n = if n < 0 do "negative" else if n = 0 do "zero" else "positive";;
 classify 5
 --- expect: positive
+
+=== Optimization: Dead Store Elimination ===
+
+--- test: dead DUP SET_LOCAL with unused binding
+let f x =
+  let _ = x + 1 in
+  x + 2
+;;
+f 10
+--- expect: 12
+
+--- test: dead store does not affect live binding
+let g x =
+  let y = x + 1 in
+  y + 2
+;;
+g 10
+--- expect: 13
+
+--- test: multiple dead bindings in sequence
+let h x =
+  let _ = x * 2 in
+  let _ = x * 3 in
+  x + 1
+;;
+h 5
+--- expect: 6
+
+--- test: dead store in match arm
+type ab = A of int | B of int;;
+let extract v = match v with
+  | A x -> x
+  | B _ -> 0
+;;
+extract (A 42)
+--- expect: 42
+
+--- test: dead store with tuple destructure
+let first p = match p with (a, _) -> a;;
+first (10, 20)
+--- expect: 10
+
+=== Optimization: Push-Pop Cancellation ===
+
+--- test: constant in sequence discarded
+let a = (42; 10);;
+a
+--- expect: 10
+
+--- test: variable in sequence discarded
+let x = 5;;
+let b = (x; 20);;
+b
+--- expect: 20
+
+--- test: nil in sequence discarded
+let c = ([]; 30);;
+c
+--- expect: 30
+
+--- test: multiple discards in sequence
+let d = (1; 2; 3; 100);;
+d
+--- expect: 100
+
+=== Optimization: Jump Threading ===
+
+--- test: nested if-else chains threaded
+let classify n =
+  if n < 0 do "neg"
+  else if n = 0 do "zero"
+  else if n < 10 do "small"
+  else "big"
+;;
+classify 5
+--- expect: small
+
+--- test: deeply nested match threaded
+type dir = N | S | E | W;;
+let name d = match d with
+  | N -> "north"
+  | S -> "south"
+  | E -> "east"
+  | W -> "west"
+;;
+name E
+--- expect: east
+
+--- test: chained if with computation
+let abs_val n = if n < 0 do 0 - n else n;;
+abs_val (-7)
+--- expect: 7
+
+=== Optimization: JUMP to RETURN ===
+
+--- test: if-else in tail position replaced with RETURN
+let sign n = if n > 0 do 1 else if n < 0 do -1 else 0;;
+sign (-5)
+--- expect: -1
+
+--- test: match arms in tail position
+let to_str b = match b with true -> "yes" | false -> "no";;
+to_str true
+--- expect: yes
+
+--- test: JUMP to RETURN not applied inside loop
+let f xs =
+  for x in xs with acc = 0 do
+    if x > 10 do break acc
+    else acc + x
+  end
+;;
+f [1; 2; 3; 100; 5]
+--- expect: 6
+
+--- test: match inside loop
+let count_a xs =
+  for x in xs with acc = 0 do
+    match x with
+    | "a" -> acc + 1
+    | _ -> acc
+  end
+;;
+count_a ["a"; "b"; "a"; "c"; "a"]
+--- expect: 3
+
+=== Optimization: GET_GLOBAL_CALL ===
+
+--- test: global value as argument to function
+let double x = x * 2;;
+let pi = 314;;
+let apply f x = f x;;
+apply double pi
+--- expect: 628
+
+--- test: global used in higher-order call
+let inc x = x + 1;;
+let base = 100;;
+let result = inc base;;
+result
+--- expect: 101
+
+=== Optimization: GET_GLOBAL_FIELD ===
+
+--- test: field access on global record
+type point = { x : int; y : int };;
+let origin = { x = 0; y = 0 };;
+let p = { x = 3; y = 4 };;
+(p.x + origin.x, p.y + origin.y)
+--- expect: (3, 4)
+
+--- test: nested field access on globals
+type color = { r : int; g : int; b : int };;
+let red = { r = 255; g = 0; b = 0 };;
+let green = { r = 0; g = 255; b = 0 };;
+(red.r + green.r, red.g + green.g)
+--- expect: (255, 255)
+
+=== Optimization: Multi-Arity + CALL_N ===
+
+--- test: three-arg function
+let f a b c = a + b + c;;
+f 1 2 3
+--- expect: 6
+
+--- test: partial application
+let f a b = a + b;;
+let g = f 10;;
+g 5
+--- expect: 15
+
+--- test: partial application chain
+let f a b c = a * b + c;;
+let g = f 2;;
+let h = g 3;;
+h 4
+--- expect: 10
+
+--- test: partial applied to map
+let mul a b = a * b;;
+let double = mul 2;;
+List.map double [1; 2; 3; 4]
+--- expect: [2; 4; 6; 8]
+
+--- test: recursive multi-arg function
+let rec gcd a b =
+  if b = 0 do a
+  else gcd b (a mod b)
+;;
+gcd 48 18
+--- expect: 6
+
+--- test: tail-recursive with accumulator
+let rec sum_to a acc =
+  if a = 0 do acc
+  else sum_to (a - 1) (acc + a)
+;;
+sum_to 100 0
+--- expect: 5050
+
+--- test: over-application through identity
+let id x = x;;
+let add a b = a + b;;
+id add 3 4
+--- expect: 7
+
+--- test: over-application chain
+let id x = x;;
+let add a b = a + b;;
+id id add 1 2
+--- expect: 3
+
+--- test: higher-order with partial
+let apply2 f x y = f x y;;
+let mul a b = a * b;;
+apply2 mul 6 7
+--- expect: 42
+
+--- test: multi-arg with closure capture
+let make_adder x =
+  let offset = x * 2 in
+  fn a -> fn b -> a + b + offset
+;;
+let f = make_adder 5;;
+f 1 2
+--- expect: 13

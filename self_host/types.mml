@@ -21,7 +21,6 @@ module Types =
     | TList of ty
     | TRecord of record_row
     | TVariant of string * ty list
-    | TMap of ty * ty
     | TArray of ty
     | TPolyVariant of pvrow
     | TVar of tvar Ref.t
@@ -119,7 +118,6 @@ module Types =
     | TArrow ((a, eff, r)) | TCont ((a, eff, r)) -> (is_concrete a) && ((is_concrete_eff eff) && (is_concrete r))
     | TTuple ts -> List.forall is_concrete ts
     | TList t | TArray t -> is_concrete t
-    | TMap ((k, v)) -> (is_concrete k) && (is_concrete v)
     | TVariant ((_, args)) -> List.forall is_concrete args
     | TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _ -> true
     | TRecord row -> is_concrete_rrow row
@@ -229,6 +227,7 @@ module Types =
     mod_pub_mutable_vars: string list;
     mod_pub_types: string list;
     mod_opaque_types: string list;
+    mod_newtypes: string list;
     mod_pub_constructors: (string * ctor_info) list;
     mod_instances: instance_def list;
     mod_submodules: (string * module_info) list;
@@ -245,10 +244,13 @@ module Types =
     mutable_fields: string list;
     modules: (string * module_info) list;
     type_aliases: (string * string) list;
-    type_synonyms: (string * int * ty) list
+    type_synonyms: (string * int * ty) list;
+    newtypes: string list;
+    hidden_types: string list;
+    hidden_ctor_types: string list
   }
 
-  pub let empty_type_env = {variants = []; constructors = []; records = []; classes = []; instances = []; effects = []; mutable_fields = []; modules = []; type_aliases = []; type_synonyms = []}
+  pub let empty_type_env = {variants = []; constructors = []; records = []; classes = []; instances = []; effects = []; mutable_fields = []; modules = []; type_aliases = []; type_synonyms = []; newtypes = []; hidden_types = []; hidden_ctor_types = []}
 
   pub let find_effect_op type_env op_name = List.find_map (fn (edef : effect_def) -> List.find_map (fn (name, ty) -> if name = op_name do
     Some (edef.effect_name, ty)
@@ -267,7 +269,6 @@ module Types =
       | TVariant ((name, [])) -> name
       | TVariant ((name, args)) -> (String.concat "_" (List.map ty_to_str args)) ^ ("_" ^ name)
       | TList t -> (ty_to_str t) ^ "_list"
-      | TMap ((k, v)) -> (ty_to_str k) ^ ("_" ^ ((ty_to_str v) ^ "_map"))
       | TArray t -> (ty_to_str t) ^ "_array"
       | TTuple ts -> (String.concat "_" (List.map ty_to_str ts)) ^ "_tup"
       | TPolyVariant _ -> "polyvar"
@@ -298,9 +299,6 @@ module Types =
     | TTuple ts -> List.iter (occurs_check id level) ts
     | TList t -> occurs_check id level t
     | TArray t -> occurs_check id level t
-    | TMap ((k, v)) -> 
-      occurs_check id level k;
-      occurs_check id level v
     | TRecord row -> occurs_check_rrow_for_ty id level row
     | TVariant ((_, args)) -> List.iter (occurs_check id level) args
     | TPolyVariant row -> occurs_check_pv_for_ty id level row
@@ -404,7 +402,6 @@ module Types =
         | (TArrow ((p1, _pe, p2)), TArrow ((a1, _ae, a2))) | (TCont ((p1, _pe, p2)), TCont ((a1, _ae, a2))) -> (go p1 a1) && (go p2 a2)
         | (TList p1, TList a1) -> go p1 a1
         | (TArray p1, TArray a1) -> go p1 a1
-        | (TMap ((pk, pv)), TMap ((ak, av))) -> (go pk ak) && (go pv av)
         | (TTuple ps, TTuple acts) when (List.length ps) = (List.length acts) -> List.forall2 go ps acts
         | (TVariant ((pn, ps)), TVariant ((an, acts))) when (pn = an) && ((List.length ps) = (List.length acts)) -> List.forall2 go ps acts
         | (TVar r1, TVar r2) when r1 = r2 -> true
@@ -523,7 +520,6 @@ module Types =
 
       end) ts)
     | TList t -> (pp_ty_arg t) ^ " list"
-    | TMap ((k, v)) -> "(" ^ ((pp_ty k) ^ (", " ^ ((pp_ty v) ^ ") map")))
     | TArray t -> (pp_ty_arg t) ^ " array"
     | TRecord row -> 
       let rec collect r =
@@ -749,9 +745,6 @@ module Types =
         List.iter2 unify ts1 ts2
       | (TList t1', TList t2') -> unify t1' t2'
       | (TArray t1', TArray t2') -> unify t1' t2'
-      | (TMap ((k1, v1)), TMap ((k2, v2))) -> 
-        unify k1 k2;
-        unify v1 v2
       | (TRecord r1, TRecord r2) -> unify_record_row r1 r2
       | (TInt, TInt) | (TFloat, TFloat) | (TBool, TBool) | (TString, TString) | (TByte, TByte) | (TRune, TRune) | (TUnit, TUnit) -> ()
       | (TVariant ((a, args_a)), TVariant ((b, args_b))) when a = b -> 
@@ -792,7 +785,6 @@ module Types =
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap ((k, v)) -> TMap (go k, go v)
       | TRecord row -> TRecord (go_rrow row)
       | TVariant ((name, args)) -> TVariant (name, List.map go args)
       | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -887,7 +879,6 @@ module Types =
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap ((k, v)) -> TMap (go k, go v)
       | TRecord row -> TRecord (go_rrow row)
       | TVariant ((name, args)) -> TVariant (name, List.map go args)
       | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -969,7 +960,6 @@ module Types =
           | TTuple ts -> TTuple (List.map go ts)
           | TList t -> TList (go t)
           | TArray t -> TArray (go t)
-          | TMap ((k, v)) -> TMap (go k, go v)
           | TRecord row -> TRecord (go_rrow row)
           | TVariant ((name, args)) -> TVariant (name, List.map go args)
           | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -1014,7 +1004,6 @@ module Types =
           | TTuple ts -> TTuple (List.map go ts)
           | TList t -> TList (go t)
           | TArray t -> TArray (go t)
-          | TMap ((k, v)) -> TMap (go k, go v)
           | TRecord row -> TRecord (go_rrow row)
           | TVariant ((name, args)) -> TVariant (name, List.map go args)
           | TPolyVariant row -> TPolyVariant (go_pv row)
@@ -1050,7 +1039,6 @@ module Types =
     | TTuple ts -> TTuple (List.map deep_repr ts)
     | TList t -> TList (deep_repr t)
     | TArray t -> TArray (deep_repr t)
-    | TMap ((k, v)) -> TMap (deep_repr k, deep_repr v)
     | TRecord row -> TRecord (deep_repr_rrow row)
     | TVariant ((name, args)) -> TVariant (name, List.map deep_repr args)
     | TPolyVariant row -> TPolyVariant (deep_repr_pv row)
@@ -1082,7 +1070,6 @@ module Types =
     | (TTuple ts1, TTuple ts2) -> ((List.length ts1) = (List.length ts2)) && (List.forall2 types_compatible ts1 ts2)
     | (TList t1, TList t2) -> types_compatible t1 t2
     | (TArray t1, TArray t2) -> types_compatible t1 t2
-    | (TMap ((k1, v1)), TMap ((k2, v2))) -> (types_compatible k1 k2) && (types_compatible v1 v2)
     | (TRecord r1, TRecord r2) -> 
       let f1 = record_row_to_fields r1 in
       let f2 = record_row_to_fields r2 in
@@ -1124,7 +1111,6 @@ module Types =
         end) f2
     | (TList t1', TList t2') -> subtype t1' t2'
     | (TArray t1', TArray t2') -> subtype t1' t2'
-    | (TMap ((k1, v1)), TMap ((k2, v2))) -> (subtype k1 k2) && (subtype v1 v2)
     | (TTuple ts1, TTuple ts2) -> ((List.length ts1) = (List.length ts2)) && (List.forall2 subtype ts1 ts2)
     | (TVar r1, TVar r2) when r1 = r2 -> true
     | _ -> false
@@ -1143,7 +1129,6 @@ module Types =
       ((List.length f1) = (List.length f2)) && (List.forall2 (fn (n1, t1) (n2, t2) -> (n1 = n2) && (equal_ty t1 t2)) f1 f2)
     | (TList t1', TList t2') -> equal_ty t1' t2'
     | (TArray t1', TArray t2') -> equal_ty t1' t2'
-    | (TMap ((k1, v1)), TMap ((k2, v2))) -> (equal_ty k1 k2) && (equal_ty v1 v2)
     | (TTuple ts1, TTuple ts2) -> ((List.length ts1) = (List.length ts2)) && (List.forall2 equal_ty ts1 ts2)
     | (TVar r1, TVar r2) -> r1 = r2
     | _ -> false
@@ -1168,7 +1153,6 @@ module Types =
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap ((k, v)) -> TMap (go k, go v)
       | TRecord row -> TRecord (go_rrow row)
       | TPolyVariant row -> TPolyVariant (go_pv row)
       | TVariant ((name, args)) -> TVariant (name, List.map go args)
@@ -1264,13 +1248,6 @@ module Types =
           | _ -> false
 
         end
-      | TMap ((k1, v1)) -> 
-        do
-          match repr conc with
-          | TMap ((k2, v2)) -> (match_one k1 k2) && (match_one v1 v2)
-          | _ -> false
-
-        end
       | TTuple ts1 -> 
         do
           match repr conc with
@@ -1327,7 +1304,6 @@ module Types =
         | TArrow ((a, _, b)) | TCont ((a, _, b)) -> (count a) + (count b)
         | TTuple ts -> List.fold (fn acc t -> acc + (count t)) 0 ts
         | TList a | TArray a -> count a
-        | TMap ((k, v)) -> (count k) + (count v)
         | TRecord row -> List.fold (fn acc (_, t) -> acc + (count t)) 0 (record_row_to_fields row)
         | TVariant ((_, ts)) -> List.fold (fn acc t -> acc + (count t)) 0 ts
         | TPolyVariant _ -> 0
@@ -1393,9 +1369,6 @@ module Types =
         | (TGen g, ty) -> Hashtbl.set subst g ty
         | (TList a, TList b) -> extract_bindings a b
         | (TArray a, TArray b) -> extract_bindings a b
-        | (TMap ((k1, v1)), TMap ((k2, v2))) -> 
-          extract_bindings k1 k2;
-          extract_bindings v1 v2
         | (TTuple ts1, TTuple ts2) when (List.length ts1) = (List.length ts2) -> List.iter2 extract_bindings ts1 ts2
         | (TVariant ((_, args1)), TVariant ((_, args2))) when (List.length args1) = (List.length args2) -> List.iter2 extract_bindings args1 args2
         | (TArrow ((a1, _, r1)), TArrow ((a2, _, r2))) | (TCont ((a1, _, r1)), TCont ((a2, _, r2))) -> 
@@ -1415,7 +1388,6 @@ module Types =
           end
         | TList a -> TList (apply_subst a)
         | TArray a -> TArray (apply_subst a)
-        | TMap ((k, v)) -> TMap (apply_subst k, apply_subst v)
         | TTuple ts -> TTuple (List.map apply_subst ts)
         | TVariant ((n, args)) -> TVariant (n, List.map apply_subst args)
         | TArrow ((a, e, r)) -> TArrow (apply_subst a, e, apply_subst r)

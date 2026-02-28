@@ -105,21 +105,27 @@ let serialize_opcode = function
   | LOOP_BREAK -> "[\"LOOP_BREAK\"]"
   | LOOP_CONTINUE n -> Printf.sprintf "[\"LOOP_CONTINUE\",%d]" n
   | FOLD_CONTINUE n -> Printf.sprintf "[\"FOLD_CONTINUE\",%d]" n
-  | MAKE_MAP n -> Printf.sprintf "[\"MAKE_MAP\",%d]" n
   | MAKE_ARRAY n -> Printf.sprintf "[\"MAKE_ARRAY\",%d]" n
   | INDEX -> "[\"INDEX\"]"
   | HALT -> "[\"HALT\"]"
   | GET_LOCAL_CALL (slot, arity) -> Printf.sprintf "[\"GET_LOCAL_CALL\",%d,%d]" slot arity
   | GET_LOCAL_TUPLE_GET (slot, idx) -> Printf.sprintf "[\"GET_LOCAL_TUPLE_GET\",%d,%d]" slot idx
   | GET_LOCAL_FIELD (slot, name) -> Printf.sprintf "[\"GET_LOCAL_FIELD\",%d,%s]" slot (json_escape_string name)
+  | GET_GLOBAL_CALL (idx, arity) -> Printf.sprintf "[\"GET_GLOBAL_CALL\",%d,%d]" idx arity
+  | GET_GLOBAL_FIELD (idx, name) -> Printf.sprintf "[\"GET_GLOBAL_FIELD\",%d,%s]" idx (json_escape_string name)
   | JUMP_TABLE (min_tag, targets, default) ->
     Printf.sprintf "[\"JUMP_TABLE\",%d,[%s],%d]" min_tag
       (String.concat "," (Array.to_list (Array.map string_of_int targets))) default
+  | CALL_N n -> Printf.sprintf "[\"CALL_N\",%d]" n
+  | TAIL_CALL_N n -> Printf.sprintf "[\"TAIL_CALL_N\",%d]" n
+  | UPDATE_REC -> "[\"UPDATE_REC\"]"
 
 let rec serialize_value = function
   | Bytecode.VInt n -> Printf.sprintf "{\"t\":\"i\",\"v\":%d}" n
   | VFloat f ->
     let s = Printf.sprintf "%.17g" f in
+    let len = String.length s in
+    let s = if len > 0 && s.[len - 1] = '.' then String.sub s 0 (len - 1) else s in
     Printf.sprintf "{\"t\":\"f\",\"v\":%s}" s
   | VBool b -> Printf.sprintf "{\"t\":\"b\",\"v\":%b}" b
   | VString s -> Printf.sprintf "{\"t\":\"s\",\"v\":%s}" (json_escape_string s)

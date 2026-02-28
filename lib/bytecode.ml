@@ -76,7 +76,6 @@ type opcode =
   | LOOP_BREAK
   | LOOP_CONTINUE of int
   | FOLD_CONTINUE of int
-  | MAKE_MAP of int
   | MAKE_ARRAY of int
   | INDEX
   | HALT
@@ -84,8 +83,14 @@ type opcode =
   | GET_LOCAL_CALL of int * int
   | GET_LOCAL_TUPLE_GET of int * int
   | GET_LOCAL_FIELD of int * string
+  | GET_GLOBAL_CALL of int * int
+  | GET_GLOBAL_FIELD of int * string
   (* Jump table for match expressions *)
   | JUMP_TABLE of int * int array * int
+  (* Multi-arity call *)
+  | CALL_N of int
+  | TAIL_CALL_N of int
+  | UPDATE_REC
 
 type record_shape = {
   rs_fields: string array;
@@ -105,11 +110,11 @@ type value =
   | VRecord of record_shape * value array
   | VVariant of int * string * value option
   | VClosure of closure
+  | VPartial of closure * value list
   | VProto of prototype
   | VExternal of external_fn
   | VContinuation of continuation_data
   | VRef of value ref
-  | VMap of (value * value) list
   | VArray of value array
 
 and closure = {
@@ -136,7 +141,6 @@ and external_fn = {
 and call_frame = {
   frame_closure: closure;
   mutable frame_ip: int;
-  frame_locals: value array;
   frame_base_sp: int;
 }
 
@@ -144,6 +148,7 @@ and fiber = {
   fiber_stack: value array;
   mutable fiber_sp: int;
   mutable fiber_frames: call_frame list;
+  mutable fiber_extra_args: value list list;
 }
 
 and continuation_data = {
@@ -213,20 +218,13 @@ let rec pp_value = function
       | VTuple _ | VVariant (_, _, Some _) -> "(" ^ pp_value v ^ ")"
       | _ -> pp_value v)
   | VClosure _ -> "<fun>"
+  | VPartial _ -> "<fun>"
   | VExternal ext ->
     if ext.ext_args = [] then Printf.sprintf "<external:%s>" ext.ext_name
     else "<fun>"
   | VProto p -> Printf.sprintf "<proto:%s>" p.name
   | VContinuation _ -> "<continuation>"
   | VRef r -> Printf.sprintf "ref(%s)" (pp_value !r)
-  | VMap pairs ->
-    let is_set = List.for_all (fun (_, v) -> v = VUnit) pairs in
-    if is_set then
-      "#{" ^ String.concat "; " (List.map (fun (k, _) -> pp_value k) pairs) ^ "}"
-    else
-      "#{" ^ String.concat "; " (List.map (fun (k, v) ->
-        pp_value k ^ ": " ^ pp_value v
-      ) pairs) ^ "}"
   | VArray arr ->
     "#[" ^ String.concat "; " (Array.to_list (Array.map pp_value arr)) ^ "]"
 
@@ -315,16 +313,20 @@ let pp_opcode = function
   | LOOP_BREAK -> "LOOP_BREAK"
   | LOOP_CONTINUE n -> Printf.sprintf "LOOP_CONTINUE %d" n
   | FOLD_CONTINUE n -> Printf.sprintf "FOLD_CONTINUE %d" n
-  | MAKE_MAP n -> Printf.sprintf "MAKE_MAP %d" n
   | MAKE_ARRAY n -> Printf.sprintf "MAKE_ARRAY %d" n
   | INDEX -> "INDEX"
   | HALT -> "HALT"
   | GET_LOCAL_CALL (slot, arity) -> Printf.sprintf "GET_LOCAL_CALL %d %d" slot arity
   | GET_LOCAL_TUPLE_GET (slot, idx) -> Printf.sprintf "GET_LOCAL_TUPLE_GET %d %d" slot idx
   | GET_LOCAL_FIELD (slot, name) -> Printf.sprintf "GET_LOCAL_FIELD %d %s" slot name
+  | GET_GLOBAL_CALL (idx, arity) -> Printf.sprintf "GET_GLOBAL_CALL %d %d" idx arity
+  | GET_GLOBAL_FIELD (idx, name) -> Printf.sprintf "GET_GLOBAL_FIELD %d %s" idx name
   | JUMP_TABLE (min_tag, targets, default) ->
     Printf.sprintf "JUMP_TABLE min=%d [%s] default=%d" min_tag
       (String.concat "," (Array.to_list (Array.map string_of_int targets))) default
+  | CALL_N n -> Printf.sprintf "CALL_N %d" n
+  | TAIL_CALL_N n -> Printf.sprintf "TAIL_CALL_N %d" n
+  | UPDATE_REC -> "UPDATE_REC"
 
 let disassemble proto =
   let buf = Buffer.create 256 in

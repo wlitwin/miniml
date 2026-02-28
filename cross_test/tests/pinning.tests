@@ -79,3 +79,252 @@ let check expected actual = match actual with
 in
 check 42 99
 --- expect: false
+
+=== Pin in Record Patterns ===
+
+--- test: pin in record field value
+let expected = 10
+in match {x = 10; y = 20} with
+  | {x = ^expected; y} -> y
+  | _ -> 0
+--- expect: 20
+
+--- test: pin in record field no match
+let expected = 99
+in match {x = 10; y = 20} with
+  | {x = ^expected; y} -> y
+  | _ -> 0
+--- expect: 0
+
+--- test: pin in record multiple fields
+let a = 1
+let b = 2
+in match {x = 1; y = 2; z = 3} with
+  | {x = ^a; y = ^b; z} -> z
+  | _ -> 0
+--- expect: 3
+
+--- test: pin in record with punning and pin
+let expected = 42
+in match {x = 42; y = 10} with
+  | {x = ^expected; y} -> y
+  | _ -> 0
+--- expect: 10
+
+=== Pin in Array Patterns ===
+
+--- test: pin in array first element
+let v = 1
+in match #[1; 2; 3] with
+  | #[^v; b; c] -> b + c
+  | _ -> 0
+--- expect: 5
+
+--- test: pin in array middle element
+let v = 2
+in match #[1; 2; 3] with
+  | #[a; ^v; c] -> a + c
+  | _ -> 0
+--- expect: 4
+
+--- test: pin in array no match
+let v = 99
+in match #[1; 2; 3] with
+  | #[^v; _; _] -> "yes"
+  | _ -> "no"
+--- expect: no
+
+--- test: pin in array multiple positions
+let a = 1
+let c = 3
+in match #[1; 2; 3] with
+  | #[^a; b; ^c] -> b
+  | _ -> 0
+--- expect: 2
+
+=== Pin in Map Key Patterns ===
+
+--- test: pin in map key
+let k = "x"
+in match #{"x": 42} with
+  | #{^k: v} -> v
+  | _ -> 0
+--- expect: 42
+
+--- test: pin in map key no match
+let k = "z"
+in match #{"x": 42} with
+  | #{^k: v} -> v
+  | _ -> 0
+--- expect: 0
+
+--- test: pin in map key int
+let k = 1
+in match #{1: "one"; 2: "two"} with
+  | #{^k: v} -> v
+  | _ -> "none"
+--- expect: one
+
+--- test: pin in map key with nested value pattern
+let k = "data"
+in match #{"data": (10, 20)} with
+  | #{^k: (a, b)} -> a + b
+  | _ -> 0
+--- expect: 30
+
+--- test: pin in map key and pin in value
+let k = "x"
+let expected = 42
+in match #{"x": 42} with
+  | #{^k: ^expected} -> "both matched"
+  | _ -> "nope"
+--- expect: both matched
+
+--- test: pin in map key computed from function
+let make_key n = $"key_{n}"
+let k = make_key 1
+in match #{"key_1": 99} with
+  | #{^k: v} -> v
+  | _ -> 0
+--- expect: 99
+
+=== Pin in Map Value Patterns ===
+
+--- test: pin in map value
+let expected = 42
+in match #{"x": 42} with
+  | #{"x": ^expected} -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+--- test: pin in map value no match
+let expected = 99
+in match #{"x": 42} with
+  | #{"x": ^expected} -> "yes"
+  | _ -> "no"
+--- expect: no
+
+--- test: pin in map value multiple entries
+let a = 1
+let b = 2
+in match #{"x": 1; "y": 2} with
+  | #{"x": ^a; "y": ^b} -> "both"
+  | _ -> "nope"
+--- expect: both
+
+=== Pin in Constructor Payload ===
+
+--- test: pin inside Some
+let x = 42
+in match Some 42 with
+  | Some (^x) -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+--- test: pin inside Some no match
+let x = 99
+in match Some 42 with
+  | Some (^x) -> "yes"
+  | _ -> "no"
+--- expect: no
+
+--- test: pin inside custom variant
+type wrapper = Wrap of int
+let expected = 10
+in match Wrap 10 with
+  | Wrap (^expected) -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+=== Pin with Guard ===
+
+--- test: pin with guard true
+let x = 5
+in match 5 with
+  | ^x when x > 0 -> "positive match"
+  | _ -> "other"
+--- expect: positive match
+
+--- test: pin match guard false falls through
+let x = 5
+in match 5 with
+  | ^x when x > 10 -> "big match"
+  | _ -> "other"
+--- expect: other
+
+=== Pin in List Tail ===
+
+--- test: pin in list second element
+let y = 2
+in match [1; 2; 3] with
+  | _ :: ^y :: _ -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+--- test: pin in list second element no match
+let y = 99
+in match [1; 2; 3] with
+  | _ :: ^y :: _ -> "yes"
+  | _ -> "no"
+--- expect: no
+
+=== Deeply Nested Pin Patterns ===
+
+--- test: pin nested in tuple and list
+let x = 1
+let y = 2
+in match (Some 1, [2; 3]) with
+  | (Some (^x), ^y :: _) -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+--- test: pin nested in tuple and list no match
+let x = 1
+let y = 99
+in match (Some 1, [2; 3]) with
+  | (Some (^x), ^y :: _) -> "yes"
+  | _ -> "no"
+--- expect: no
+
+--- test: pin in record inside tuple
+let expected = 42
+in match (true, {x = 42; y = 0}) with
+  | (true, {x = ^expected; y}) -> y
+  | _ -> -1
+--- expect: 0
+
+--- test: pin in array inside variant
+type container = Box of int array
+let v = 2
+in match Box #[1; 2; 3] with
+  | Box #[_; ^v; _] -> "found"
+  | _ -> "not found"
+--- expect: found
+
+--- test: pin in map value inside tuple
+let expected = "hello"
+in match (1, #{"key": "hello"}) with
+  | (1, #{"key": ^expected}) -> "yes"
+  | _ -> "no"
+--- expect: yes
+
+--- test: pin deeply nested three levels
+let target = 5
+in match (1, (2, (3, 4, 5))) with
+  | (_, (_, (_, _, ^target))) -> "found"
+  | _ -> "nope"
+--- expect: found
+
+--- test: pin in list of tuples
+let key = "x"
+in match [("x", 1); ("y", 2)] with
+  | (^key, v) :: _ -> v
+  | _ -> 0
+--- expect: 1
+
+--- test: pin in list of tuples no match
+let key = "z"
+in match [("x", 1); ("y", 2)] with
+  | (^key, v) :: _ -> v
+  | _ -> 0
+--- expect: 0

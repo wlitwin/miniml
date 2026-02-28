@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MiniML Playground</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>
   /* Ayu Mirage palette */
   :root {
@@ -59,7 +60,7 @@
     border-radius: 4px; padding: 12px; min-height: 120px; white-space: pre-wrap;
     max-height: 400px; overflow-y: auto; line-height: 1.5;
   }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
   button {
     padding: 8px 20px; font-size: 14px; border: none; border-radius: 4px;
     cursor: pointer; font-weight: 600;
@@ -212,6 +213,8 @@
     }
     .docs-sidebar a.active { border-left-color: transparent; border-bottom-color: var(--accent); }
     .docs-content { max-height: none; }
+    .toolbar .spacer { display: none; }
+    .toolbar select { flex: 1; min-width: 0; }
   }
 </style>
 </head>
@@ -266,9 +269,22 @@ let () = print $"fib(20) = {fib 20}"
         <option value="framework">Framework GUI</option>
         <option value="layout">Layout Engine</option>
         <option value="snake">Snake Game</option>
+        <option value="provide">Provide &amp; Try</option>
+        <option value="pinning">Pin Patterns</option>
+        <option value="newtypes">Newtypes</option>
+        <option value="collections">Collections &amp; Indexing</option>
+        <option value="cyclic">Cyclic Data Structures</option>
+        <option value="loops">Loops &amp; Control Flow</option>
+        <option value="polyvariants">Polymorphic Variants</option>
       </select>
       <div class="spacer"></div>
       <label class="toggle-label"><input type="checkbox" id="optimizeToggle"> Optimize</label>
+      <select id="modeSelect">
+        <option value="js-js">JS &rarr; JS</option>
+        <option value="js-vm">JS &rarr; VM</option>
+        <option value="bc-vm">Bytecode &rarr; VM</option>
+        <option value="bc-js">Bytecode &rarr; JS</option>
+      </select>
       <span id="statusText" class="status"></span>
     </div>
 
@@ -338,17 +354,33 @@ globalThis._canvasInit = function(w, h) {
   appCanvas.style.height = `${h}px`;
 };
 
-appCanvas.addEventListener("mousemove", (e) => {
+function updateCanvasPointer(clientX, clientY) {
   const dpr = window.devicePixelRatio || 1;
   const rect = appCanvas.getBoundingClientRect();
   const scaleX = appCanvas.width / (rect.width * dpr);
   const scaleY = appCanvas.height / (rect.height * dpr);
-  globalThis._canvasMouseX = (e.clientX - rect.left) * scaleX;
-  globalThis._canvasMouseY = (e.clientY - rect.top) * scaleY;
-});
+  globalThis._canvasMouseX = (clientX - rect.left) * scaleX;
+  globalThis._canvasMouseY = (clientY - rect.top) * scaleY;
+}
+appCanvas.addEventListener("mousemove", (e) => { updateCanvasPointer(e.clientX, e.clientY); });
 appCanvas.addEventListener("mousedown", () => { globalThis._canvasMouseDown = true; });
 appCanvas.addEventListener("mouseup", () => { globalThis._canvasMouseDown = false; });
 appCanvas.addEventListener("mouseleave", () => { globalThis._canvasMouseDown = false; });
+appCanvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  updateCanvasPointer(t.clientX, t.clientY);
+  globalThis._canvasMouseDown = true;
+}, { passive: false });
+appCanvas.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  updateCanvasPointer(t.clientX, t.clientY);
+}, { passive: false });
+appCanvas.addEventListener("touchend", (e) => {
+  e.preventDefault();
+  globalThis._canvasMouseDown = false;
+}, { passive: false });
 document.addEventListener("keydown", (e) => {
   if (globalThis._canvasCtx) {
     e.preventDefault();
@@ -382,7 +414,7 @@ stopBtn.addEventListener("click", () => {
 const HL_KEYWORDS = new Set([
   'let','rec','in','if','else','fn','match','with','type','of','not','mod',
   'true','false','class','instance','effect','extern','perform','handle','try',
-  'resume','return','continue','mut','for','do','break','when','where','module',
+  'provide','resume','return','continue','mut','for','do','break','when','where','module',
   'pub','open','end','opaque','and','deriving','land','lor','lxor','lnot','lsl','lsr'
 ]);
 
@@ -406,9 +438,7 @@ function highlightMiniML(code) {
     // Line comment --
     if (code[i] === '-' && code[i+1] === '-') {
       let j = i; while (i < n && code[i] !== '\n') i++;
-      const cmt = escHtml(code.slice(j, i));
-      // Highlight @annotations inside comments
-      r += '<span class="hl-comment">' + cmt.replace(/@(\w+)/g, '</span><span class="hl-annotation">@$1</span><span class="hl-comment">') + '</span>';
+      r += sp('comment', code.slice(j, i));
       continue;
     }
     // Block comment (* ... *) with nesting
@@ -494,6 +524,12 @@ function highlightMiniML(code) {
       }
       r += sp('number', code.slice(j, i)); continue;
     }
+    // Annotation @name
+    if (code[i] === '@' && i+1 < n && isIdS(code[i+1])) {
+      let j = i; i++;
+      while (i < n && isIdC(code[i])) i++;
+      r += sp('annotation', code.slice(j, i)); continue;
+    }
     // Identifier or keyword
     if (isIdS(code[i])) {
       let j = i;
@@ -554,9 +590,11 @@ marked.use({
   }
 });
 
-// Compiler bundle cache
-let compilerJson = null;  // JSON string for compiler bundle
+// Compiler bundle caches
+let compilerJson = null;  // JSON string for bytecode compiler bundle
 let compilerLoading = false;
+let compilerNativeJs = null;  // JS string for native JS compiler
+let compilerNativeLoading = false;
 
 function appendOutput(text, cls) {
   const span = document.createElement("span");
@@ -574,24 +612,45 @@ async function loadCompiler() {
   if (compilerJson) return compilerJson;
   if (compilerLoading) return null;
   compilerLoading = true;
-  setStatus('<span class="spinner"></span>Loading compiler...');
+  setStatus('<span class="spinner"></span>Loading bytecode compiler...');
   try {
     const resp = await fetch("compiler.json");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     compilerJson = await resp.text();
-    setStatus("Compiler loaded");
+    setStatus("Bytecode compiler loaded");
     return compilerJson;
   } catch (e) {
     setStatus("");
-    appendOutput("Failed to load compiler: " + e.message, "error");
+    appendOutput("Failed to load bytecode compiler: " + e.message, "error");
     return null;
   } finally {
     compilerLoading = false;
   }
 }
 
-// Pre-fetch compiler on page load
+async function loadCompilerNative() {
+  if (compilerNativeJs) return compilerNativeJs;
+  if (compilerNativeLoading) return null;
+  compilerNativeLoading = true;
+  setStatus('<span class="spinner"></span>Loading JS compiler...');
+  try {
+    const resp = await fetch("compiler_native.js");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    compilerNativeJs = await resp.text();
+    setStatus("JS compiler loaded");
+    return compilerNativeJs;
+  } catch (e) {
+    setStatus("");
+    appendOutput("Failed to load JS compiler: " + e.message, "error");
+    return null;
+  } finally {
+    compilerNativeLoading = false;
+  }
+}
+
+// Pre-fetch both compilers on page load
 loadCompiler();
+loadCompilerNative();
 
 async function runProgram() {
   // Clean up any running canvas app
@@ -611,57 +670,93 @@ async function runProgram() {
     return;
   }
 
-  // Load compiler if needed
-  const compiler = await loadCompiler();
-  if (!compiler) {
-    runBtn.disabled = false;
-    return;
-  }
+  const mode = document.getElementById("modeSelect").value;
+  const optimize = document.getElementById("optimizeToggle").checked;
+  const [compilerType, outputType] = mode.split("-");  // "bc"/"js", "vm"/"js"
+
+  const emitFlag = outputType === "js" ? "--emit-js" : "--emit-json";
+  const compilerArgs = optimize
+    ? ["compiler", emitFlag, "input.mml"]
+    : ["compiler", emitFlag, "--no-optimize", "input.mml"];
+
+  const readFile = (filename) => {
+    if (filename === "input.mml") return code;
+    if (MiniML.STDLIB_SOURCES[filename]) return MiniML.STDLIB_SOURCES[filename];
+    throw new Error("File not found: " + filename);
+  };
 
   // Stage 1: Compile
   setStatus('<span class="spinner"></span>Compiling...');
   // Yield to let browser paint the status update before blocking
   await new Promise(r => setTimeout(r, 10));
-  const compileOutput = [];
 
-  const optimize = document.getElementById("optimizeToggle").checked;
-  globalThis._vmArgs = optimize
-    ? ["compiler", "--emit-json", "input.mml"]
-    : ["compiler", "--emit-json", "--no-optimize", "input.mml"];
-  globalThis._vmReadFile = (filename) => {
-    if (filename === "input.mml") return code;
-    if (MiniML.STDLIB_SOURCES[filename]) return MiniML.STDLIB_SOURCES[filename];
-    throw new Error("File not found: " + filename);
-  };
-  globalThis._vmOutput = (s) => compileOutput.push(s);
-
-  let compiledJson;
+  let compiled;
   const t0 = performance.now();
-  try {
-    MiniML.loadBundle(compiler);
-    compiledJson = compileOutput.join("\n");
-  } catch (e) {
-    const elapsed = (performance.now() - t0).toFixed(1);
+
+  if (compilerType === "bc") {
+    // Bytecode compiler path — run compiler.json in VM
+    const compiler = await loadCompiler();
+    if (!compiler) { runBtn.disabled = false; return; }
+
+    const compileOutput = [];
+    globalThis._vmArgs = compilerArgs;
+    globalThis._vmReadFile = readFile;
+    globalThis._vmOutput = (s) => compileOutput.push(s);
+
+    try {
+      MiniML.loadBundle(compiler);
+      compiled = compileOutput.join(outputType === "js" ? "" : "\n");
+    } catch (e) {
+      const elapsed = (performance.now() - t0).toFixed(1);
+      globalThis._vmArgs = null;
+      globalThis._vmReadFile = null;
+      globalThis._vmOutput = null;
+      setStatus("");
+      let msg = e.message || String(e);
+      msg = msg.replace(/^\[line \d+\] /, "");
+      appendOutput("Compile error: " + msg, "compile-error");
+      appendOutput(`\n--- failed in ${elapsed}ms ---`, "timing");
+      runBtn.disabled = false;
+      return;
+    }
+
     globalThis._vmArgs = null;
     globalThis._vmReadFile = null;
     globalThis._vmOutput = null;
-    setStatus("");
-    // Strip outer VM's [line N] prefix - the compiler's own line is noise
-    let msg = e.message || String(e);
-    msg = msg.replace(/^\[line \d+\] /, "");
-    appendOutput("Compile error: " + msg, "compile-error");
-    appendOutput(`\n--- failed in ${elapsed}ms ---`, "timing");
-    runBtn.disabled = false;
-    return;
-  }
+  } else {
+    // JS compiler path — eval compiler_native.js
+    const compilerJs = await loadCompilerNative();
+    if (!compilerJs) { runBtn.disabled = false; return; }
 
-  globalThis._vmArgs = null;
-  globalThis._vmReadFile = null;
-  globalThis._vmOutput = null;
+    const compileOutput = [];
+    globalThis._jsSysArgs = compilerArgs;
+    globalThis._jsReadFile = readFile;
+    globalThis._jsOutput = (s) => compileOutput.push(s);
+
+    try {
+      new Function(compilerJs)();
+      compiled = compileOutput.join("");
+    } catch (e) {
+      const elapsed = (performance.now() - t0).toFixed(1);
+      globalThis._jsSysArgs = null;
+      globalThis._jsReadFile = null;
+      globalThis._jsOutput = null;
+      setStatus("");
+      let msg = e.message || String(e);
+      appendOutput("Compile error: " + msg, "compile-error");
+      appendOutput(`\n--- failed in ${elapsed}ms ---`, "timing");
+      runBtn.disabled = false;
+      return;
+    }
+
+    globalThis._jsSysArgs = null;
+    globalThis._jsReadFile = null;
+    globalThis._jsOutput = null;
+  }
 
   const compileTime = (performance.now() - t0).toFixed(1);
 
-  if (!compiledJson || !compiledJson.trim()) {
+  if (!compiled || !compiled.trim()) {
     setStatus("");
     appendOutput("Compiler produced no output.", "error");
     runBtn.disabled = false;
@@ -670,44 +765,73 @@ async function runProgram() {
 
   // Stage 2: Execute
   setStatus('<span class="spinner"></span>Running...');
-  globalThis._vmOutput = (s) => appendOutput(s);
-
   const t1 = performance.now();
-  try {
-    const result = MiniML.loadBundle(compiledJson);
-    const runTime = (performance.now() - t1).toFixed(1);
-    if (result !== MiniML.VUNIT && result.tag !== "unit") {
-      appendOutput(MiniML.ppValue(result));
+
+  if (outputType === "vm") {
+    // Execute bytecode in VM
+    globalThis._vmOutput = (s) => appendOutput(s);
+
+    try {
+      const result = MiniML.loadBundle(compiled);
+      const runTime = (performance.now() - t1).toFixed(1);
+      if (result !== MiniML.VUNIT && result.tag !== "unit") {
+        appendOutput(MiniML.ppValue(result));
+      }
+      setStatus("");
+      appendOutput(`\n--- compiled in ${compileTime}ms, ran in ${runTime}ms ---`, "timing");
+    } catch (e) {
+      const runTime = (performance.now() - t1).toFixed(1);
+      setStatus("");
+      if (e instanceof MiniML.RuntimeError) {
+        appendOutput("Runtime error: " + e.message, "error");
+      } else {
+        appendOutput("Error: " + e.message, "error");
+      }
+      appendOutput(`\n--- compiled in ${compileTime}ms, failed in ${runTime}ms ---`, "timing");
     }
-    setStatus("");
-    appendOutput(`\n--- compiled in ${compileTime}ms, ran in ${runTime}ms ---`, "timing");
-  } catch (e) {
-    const runTime = (performance.now() - t1).toFixed(1);
-    setStatus("");
-    if (e instanceof MiniML.RuntimeError) {
-      appendOutput("Runtime error: " + e.message, "error");
-    } else {
-      appendOutput("Error: " + e.message, "error");
+  } else {
+    // Execute raw JS
+    globalThis._jsOutput = (s) => appendOutput(s);
+
+    try {
+      new Function(compiled)();
+      const runTime = (performance.now() - t1).toFixed(1);
+      setStatus("");
+      appendOutput(`\n--- compiled in ${compileTime}ms, ran in ${runTime}ms ---`, "timing");
+    } catch (e) {
+      const runTime = (performance.now() - t1).toFixed(1);
+      setStatus("");
+      appendOutput("Runtime error: " + (e.message || String(e)), "error");
+      appendOutput(`\n--- compiled in ${compileTime}ms, failed in ${runTime}ms ---`, "timing");
+    } finally {
+      globalThis._jsOutput = null;
     }
-    appendOutput(`\n--- compiled in ${compileTime}ms, failed in ${runTime}ms ---`, "timing");
   }
 
   // Stage 3: Start canvas animation loop if app was registered
   if (globalThis._canvasApp) {
-    const { initFn, frameFn } = globalThis._canvasApp;
+    const { initFn, frameFn, jsMode, call: jsCall } = globalThis._canvasApp;
     const vmInst = globalThis._vmInstance;
     stopBtn.style.display = "inline-block";
 
-    // Keep _vmOutput active so print inside frame functions shows in output
-    // globalThis._vmOutput stays set
+    // Keep output hooks active so print inside frame functions shows in output
+    if (jsMode) {
+      globalThis._jsOutput = (s) => appendOutput(s);
+    }
+    // globalThis._vmOutput stays set for VM mode
 
     let state;
     try {
-      state = MiniML.callClosure(vmInst, initFn, MiniML.VUNIT);
+      if (jsMode) {
+        state = jsCall(initFn, [undefined]);
+      } else {
+        state = MiniML.callClosure(vmInst, initFn, MiniML.VUNIT);
+      }
     } catch (e) {
       appendOutput("Canvas init error: " + e.message, "error");
       stopCanvasApp();
       globalThis._vmOutput = null;
+      globalThis._jsOutput = null;
       runBtn.disabled = false;
       return;
     }
@@ -729,11 +853,16 @@ async function runProgram() {
       _prevKeysDown = currentKeys;
 
       try {
-        state = MiniML.callClosure(vmInst, frameFn, state);
+        if (jsMode) {
+          state = jsCall(frameFn, [state]);
+        } else {
+          state = MiniML.callClosure(vmInst, frameFn, state);
+        }
       } catch (e) {
         appendOutput("Canvas frame error: " + e.message, "error");
         stopCanvasApp();
         globalThis._vmOutput = null;
+        globalThis._jsOutput = null;
         runBtn.disabled = false;
         return;
       }
@@ -749,6 +878,16 @@ async function runProgram() {
 }
 
 runBtn.addEventListener("click", runProgram);
+
+// Hide optimize checkbox when output is JS (optimizer only applies to bytecode)
+const modeSelect = document.getElementById("modeSelect");
+const optimizeLabel = document.getElementById("optimizeToggle").parentElement;
+function updateOptimizeVisibility() {
+  const outputType = modeSelect.value.split("-")[1];
+  optimizeLabel.style.display = outputType === "vm" ? "" : "none";
+}
+modeSelect.addEventListener("change", updateOptimizeVisibility);
+updateOptimizeVisibility();
 
 clearBtn.addEventListener("click", () => {
   output.textContent = "";
@@ -2240,6 +2379,550 @@ let frame s =
 
 let () = Canvas.start_app init frame
 `,
+  provide: `-- Effect Handlers: handle, try, and provide
+-- MiniML has three forms for handling algebraic effects,
+-- each suited to different patterns.
+
+-- === provide/with: Dependency Injection ===
+-- provide always resumes — the handler arm's result is
+-- automatically passed back to the performer. No explicit
+-- continuation. Perfect for configuration and context.
+
+effect Config =
+  db_host : unit -> string
+  db_port : unit -> int
+  debug : unit -> bool
+end
+
+let connect () =
+  let host = perform db_host () in
+  let port = perform db_port () in
+  if perform debug () do
+    print $"[debug] connecting to {host}:{port}"
+  end;
+  $"{host}:{port}"
+
+-- provide supplies values without seeing a continuation
+let result = provide connect () with
+  | db_host () -> "localhost"
+  | db_port () -> 5432
+  | debug () -> true
+let () = print $"connected: {result}"
+
+-- Swap config by wrapping with a different provide
+let prod = provide connect () with
+  | db_host () -> "db.prod.example.com"
+  | db_port () -> 5432
+  | debug () -> false
+let () = print $"production: {prod}"
+
+-- === try/with: Exceptions (never resume) ===
+-- try catches an effect and aborts — no continuation,
+-- no resumption. Like traditional exception handling.
+
+let () = print ""
+
+effect Fail =
+  fail : string -> 'a
+end
+
+let safe_div a b =
+  if b = 0 do perform fail "division by zero"
+  else a / b
+
+let try_div a b =
+  try Some (safe_div a b)
+  with
+  | fail msg -> print $"  error: {msg}"; None
+
+let () = print $"10 / 3: {show (try_div 10 3)}"
+let () = print $"10 / 0: {show (try_div 10 0)}"
+
+-- === handle/with: Full Control (coroutines, generators) ===
+-- handle gives you the continuation k — you choose
+-- when and whether to resume it.
+
+let () = print ""
+
+effect Emit =
+  emit : int -> unit
+end
+
+-- Collect emitted values into a list (resume each time)
+let collect f =
+  let mut items = [] in
+  handle f () with
+  | return _ -> List.rev items
+  | emit x k ->
+    items := x :: items;
+    resume k ()
+
+let evens = collect (fn () ->
+  for i in [1; 2; 3; 4; 5; 6] do
+    if i mod 2 = 0 do perform emit i end
+  end
+)
+let () = print $"evens: {show evens}"
+
+-- Take only the first N (resume conditionally)
+let take_n n f =
+  let mut items = [] in
+  let mut count = 0 in
+  handle f () with
+  | return _ -> List.rev items
+  | emit x k ->
+    items := x :: items;
+    count := count + 1;
+    if count < n do resume k ()
+    else List.rev items
+
+let first3 = take_n 3 (fn () ->
+  let mut i = 1 in
+  for do
+    perform emit (i * i);
+    i := i + 1
+  end
+)
+let () = print $"first 3 squares: {show first3}"
+
+-- === Nested handlers: provide + try ===
+-- Combine multiple effect forms in one program
+
+let () = print ""
+
+effect Logger =
+  log : string -> unit
+end
+
+let process items =
+  for item in items do
+    perform log $"processing: {item}";
+    if item = "bad" do
+      perform fail $"invalid item: {item}"
+    end;
+    perform log $"  ok: {item}"
+  end
+
+let run items =
+  let mut logs = [] in
+  let result =
+    try
+      provide
+        process items;
+        "success"
+      with
+      | log msg -> logs := msg :: logs
+    with
+    | fail msg -> $"failed: {msg}"
+  in
+  (result, List.rev logs)
+
+let (status, logs) = run ["apple"; "banana"; "cherry"]
+let () = print $"status: {status}"
+let () = for msg in logs do print msg end
+
+let () = print ""
+let (status2, logs2) = run ["apple"; "bad"; "cherry"]
+let () = print $"status: {status2}"
+let () = for msg in logs2 do print msg end
+`,
+  pinning: `-- Pin Patterns
+-- Use ^variable in patterns to match against an existing value
+-- instead of binding a new variable. Eliminates guards!
+
+let x = 42
+let result = match 42 with
+  | ^x -> "matched"
+  | _ -> "nope"
+let () = print $"pin basic: {result}"
+
+-- Pin in function parameters: compare against a known value
+let classify target value =
+  match value with
+  | ^target -> "exact match"
+  | n when n > target -> "too high"
+  | _ -> "too low"
+
+let () = print $"classify: {classify 10 10}"
+let () = print $"classify: {classify 10 15}"
+let () = print $"classify: {classify 10 5}"
+
+-- Pin in tuples: match specific coordinates
+let expected_x = 3
+let expected_y = 4
+let check point = match point with
+  | (^expected_x, ^expected_y) -> "origin target"
+  | (^expected_x, _) -> "right column"
+  | (_, ^expected_y) -> "right row"
+  | _ -> "elsewhere"
+
+let () = print ""
+let () = print $"point (3,4): {check (3, 4)}"
+let () = print $"point (3,9): {check (3, 9)}"
+let () = print $"point (7,4): {check (7, 4)}"
+let () = print $"point (0,0): {check (0, 0)}"
+
+-- Pin in lists: take elements until a sentinel value
+let sentinel = 0
+let take_until_sentinel xs =
+  let rec go acc xs = match xs with
+    | [] -> List.rev acc
+    | ^sentinel :: _ -> List.rev acc
+    | x :: rest -> go (x :: acc) rest
+  in go [] xs
+
+let () = print ""
+let () = print $"take until 0: {show (take_until_sentinel [1; 2; 3; 0; 4; 5])}"
+let () = print $"no sentinel:  {show (take_until_sentinel [1; 2; 3])}"
+
+-- Pin in records
+type point = { x: int; y: int }
+let origin_x = 0
+let on_y_axis p = match p with
+  | {x = ^origin_x; y} -> Some y
+  | _ -> None
+
+let () = print ""
+let () = print $"(0,5) on Y axis: {show (on_y_axis {x = 0; y = 5})}"
+let () = print $"(3,5) on Y axis: {show (on_y_axis {x = 3; y = 5})}"
+`,
+  newtypes: `-- Newtypes: Zero-Cost Semantic Types
+-- newtypes create distinct types from existing ones.
+-- The constructor is erased at runtime - zero overhead.
+
+-- A newtype for validated email addresses
+newtype email = Email of string deriving Show
+
+let make_email s =
+  if String.contains "@" s do Some (Email s)
+  else None
+
+let () = match make_email "user@example.com" with
+  | Some e -> print $"valid: {show e}"
+  | None -> print "invalid"
+
+let () = match make_email "not-an-email" with
+  | Some e -> print $"valid: {show e}"
+  | None -> print "invalid"
+
+-- Newtypes for unit safety (can't mix up meters and seconds)
+newtype meters = Meters of float deriving Show
+newtype seconds = Seconds of float deriving Show
+newtype mps = MPS of float deriving Show
+
+let speed (Meters d) (Seconds t) = MPS (d / t)
+
+let d = Meters 100.0
+let t = Seconds 9.58
+let (MPS v) = speed d t
+let () = print $"speed = {v:.2f} m/s"
+
+-- This would be a type error:
+-- let bad = speed t d  -- can't pass Seconds where Meters expected
+
+-- Opaque newtypes in modules hide the constructor
+module UserId =
+  opaque newtype t = UserId of int
+  pub let make n = UserId n
+  pub let to_int (UserId n) = n
+  pub let compare (UserId a) (UserId b) = a - b
+end
+
+let id1 = UserId.make 42
+let id2 = UserId.make 99
+let () = print $"user {UserId.to_int id1} vs {UserId.to_int id2}"
+let () = print $"compare: {UserId.compare id1 id2}"
+
+-- Outside the module, you can't do: UserId 42  (constructor is hidden)
+-- This ensures all UserIds go through the make function
+
+-- Newtype with custom Show instance
+newtype 'a nonempty = NonEmpty of 'a list
+
+instance Show ('a nonempty) where Show 'a =
+  let show (NonEmpty xs) = $"NonEmpty {show xs}"
+end
+
+let nel = NonEmpty [1; 2; 3]
+let () = print $"{show nel}"
+
+-- Unwrap and use list functions
+let head (NonEmpty xs) = match xs with
+  | x :: _ -> x
+  | [] -> failwith "impossible"
+let () = print $"head = {head nel}"
+`,
+  collections: `-- Collections & Indexing
+-- Arrays, Maps, Sets with the unified .[key] syntax
+
+-- === Arrays ===
+let arr = #[10; 20; 30; 40; 50]
+let () = print $"array: {show arr}"
+let () = print $"arr.[2] = {arr.[2]}"
+let () = print $"length = {array_length arr}"
+
+-- Array map and fold
+let doubled = Array.map (fn x -> x * 2) arr
+let () = print $"doubled: {show doubled}"
+
+let sum = for x in arr with acc = 0 do acc + x end
+let () = print $"sum = {sum}"
+
+-- === Maps ===
+let () = print ""
+let scores = #{"alice": 95; "bob": 87; "carol": 92}
+let () = print $"scores: {show scores}"
+
+-- Indexing with .[key]
+let () = print $"alice: {scores.["alice"]}"
+
+-- Functional update
+let scores2 = #{ scores with "bob": 91 }
+let () = print $"updated bob: {scores2.["bob"]}"
+
+-- Map keys and values
+let () = print $"keys: {show (Map.keys scores)}"
+let () = print $"values: {show (Map.values scores)}"
+
+-- Check membership
+let () = print $"has alice? {Map.has "alice" scores}"
+let () = print $"has dave? {Map.has "dave" scores}"
+
+-- === Sets ===
+let () = print ""
+let fruits = Set.of_list ["apple"; "banana"; "cherry"; "apple"]
+let () = print $"fruits: {show fruits}"
+let () = print $"has banana: {Set.mem "banana" fruits}"
+let () = print $"size: {Set.size fruits}"
+
+-- Set operations
+let more = Set.of_list ["banana"; "date"; "elderberry"]
+let both = Set.inter fruits more
+let () = print $"intersection: {show both}"
+
+-- === Custom Indexing ===
+-- The .[key] syntax uses the Index type class
+-- Works on arrays (int index), strings (int index), maps (key index)
+let () = print ""
+let () = print "-- Uniform .[key] syntax --"
+let a = #[100; 200; 300]
+let s = "hello"
+let m = #{"x": 42}
+
+let () = print $"array.[1] = {a.[1]}"
+let () = print $"string.[0] = {Byte.to_int s.[0]}"
+let () = print $"map.[key] = {m.["x"]}"
+`,
+  cyclic: `-- Cyclic Data Structures
+-- MiniML supports recursive value definitions that create
+-- true cyclic, infinite data structures via backpatching.
+
+-- A simple infinite list: 1, 1, 1, 1, ...
+let rec ones = 1 :: ones
+let () = print $"ones: {show (Enum.take 8 ones)}"
+
+-- Alternating cycle: 1, 2, 1, 2, ...
+let rec cycle = 1 :: 2 :: cycle
+let () = print $"cycle: {show (Enum.take 8 cycle)}"
+
+-- Three-element cycle
+let rec rgb = "red" :: "green" :: "blue" :: rgb
+let () = print $"rgb:   {show (Enum.take 9 rgb)}"
+
+-- Mutual recursion: a = 1 :: b, b = 2 :: a
+let rec ping = 1 :: pong
+and pong = 2 :: ping
+let () = print $"ping: {show (Enum.take 8 ping)}"
+let () = print $"pong: {show (Enum.take 8 pong)}"
+
+-- Cyclic variant: self-referential tree
+type tree = Leaf | Node of string * tree
+
+let rec infinite_tree = Node ("hello", infinite_tree)
+let () = match infinite_tree with
+  | Node (s1, Node (s2, Node (s3, _))) ->
+    print $"3 levels deep: {s1}, {s2}, {s3}"
+  | _ -> ()
+
+-- Practical use: assign colors from a cycle to items
+let label_items items =
+  let rec go items colors acc = match (items, colors) with
+    | ([], _) -> List.rev acc
+    | (item :: rest, color :: colors_rest) ->
+      go rest colors_rest ($"{color}: {item}" :: acc)
+    | _ -> List.rev acc
+  in go items (Enum.take (List.length items) rgb) []
+
+let () = print ""
+let labeled = label_items ["apple"; "banana"; "cherry"; "date"; "elderberry"]
+let () = for s in labeled do print s end
+
+-- Using Enum on cyclic lists
+let () = print $"\\nfirst 5 ones squared: {show (List.map (fn x -> x * x) (Enum.take 5 ones))}"
+let () = print $"sum of 10 ones: {Enum.sum (Enum.take 10 ones)}"
+`,
+  loops: `-- Loops & Control Flow
+-- MiniML has powerful loop constructs with break, continue, and return
+
+-- === Fold loops (with accumulator) ===
+let sum = for x in [1; 2; 3; 4; 5] with acc = 0 do
+  acc + x
+end
+let () = print $"sum: {sum}"
+
+-- Tuple accumulator
+let (total, count) = for x in [10; 20; 30] with (sum, n) = (0, 0) do
+  (sum + x, n + 1)
+end
+let () = print $"average: {total / count}"
+
+-- Destructuring in fold
+let pairs = [("a", 1); ("b", 2); ("c", 3)]
+let keys = for (k, _) in pairs with acc = "" do
+  if acc = "" do k else acc ^ ", " ^ k
+end
+let () = print $"keys: {keys}"
+
+-- === While loops ===
+let () = print ""
+let mut n = 1
+let () = for n <= 1024 do
+  n := n * 2
+end
+let () = print $"first power of 2 > 1024: {n}"
+
+-- === Break ===
+-- Find first element matching a condition
+let found = for x in [4; 7; 2; 9; 1; 8] with result = -1 do
+  if x > 5 do break x
+  else result
+end
+let () = print $"first > 5: {found}"
+
+-- Break with custom value in fold
+let partial_sum = for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if acc + x > 8 do break acc
+  else acc + x
+end
+let () = print $"partial sum (until > 8): {partial_sum}"
+
+-- === Continue ===
+-- Skip even numbers
+let odd_sum = for x in [1; 2; 3; 4; 5; 6; 7; 8; 9; 10] with acc = 0 do
+  if x mod 2 = 0 do continue
+  else acc + x
+end
+let () = print $"sum of odds: {odd_sum}"
+
+-- === Return (early exit from function) ===
+let find_index target xs =
+  let mut i = 0 in
+  for x in xs do
+    if x = target do return i else ();
+    i := i + 1
+  end;
+  -1
+
+let () = print $"index of 30: {find_index 30 [10; 20; 30; 40; 50]}"
+let () = print $"index of 99: {find_index 99 [10; 20; 30; 40; 50]}"
+
+-- === While-let loops ===
+-- Loop while a pattern matches
+let () = print ""
+let mut xs = [1; 2; 3; 4; 5]
+let mut sum = 0
+let () = for let x :: rest = xs do
+  sum := sum + x;
+  xs := rest
+end
+let () = print $"while-let sum: {sum}"
+
+-- === Infinite loop with break ===
+let mut guess = 1
+let () = for do
+  if guess * guess >= 100 do break
+  else guess := guess + 1
+end
+let () = print $"sqrt(100) ~ {guess}"
+
+-- === For-in over arrays ===
+let () = print ""
+let arr = #[10; 20; 30; 40; 50]
+let max = for x in arr with best = 0 do
+  if x > best do x else best
+end
+let () = print $"max of array: {max}"
+`,
+  polyvariants: `-- Polymorphic Variants
+-- Backtick variants don't need type declarations -
+-- they're structural, open, and compose freely.
+
+-- No type declaration needed - just use them
+let describe_color c = match c with
+  | \`Red -> "warm: red"
+  | \`Blue -> "cool: blue"
+  | \`Green -> "cool: green"
+  | _ -> "unknown"
+
+let () = print (describe_color \`Red)
+let () = print (describe_color \`Blue)
+
+-- Polyvariants with payloads
+let area shape : float = match shape with
+  | \`Circle r -> 3.14159 * r * r
+  | \`Rect (w, h) -> (w : float) * h
+  | \`Triangle (b, h) -> 0.5 * b * h
+
+let shapes = [\`Circle 5.0; \`Rect (3.0, 4.0); \`Triangle (6.0, 8.0)]
+let () = for s in shapes do
+  print $"area = {area s:.2f}"
+end
+
+-- Row polymorphism: functions accept MORE variants than they handle
+let is_primary (c : [> \`Red | \`Blue | \`Green]) = match c with
+  | \`Red -> true
+  | \`Blue -> true
+  | \`Green -> true
+  | _ -> false
+
+let () = print ""
+let () = print $"Red primary? {is_primary \`Red}"
+let () = print $"Yellow primary? {is_primary \`Yellow}"
+
+-- Composable: mix variant sets from different functions
+let classify_temp temp =
+  if temp > 30.0 do \`Hot
+  else if temp > 15.0 do \`Warm
+  else \`Cold
+
+let describe_weather weather = match weather with
+  | \`Hot -> "stay inside"
+  | \`Warm -> "nice day"
+  | \`Cold -> "bring a coat"
+  | \`Rainy -> "bring umbrella"
+
+let () = print $"25 degrees: {describe_weather (classify_temp 25.0)}"
+let () = print $"5 degrees: {describe_weather (classify_temp 5.0)}"
+let () = print $"rainy: {describe_weather \`Rainy}"
+
+-- Nested polyvariants
+let () = print ""
+let handle_event event = match event with
+  | \`Click pos -> $"clicked at {show pos}"
+  | \`Key k -> match k with
+    | \`Enter -> "pressed enter"
+    | \`Escape -> "pressed escape"
+    | \`Char c -> $"typed '{c}'"
+
+let () = print (handle_event (\`Click (10, 20)))
+let () = print (handle_event (\`Key \`Enter))
+let () = print (handle_event (\`Key (\`Char "a")))
+
+-- Polyvariants in collections
+let log = [\`Info "started"; \`Warn "slow query"; \`Error "timeout"; \`Info "done"]
+let errors = List.filter (fn e -> match e with \`Error _ -> true | _ -> false) log
+let () = print $"errors: {List.length errors}"
+`,
 };
 
 samples.addEventListener("change", () => {
@@ -2262,6 +2945,7 @@ const DOCS = [
   { file: "modules.md",  title: "Module System" },
   { file: "compiler.md", title: "Compiler Pipeline" },
   { file: "js-vm.md",    title: "JavaScript VM" },
+  { file: "harness.md",  title: "Browser Harness" },
   { separator: true, title: "Type System Internals" },
   { file: "typesystem/00-overview.md",        title: "Overview" },
   { file: "typesystem/01-types.md",           title: "Types & Representation" },

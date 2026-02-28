@@ -189,7 +189,7 @@ match None with
 
 --- test: empty map
 #{}
---- expect: #{}
+--- expect: []
 
 --- test: map get returns Some
 let m = #{"a": 1; "b": 2};;
@@ -407,7 +407,7 @@ Set.size #Set{10; 20; 30}
 
 --- test: typed set empty
 Set.size #Set{}
---- expect-type-error
+--- expect: 0
 
 --- test: typed array bracket
 Array.length #Array[1; 2; 3]
@@ -424,6 +424,29 @@ array_length #[10; 20; 30]
 --- test: native map unchanged
 size #{"a": 1; "b": 2}
 --- expect: 2
+
+--- test: map typeclass dict in recursive function
+let rec add n tbl =
+  if n <= 0 do tbl else do
+    let tbl = #{ tbl with n: n} in
+    add (n-1) tbl
+  end
+in
+size (add 5 #{})
+--- expect: 5
+
+--- test: map typeclass dict iteration via for loop
+let rec add n tbl =
+  if n <= 0 do tbl else do
+    let tbl = #{ tbl with n: n} in
+    add (n-1) tbl
+  end
+in
+let t = add 3 #{} in
+let mut sum = 0 in
+for (_, v) in t do sum := sum + v end;
+sum
+--- expect: 6
 
 === Map Iteration Tests ===
 

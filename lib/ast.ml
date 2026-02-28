@@ -12,7 +12,6 @@ type ty_annot =
   | TyArray of ty_annot
   | TyTuple of ty_annot list
   | TyApp of ty_annot list * string
-  | TyMap of ty_annot * ty_annot
   | TyQualified of string list * string
   | TyPolyVariant of pv_annot_kind * (string * ty_annot option) list
   | TyWithEffect of ty_annot * eff_annot
@@ -125,6 +124,7 @@ type type_def =
     (* (name, arg_type, return_type) -- return_type = Some for GADT constructors *)
   | TDRecord of (bool * string * ty_annot) list
   | TDAlias of ty_annot
+  | TDNewtype of string * ty_annot    (* constructor_name, underlying_type *)
 
 type constraint_ = string * string list
   (* class_name, tyvar_names — e.g. ("Show", ["a"]) *)

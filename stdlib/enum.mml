@@ -1,6 +1,6 @@
 module Enum =
   pub let reduce f xs =
-    -- @partial
+    @partial
     match xs with
     | x :: rest -> List.fold f x rest
 
@@ -98,13 +98,13 @@ module Enum =
     List.map (fn p -> match p with (a, b) -> f a b) (List.zip xs ys)
 
   pub let min_by f xs =
-    -- @partial
+    @partial
     match xs with
     | x :: rest ->
       List.fold (fn best y -> if f y < f best do y else best) x rest
 
   pub let max_by f xs =
-    -- @partial
+    @partial
     match xs with
     | x :: rest ->
       List.fold (fn best y -> if f y > f best do y else best) x rest

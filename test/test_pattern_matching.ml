@@ -443,28 +443,28 @@ let () =
   Printf.printf "\n=== Map Pattern Matching Tests ===\n";
 
   test "map pattern basic" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       match #{"x": 1; "y": 2} with
         | #{"x": x} -> x
         | _ -> 0
     |} 1);
 
   test "map pattern multiple keys" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       match #{"a": 1; "b": 2} with
         | #{"a": a; "b": b} -> a + b
         | _ -> 0
     |} 3);
 
   test "map pattern missing key fallthrough" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       match #{"x": 1} with
         | #{"y": y} -> y
         | _ -> 0
     |} 0);
 
   test "map pattern int keys" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       match #{1: 10; 2: 20} with
         | #{1: v} -> v
         | _ -> 0
@@ -499,7 +499,7 @@ let () =
     |} "non-exhaustive match, missing: _");
 
   test "map pattern with wildcard is exhaustive" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       match #{"x": 1} with
         | #{"x": x} -> x
         | _ -> 0

@@ -780,3 +780,596 @@ with
 | get_val () k -> resume k 10
 in print (string_of_int r)
 --- expect: 11
+
+--- test: deep recursion with effects (stack safety)
+effect Counter =
+  tick : unit -> unit
+end
+handle
+  let rec loop n =
+    if n <= 0 do ()
+    else (perform tick (); loop (n - 1))
+  in
+  loop 5000;
+  "done"
+with
+| return x -> x
+| tick () k -> resume k ()
+--- expect: done
+
+=== Simple Handler Optimization Tests ===
+
+--- test: simple handler inline performs
+effect Val = get : unit -> int end
+handle
+  perform get () + perform get () + 1
+with
+| return x -> x
+| get () k -> resume k 10
+--- expect: 21
+
+--- test: simple handler with mutation
+effect Counter = inc : unit -> unit end
+let mut count = 0 in
+handle
+  perform inc ();
+  perform inc ();
+  perform inc ();
+  count
+with
+| return x -> x
+| inc () k -> count := count + 1; resume k ()
+--- expect: 3
+
+--- test: simple handler with return arm
+effect Val = get : unit -> int end
+handle
+  perform get ()
+with
+| return x -> x + 100
+| get () k -> resume k 42
+--- expect: 142
+
+--- test: simple handler multi-op state
+effect State =
+  get : unit -> int
+  put : int -> unit
+end
+let mut st = 0 in
+handle
+  perform put 10;
+  let x = perform get () in
+  perform put (x + 5);
+  perform get ()
+with
+| return x -> x
+| get () k -> resume k st
+| put v k -> st := v; resume k ()
+--- expect: 15
+
+--- test: simple handler called function uses CPS wrapper
+effect Ask = ask : unit -> int end
+let f () = perform ask () * 2
+handle
+  f () + 1
+with
+| return x -> x
+| ask () k -> resume k 21
+--- expect: 43
+
+--- test: mixed simple and non-simple ops
+effect E =
+  get : unit -> int
+  choose : unit -> bool
+end
+handle
+  let x = perform get () in
+  let b = perform choose () in
+  if b do x else 0
+with
+| return x -> x
+| get () k -> resume k 42
+| choose () k ->
+  let a = resume k true in
+  a
+--- expect: 42
+
+=== Try/With Optimization Tests ===
+
+--- test: try/with basic catch
+effect Exn = fail : string -> int end
+try
+  perform fail "error"
+with
+| fail msg -> 42
+--- expect: 42
+
+--- test: try/with no exception
+effect Exn = fail : string -> int end
+try
+  10 + 20
+with
+| fail msg -> 0
+--- expect: 30
+
+--- test: try/with called function throws
+effect Exn = fail : unit -> int end
+let boom () = perform fail ()
+try
+  boom () + 1
+with
+| fail () -> 99
+--- expect: 99
+
+--- test: try/with multiple ops
+effect IO =
+  not_found : string -> int
+  perm_denied : string -> int
+end
+try
+  perform perm_denied "secret"
+with
+| not_found path -> 1
+| perm_denied path -> 2
+--- expect: 2
+
+--- test: nested try/with and simple handler
+effect Exn = fail : unit -> int end
+effect Val = get : unit -> int end
+try
+  handle
+    perform get () + 1
+  with
+  | return x -> x
+  | get () k -> resume k 42
+with
+| fail () -> 0
+--- expect: 43
+
+--- test: try/with recursive function throws
+effect Exn = fail : string -> int end
+let rec check n =
+  if n <= 0 do perform fail "done"
+  else check (n - 1)
+try
+  check 50
+with
+| fail msg -> 100
+--- expect: 100
+
+--- test: recursive non-tail call inside handle with effects
+effect Trace =
+  trace : string -> unit
+end
+let rec eval n =
+  if n <= 0 do 0
+  else
+    let a = eval (n - 1) in
+    perform trace "step";
+    a + n
+in
+let mut log = 0 in
+handle
+  eval 5
+with
+| return x -> (x, log)
+| trace _ k ->
+  log := log + 1;
+  resume k ()
+--- expect: (15, 5)
+
+--- test: recursive non-tail call with nested effects and multiple bindings
+effect Counter =
+  inc : unit -> int
+end
+let rec tree_sum depth =
+  if depth <= 0 do
+    perform inc ()
+  else
+    let left = tree_sum (depth - 1) in
+    let right = tree_sum (depth - 1) in
+    left + right
+in
+let mut count = 0 in
+handle
+  tree_sum 3
+with
+| return x -> (x, count)
+| inc () k ->
+  count := count + 1;
+  resume k count
+--- expect: (36, 8)
+
+--- test: handler classification - tail-resumptive provide pattern
+effect Config = get_db : unit -> string; get_port : unit -> int end
+handle
+  let db = perform get_db () in
+  let port = perform get_port () in
+  db ^ ":" ^ show port
+with
+| return x -> x
+| get_db () k -> resume k "localhost"
+| get_port () k -> resume k 8080
+--- expect: localhost:8080
+
+--- test: handler classification - non-resuming try pattern
+effect Fail = fail : string -> 'a end
+try
+  let x = 10 in
+  if x > 5 do perform fail "too big" else x
+with
+| fail msg -> -1
+--- expect: -1
+
+--- test: handler classification - mixed provide and full arms
+effect Mixed = get_val : unit -> int; choose : unit -> bool end
+handle
+  let v = perform get_val () in
+  if perform choose () do v * 2 else v
+with
+| return x -> x
+| get_val () k -> resume k 21
+| choose () k -> resume k true
+--- expect: 42
+
+--- test: handler classification - provide with branching resume
+effect Lookup = lookup : string -> int end
+handle
+  perform lookup "a" + perform lookup "b"
+with
+| return x -> x
+| lookup key k ->
+  if key = "a" do resume k 10
+  else resume k 20
+--- expect: 30
+
+--- test: handler classification - provide with let in body
+effect Env = get : unit -> int end
+handle
+  let x = perform get () in
+  x * x
+with
+| return x -> x
+| get () k ->
+  let v = 7 in
+  resume k v
+--- expect: 49
+
+=== Provide/With Tests ===
+
+--- test: provide basic value
+effect Env = get_name : unit -> string end
+provide
+  perform get_name ()
+with
+| get_name () -> "world"
+--- expect: world
+
+--- test: provide with argument
+effect Config = get : string -> int end
+provide
+  perform get "port"
+with
+| get key -> if key = "port" do 8080 else 0
+--- expect: 8080
+
+--- test: provide multiple operations
+effect DB = host : unit -> string; port : unit -> int end
+provide
+  perform host () ^ ":" ^ show (perform port ())
+with
+| host () -> "localhost"
+| port () -> 5432
+--- expect: localhost:5432
+
+--- test: provide nested different effects
+effect Outer = get_outer : unit -> string end
+effect Inner = get_inner : unit -> string end
+provide
+  let a = perform get_outer () in
+  let b = provide perform get_inner () with
+    | get_inner () -> "red"
+  in
+  (a, b)
+with
+| get_outer () -> "blue"
+--- expect: (blue, red)
+
+--- test: provide nested same effect
+effect Theme = color : unit -> string end
+provide
+  let outer = perform color () in
+  let inner = provide perform color () with
+    | color () -> "red"
+  in
+  (outer, inner)
+with
+| color () -> "blue"
+--- expect: (blue, red)
+
+--- test: nested handle same effect
+effect Val = get : unit -> int end
+handle
+  let a = perform get () in
+  let b = handle perform get () with
+    | return x -> x
+    | get () k -> resume k 99
+  in
+  (a, b)
+with
+| return x -> x
+| get () k -> resume k 42
+--- expect: (42, 99)
+
+--- test: inner full handler shadows outer provide
+effect E = get : unit -> int end
+provide
+  handle
+    perform get ()
+  with
+  | return x -> x
+  | get () k -> resume k 99
+with
+| get () -> 42
+--- expect: 99
+
+--- test: inner try handler shadows outer provide
+effect E = get : unit -> int end
+provide
+  try perform get () with
+  | get () -> 99
+with
+| get () -> 42
+--- expect: 99
+
+--- test: triple nesting same effect
+effect E = get : unit -> int end
+provide
+  let a = perform get () in
+  let b = provide
+    let x = perform get () in
+    let y = provide perform get () with
+      | get () -> 3
+    in
+    (x, y)
+  with
+  | get () -> 2
+  in
+  (a, b)
+with
+| get () -> 1
+--- expect: (1, (2, 3))
+
+--- test: provide with computation in arm
+effect Lookup = find : string -> int end
+provide
+  perform find "a" + perform find "b"
+with
+| find key ->
+  if key = "a" do 1 else 2
+--- expect: 3
+
+--- test: provide side-effecting unit operation
+effect Logger = log : string -> unit end
+let mut msgs = [] in
+provide
+  perform log "hello";
+  perform log "world";
+  msgs
+with
+| log msg -> msgs := msg :: msgs
+--- expect: [world; hello]
+
+--- test: provide with try inside
+effect Ctx = get_user : unit -> string end
+effect Fail = fail : string -> 'a end
+provide
+  try
+    let u = perform get_user () in
+    if u = "admin" do perform fail "nope" else u
+  with
+  | fail msg -> "fallback"
+with
+| get_user () -> "admin"
+--- expect: fallback
+
+--- test: provide is classified as THOpProvide
+--- provide arms should get the tail-resumptive optimization
+effect Counter = next : unit -> int end
+let mut n = 0 in
+provide
+  let a = perform next () in
+  let b = perform next () in
+  let c = perform next () in
+  (a, b, c)
+with
+| next () -> n := n + 1; n
+--- expect: (1, 2, 3)
+
+=== Unit/Wildcard Elision Tests ===
+
+--- test: perform unit elision
+effect E = get_val : unit -> int end
+handle
+  perform get_val + 1
+with
+| return x -> x
+| get_val () k -> resume k 42
+--- expect: 43
+
+--- test: perform unit elision in sequence
+effect Logger = log : string -> unit end
+let mut count = 0 in
+handle
+  perform log "a";
+  perform log "b";
+  count
+with
+| return x -> x
+| log _ k -> count := count + 1; resume k ()
+--- expect: 2
+
+--- test: perform unit elision in let binding
+effect E = get : unit -> int end
+handle
+  let x = perform get in
+  x * 2
+with
+| return x -> x
+| get () k -> resume k 21
+--- expect: 42
+
+--- test: perform unit elision parenthesized
+effect E = get : unit -> int end
+handle
+  (perform get) + 1
+with
+| return x -> x
+| get () k -> resume k 10
+--- expect: 11
+
+--- test: perform with arg still works
+effect E = double : int -> int end
+handle
+  perform double 5
+with
+| return x -> x
+| double n k -> resume k (n * 2)
+--- expect: 10
+
+--- test: try/with wildcard arm elision
+effect Fail = fail : string -> 'a end
+try
+  perform fail "oops"
+with
+| fail -> "caught"
+--- expect: caught
+
+--- test: try/with wildcard elision unit effect
+effect Boom = boom : unit -> 'a end
+try
+  perform boom;
+  "unreachable"
+with
+| boom -> "caught"
+--- expect: caught
+
+--- test: try/with wildcard elision with explicit arg still works
+effect Fail = fail : string -> 'a end
+try
+  perform fail "hello"
+with
+| fail msg -> msg
+--- expect: hello
+
+--- test: provide wildcard arm elision
+effect E = get_name : unit -> string end
+provide
+  perform get_name
+with
+| get_name -> "world"
+--- expect: world
+
+--- test: provide wildcard elision non-unit effect
+effect E = check : string -> bool end
+provide
+  perform check "admin"
+with
+| check -> true
+--- expect: true
+
+--- test: provide wildcard elision with explicit arg still works
+effect E = get : string -> int end
+provide
+  perform get "port"
+with
+| get key -> if key = "port" do 8080 else 0
+--- expect: 8080
+
+--- test: handle wildcard elision no arg no k
+effect E = get : unit -> int end
+handle
+  perform get
+with
+| return x -> x
+| get -> resume __k 42
+--- expect: 42
+
+--- test: handle wildcard elision one ident is k
+effect E = get : unit -> int end
+handle
+  perform get
+with
+| return x -> x
+| get k -> resume k 42
+--- expect: 42
+
+--- test: handle wildcard elision non-unit effect
+effect E = check : string -> unit end
+handle
+  perform check "test";
+  "done"
+with
+| return x -> x
+| check k -> resume k ()
+--- expect: done
+
+--- test: handle unit-paren then arrow elision
+effect E = get : unit -> int end
+handle
+  perform get
+with
+| return x -> x
+| get () -> resume __k 99
+--- expect: 99
+
+--- test: handle explicit arg and k still works
+effect E = double : int -> int end
+handle
+  perform double 5
+with
+| return x -> x
+| double n k -> resume k (n * 2)
+--- expect: 10
+
+--- test: mixed elision in multi-arm handler
+effect E =
+  get : unit -> int
+  check : string -> bool
+  put : int -> unit
+end
+let mut st = 0 in
+handle
+  let v = perform get in
+  if perform check "go" do
+    perform put (v + 1);
+    perform get
+  else v
+with
+| return x -> x
+| get k -> resume k st
+| check k -> resume k true
+| put v k -> st := v; resume k ()
+--- expect: 1
+
+--- test: elision in provide with multiple ops
+effect DB = host : unit -> string; port : unit -> int end
+provide
+  perform host ^ ":" ^ show (perform port)
+with
+| host -> "localhost"
+| port -> 5432
+--- expect: localhost:5432
+
+--- test: elision in try with multiple ops
+effect IO =
+  not_found : string -> 'a
+  timeout : unit -> 'a
+end
+try
+  perform timeout;
+  "ok"
+with
+| not_found -> "missing"
+| timeout -> "timed out"
+--- expect: timed out

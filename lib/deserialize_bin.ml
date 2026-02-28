@@ -147,7 +147,6 @@ let read_opcode r strs =
   | 68 -> Bytecode.LOOP_BREAK
   | 69 -> Bytecode.LOOP_CONTINUE (read_u32 r)
   | 70 -> Bytecode.FOLD_CONTINUE (read_u32 r)
-  | 71 -> Bytecode.MAKE_MAP (read_u32 r)
   | 72 -> Bytecode.MAKE_ARRAY (read_u32 r)
   | 73 -> Bytecode.INDEX
   | 74 -> Bytecode.HALT
@@ -168,12 +167,23 @@ let read_opcode r strs =
     let slot = read_u32 r in
     let name = strs.(read_u32 r) in
     Bytecode.GET_LOCAL_FIELD (slot, name)
+  | 81 ->
+    let idx = read_u32 r in
+    let arity = read_u32 r in
+    Bytecode.GET_GLOBAL_CALL (idx, arity)
+  | 82 ->
+    let idx = read_u32 r in
+    let name = strs.(read_u32 r) in
+    Bytecode.GET_GLOBAL_FIELD (idx, name)
   | 80 ->
     let min_tag = read_u32 r in
     let table_size = read_u32 r in
     let targets = Array.init table_size (fun _ -> read_u32 r) in
     let default = read_u32 r in
     Bytecode.JUMP_TABLE (min_tag, targets, default)
+  | 83 -> Bytecode.CALL_N (read_u32 r)
+  | 84 -> Bytecode.TAIL_CALL_N (read_u32 r)
+  | 85 -> Bytecode.UPDATE_REC
   | n -> failwith (Printf.sprintf "unknown opcode tag: %d" n)
 
 let rec read_value r strs =

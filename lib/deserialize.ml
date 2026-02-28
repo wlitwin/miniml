@@ -261,15 +261,19 @@ let deserialize_opcode json =
      | "LOOP_BREAK", [] -> LOOP_BREAK
      | "LOOP_CONTINUE", [JInt n] -> LOOP_CONTINUE n
      | "FOLD_CONTINUE", [JInt n] -> FOLD_CONTINUE n
-     | "MAKE_MAP", [JInt n] -> MAKE_MAP n
      | "MAKE_ARRAY", [JInt n] -> MAKE_ARRAY n
      | "INDEX", [] -> INDEX
      | "HALT", [] -> HALT
      | "GET_LOCAL_CALL", [JInt slot; JInt arity] -> GET_LOCAL_CALL (slot, arity)
      | "GET_LOCAL_TUPLE_GET", [JInt slot; JInt idx] -> GET_LOCAL_TUPLE_GET (slot, idx)
      | "GET_LOCAL_FIELD", [JInt slot; JString name] -> GET_LOCAL_FIELD (slot, name)
+     | "GET_GLOBAL_CALL", [JInt idx; JInt arity] -> GET_GLOBAL_CALL (idx, arity)
+     | "GET_GLOBAL_FIELD", [JInt idx; JString name] -> GET_GLOBAL_FIELD (idx, name)
      | "JUMP_TABLE", [JInt min_tag; JArray targets; JInt default] ->
        JUMP_TABLE (min_tag, Array.of_list (List.map json_int targets), default)
+     | "CALL_N", [JInt n] -> CALL_N n
+     | "TAIL_CALL_N", [JInt n] -> TAIL_CALL_N n
+     | "UPDATE_REC", [] -> UPDATE_REC
      | _ -> failwith (Printf.sprintf "unknown opcode: %s" op))
   | _ -> failwith "invalid opcode format"
 

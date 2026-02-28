@@ -132,6 +132,7 @@ type pattern =
   | PatOr of pattern * pattern
   | PatArray of pattern list
   | PatMap of (pattern * pattern) list
+  | PatPolyVariant of string * pattern option
 ```
 
 Each of these forms has a corresponding case in `check_pattern`.
@@ -286,6 +287,41 @@ detail.
 Record patterns are explained in detail in the record pattern inference
 section below.
 
+### Polymorphic Variant Patterns
+
+```ocaml
+  | Ast.PatPolyVariant (tag, None) ->
+    let tail = new_pvvar level in
+    let row = Types.PVRow (tag, None, tail) in
+    try_unify ty (Types.TPolyVariant row);
+    []
+  | Ast.PatPolyVariant (tag, Some sub_pat) ->
+    let payload_ty = new_tvar level in
+    let tail = new_pvvar level in
+    let row = Types.PVRow (tag, Some payload_ty, tail) in
+    try_unify ty (Types.TPolyVariant row);
+    check_pattern ctx level sub_pat payload_ty
+```
+
+A poly variant pattern like `` `Foo `` or `` `Bar x `` constructs an open
+poly variant row type (using a `PVVar` tail) with the given tag, and unifies
+it with the scrutinee type. For tags with a payload, the sub-pattern is
+checked against a fresh type variable representing the payload type.
+
+For example:
+
+```
+match x with
+| `Circle r -> 3.14 *. r *. r
+| `Square s -> s *. s
+```
+
+The scrutinee `x` is unified with
+`TPolyVariant(PVRow("Circle", Some 'a, PVRow("Square", Some 'b, PVVar(...))))`,
+and the payload variables `r` and `s` get bound to `'a` and `'b` respectively.
+Since the row ends with a `PVVar`, this match accepts any poly variant with
+at least these two tags.
+
 ### Alias Patterns
 
 ```ocaml
@@ -347,7 +383,7 @@ share the same type.
   | Ast.PatMap entries ->
     let key_ty = Types.new_tvar level in
     let val_ty = Types.new_tvar level in
-    try_unify ty (Types.TMap (key_ty, val_ty));
+    try_unify ty (Types.TVariant ("map", [key_ty; val_ty]));
     List.concat_map (fun (kpat, vpat) ->
       check_pattern ctx level kpat key_ty @
       check_pattern ctx level vpat val_ty
@@ -355,7 +391,7 @@ share the same type.
 ```
 
 Map patterns destructure map literals. Fresh type variables are created for the
-key and value types, the scrutinee is unified with `TMap(key_ty, val_ty)`, and
+key and value types, the scrutinee is unified with the map newtype, and
 each key-value pair's sub-patterns are checked against the corresponding types.
 
 
@@ -1021,8 +1057,6 @@ let rec types_compatible t1 t2 =
     List.length ts1 = List.length ts2 && List.for_all2 types_compatible ts1 ts2
   | TList t1, TList t2 -> types_compatible t1 t2
   | TArray t1, TArray t2 -> types_compatible t1 t2
-  | TMap (k1, v1), TMap (k2, v2) ->
-    types_compatible k1 k2 && types_compatible v1 v2
   | TVariant (a, args_a), TVariant (b, args_b) ->
     String.equal a b && List.length args_a = List.length args_b &&
     List.for_all2 types_compatible args_a args_b
@@ -1133,12 +1167,12 @@ it. Array matches almost always need a wildcard or variable catch-all.
 ### Other Types
 
 ```ocaml
-    | Types.TMap _ -> ["_"]
     | Types.TInt | Types.TFloat | Types.TString -> ["_"]
     | _ -> []
 ```
 
-Maps, integers, floats, and strings have effectively infinite value spaces.
+Integers, floats, and strings have effectively infinite value spaces. Map
+patterns (matched via the newtype variant) also fall into this category.
 Without a wildcard, they are always non-exhaustive. The checker reports `"_"`
 as the missing pattern, indicating that a catch-all is needed.
 
@@ -1222,10 +1256,24 @@ if not partial then
   !exhaustiveness_check_ref ctx (Types.repr scrut_te.ty) all_arms;
 ```
 
-This flag is used internally by derived code (such as auto-generated `Show`
-and `Eq` instances) where the compiler constructs match expressions that are
-known to be correct by construction, or where partial matching is intentional.
-User-written match expressions always have this flag set to `false`.
+This flag is set to `true` in two cases:
+
+1. **User-written `@partial` annotation.** Users can suppress the exhaustiveness
+   check on a specific match expression by placing `@partial` before it:
+
+   ```
+   @partial
+   match opt with
+   | Some x -> x
+   ```
+
+   The lexer emits a `PARTIAL` token, and the parser sets the boolean flag to
+   `true`. This is useful for functions like `unwrap` where the caller
+   guarantees the value will match.
+
+2. **Derived code.** Auto-generated `Show` and `Eq` instances construct match
+   expressions that are known to be correct by construction. These also set
+   the flag to `true`.
 
 
 ## Summary
@@ -1236,8 +1284,10 @@ Pattern matching typechecking has two phases:
    unifying the scrutinee type with the type implied by the pattern, and
    collecting variable bindings. Constructor patterns trigger a lookup in the
    type environment to determine the parent variant type and instantiate its
-   type parameters. Record patterns use field names to infer which record type
-   is involved when the scrutinee type is not yet known. For GADT types,
+   type parameters. Polymorphic variant patterns construct open row types
+   and unify them with the scrutinee. Record patterns use field names to
+   infer which record type is involved when the scrutinee type is not yet
+   known. For GADT types,
    `check_pattern_gadt` handles constructor patterns specially, creating fresh
    tvars for both universals and existentials, and building the return type
    from `ctor_return_ty_params` to establish local type equations via

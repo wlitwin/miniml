@@ -595,10 +595,10 @@ let () =
     expect_stdlib_string {|show (1, true, "x")|} "(1, true, x)");
 
   test "show map" (fun () ->
-    expect_stdlib_string {|show #{"a": 1}|} {|#{a: 1}|});
+    expect_stdlib_string {|show #{"a": 1}|} {|[(a, 1)]|});
 
   test "show set" (fun () ->
-    expect_stdlib_string {|show (Set.of_list [1; 2; 3])|} "#{3; 2; 1}");
+    expect_stdlib_string {|show (Set.of_list [1; 2; 3])|} "[(1, ()); (2, ()); (3, ())]");
 
   test "show nested list" (fun () ->
     expect_stdlib_string {|show [[1; 2]; [3; 4]]|} "[[1; 2]; [3; 4]]");
@@ -658,7 +658,7 @@ let () =
     expect_int {|fold (+) 0 [1; 2; 3; 4; 5]|} 15);
 
   test "builtin Map fundep works" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let m = of_list [("a", 1); ("b", 2)];;
       match get "a" m with
         | Some v -> v
@@ -666,7 +666,7 @@ let () =
     |} 1);
 
   test "Map higher-order with fundep" (fun () ->
-    expect_int {|
+    expect_stdlib_int {|
       let lookup key m = match get key m with
         | Some v -> v
         | None -> 0;;

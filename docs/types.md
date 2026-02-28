@@ -73,7 +73,8 @@ Compound types are built from these:
 | `'a * 'b`              | Tuple                 | `(1, "hello")`, `(true, 3, 4)`|
 | `'a list`              | Linked list           | `[1; 2; 3]`, `[]`             |
 | `'a array`             | Mutable array         | `#[1; 2; 3]`, `#[]`           |
-| `('k, 'v) map`         | Immutable map         | `#{"a": 1; "b": 2}`           |
+| `('k, 'v) map`         | Immutable map (newtype)| `#{"a": 1; "b": 2}`          |
+| `'a set`               | Immutable set (newtype)| `#{1; 2; 3}`                  |
 | `'a option`            | Optional value        | `Some 42`, `None`             |
 | `{ x: int; y: string }`| Record                | `{ x = 1; y = "hi" }`         |
 
@@ -455,6 +456,44 @@ let rec is_even n =
   if n = 0 do true else is_odd (n - 1)
 and is_odd n =
   if n = 0 do false else is_even (n - 1)
+```
+
+### Newtypes
+
+Newtypes create a distinct nominal type with a single constructor that is
+erased at runtime. They provide type safety at zero cost — the constructor
+wrapper disappears during compilation, so the runtime representation is
+identical to the underlying type.
+
+```
+newtype email = Email of string
+newtype meters = Meters of float
+newtype ('k, 'v) map = MMap of ('k * 'v) list
+```
+
+Newtypes are useful for:
+- **Unit safety** — prevent mixing up values with the same underlying type
+  (e.g., `meters` vs `seconds`)
+- **Abstraction** — wrap an implementation detail behind a named type
+- **Type class instances** — define class instances for the newtype without
+  affecting the underlying type
+
+Newtypes support `deriving Show, Eq`, custom type class instances, and
+`opaque newtype` in modules (which hides the constructor, similar to
+`opaque type` for regular variants).
+
+Pattern matching works normally:
+
+```
+newtype age = Age of int
+let birthday (Age n) = Age (n + 1)
+```
+
+The standard library uses newtypes for maps and sets:
+
+```
+newtype ('k, 'v) map = MMap of ('k * 'v) list
+newtype 'a set = MSet of ('a, unit) map
 ```
 
 ## Structural Record Subtyping

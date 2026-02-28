@@ -247,7 +247,7 @@ class Map 'm 'k 'v =
 end
 ```
 
-**Instances:** `('k, 'v) map` (the built-in persistent map type)
+**Instances:** `('k, 'v) map` (defined as `newtype ('k, 'v) map = MMap of ('k * 'v) list` in the standard library)
 
 ```miniml
 let m = #{"a": 1; "b": 2}
@@ -648,6 +648,74 @@ Applies a side-effecting function to corresponding elements of two lists.
 List.map2 (fn a b -> a + b) [1; 2; 3] [10; 20; 30]  (* [11; 22; 33] *)
 ```
 
+### Iteration
+
+```
+List.iter : ('a -> unit) -> 'a list -> unit
+```
+Applies a side-effecting function to each element.
+
+```
+List.iteri : (int -> 'a -> unit) -> 'a list -> unit
+```
+Like `iter`, but the function also receives the zero-based index.
+
+### Additional Searching
+
+```
+List.mem : 'a -> 'a list -> bool
+```
+Returns `true` if the element is in the list.
+
+```
+List.mem_assoc : 'k -> ('k * 'v) list -> bool
+```
+Returns `true` if the key exists in the association list.
+
+```
+List.assoc : 'k -> ('k * 'v) list -> 'v
+```
+Looks up a key in an association list. Partial: fails if not found.
+
+```
+List.nth_opt : 'a list -> int -> 'a option
+```
+Returns `Some element` at the given index, or `None` if out of bounds.
+
+```
+List.find_index : ('a -> bool) -> 'a list -> int option
+```
+Returns `Some i` where `i` is the index of the first matching element, or `None`.
+
+### Additional Transformations
+
+```
+List.filter_map : ('a -> 'b option) -> 'a list -> 'b list
+```
+Applies the function to each element, keeping the `Some` results.
+
+```
+List.filteri : (int -> 'a -> bool) -> 'a list -> 'a list
+```
+Like `filter`, but the predicate also receives the zero-based index.
+
+```
+List.rev_append : 'a list -> 'a list -> 'a list
+```
+`List.rev_append l1 l2` reverses `l1` and prepends it to `l2`.
+
+### Additional Combining
+
+```
+List.fold2 : ('c -> 'a -> 'b -> 'c) -> 'c -> 'a list -> 'b list -> 'c
+```
+Left fold over two lists simultaneously.
+
+```
+List.forall2 : ('a -> 'b -> bool) -> 'a list -> 'b list -> bool
+```
+Returns `true` if the predicate holds for all corresponding element pairs.
+
 ### Sorting
 
 ```
@@ -656,6 +724,11 @@ List.sort : ('a -> 'a -> int) -> 'a list -> 'a list
 Sorts a list using a comparison function. The comparator should return a
 negative value if the first argument is less, positive if greater, and zero
 if equal.
+
+```
+List.sort_uniq : ('a -> 'a -> int) -> 'a list -> 'a list
+```
+Sorts and removes duplicates.
 
 ```miniml
 List.sort (fn a b -> if a < b do 0 - 1 else if a > b do 1 else 0) [3; 1; 4; 1; 5]
@@ -725,9 +798,19 @@ Array.iter : ('a -> unit) -> 'a array -> unit
 Applies a side-effecting function to each element.
 
 ```
+Array.iteri : (int -> 'a -> unit) -> 'a array -> unit
+```
+Like `iter`, but the function also receives the zero-based index.
+
+```
 Array.fold : ('b -> 'a -> 'b) -> 'b -> 'a array -> 'b
 ```
 Left fold over the array.
+
+```
+Array.forall : ('a -> bool) -> 'a array -> bool
+```
+Returns `true` if all elements satisfy the predicate.
 
 ```miniml
 let a = Array.make 3 0            (* #[0; 0; 0] *)
@@ -746,8 +829,8 @@ Array.fold (fn acc x -> acc + x) 0 b  (* 6 *)
 
 ## Set Module
 
-Immutable sets, implemented on top of the built-in map type.
-The underlying representation is `type 'a set = ('a, unit) map`.
+Immutable sets, implemented as a newtype over the map type.
+The underlying representation is `newtype 'a set = MSet of ('a, unit) map`.
 
 ```
 Set.empty : unit -> 'a set
@@ -888,6 +971,22 @@ Returns all keys.
 Hashtbl.values : ('k, 'v) Hashtbl.t -> 'v list
 ```
 Returns all values.
+
+```
+Hashtbl.find : ('k, 'v) Hashtbl.t -> 'k -> 'v
+```
+Looks up a key, returning the value directly. Partial: fails if not found.
+Use `Hashtbl.get` for the safe `option`-returning version.
+
+```
+Hashtbl.fold : ('k -> 'v -> 'b -> 'b) -> ('k, 'v) Hashtbl.t -> 'b -> 'b
+```
+Folds over all key-value pairs.
+
+```
+Hashtbl.iter : ('k -> 'v -> unit) -> ('k, 'v) Hashtbl.t -> unit
+```
+Applies a side-effecting function to each key-value pair.
 
 ```miniml
 let t = Hashtbl.create 16
@@ -1232,6 +1331,11 @@ Option.to_list : 'a option -> 'a list
 ```
 Returns a singleton list for `Some`, or an empty list for `None`.
 
+```
+Option.iter : ('a -> unit) -> 'a option -> unit
+```
+Applies the function to the value inside `Some`, or does nothing for `None`.
+
 ```miniml
 Option.map (fn x -> x + 1) (Some 5)     (* Some 6 *)
 Option.map (fn x -> x + 1) None         (* None *)
@@ -1376,6 +1480,19 @@ Buffer.contents : buffer -> string
 Returns the accumulated contents as a string.
 
 ```
+Buffer.sub : buffer -> int -> int -> string
+```
+`Buffer.sub buf pos len` extracts a substring of `len` bytes starting at byte
+offset `pos` from the buffer contents. Useful for capturing portions of a
+buffer without converting the whole thing.
+
+```
+Buffer.truncate : buffer -> int -> unit
+```
+Sets the buffer length to `n`, discarding any bytes beyond that point. Does
+not deallocate the underlying storage.
+
+```
 Buffer.grow : buffer -> int -> unit
 ```
 Ensures there is room for `needed` additional bytes, resizing if necessary.
@@ -1443,6 +1560,11 @@ Dynarray.create : int -> 'a -> 'a Dynarray.t
 ```
 `Dynarray.create n default` creates a dynarray with initial capacity `n`
 (minimum 16). The `default` value fills unused slots.
+
+```
+Dynarray.empty : unit -> 'a Dynarray.t
+```
+Creates an empty dynarray with default capacity.
 
 ```
 Dynarray.length : 'a Dynarray.t -> int

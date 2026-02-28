@@ -513,6 +513,202 @@ match #{1: 10; 2: 20} with
   | _ -> 0
 --- expect: 10
 
+--- test: map pattern bool keys
+match #{true: "yes"; false: "no"} with
+  | #{true: v} -> v
+  | _ -> "?"
+--- expect: yes
+
+--- test: map pattern literal value match
+match #{"x": 42; "y": 99} with
+  | #{"x": 42} -> "exact"
+  | _ -> "other"
+--- expect: exact
+
+--- test: map pattern literal value no match
+match #{"x": 10} with
+  | #{"x": 42} -> "exact"
+  | _ -> "other"
+--- expect: other
+
+--- test: map pattern wildcard value
+match #{"x": 1; "y": 2} with
+  | #{"x": _} -> "has x"
+  | _ -> "no x"
+--- expect: has x
+
+--- test: map pattern nested tuple value
+match #{"x": (1, 2)} with
+  | #{"x": (a, b)} -> a + b
+  | _ -> 0
+--- expect: 3
+
+--- test: map pattern nested constructor value
+match #{"x": Some 42} with
+  | #{"x": Some v} -> v
+  | _ -> 0
+--- expect: 42
+
+--- test: map pattern nested constructor None fallthrough
+match #{"x": None} with
+  | #{"x": Some v} -> v
+  | _ -> 0
+--- expect: 0
+
+--- test: map pattern nested list value
+match #{1: [10; 20; 30]} with
+  | #{1: x :: _} -> x
+  | _ -> 0
+--- expect: 10
+
+--- test: map pattern nested array value
+match #{"x": #[1; 2; 3]} with
+  | #{"x": #[a; b; c]} -> a + b + c
+  | _ -> 0
+--- expect: 6
+
+--- test: map pattern empty match
+match #{} with
+  | #{} -> "empty"
+  | _ -> "not empty"
+--- expect: empty
+
+--- test: map pattern with guard
+match #{"x": 5; "y": 10} with
+  | #{"x": x} when x > 3 -> "big"
+  | _ -> "small"
+--- expect: big
+
+--- test: map pattern guard fallthrough
+match #{"x": 1} with
+  | #{"x": x} when x > 3 -> "big"
+  | _ -> "small"
+--- expect: small
+
+=== Array Pattern Advanced Tests ===
+
+--- test: array pattern with wildcards
+match #[1; 2; 3] with
+  | #[_; b; _] -> b
+  | _ -> 0
+--- expect: 2
+
+--- test: array pattern nested tuples
+match #[(1, 2); (3, 4)] with
+  | #[(a, b); (c, d)] -> a + b + c + d
+  | _ -> 0
+--- expect: 10
+
+--- test: array pattern nested constructors
+match #[Some 1; None; Some 3] with
+  | #[Some a; _; Some c] -> a + c
+  | _ -> 0
+--- expect: 4
+
+--- test: array pattern nested lists
+match #[[1; 2]; [3; 4]] with
+  | #[a :: _; b :: _] -> a + b
+  | _ -> 0
+--- expect: 4
+
+--- test: array pattern with guard
+match #[5; 10] with
+  | #[a; b] when a + b > 10 -> "big"
+  | _ -> "small"
+--- expect: big
+
+=== List Pattern Advanced Tests ===
+
+--- test: list two element destructure
+match [1; 2] with
+  | [a; b] -> a + b
+  | _ -> 0
+--- expect: 3
+
+--- test: list nested cons
+match [1; 2; 3; 4] with
+  | a :: b :: rest -> a + b
+  | _ -> 0
+--- expect: 3
+
+--- test: list nested tuple elements
+match [(1, "a"); (2, "b")] with
+  | (n, _) :: _ -> n
+  | [] -> 0
+--- expect: 1
+
+=== Record Pattern Advanced Tests ===
+
+--- test: record pattern literal field value
+match {x = 1; y = 2} with
+  | {x = 1; y} -> y
+  | _ -> 0
+--- expect: 2
+
+--- test: record pattern literal field no match
+match {x = 5; y = 2} with
+  | {x = 1; y} -> y
+  | _ -> 0
+--- expect: 0
+
+--- test: record pattern nested record
+type inner = { a: int; b: int }
+type outer = { inner: inner; extra: int }
+match {inner = {a = 10; b = 20}; extra = 30} with
+  | {inner = {a; b}; extra} -> a + b + extra
+--- expect: 60
+
+--- test: record pattern nested variant
+type tagged = { tag: string; value: int option }
+match {tag = "ok"; value = Some 42} with
+  | {tag = "ok"; value = Some v} -> v
+  | _ -> 0
+--- expect: 42
+
+=== String and Float Literal Pattern Tests ===
+
+--- test: string literal pattern match
+match "hello" with
+  | "hello" -> 1
+  | "world" -> 2
+  | _ -> 0
+--- expect: 1
+
+--- test: string literal pattern second branch
+match "world" with
+  | "hello" -> 1
+  | "world" -> 2
+  | _ -> 0
+--- expect: 2
+
+--- test: string literal pattern fallthrough
+match "other" with
+  | "hello" -> 1
+  | "world" -> 2
+  | _ -> 0
+--- expect: 0
+
+--- test: float literal pattern match
+match 3.14 with
+  | 3.14 -> "pi"
+  | 2.72 -> "e"
+  | _ -> "other"
+--- expect: pi
+
+--- test: float literal pattern second branch
+match 2.72 with
+  | 3.14 -> "pi"
+  | 2.72 -> "e"
+  | _ -> "other"
+--- expect: e
+
+--- test: float literal pattern fallthrough
+match 1.0 with
+  | 3.14 -> "pi"
+  | 2.72 -> "e"
+  | _ -> "other"
+--- expect: other
+
 === Array/Map Exhaustiveness Tests ===
 
 --- test: non-exhaustive array pattern
@@ -535,7 +731,7 @@ match #[1; 2; 3] with
 --- test: non-exhaustive map pattern
 match #{"x": 1} with
   | #{"x": x} -> x
---- expect-type-error: non-exhaustive match, missing: _
+--- expect-type-error: non-exhaustive match, missing: MMap _
 
 --- test: map pattern with wildcard is exhaustive
 match #{"x": 1} with

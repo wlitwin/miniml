@@ -53,11 +53,6 @@ let as_rune = function
   | Bytecode.VRune n -> n
   | _ -> raise (Vm.Runtime_error "expected rune")
 
-let as_map = function
-  | Bytecode.VMap m -> m
-  | v -> raise (Vm.Runtime_error
-      (Printf.sprintf "expected map, got %s" (Bytecode.pp_value v)))
-
 let as_array = function
   | Bytecode.VArray a -> a
   | _ -> raise (Vm.Runtime_error "expected array")
@@ -123,26 +118,6 @@ let builtins : builtin_def list = [
   { name = "string_of_bool"; ty = Types.TArrow (Types.TBool, Types.EffEmpty, Types.TString); quant = 0; arity = 1;
     impl = fun args ->
       VString (if as_bool (List.nth args 0) then "true" else "false") };
-
-  (* Map pattern matching helpers (used by compiler for PatMap) *)
-  { name = "__map_has";
-    ty = Types.TArrow (Types.TMap (Types.TGen 0, Types.TGen 1),
-         Types.EffEmpty, Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TBool));
-    quant = 2; arity = 2;
-    impl = fun args ->
-      let pairs = as_map (List.nth args 0) in
-      let key = List.nth args 1 in
-      VBool (List.mem_assoc key pairs) };
-  { name = "__map_get";
-    ty = Types.TArrow (Types.TMap (Types.TGen 0, Types.TGen 1),
-         Types.EffEmpty, Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TGen 1));
-    quant = 2; arity = 2;
-    impl = fun args ->
-      let pairs = as_map (List.nth args 0) in
-      let key = List.nth args 1 in
-      (match List.assoc_opt key pairs with
-       | Some v -> v
-       | None -> raise (Vm.Runtime_error "key not found in map")) };
 
   (* Array operations (array_get and array_length kept for internal use by Iter/Show instances) *)
   { name = "array_get";
@@ -291,7 +266,6 @@ let copy_fiber (f : Bytecode.fiber) : Bytecode.fiber =
     Bytecode.{
       frame_closure = frame.frame_closure;
       frame_ip = frame.frame_ip;
-      frame_locals = Array.copy frame.frame_locals;
       frame_base_sp = frame.frame_base_sp;
     }
   ) f.fiber_frames in
@@ -299,6 +273,7 @@ let copy_fiber (f : Bytecode.fiber) : Bytecode.fiber =
     fiber_stack = new_stack;
     fiber_sp = f.fiber_sp;
     fiber_frames = new_frames;
+    fiber_extra_args = List.map (fun l -> List.map (fun v -> v) l) f.fiber_extra_args;
   }
 
 let copy_continuation = function
@@ -491,7 +466,7 @@ let register_module state mod_name (fns : (string * Types.ty * int * (Bytecode.v
   let minfo = Types.{
     mod_name; mod_pub_vars = !pub_vars; mod_pub_mutable_vars = [];
     mod_pub_types = [];
-    mod_opaque_types = []; mod_pub_constructors = []; mod_instances = [];
+    mod_opaque_types = []; mod_newtypes = []; mod_pub_constructors = []; mod_instances = [];
     mod_submodules = []; mod_pub_classes = [];
   } in
   let type_env = { state.ctx.type_env with
@@ -504,411 +479,122 @@ let make_ext name arity fn =
 let captured_setups : Bytecode.prototype list ref = ref []
 let capture_mode : bool ref = ref false
 
+let captured_typed_setups : (Types.type_env * Typechecker.tprogram) list ref = ref []
+let js_capture_mode : bool ref = ref false
+
+let start_js_capture () = js_capture_mode := true; captured_typed_setups := []
+let stop_js_capture () = js_capture_mode := false
+
 let eval_setup state source =
   let tokens = Lexer.tokenize source in
   let program = Parser.parse_program tokens in
   let (ctx', typed_program) =
     Typechecker.check_program_in_ctx state.ctx program in
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
+  let typed_program = Typechecker.classify_handlers typed_program in
   let compiled =
     Compiler.compile_program_with_globals
       ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
   let _ = Vm.execute_with_globals compiled state.globals in
   if !capture_mode then
     captured_setups := !captured_setups @ [compiled.main];
+  if !js_capture_mode then
+    captured_typed_setups := !captured_typed_setups @ [(ctx'.Typechecker.type_env, typed_program)];
   { state with ctx = ctx' }
 
 let setup_default_classes state stdlib_pub_vars =
-  (* Option type: type 'a option = None | Some of 'a *)
-  let type_env = { state.ctx.type_env with
-    Types.variants = ("option", 1, [("None", None); ("Some", Some (Types.TGen 0))], false) :: state.ctx.type_env.variants;
-    constructors =
-      ("None", Types.{ ctor_type_name = "option"; ctor_arg_ty = None; ctor_num_params = 1;
-                        ctor_return_ty_params = None; ctor_existentials = 0 }) ::
-      ("Some", Types.{ ctor_type_name = "option"; ctor_arg_ty = Some (Types.TGen 0); ctor_num_params = 1;
-                        ctor_return_ty_params = None; ctor_existentials = 0 }) ::
-      state.ctx.type_env.constructors;
-  } in
-  let state = { state with ctx = Typechecker.{ state.ctx with type_env } } in
-  (* ---- Num class: + - * / : 'a -> 'a -> 'a; neg : 'a -> 'a ---- *)
-  let a2a = Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TGen 0)) in
-  let a_a = Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TGen 0) in
-  let state = register_class state
-    ~name:"Num" ~tyvars:["a"] ~fundeps:[]
-    ~methods:[("+", a2a); ("-", a2a); ("*", a2a); ("/", a2a); ("neg", a_a)] in
-  let state = register_instance state
-    ~class_name:"Num" ~tys:[Types.TInt]
-    ~methods:[
-      ("+", make_ext "num_add_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) + as_int (List.nth args 1))));
-      ("-", make_ext "num_sub_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) - as_int (List.nth args 1))));
-      ("*", make_ext "num_mul_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) * as_int (List.nth args 1))));
-      ("/", make_ext "num_div_int" 2
-        (fun args ->
-          let b = as_int (List.nth args 1) in
-          if b = 0 then raise (Vm.Runtime_error "division by zero");
-          VInt (as_int (List.nth args 0) / b)));
-      ("neg", make_ext "num_neg_int" 1
-        (fun args -> VInt (- as_int (List.nth args 0))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Num" ~tys:[Types.TFloat]
-    ~methods:[
-      ("+", make_ext "num_add_float" 2
-        (fun args -> VFloat (as_float (List.nth args 0) +. as_float (List.nth args 1))));
-      ("-", make_ext "num_sub_float" 2
-        (fun args -> VFloat (as_float (List.nth args 0) -. as_float (List.nth args 1))));
-      ("*", make_ext "num_mul_float" 2
-        (fun args -> VFloat (as_float (List.nth args 0) *. as_float (List.nth args 1))));
-      ("/", make_ext "num_div_float" 2
-        (fun args -> VFloat (as_float (List.nth args 0) /. as_float (List.nth args 1))));
-      ("neg", make_ext "num_neg_float" 1
-        (fun args -> VFloat (-. (as_float (List.nth args 0)))));
-    ] in
-  (* ---- Eq class: (=) (<>) : 'a -> 'a -> bool ---- *)
-  let a2bool = Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TBool)) in
-  let state = register_class state
-    ~name:"Eq" ~tyvars:["a"] ~fundeps:[]
-    ~methods:[("=", a2bool); ("<>", a2bool)] in
-  let state = register_instance state
-    ~class_name:"Eq" ~tys:[Types.TInt]
-    ~methods:[
-      ("=", make_ext "eq_int" 2
-        (fun args -> VBool (as_int (List.nth args 0) = as_int (List.nth args 1))));
-      ("<>", make_ext "neq_int" 2
-        (fun args -> VBool (as_int (List.nth args 0) <> as_int (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Eq" ~tys:[Types.TFloat]
-    ~methods:[
-      ("=", make_ext "eq_float" 2
-        (fun args -> VBool (as_float (List.nth args 0) = as_float (List.nth args 1))));
-      ("<>", make_ext "neq_float" 2
-        (fun args -> VBool (as_float (List.nth args 0) <> as_float (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Eq" ~tys:[Types.TString]
-    ~methods:[
-      ("=", make_ext "eq_string" 2
-        (fun args -> VBool (as_string (List.nth args 0) = as_string (List.nth args 1))));
-      ("<>", make_ext "neq_string" 2
-        (fun args -> VBool (as_string (List.nth args 0) <> as_string (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Eq" ~tys:[Types.TBool]
-    ~methods:[
-      ("=", make_ext "eq_bool" 2
-        (fun args -> VBool (as_bool (List.nth args 0) = as_bool (List.nth args 1))));
-      ("<>", make_ext "neq_bool" 2
-        (fun args -> VBool (as_bool (List.nth args 0) <> as_bool (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Eq" ~tys:[Types.TByte]
-    ~methods:[
-      ("=", make_ext "eq_byte" 2
-        (fun args -> VBool (as_byte (List.nth args 0) = as_byte (List.nth args 1))));
-      ("<>", make_ext "neq_byte" 2
-        (fun args -> VBool (as_byte (List.nth args 0) <> as_byte (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Eq" ~tys:[Types.TRune]
-    ~methods:[
-      ("=", make_ext "eq_rune" 2
-        (fun args -> VBool (as_rune (List.nth args 0) = as_rune (List.nth args 1))));
-      ("<>", make_ext "neq_rune" 2
-        (fun args -> VBool (as_rune (List.nth args 0) <> as_rune (List.nth args 1))));
-    ] in
-  (* ---- Ord class: (<) (>) (<=) (>=) : 'a -> 'a -> bool ---- *)
-  let state = register_class state
-    ~name:"Ord" ~tyvars:["a"] ~fundeps:[]
-    ~methods:[("<", a2bool); (">", a2bool); ("<=", a2bool); (">=", a2bool)] in
-  let state = register_instance state
-    ~class_name:"Ord" ~tys:[Types.TInt]
-    ~methods:[
-      ("<", make_ext "lt_int" 2
-        (fun args -> VBool (as_int (List.nth args 0) < as_int (List.nth args 1))));
-      (">", make_ext "gt_int" 2
-        (fun args -> VBool (as_int (List.nth args 0) > as_int (List.nth args 1))));
-      ("<=", make_ext "le_int" 2
-        (fun args -> VBool (as_int (List.nth args 0) <= as_int (List.nth args 1))));
-      (">=", make_ext "ge_int" 2
-        (fun args -> VBool (as_int (List.nth args 0) >= as_int (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Ord" ~tys:[Types.TFloat]
-    ~methods:[
-      ("<", make_ext "lt_float" 2
-        (fun args -> VBool (as_float (List.nth args 0) < as_float (List.nth args 1))));
-      (">", make_ext "gt_float" 2
-        (fun args -> VBool (as_float (List.nth args 0) > as_float (List.nth args 1))));
-      ("<=", make_ext "le_float" 2
-        (fun args -> VBool (as_float (List.nth args 0) <= as_float (List.nth args 1))));
-      (">=", make_ext "ge_float" 2
-        (fun args -> VBool (as_float (List.nth args 0) >= as_float (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Ord" ~tys:[Types.TString]
-    ~methods:[
-      ("<", make_ext "lt_string" 2
-        (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) < 0)));
-      (">", make_ext "gt_string" 2
-        (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) > 0)));
-      ("<=", make_ext "le_string" 2
-        (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) <= 0)));
-      (">=", make_ext "ge_string" 2
-        (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) >= 0)));
-    ] in
-  let state = register_instance state
-    ~class_name:"Ord" ~tys:[Types.TByte]
-    ~methods:[
-      ("<", make_ext "lt_byte" 2
-        (fun args -> VBool (as_byte (List.nth args 0) < as_byte (List.nth args 1))));
-      (">", make_ext "gt_byte" 2
-        (fun args -> VBool (as_byte (List.nth args 0) > as_byte (List.nth args 1))));
-      ("<=", make_ext "le_byte" 2
-        (fun args -> VBool (as_byte (List.nth args 0) <= as_byte (List.nth args 1))));
-      (">=", make_ext "ge_byte" 2
-        (fun args -> VBool (as_byte (List.nth args 0) >= as_byte (List.nth args 1))));
-    ] in
-  let state = register_instance state
-    ~class_name:"Ord" ~tys:[Types.TRune]
-    ~methods:[
-      ("<", make_ext "lt_rune" 2
-        (fun args -> VBool (as_rune (List.nth args 0) < as_rune (List.nth args 1))));
-      (">", make_ext "gt_rune" 2
-        (fun args -> VBool (as_rune (List.nth args 0) > as_rune (List.nth args 1))));
-      ("<=", make_ext "le_rune" 2
-        (fun args -> VBool (as_rune (List.nth args 0) <= as_rune (List.nth args 1))));
-      (">=", make_ext "ge_rune" 2
-        (fun args -> VBool (as_rune (List.nth args 0) >= as_rune (List.nth args 1))));
-    ] in
-  (* ---- Bitwise class: land lor lxor lsl lsr : 'a -> 'a -> 'a; lnot : 'a -> 'a ---- *)
-  let state = register_class state
-    ~name:"Bitwise" ~tyvars:["a"] ~fundeps:[]
-    ~methods:[("land", a2a); ("lor", a2a); ("lxor", a2a);
-              ("lsl", a2a); ("lsr", a2a); ("lnot", a_a)] in
-  let state = register_instance state
-    ~class_name:"Bitwise" ~tys:[Types.TInt]
-    ~methods:[
-      ("land", make_ext "band_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) land as_int (List.nth args 1))));
-      ("lor", make_ext "bor_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) lor as_int (List.nth args 1))));
-      ("lxor", make_ext "bxor_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) lxor as_int (List.nth args 1))));
-      ("lsl", make_ext "bshl_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) lsl as_int (List.nth args 1))));
-      ("lsr", make_ext "bshr_int" 2
-        (fun args -> VInt (as_int (List.nth args 0) lsr as_int (List.nth args 1))));
-      ("lnot", make_ext "bnot_int" 1
-        (fun args -> VInt (lnot (as_int (List.nth args 0)))));
-    ] in
-  (* Show class: show : 'a -> string *)
-  let state = register_class state
-    ~name:"Show" ~tyvars:["a"] ~fundeps:[]
-    ~methods:[("show", Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TString))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TInt]
-    ~methods:[("show", make_ext "show_int" 1
-      (fun args -> Bytecode.VString (string_of_int (as_int (List.nth args 0)))))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TFloat]
-    ~methods:[("show", make_ext "show_float" 1
-      (fun args -> Bytecode.VString (Printf.sprintf "%g" (as_float (List.nth args 0)))))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TBool]
-    ~methods:[("show", make_ext "show_bool" 1
-      (fun args -> Bytecode.VString
-        (if as_bool (List.nth args 0) then "true" else "false")))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TString]
-    ~methods:[("show", make_ext "show_string" 1
-      (fun args -> List.nth args 0))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TUnit]
-    ~methods:[("show", make_ext "show_unit" 1
-      (fun _args -> Bytecode.VString "()"))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TByte]
-    ~methods:[("show", make_ext "show_byte" 1
-      (fun args -> Bytecode.VString (Printf.sprintf "#%02x" (as_byte (List.nth args 0)))))] in
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TRune]
-    ~methods:[("show", make_ext "show_rune" 1
-      (fun args -> Bytecode.VString (Bytecode.pp_value (List.nth args 0))))] in
-  (* Iter class: fold : ('c -> 'b -> 'c) -> 'c -> 'a -> 'c *)
-  (* TGen 0='a (collection), TGen 1='b (element), TGen 2='c (accumulator) *)
-  let fold_ty = Types.TArrow(
-    Types.TArrow(Types.TGen 2, Types.EffEmpty, Types.TArrow(Types.TGen 1, Types.EffEmpty, Types.TGen 2)),
-    Types.EffEmpty, Types.TArrow(Types.TGen 2, Types.EffEmpty, Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TGen 2))) in
-  let state = register_class state
-    ~name:"Iter" ~tyvars:["a"; "b"]
-    ~fundeps:[Types.{ fd_from = [0]; fd_to = [1] }]
-    ~methods:[("fold", fold_ty)] in
+  (* Register typeclass primitive extern implementations.
+     These are referenced by extern declarations in stdlib/classes.mml *)
+  let reg name arity impl =
+    let idx = Dynarray.length state.global_names in
+    Dynarray.add_last state.global_names name;
+    Hashtbl.replace state.globals idx
+      (Bytecode.VExternal { ext_name = name; ext_arity = arity; ext_fn = impl; ext_args = [] });
+  in
+  (* Num primitives *)
+  reg "__num_add_int" 2 (fun args -> VInt (as_int (List.nth args 0) + as_int (List.nth args 1)));
+  reg "__num_sub_int" 2 (fun args -> VInt (as_int (List.nth args 0) - as_int (List.nth args 1)));
+  reg "__num_mul_int" 2 (fun args -> VInt (as_int (List.nth args 0) * as_int (List.nth args 1)));
+  reg "__num_div_int" 2 (fun args ->
+    let b = as_int (List.nth args 1) in
+    if b = 0 then raise (Vm.Runtime_error "division by zero");
+    VInt (as_int (List.nth args 0) / b));
+  reg "__num_neg_int" 1 (fun args -> VInt (- as_int (List.nth args 0)));
+  reg "__num_add_float" 2 (fun args -> VFloat (as_float (List.nth args 0) +. as_float (List.nth args 1)));
+  reg "__num_sub_float" 2 (fun args -> VFloat (as_float (List.nth args 0) -. as_float (List.nth args 1)));
+  reg "__num_mul_float" 2 (fun args -> VFloat (as_float (List.nth args 0) *. as_float (List.nth args 1)));
+  reg "__num_div_float" 2 (fun args -> VFloat (as_float (List.nth args 0) /. as_float (List.nth args 1)));
+  reg "__num_neg_float" 1 (fun args -> VFloat (-. (as_float (List.nth args 0))));
+  (* Eq primitives *)
+  reg "__eq_int" 2 (fun args -> VBool (as_int (List.nth args 0) = as_int (List.nth args 1)));
+  reg "__neq_int" 2 (fun args -> VBool (as_int (List.nth args 0) <> as_int (List.nth args 1)));
+  reg "__eq_float" 2 (fun args -> VBool (as_float (List.nth args 0) = as_float (List.nth args 1)));
+  reg "__neq_float" 2 (fun args -> VBool (as_float (List.nth args 0) <> as_float (List.nth args 1)));
+  reg "__eq_string" 2 (fun args -> VBool (as_string (List.nth args 0) = as_string (List.nth args 1)));
+  reg "__neq_string" 2 (fun args -> VBool (as_string (List.nth args 0) <> as_string (List.nth args 1)));
+  reg "__eq_bool" 2 (fun args -> VBool (as_bool (List.nth args 0) = as_bool (List.nth args 1)));
+  reg "__neq_bool" 2 (fun args -> VBool (as_bool (List.nth args 0) <> as_bool (List.nth args 1)));
+  reg "__eq_byte" 2 (fun args -> VBool (as_byte (List.nth args 0) = as_byte (List.nth args 1)));
+  reg "__neq_byte" 2 (fun args -> VBool (as_byte (List.nth args 0) <> as_byte (List.nth args 1)));
+  reg "__eq_rune" 2 (fun args -> VBool (as_rune (List.nth args 0) = as_rune (List.nth args 1)));
+  reg "__neq_rune" 2 (fun args -> VBool (as_rune (List.nth args 0) <> as_rune (List.nth args 1)));
+  (* Ord primitives *)
+  reg "__lt_int" 2 (fun args -> VBool (as_int (List.nth args 0) < as_int (List.nth args 1)));
+  reg "__gt_int" 2 (fun args -> VBool (as_int (List.nth args 0) > as_int (List.nth args 1)));
+  reg "__le_int" 2 (fun args -> VBool (as_int (List.nth args 0) <= as_int (List.nth args 1)));
+  reg "__ge_int" 2 (fun args -> VBool (as_int (List.nth args 0) >= as_int (List.nth args 1)));
+  reg "__lt_float" 2 (fun args -> VBool (as_float (List.nth args 0) < as_float (List.nth args 1)));
+  reg "__gt_float" 2 (fun args -> VBool (as_float (List.nth args 0) > as_float (List.nth args 1)));
+  reg "__le_float" 2 (fun args -> VBool (as_float (List.nth args 0) <= as_float (List.nth args 1)));
+  reg "__ge_float" 2 (fun args -> VBool (as_float (List.nth args 0) >= as_float (List.nth args 1)));
+  reg "__lt_string" 2 (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) < 0));
+  reg "__gt_string" 2 (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) > 0));
+  reg "__le_string" 2 (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) <= 0));
+  reg "__ge_string" 2 (fun args -> VBool (String.compare (as_string (List.nth args 0)) (as_string (List.nth args 1)) >= 0));
+  reg "__lt_byte" 2 (fun args -> VBool (as_byte (List.nth args 0) < as_byte (List.nth args 1)));
+  reg "__gt_byte" 2 (fun args -> VBool (as_byte (List.nth args 0) > as_byte (List.nth args 1)));
+  reg "__le_byte" 2 (fun args -> VBool (as_byte (List.nth args 0) <= as_byte (List.nth args 1)));
+  reg "__ge_byte" 2 (fun args -> VBool (as_byte (List.nth args 0) >= as_byte (List.nth args 1)));
+  reg "__lt_rune" 2 (fun args -> VBool (as_rune (List.nth args 0) < as_rune (List.nth args 1)));
+  reg "__gt_rune" 2 (fun args -> VBool (as_rune (List.nth args 0) > as_rune (List.nth args 1)));
+  reg "__le_rune" 2 (fun args -> VBool (as_rune (List.nth args 0) <= as_rune (List.nth args 1)));
+  reg "__ge_rune" 2 (fun args -> VBool (as_rune (List.nth args 0) >= as_rune (List.nth args 1)));
+  (* Bitwise primitives *)
+  reg "__band_int" 2 (fun args -> VInt (as_int (List.nth args 0) land as_int (List.nth args 1)));
+  reg "__bor_int" 2 (fun args -> VInt (as_int (List.nth args 0) lor as_int (List.nth args 1)));
+  reg "__bxor_int" 2 (fun args -> VInt (as_int (List.nth args 0) lxor as_int (List.nth args 1)));
+  reg "__bshl_int" 2 (fun args -> VInt (as_int (List.nth args 0) lsl as_int (List.nth args 1)));
+  reg "__bshr_int" 2 (fun args -> VInt (as_int (List.nth args 0) lsr as_int (List.nth args 1)));
+  reg "__bnot_int" 1 (fun args -> VInt (lnot (as_int (List.nth args 0))));
+  (* Show primitives *)
+  reg "__show_int" 1 (fun args -> Bytecode.VString (string_of_int (as_int (List.nth args 0))));
+  reg "__show_float" 1 (fun args -> Bytecode.VString (Printf.sprintf "%g" (as_float (List.nth args 0))));
+  reg "__show_bool" 1 (fun args -> Bytecode.VString (if as_bool (List.nth args 0) then "true" else "false"));
+  reg "__show_string" 1 (fun args -> List.nth args 0);
+  reg "__show_unit" 1 (fun _args -> Bytecode.VString "()");
+  reg "__show_byte" 1 (fun args -> Bytecode.VString (Printf.sprintf "#%02x" (as_byte (List.nth args 0))));
+  reg "__show_rune" 1 (fun args -> Bytecode.VString (Bytecode.pp_value (List.nth args 0)));
+  (* Index primitives *)
+  reg "__index_at_array" 2 (fun args ->
+    let idx = as_int (List.nth args 0) in
+    let arr = as_array (List.nth args 1) in
+    if idx < 0 || idx >= Array.length arr then
+      raise (Vm.Runtime_error (Printf.sprintf
+        "[line 0] array index out of bounds: %d (length %d)" idx (Array.length arr)));
+    arr.(idx));
+  reg "__index_at_string" 2 (fun args ->
+    let idx = as_int (List.nth args 0) in
+    let s = as_string (List.nth args 1) in
+    if idx < 0 || idx >= String.length s then
+      raise (Vm.Runtime_error (Printf.sprintf
+        "[line 0] string index out of bounds: %d (length %d)" idx (String.length s)));
+    Bytecode.VByte (Char.code s.[idx]));
+  (* Load all class definitions, primitive instances, option type, etc. from stdlib *)
+  let state = eval_setup state Stdlib_sources.classes in
+  let state = eval_setup state Stdlib_sources.option_type in
   let state = eval_setup state Stdlib_sources.iter in
-  (*
-  class Map 'm 'k 'v =
-    of_list : ('k * 'v) list -> 'm
-    get     : 'k -> 'm -> 'v option
-    set     : 'k -> 'v -> 'm -> 'm
-    has     : 'k -> 'm -> bool
-    remove  : 'k -> 'm -> 'm
-    size    : 'm -> int
-    keys    : 'm -> 'k list
-    values  : 'm -> 'v list
-    to_list : 'm -> ('k * 'v) list
-  *)
-  (* TGen 0='m (collection), TGen 1='k (key), TGen 2='v (value) *)
-  let option_v = Types.TVariant ("option", [Types.TGen 2]) in
-  let of_list_ty = Types.TArrow(
-    Types.TList (Types.TTuple [Types.TGen 1; Types.TGen 2]),
-    Types.EffEmpty, Types.TGen 0) in
-  let get_ty =
-    Types.TArrow(Types.TGen 1, Types.EffEmpty, Types.TArrow(Types.TGen 0, Types.EffEmpty, option_v)) in
-  let set_ty =
-    Types.TArrow(Types.TGen 1, Types.EffEmpty, Types.TArrow(Types.TGen 2, Types.EffEmpty,
-      Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TGen 0))) in
-  let has_ty =
-    Types.TArrow(Types.TGen 1, Types.EffEmpty, Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TBool)) in
-  let remove_ty =
-    Types.TArrow(Types.TGen 1, Types.EffEmpty, Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TGen 0)) in
-  let size_ty =
-    Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TInt) in
-  let keys_ty =
-    Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TList (Types.TGen 1)) in
-  let values_ty =
-    Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TList (Types.TGen 2)) in
-  let to_list_ty = Types.TArrow(
-    Types.TGen 0,
-    Types.EffEmpty, Types.TList (Types.TTuple [Types.TGen 1; Types.TGen 2])) in
-  let state = register_class state
-    ~name:"Map" ~tyvars:["m"; "k"; "v"]
-    ~fundeps:[Types.{ fd_from = [0]; fd_to = [1; 2] }]
-    ~methods:[
-      ("of_list", of_list_ty);
-      ("get", get_ty);
-      ("set", set_ty);
-      ("has", has_ty);
-      ("remove", remove_ty);
-      ("size", size_ty);
-      ("keys", keys_ty);
-      ("values", values_ty);
-      ("to_list", to_list_ty);
-    ] in
-  (* Native map instance: instance Map (('k, 'v) map) 'k 'v *)
-  let state = register_instance state
-    ~class_name:"Map"
-    ~tys:[Types.TMap (Types.TGen 0, Types.TGen 1); Types.TGen 0; Types.TGen 1]
-    ~methods:[
-      ("of_list", make_ext "map_of_list" 1
-        (fun args ->
-          let lst = match List.nth args 0 with
-            | Bytecode.VList l -> l
-            | v -> raise (Vm.Runtime_error
-                (Printf.sprintf "expected list, got %s" (Bytecode.pp_value v)))
-          in
-          let pairs = List.map (fun v ->
-            match v with
-            | Bytecode.VTuple [|k; v|] -> (k, v)
-            | v -> raise (Vm.Runtime_error
-                (Printf.sprintf "expected tuple pair, got %s" (Bytecode.pp_value v)))
-          ) lst in
-          Bytecode.VMap pairs));
-      ("get", make_ext "map_get" 2
-        (fun args ->
-          let key = List.nth args 0 in
-          let pairs = as_map (List.nth args 1) in
-          match List.assoc_opt key pairs with
-          | Some v -> Bytecode.VVariant (1, "Some", Some v)
-          | None -> Bytecode.VVariant (0, "None", None)));
-      ("set", make_ext "map_set" 3
-        (fun args ->
-          let k = List.nth args 0 in
-          let v = List.nth args 1 in
-          let pairs = as_map (List.nth args 2) in
-          let updated = (k, v) :: List.filter (fun (k2, _) -> k2 <> k) pairs in
-          Bytecode.VMap updated));
-      ("has", make_ext "map_has" 2
-        (fun args ->
-          let key = List.nth args 0 in
-          let pairs = as_map (List.nth args 1) in
-          Bytecode.VBool (List.mem_assoc key pairs)));
-      ("remove", make_ext "map_remove" 2
-        (fun args ->
-          let key = List.nth args 0 in
-          let pairs = as_map (List.nth args 1) in
-          Bytecode.VMap (List.filter (fun (k, _) -> k <> key) pairs)));
-      ("size", make_ext "map_size" 1
-        (fun args ->
-          let pairs = as_map (List.nth args 0) in
-          Bytecode.VInt (List.length pairs)));
-      ("keys", make_ext "map_keys" 1
-        (fun args ->
-          let pairs = as_map (List.nth args 0) in
-          Bytecode.VList (List.map fst pairs)));
-      ("values", make_ext "map_values" 1
-        (fun args ->
-          let pairs = as_map (List.nth args 0) in
-          Bytecode.VList (List.map snd pairs)));
-      ("to_list", make_ext "map_to_list" 1
-        (fun args ->
-          let pairs = as_map (List.nth args 0) in
-          Bytecode.VList (List.map (fun (k, v) -> Bytecode.VTuple [|k; v|]) pairs)));
-    ] in
-  (* ---- Index class: at : 'k -> 'c -> 'v ---- *)
-  (* TGen 0='c (container), TGen 1='k (key/index), TGen 2='v (value/element) *)
-  let at_ty = Types.TArrow(Types.TGen 1, Types.EffEmpty,
-    Types.TArrow(Types.TGen 0, Types.EffEmpty, Types.TGen 2)) in
-  let state = register_class state
-    ~name:"Index" ~tyvars:["c"; "k"; "v"]
-    ~fundeps:[Types.{ fd_from = [0]; fd_to = [1; 2] }]
-    ~methods:[("at", at_ty)] in
-  let state = register_instance state
-    ~class_name:"Index" ~tys:[Types.TArray (Types.TGen 0); Types.TInt; Types.TGen 0]
-    ~methods:[
-      ("at", make_ext "index_at_array" 2
-        (fun args ->
-          let idx = as_int (List.nth args 0) in
-          let arr = as_array (List.nth args 1) in
-          if idx < 0 || idx >= Array.length arr then
-            raise (Vm.Runtime_error (Printf.sprintf
-              "[line 0] array index out of bounds: %d (length %d)" idx (Array.length arr)));
-          arr.(idx)));
-    ] in
-  let state = register_instance state
-    ~class_name:"Index" ~tys:[Types.TString; Types.TInt; Types.TByte]
-    ~methods:[
-      ("at", make_ext "index_at_string" 2
-        (fun args ->
-          let idx = as_int (List.nth args 0) in
-          let s = as_string (List.nth args 1) in
-          if idx < 0 || idx >= String.length s then
-            raise (Vm.Runtime_error (Printf.sprintf
-              "[line 0] string index out of bounds: %d (length %d)" idx (String.length s)));
-          Bytecode.VByte (Char.code s.[idx])));
-    ] in
-  let state = register_instance state
-    ~class_name:"Index" ~tys:[Types.TMap (Types.TGen 0, Types.TGen 1); Types.TGen 0; Types.TGen 1]
-    ~methods:[
-      ("at", make_ext "index_at_map" 2
-        (fun args ->
-          let key = List.nth args 0 in
-          let pairs = as_map (List.nth args 1) in
-          match List.assoc_opt key pairs with
-          | Some v -> v
-          | None -> raise (Vm.Runtime_error
-              (Printf.sprintf "[line 0] key not found: %s" (Bytecode.pp_value key)))));
-    ] in
+  let state = eval_setup state Stdlib_sources.map_class in
   let state = eval_setup state Stdlib_sources.show in
-  let state = eval_setup state Stdlib_sources.iter_map in
-  (* Map/Set show as native instances — multi-param class methods don't
-     propagate type info between params during inference, so we use pp_value *)
-  let state = register_instance state
-    ~class_name:"Show" ~tys:[Types.TMap (Types.TGen 0, Types.TGen 1)]
-    ~methods:[("show", make_ext "show_map" 1
-      (fun args -> Bytecode.VString (Bytecode.pp_value (List.nth args 0))))] in
   (* Build Stdlib module_info and register it *)
   let stdlib_constructors =
     List.filter_map (fun (name, info) ->
@@ -923,6 +609,7 @@ let setup_default_classes state stdlib_pub_vars =
     mod_pub_mutable_vars = [];
     mod_pub_types = [];
     mod_opaque_types = [];
+    mod_newtypes = [];
     mod_pub_constructors = stdlib_constructors;
     mod_instances = [];
     mod_submodules = [];
@@ -950,6 +637,7 @@ let eval_source source =
     let (ctx', typed_program) =
       Typechecker.check_program_in_ctx state.ctx program in
     let typed_program = Typechecker.transform_constraints ctx' typed_program in
+    let typed_program = Typechecker.classify_handlers typed_program in
     let compiled =
       Compiler.compile_program_with_globals
         ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
@@ -965,6 +653,7 @@ let run_string_in_state state source =
     Typechecker.check_program_in_ctx state.ctx program
   in
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
+  let typed_program = Typechecker.classify_handlers typed_program in
   let compiled =
     Compiler.compile_program_with_globals
       ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program
@@ -1044,6 +733,7 @@ let emit_json_bundle state ?source () =
       let (ctx', typed_program) =
         Typechecker.check_program_in_ctx state.ctx program in
       let typed_program = Typechecker.transform_constraints ctx' typed_program in
+      let typed_program = Typechecker.classify_handlers typed_program in
       let compiled =
         Compiler.compile_program_with_globals
           ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
@@ -1055,6 +745,19 @@ let emit_json_bundle state ?source () =
     ~native_globals_json
     ~setup_protos:!captured_setups
     ~main_proto
+
+let emit_js state ?source () =
+  match source with
+  | None -> ""
+  | Some src ->
+    let tokens = Lexer.tokenize src in
+    let program = Parser.parse_program tokens in
+    let (ctx', typed_program) =
+      Typechecker.check_program_in_ctx state.ctx program in
+    let typed_program = Typechecker.transform_constraints ctx' typed_program in
+    let typed_program = Typechecker.classify_handlers typed_program in
+    Js_codegen.compile_program_with_stdlib
+      ctx'.Typechecker.type_env !captured_typed_setups typed_program
 
 let emit_binary_bundle state ?source () =
   let main_proto = match source with
@@ -1073,6 +776,7 @@ let emit_binary_bundle state ?source () =
       let (ctx', typed_program) =
         Typechecker.check_program_in_ctx state.ctx program in
       let typed_program = Typechecker.transform_constraints ctx' typed_program in
+      let typed_program = Typechecker.classify_handlers typed_program in
       let compiled =
         Compiler.compile_program_with_globals
           ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
@@ -1092,6 +796,7 @@ let eval_repl state source =
       Typechecker.check_program_in_ctx state.ctx program
     in
     let typed_program = Typechecker.transform_constraints ctx' typed_program in
+    let typed_program = Typechecker.classify_handlers typed_program in
     let type_info = match List.rev typed_program with
       | Typechecker.TDExpr te :: _ -> Some (None, Types.pp_ty te.ty)
       | Typechecker.TDLet (name, te) :: _ -> Some (Some name, Types.pp_ty te.ty)

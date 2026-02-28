@@ -301,14 +301,14 @@ let () =
   test "partial annotation suppresses exhaustiveness" (fun () ->
     expect_int {|
       type option = Some of int | None
-      -- @partial
+      @partial
       match Some 5 with
       | Some x -> x
     |} 5);
 
   test "partial annotation on bool match" (fun () ->
     expect_int {|
-      -- @partial
+      @partial
       match true with
       | true -> 1
     |} 1);

@@ -527,7 +527,7 @@ show #{"a": 1}
 
 --- test: show set
 show (Set.of_list [1; 2; 3])
---- expect: #{3; 2; 1}
+--- expect: #{1; 2; 3}
 
 --- test: show nested list
 show [[1; 2]; [3; 4]]
@@ -658,7 +658,7 @@ f ()
 --- test: set operations no spurious constraint
 let f () =
   let s = Set.of_list [1; 2; 3] in
-  has 2 s
+  Set.mem 2 s
 ;;
 f ()
 --- expect: true

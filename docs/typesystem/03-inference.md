@@ -622,13 +622,14 @@ they bind the same set of variables:
 ```
 
 **Record patterns** try to determine the record type, either from the
-scrutinee or by searching the type environment for a record that has the
-mentioned fields:
+scrutinee's record row or by searching the type environment for a record
+that has the mentioned fields:
 
 ```ocaml
 | Ast.PatRecord field_pats ->
   let field_tys = match Types.repr ty with
-    | Types.TRecord field_tys -> field_tys
+    | Types.TRecord row ->
+      Types.record_row_to_fields row
     | _ ->
       let pat_field_names = List.map fst field_pats in
       let candidates = List.filter (fun (_name, fields) ->
@@ -637,7 +638,7 @@ mentioned fields:
       (match candidates with
        | [(_name, fields)] ->
          let fields = instantiate_record_fields level fields in
-         let record_ty = Types.TRecord fields in
+         let record_ty = Types.TRecord (Types.fields_to_closed_row fields) in
          try_unify ty record_ty;
          fields
        | [] -> error "record pattern used with non-record type"
@@ -782,8 +783,8 @@ and synth_unop ctx level op e =
 
 ### Construction: ERecord
 
-Record construction synthesizes each field value and builds a record
-type with sorted fields:
+Record construction synthesizes each field value and builds a closed
+record row type:
 
 ```ocaml
 | Ast.ERecord fields ->
@@ -791,28 +792,31 @@ type with sorted fields:
     let te = synth ctx level e in (n, te)
   ) fields in
   let field_tys = List.map (fun (n, te) -> (n, te.ty)) typed_fields in
-  let field_tys = List.sort (fun (a, _) (b, _) -> String.compare a b) field_tys in
-  mk (TERecord typed_fields) (Types.TRecord field_tys)
+  let row = Types.fields_to_closed_row field_tys in
+  mk (TERecord typed_fields) (Types.TRecord row)
 ```
 
-Fields are sorted alphabetically in the type. This normalization means
-`{ x = 1; y = 2 }` and `{ y = 2; x = 1 }` get the same type.
+The `fields_to_closed_row` helper converts the field list into a chain
+of `RRow` entries ending with `REmpty`, producing a closed record type.
+Record literals always produce closed types -- the set of fields is
+exactly what was written.
 
 ### Field Access: EField
 
 Field access looks at the synthesized type of the expression. If it is
-already a known record, the field is looked up directly. If it is a type
-variable, the typechecker searches the type environment for registered
-record types that have the field:
+already a known record row, the field is looked up directly via
+`rewrite_record_row`. If the type is still a variable, the typechecker
+searches the type environment for registered record types that have
+the field, or falls back to row-polymorphic structural typing:
 
 ```ocaml
 | Ast.EField (e, field) ->
   let te = synth ctx level e in
   (match Types.repr te.ty with
-   | Types.TRecord fields ->
-     (match List.assoc_opt field fields with
-      | Some ty -> mk (TEField (te, field)) ty
-      | None -> error (...))
+   | Types.TRecord row ->
+     (* Use row rewriting to find the field *)
+     let (field_ty, _rest) = Types.rewrite_record_row field row in
+     mk (TEField (te, field)) field_ty
    | Types.TVar _ ->
      let candidates = List.filter (fun (_name, fields) ->
        List.mem_assoc field fields
@@ -820,33 +824,31 @@ record types that have the field:
      (match candidates with
       | [(_name, fields)] ->
         let fields = instantiate_record_fields level fields in
-        let record_ty = Types.TRecord fields in
+        let record_ty = Types.TRecord (Types.fields_to_closed_row fields) in
         try_unify te.ty record_ty;
-        (match List.assoc_opt field fields with
-         | Some field_ty -> mk (TEField (te, field)) field_ty
-         | None -> assert false)
-      | [] -> error (...)
+        ...
       | _ ->
-        (* Multiple candidates -- use structural typing *)
+        (* Multiple or no candidates -- use structural typing *)
         let field_ty = Types.new_tvar level in
-        let record_ty = Types.TRecord [(field, field_ty)] in
-        try_unify te.ty record_ty;
+        let row = Types.RRow (field, field_ty, Types.new_rvar level) in
+        try_unify te.ty (Types.TRecord row);
         mk (TEField (te, field)) field_ty)
    | _ -> error "field access on non-record type")
 ```
 
 Three resolution strategies:
 
-1. **Known record type.** Direct field lookup.
+1. **Known record row.** Use `rewrite_record_row` to find the field in
+   the row. If the row is open (ends with `RVar`), the field is added
+   to the row automatically.
 2. **Unique registered record.** If exactly one record type in the
    environment has this field, unify the expression's type with that
    record type. This also handles parametric record types through
    `instantiate_record_fields`, which replaces `TGen` placeholders with
    fresh variables.
-3. **Multiple candidates.** Fall back to structural typing: create a
-   minimal record type `{ field: 'a }` and unify. The width subtyping in
-   `unify` (from the previous chapter) allows the actual record to have
-   additional fields.
+3. **Structural typing fallback.** Create an open record row
+   `{ field: 'a; .. }` (with a fresh `RVar` tail) and unify. The row
+   variable allows the actual record to have additional fields.
 
 ### Field Assignment: EFieldAssign
 
@@ -936,6 +938,49 @@ The steps:
 5. **Constructor as function.** If a constructor that takes an argument
    is used without one (e.g. passing `Some` as a function argument), a
    lambda wrapper is synthesized: `fun __x -> Some __x`.
+
+## Polymorphic Variants: EPolyVariant
+
+Polymorphic variant construction is simpler than named constructors because
+there is no type environment lookup -- the type is built structurally from
+the tag:
+
+```ocaml
+| Ast.EPolyVariant (tag, None) ->
+  let tail = new_pvvar level in
+  let row = Types.PVRow (tag, None, tail) in
+  mk (TEConstruct ("`" ^ tag, None)) (Types.TPolyVariant row)
+
+| Ast.EPolyVariant (tag, Some arg) ->
+  let arg_te = synth ctx level arg in
+  let tail = new_pvvar level in
+  let row = Types.PVRow (tag, Some arg_te.ty, tail) in
+  mk (TEConstruct ("`" ^ tag, Some arg_te)) (Types.TPolyVariant row)
+```
+
+Each poly variant expression creates an open row type (ending with a fresh
+`PVVar`). This means `` `Foo `` has type `` [> `Foo] `` -- a poly variant
+with at least the `Foo` tag. The open tail allows this value to unify with
+any poly variant type that includes `Foo`.
+
+For tags with payloads, the argument is synthesized and its type is stored
+in the row entry. `` `Bar 42 `` gets type `` [> `Bar of int] ``.
+
+Note that poly variant expressions are compiled as `TEConstruct` nodes
+with the tag name prefixed by a backtick. The compiler uses this prefix
+to distinguish poly variant tags from named constructors and generates
+hash-based tag values instead of declared constructor tags.
+
+### Type Coercion: `:>`
+
+Poly variant values can be widened using the `:>` coercion operator:
+
+```
+(`Foo : [`Foo | `Bar] :> [`Foo | `Bar | `Baz])
+```
+
+This asserts that the source type is a subtype of the target type (all
+tags in the source are present in the target).
 
 ## Lists and Cons: ECons, ENil, EList
 
@@ -1280,7 +1325,7 @@ against those types:
     let vt = check ctx level v v1_te.ty in
     (kt, vt)
   ) rest in
-  mk (TEMap ((k1_te, v1_te) :: rest_tes)) (Types.TMap (k1_te.ty, v1_te.ty))
+  mk (TEMap ((k1_te, v1_te) :: rest_tes)) (Types.TVariant ("map", [k1_te.ty; v1_te.ty]))
 ```
 
 ### Indexing

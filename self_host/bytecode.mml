@@ -78,14 +78,18 @@ module Bytecode =
     | LOOP_BREAK
     | LOOP_CONTINUE of int
     | FOLD_CONTINUE of int
-    | MAKE_MAP of int
     | MAKE_ARRAY of int
     | INDEX
     | HALT
     | GET_LOCAL_CALL of int * int
     | GET_LOCAL_TUPLE_GET of int * int
     | GET_LOCAL_FIELD of int * string
+    | GET_GLOBAL_CALL of int * int
+    | GET_GLOBAL_FIELD of int * string
     | JUMP_TABLE of int * int array * int
+    | CALL_N of int
+    | TAIL_CALL_N of int
+    | UPDATE_REC
 
 
   pub type record_shape = {
@@ -106,11 +110,11 @@ module Bytecode =
     | VRecord of record_shape * value array
     | VVariant of int * string * value option
     | VClosure of closure
+    | VPartial of closure * value list
     | VProto of prototype
     | VExternal of external_fn
     | VContinuation of continuation_data
     | VRef of value Ref.t
-    | VMap of (value * value) list
     | VArray of value array
 
   and closure = {
@@ -134,13 +138,13 @@ module Bytecode =
   and call_frame = {
     frame_closure: closure;
     mut frame_ip: int;
-    frame_locals: value array;
     frame_base_sp: int
   }
   and fiber = {
     fiber_stack: value array;
     mut fiber_sp: int;
-    mut fiber_frames: call_frame list
+    mut fiber_frames: call_frame list;
+    mut fiber_extra_args: value list list
   }
   and continuation_data = {
     cd_fiber: fiber;
@@ -169,7 +173,7 @@ module Bytecode =
       | VInt n -> string_of_int n
       | VFloat f -> 
         let s = $"{f:g}" in
-        if (String.contains s ".") || (String.contains s "e") do
+        if (String.contains "." s) || (String.contains "e" s) do
           s
         else
           s ^ "."
@@ -209,6 +213,7 @@ module Bytecode =
       | _ -> pp_value v
       ))
       | VClosure _ -> "<fun>"
+      | VPartial _ -> "<fun>"
       | VExternal ext -> 
         if ext.ext_args = [] do
           $"<external:{ext.ext_name}>"
@@ -217,12 +222,6 @@ module Bytecode =
       | VProto p -> $"<proto:{p.name}>"
       | VContinuation _ -> "<continuation>"
       | VRef r -> $"ref({pp_value (Ref.get r)})"
-      | VMap pairs -> 
-        let is_set = List.forall (fn (_, v) -> v = VUnit) pairs in
-        if is_set do
-          "#{" ^ ((String.concat "; " (List.map (fn (k, _) -> pp_value k) pairs)) ^ "}")
-        else
-          "#{" ^ ((String.concat "; " (List.map (fn (k, v) -> (pp_value k) ^ (": " ^ (pp_value v))) pairs)) ^ "}")
       | VArray arr -> "#[" ^ ((String.concat "; " (Array.to_list (Array.map pp_value arr))) ^ "]")
 
 
@@ -307,14 +306,18 @@ module Bytecode =
       | LOOP_BREAK -> "LOOP_BREAK"
       | LOOP_CONTINUE n -> $"LOOP_CONTINUE {n}"
       | FOLD_CONTINUE n -> $"FOLD_CONTINUE {n}"
-      | MAKE_MAP n -> $"MAKE_MAP {n}"
       | MAKE_ARRAY n -> $"MAKE_ARRAY {n}"
       | INDEX -> "INDEX"
       | HALT -> "HALT"
       | GET_LOCAL_CALL ((slot, arity)) -> $"GET_LOCAL_CALL {slot} {arity}"
       | GET_LOCAL_TUPLE_GET ((slot, idx)) -> $"GET_LOCAL_TUPLE_GET {slot} {idx}"
       | GET_LOCAL_FIELD ((slot, name)) -> $"GET_LOCAL_FIELD {slot} {name}"
+      | GET_GLOBAL_CALL ((idx, arity)) -> $"GET_GLOBAL_CALL {idx} {arity}"
+      | GET_GLOBAL_FIELD ((idx, name)) -> $"GET_GLOBAL_FIELD {idx} {name}"
       | JUMP_TABLE ((min_tag, targets, default)) -> $"JUMP_TABLE min={min_tag} [{String.concat "," (Array.to_list (Array.map string_of_int targets))}] default={default}"
+      | CALL_N n -> $"CALL_N {n}"
+      | TAIL_CALL_N n -> $"TAIL_CALL_N {n}"
+      | UPDATE_REC -> "UPDATE_REC"
 
 
   pub let disassemble proto =

@@ -526,7 +526,6 @@ let freshen_arrow_effects level ty =
     | Types.TArray t -> Types.TArray (go t)
     | Types.TRecord fs -> Types.TRecord (List.map (fun (n, t) -> (n, go t)) fs)
     | Types.TVariant (name, args) -> Types.TVariant (name, List.map go args)
-    | Types.TMap (k, v) -> Types.TMap (go k, go v)
     | t -> t
   in
   go ty
@@ -1387,8 +1386,7 @@ type ty_annot =
   | TyList of ty_annot                  (* int list *)
   | TyArray of ty_annot                 (* int array *)
   | TyTuple of ty_annot list            (* int * string *)
-  | TyApp of ty_annot list * string     (* ('a, 'b) result *)
-  | TyMap of ty_annot * ty_annot        (* (string, int) map *)
+  | TyApp of ty_annot list * string     (* ('a, 'b) result, ('k, 'v) map *)
   | TyQualified of string list * string (* Module.Type *)
   | TyWithEffect of ty_annot * eff_annot  (* return type / effect on let decls *)
 ```
@@ -1441,13 +1439,13 @@ let resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.ty =
     | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
     | Ast.TyList t -> Types.TList (go t)
     | Ast.TyArray t -> Types.TArray (go t)
-    | Ast.TyMap (k, v) -> Types.TMap (go k, go v)
     | Ast.TyApp (args, name) -> (* parameterized type: expand synonym or build TVariant *)
       ...
-    | Ast.TyRecord fields ->
+    | Ast.TyRecord (fields, is_open) ->
       let fields = List.map (fun (n, t) -> (n, go t)) fields in
-      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      Types.TRecord fields
+      let row = Types.fields_to_closed_row fields in
+      let row = if is_open then Types.RRow_append row (Types.new_rvar level) else row in
+      Types.TRecord row
     | Ast.TyQualified (path, name) ->
       let qualified = String.concat "." path ^ "." ^ name in
       go (Ast.TyName qualified)
@@ -1469,8 +1467,13 @@ Key behaviors:
 - **Parameterized types** (`TyApp`): arguments are resolved first, then
   the synonym or variant is looked up. For synonyms, `subst_tgens` performs
   the substitution. For variants, a `TVariant(name, args)` is constructed.
-- **Record types** (`TyRecord`): fields are resolved and sorted
-  alphabetically to ensure structural comparison works.
+- **Record types** (`TyRecord`): fields are resolved and converted to a
+  record row. If the annotation includes `..` (the open record marker),
+  the row ends with a fresh `RVar`; otherwise it ends with `REmpty`.
+- **Poly variant types** (`TyPolyVariant`): tags and payloads are resolved
+  into a `pvrow`. The annotation kind (`PVExact`, `PVLower`, `PVUpper`)
+  determines whether the row is closed (`PVEmpty`), open with a lower
+  bound (`PVVar`), or constrained with an upper bound.
 - **Qualified types** (`TyQualified`): converted to a dotted string like
   `"Module.Type"` and re-resolved as `TyName`.
 

@@ -18,11 +18,17 @@ const vstring = (v) => ({ tag: "string", v });
 const vbyte = (v) => ({ tag: "byte", v: v & 0xFF });
 const vrune = (v) => ({ tag: "rune", v });
 const vtuple = (vs) => ({ tag: "tuple", v: vs });
-const vlist = (vs) => ({ tag: "list", v: vs });
-const VNIL = vlist([]);
+// Lists use linked cons cells: {tag:"list", hd, tl} for cons, VNIL for nil
+const VNIL = Object.freeze({ tag: "list" });
+function vlist(arr) {
+  let result = VNIL;
+  for (let i = arr.length - 1; i >= 0; i--) result = { tag: "list", hd: arr[i], tl: result };
+  return result;
+}
 const vrecord = (fields) => ({ tag: "record", v: fields }); // fields: [[name, val], ...]
 const vvariant = (tagN, name, payload) => ({ tag: "variant", tagN, name, payload });
 const vclosure = (proto, upvalues) => ({ tag: "closure", proto, upvalues });
+const vpartial = (closure, args) => ({ tag: "partial", closure, args });
 const vexternal = (name, arity, fn, args) => ({ tag: "external", name, arity, fn, args: args || [] });
 const vcontinuation = (fiber, returnHandler, opHandlers) =>
   ({ tag: "continuation", fiber, returnHandler, opHandlers, used: false });
@@ -39,7 +45,13 @@ function asString(v) { if (v.tag === "string") return v.v; error(`expected strin
 function asClosure(v) { if (v.tag === "closure") return v; error(`expected function, got ${ppValue(v)}`); }
 function asTuple(v) { if (v.tag === "tuple") return v.v; error(`expected tuple, got ${ppValue(v)}`); }
 function asRecord(v) { if (v.tag === "record") return v.v; error(`expected record, got ${ppValue(v)}`); }
-function asList(v) { if (v.tag === "list") return v.v; error(`expected list, got ${ppValue(v)}`); }
+function asList(v) { if (v.tag === "list") return v; error(`expected list, got ${ppValue(v)}`); }
+function listToArray(v) {
+  const result = [];
+  let cur = asList(v);
+  while ("hd" in cur) { result.push(cur.hd); cur = cur.tl; }
+  return result;
+}
 function asVariant(v) { if (v.tag === "variant") return v; error(`expected variant, got ${ppValue(v)}`); }
 function asContinuation(v) { if (v.tag === "continuation") return v; error(`expected continuation, got ${ppValue(v)}`); }
 function asByte(v) { if (v.tag === "byte") return v.v; error(`expected byte, got ${ppValue(v)}`); }
@@ -62,10 +74,14 @@ function valuesEqual(a, b) {
       if (a.v.length !== b.v.length) return false;
       for (let i = 0; i < a.v.length; i++) if (!valuesEqual(a.v[i], b.v[i])) return false;
       return true;
-    case "list":
-      if (a.v.length !== b.v.length) return false;
-      for (let i = 0; i < a.v.length; i++) if (!valuesEqual(a.v[i], b.v[i])) return false;
-      return true;
+    case "list": {
+      let ca = a, cb = b;
+      while ("hd" in ca && "hd" in cb) {
+        if (!valuesEqual(ca.hd, cb.hd)) return false;
+        ca = ca.tl; cb = cb.tl;
+      }
+      return !("hd" in ca) && !("hd" in cb);
+    }
     case "variant":
       if (a.tagN !== b.tagN) return false;
       if (a.payload === null && b.payload === null) return true;
@@ -109,7 +125,12 @@ function ppValue(v) {
     case "rune": return "'" + runeToUtf8(v.v) + "'";
     case "unit": return "()";
     case "tuple": return "(" + v.v.map(ppValue).join(", ") + ")";
-    case "list": return "[" + v.v.map(ppValue).join("; ") + "]";
+    case "list": {
+      const elems = [];
+      let cur = v;
+      while ("hd" in cur) { elems.push(ppValue(cur.hd)); cur = cur.tl; }
+      return "[" + elems.join("; ") + "]";
+    }
     case "record":
       return "{ " + v.v.map(([n, val]) => n + " = " + ppValue(val)).join("; ") + " }";
     case "variant":
@@ -119,6 +140,7 @@ function ppValue(v) {
         return v.name + " (" + pv + ")";
       return v.name + " " + pv;
     case "closure": return "<fun>";
+    case "partial": return "<fun>";
     case "external":
       if (v.args.length === 0) return `<external:${v.name}>`;
       return "<fun>";
@@ -136,10 +158,10 @@ function ppValue(v) {
 }
 
 // --- Fiber ---
-const STACK_SIZE = 4096;
+const STACK_SIZE = 65536;
 
 function makeFiber() {
-  return { stack: new Array(STACK_SIZE), sp: 0, frames: [] };
+  return { stack: new Array(STACK_SIZE).fill(VUNIT), sp: 0, frames: [], extraArgs: [] };
 }
 
 function copyFiber(f) {
@@ -147,15 +169,15 @@ function copyFiber(f) {
   const newFrames = f.frames.map(fr => ({
     closure: fr.closure,
     ip: fr.ip,
-    locals: fr.locals.slice(),
     baseSp: fr.baseSp,
   }));
-  return { stack: newStack, sp: f.sp, frames: newFrames };
+  return { stack: newStack, sp: f.sp, frames: newFrames, extraArgs: f.extraArgs.map(a => a.slice()) };
 }
 
 // --- Top-level helper functions ---
 function findHandler(vm, opName) {
-  for (const he of vm.handlerStack) {
+  for (let i = vm.handlerStack.length - 1; i >= 0; i--) {
+    const he = vm.handlerStack[i];
     for (const [name] of he.ops) {
       if (name === opName) return he;
     }
@@ -175,13 +197,16 @@ function removeHandler(vm, he) {
 }
 
 function internalCall(fiber, cls, arg) {
-  const newLocals = new Array(cls.proto.num_locals).fill(VUNIT);
-  newLocals[0] = arg;
-  fiber.frames.push({ closure: cls, ip: 0, locals: newLocals, baseSp: fiber.sp });
+  const base = fiber.sp;
+  const numLocals = cls.proto.num_locals;
+  fiber.stack.fill(VUNIT, base, base + numLocals);
+  fiber.stack[base] = arg;
+  fiber.sp = base + numLocals;
+  fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
 }
 
 // --- Opcode profiling (toggle with vm.profile = true) ---
-const OP_COUNTS = new Uint32Array(81);
+const OP_COUNTS = new Uint32Array(85);
 
 function resetProfile() { OP_COUNTS.fill(0); }
 
@@ -198,6 +223,101 @@ function dumpProfile(opcodeNames) {
     const pct = (count / total * 100).toFixed(1);
     console.log(`  ${name.padEnd(22)} ${count.toLocaleString().padStart(12)}  (${pct}%)`);
   }
+}
+
+// --- Multi-arity call helpers ---
+function callWithArgs(vm, fiber, fnVal, args) {
+  // Returns true if a frame was entered, false if result was pushed to stack
+  if (fnVal.tag === "closure") {
+    const arity = fnVal.proto.arity;
+    const n = args.length;
+    if (n === arity) {
+      const base = fiber.sp;
+      const numLocals = fnVal.proto.num_locals;
+      fiber.stack.fill(VUNIT, base, base + numLocals);
+      for (let i = 0; i < n; i++) fiber.stack[base + i] = args[i];
+      fiber.sp = base + numLocals;
+      fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
+      return true;
+    } else if (n < arity) {
+      fiber.stack[fiber.sp++] = vpartial(fnVal, args);
+      return false;
+    } else {
+      const useArgs = args.slice(0, arity);
+      const extra = args.slice(arity);
+      fiber.extraArgs.push(extra);
+      const base = fiber.sp;
+      const numLocals = fnVal.proto.num_locals;
+      fiber.stack.fill(VUNIT, base, base + numLocals);
+      for (let i = 0; i < arity; i++) fiber.stack[base + i] = useArgs[i];
+      fiber.sp = base + numLocals;
+      fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
+      return true;
+    }
+  } else if (fnVal.tag === "partial") {
+    return callWithArgs(vm, fiber, fnVal.closure, fnVal.args.concat(args));
+  } else if (fnVal.tag === "external") {
+    const all = fnVal.args.concat(args);
+    if (all.length >= fnVal.arity) {
+      const useArgs = all.slice(0, fnVal.arity);
+      const remaining = all.slice(fnVal.arity);
+      const result = fnVal.fn(useArgs);
+      if (remaining.length === 0) { fiber.stack[fiber.sp++] = result; return false; }
+      return callWithArgs(vm, fiber, result, remaining);
+    } else {
+      fiber.stack[fiber.sp++] = vexternal(fnVal.name, fnVal.arity, fnVal.fn, all);
+      return false;
+    }
+  } else {
+    error(`CALL_N: expected function, got ${ppValue(fnVal)}`);
+  }
+}
+
+function processExtraArgs(vm, fiber, result) {
+  // Returns [result, enteredFrame]
+  while (fiber.extraArgs.length > 0) {
+    const pending = fiber.extraArgs[fiber.extraArgs.length - 1];
+    fiber.extraArgs.pop();
+    if (result.tag === "closure") {
+      const arity = result.proto.arity;
+      const n = pending.length;
+      if (n >= arity) {
+        const useArgs = pending.slice(0, arity);
+        const remaining = pending.slice(arity);
+        if (remaining.length > 0) fiber.extraArgs.push(remaining);
+        const base = fiber.sp;
+        const numLocals = result.proto.num_locals;
+        fiber.stack.fill(VUNIT, base, base + numLocals);
+        for (let i = 0; i < arity; i++) fiber.stack[base + i] = useArgs[i];
+        fiber.sp = base + numLocals;
+        fiber.frames.push({ closure: result, ip: 0, baseSp: base });
+        return [result, true];
+      } else {
+        // Not enough args in this batch
+        result = vpartial(result, pending);
+        // continue to next batch
+      }
+    } else if (result.tag === "partial") {
+      fiber.extraArgs.push(result.args.concat(pending));
+      result = result.closure;
+      // re-process
+    } else if (result.tag === "external") {
+      const all = result.args.concat(pending);
+      if (all.length >= result.arity) {
+        const useArgs = all.slice(0, result.arity);
+        const remaining = all.slice(result.arity);
+        if (remaining.length > 0) fiber.extraArgs.push(remaining);
+        result = result.fn(useArgs);
+        // continue - result might be callable
+      } else {
+        result = vexternal(result.name, result.arity, result.fn, all);
+        // continue to next batch
+      }
+    } else {
+      error(`expected function in over-application, got ${ppValue(result)}`);
+    }
+  }
+  return [result, false];
 }
 
 // --- VM dispatch loop ---
@@ -222,10 +342,10 @@ function run(vm) {
         fiber.sp++;
         break;
       case 3: // GET_LOCAL
-        fiber.stack[fiber.sp++] = f.locals[op[1]];
+        fiber.stack[fiber.sp++] = fiber.stack[f.baseSp + op[1]];
         break;
       case 4: // SET_LOCAL
-        f.locals[op[1]] = fiber.stack[--fiber.sp];
+        fiber.stack[f.baseSp + op[1]] = fiber.stack[--fiber.sp];
         break;
       case 5: // GET_UPVALUE
         fiber.stack[fiber.sp++] = f.closure.upvalues[op[1]];
@@ -426,7 +546,7 @@ function run(vm) {
         const protoIdx = op[1];
         const captures = op[2];
         const fnProto = getProto(f.closure.proto, protoIdx);
-        const upvalues = captures.map(cap => resolveCapture(f, cap));
+        const upvalues = captures.map(cap => resolveCapture(fiber, f, cap));
         fiber.stack[fiber.sp++] = vclosure(fnProto, upvalues);
         break;
       }
@@ -435,7 +555,7 @@ function run(vm) {
         const captures = op[2];
         const selfIdx = op[3];
         const fnProto = getProto(f.closure.proto, protoIdx);
-        const upvalues = captures.map(cap => resolveCapture(f, cap));
+        const upvalues = captures.map(cap => resolveCapture(fiber, f, cap));
         const cls = vclosure(fnProto, upvalues);
         cls.upvalues[selfIdx] = cls; // circular reference for recursion
         fiber.stack[fiber.sp++] = cls;
@@ -445,10 +565,29 @@ function run(vm) {
         const arg = fiber.stack[--fiber.sp];
         const fnVal = fiber.stack[--fiber.sp];
         if (fnVal.tag === "closure") {
-          const baseSp = fiber.sp;
-          const newLocals = new Array(fnVal.proto.num_locals).fill(VUNIT);
-          newLocals[0] = arg;
-          fiber.frames.push({ closure: fnVal, ip: 0, locals: newLocals, baseSp });
+          if (fnVal.proto.arity === 1) {
+            const base = fiber.sp;
+            const numLocals = fnVal.proto.num_locals;
+            fiber.stack.fill(VUNIT, base, base + numLocals);
+            fiber.stack[base] = arg;
+            fiber.sp = base + numLocals;
+            fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
+          } else {
+            fiber.stack[fiber.sp++] = vpartial(fnVal, [arg]);
+          }
+        } else if (fnVal.tag === "partial") {
+          const newArgs = fnVal.args.concat([arg]);
+          if (newArgs.length === fnVal.closure.proto.arity) {
+            const cls = fnVal.closure;
+            const base = fiber.sp;
+            const numLocals = cls.proto.num_locals;
+            fiber.stack.fill(VUNIT, base, base + numLocals);
+            for (let i = 0; i < newArgs.length; i++) fiber.stack[base + i] = newArgs[i];
+            fiber.sp = base + numLocals;
+            fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
+          } else {
+            fiber.stack[fiber.sp++] = vpartial(fnVal.closure, newArgs);
+          }
         } else if (fnVal.tag === "external") {
           const newArgs = fnVal.args.concat([arg]);
           if (newArgs.length === fnVal.arity) {
@@ -464,45 +603,79 @@ function run(vm) {
       case 43: { // TAIL_CALL
         const arg = fiber.stack[--fiber.sp];
         const fnVal = fiber.stack[--fiber.sp];
+        let tailResult = null;
+        let tailEntered = false;
         if (fnVal.tag === "closure") {
-          const currentBaseSp = f.baseSp;
-          const newLocals = new Array(fnVal.proto.num_locals).fill(VUNIT);
-          newLocals[0] = arg;
-          fiber.frames[fiber.frames.length - 1] = { closure: fnVal, ip: 0, locals: newLocals, baseSp: currentBaseSp };
+          if (fnVal.proto.arity === 1) {
+            const currentBaseSp = f.baseSp;
+            const numLocals = fnVal.proto.num_locals;
+            fiber.stack.fill(VUNIT, currentBaseSp, currentBaseSp + numLocals);
+            fiber.stack[currentBaseSp] = arg;
+            fiber.sp = currentBaseSp + numLocals;
+            fiber.frames[fiber.frames.length - 1] = { closure: fnVal, ip: 0, baseSp: currentBaseSp };
+            tailEntered = true;
+          } else {
+            tailResult = vpartial(fnVal, [arg]);
+          }
+        } else if (fnVal.tag === "partial") {
+          const newArgs = fnVal.args.concat([arg]);
+          if (newArgs.length === fnVal.closure.proto.arity) {
+            const cls = fnVal.closure;
+            const currentBaseSp = f.baseSp;
+            const numLocals = cls.proto.num_locals;
+            fiber.stack.fill(VUNIT, currentBaseSp, currentBaseSp + numLocals);
+            for (let i = 0; i < newArgs.length; i++) fiber.stack[currentBaseSp + i] = newArgs[i];
+            fiber.sp = currentBaseSp + numLocals;
+            fiber.frames[fiber.frames.length - 1] = { closure: cls, ip: 0, baseSp: currentBaseSp };
+            tailEntered = true;
+          } else {
+            tailResult = vpartial(fnVal.closure, newArgs);
+          }
         } else if (fnVal.tag === "external") {
           const newArgs = fnVal.args.concat([arg]);
-          let result;
           if (newArgs.length === fnVal.arity) {
-            result = fnVal.fn(newArgs);
+            tailResult = fnVal.fn(newArgs);
           } else {
-            result = vexternal(fnVal.name, fnVal.arity, fnVal.fn, newArgs);
+            tailResult = vexternal(fnVal.name, fnVal.arity, fnVal.fn, newArgs);
           }
-          // Proper tail return: pop frame and return result
+        } else {
+          error(`expected function, got ${ppValue(fnVal)}`);
+        }
+        if (!tailEntered) {
           fiber.sp = f.baseSp;
           fiber.frames.pop();
+          let result2 = tailResult;
+          if (fiber.extraArgs.length > 0) {
+            const [res, entered2] = processExtraArgs(vm, fiber, tailResult);
+            result2 = res;
+            if (entered2) break;
+          }
           if (fiber.frames.length === 0) {
             const he = findHandlerForFiber(vm, fiber);
             if (he) {
               removeHandler(vm, he);
               fiber = he.parentFiber;
               vm.currentFiber = fiber;
-              internalCall(fiber, asClosure(he.returnHandler), result);
+              internalCall(fiber, asClosure(he.returnHandler), result2);
             } else {
-              return result;
+              return result2;
             }
           } else {
-            fiber.stack[fiber.sp++] = result;
+            fiber.stack[fiber.sp++] = result2;
           }
-        } else {
-          error(`expected function, got ${ppValue(fnVal)}`);
         }
         break;
       }
       case 44: { // RETURN
-        const result = fiber.stack[--fiber.sp];
+        let result = fiber.stack[--fiber.sp];
+        fiber.sp = fiber.frames[fiber.frames.length - 1].baseSp;
         fiber.frames.pop();
+        if (fiber.extraArgs.length > 0) {
+          const [res, entered] = processExtraArgs(vm, fiber, result);
+          result = res;
+          if (entered) break;
+        }
         if (fiber.frames.length === 0) {
-          // Last frame — check for handler
           const he = findHandlerForFiber(vm, fiber);
           if (he) {
             removeHandler(vm, he);
@@ -514,6 +687,91 @@ function run(vm) {
           }
         } else {
           fiber.stack[fiber.sp++] = result;
+        }
+        break;
+      }
+      case 83: { // CALL_N
+        const n = op[1];
+        const args = new Array(n);
+        for (let i = n - 1; i >= 0; i--) args[i] = fiber.stack[--fiber.sp];
+        const fnVal83 = fiber.stack[--fiber.sp];
+        callWithArgs(vm, fiber, fnVal83, args);
+        break;
+      }
+      case 84: { // TAIL_CALL_N
+        const n = op[1];
+        const args = new Array(n);
+        for (let i = n - 1; i >= 0; i--) args[i] = fiber.stack[--fiber.sp];
+        const fnVal84 = fiber.stack[--fiber.sp];
+        // Try to resolve the call
+        let tcnEntered = false;
+        let tcnResult = null;
+        const resolve = (fn, remaining) => {
+          if (fn.tag === "closure") {
+            const arity = fn.proto.arity;
+            const nArgs = remaining.length;
+            if (nArgs === arity) {
+              const baseSp = f.baseSp;
+              const numLocals = fn.proto.num_locals;
+              fiber.stack.fill(VUNIT, baseSp, baseSp + numLocals);
+              for (let i = 0; i < nArgs; i++) fiber.stack[baseSp + i] = remaining[i];
+              fiber.sp = baseSp + numLocals;
+              fiber.frames[fiber.frames.length - 1] = { closure: fn, ip: 0, baseSp };
+              tcnEntered = true;
+            } else if (nArgs < arity) {
+              tcnResult = vpartial(fn, remaining);
+            } else {
+              const useArgs = remaining.slice(0, arity);
+              const extra = remaining.slice(arity);
+              fiber.extraArgs.push(extra);
+              const baseSp = f.baseSp;
+              const numLocals = fn.proto.num_locals;
+              fiber.stack.fill(VUNIT, baseSp, baseSp + numLocals);
+              for (let i = 0; i < arity; i++) fiber.stack[baseSp + i] = useArgs[i];
+              fiber.sp = baseSp + numLocals;
+              fiber.frames[fiber.frames.length - 1] = { closure: fn, ip: 0, baseSp };
+              tcnEntered = true;
+            }
+          } else if (fn.tag === "partial") {
+            resolve(fn.closure, fn.args.concat(remaining));
+          } else if (fn.tag === "external") {
+            const all = fn.args.concat(remaining);
+            if (all.length >= fn.arity) {
+              const useArgs = all.slice(0, fn.arity);
+              const rest = all.slice(fn.arity);
+              const r = fn.fn(useArgs);
+              if (rest.length === 0) tcnResult = r;
+              else resolve(r, rest);
+            } else {
+              tcnResult = vexternal(fn.name, fn.arity, fn.fn, all);
+            }
+          } else {
+            error(`TAIL_CALL_N: expected function, got ${ppValue(fn)}`);
+          }
+        };
+        resolve(fnVal84, args);
+        if (!tcnEntered) {
+          fiber.sp = f.baseSp;
+          fiber.frames.pop();
+          let result2 = tcnResult;
+          if (fiber.extraArgs.length > 0) {
+            const [res, entered2] = processExtraArgs(vm, fiber, tcnResult);
+            result2 = res;
+            if (entered2) break;
+          }
+          if (fiber.frames.length === 0) {
+            const he = findHandlerForFiber(vm, fiber);
+            if (he) {
+              removeHandler(vm, he);
+              fiber = he.parentFiber;
+              vm.currentFiber = fiber;
+              internalCall(fiber, asClosure(he.returnHandler), result2);
+            } else {
+              return result2;
+            }
+          } else {
+            fiber.stack[fiber.sp++] = result2;
+          }
         }
         break;
       }
@@ -605,8 +863,8 @@ function run(vm) {
       case 54: { // CONS
         const tl = fiber.stack[--fiber.sp];
         const hd = fiber.stack[--fiber.sp];
-        const tlList = asList(tl);
-        fiber.stack[fiber.sp++] = vlist([hd, ...tlList]);
+        asList(tl); // validate
+        fiber.stack[fiber.sp++] = { tag: "list", hd, tl };
         break;
       }
       case 55: // NIL
@@ -617,22 +875,26 @@ function run(vm) {
         fiber.stack[fiber.sp - 1] = vbool(asVariant(fiber.stack[fiber.sp - 1]).tagN === tagN);
         break;
       }
-      case 57: // IS_NIL
-        fiber.stack[fiber.sp - 1] = vbool(asList(fiber.stack[fiber.sp - 1]).length === 0);
+      case 57: { // IS_NIL
+        const v = asList(fiber.stack[fiber.sp - 1]);
+        fiber.stack[fiber.sp - 1] = vbool(!("hd" in v));
         break;
-      case 58: // IS_CONS
-        fiber.stack[fiber.sp - 1] = vbool(asList(fiber.stack[fiber.sp - 1]).length > 0);
+      }
+      case 58: { // IS_CONS
+        const v = asList(fiber.stack[fiber.sp - 1]);
+        fiber.stack[fiber.sp - 1] = vbool("hd" in v);
         break;
+      }
       case 59: { // HEAD
-        const l = asList(fiber.stack[fiber.sp - 1]);
-        if (l.length === 0) error("head of empty list");
-        fiber.stack[fiber.sp - 1] = l[0];
+        const v = asList(fiber.stack[fiber.sp - 1]);
+        if (!("hd" in v)) error("head of empty list");
+        fiber.stack[fiber.sp - 1] = v.hd;
         break;
       }
       case 60: { // TAIL
-        const l = asList(fiber.stack[fiber.sp - 1]);
-        if (l.length === 0) error("tail of empty list");
-        fiber.stack[fiber.sp - 1] = vlist(l.slice(1));
+        const v = asList(fiber.stack[fiber.sp - 1]);
+        if (!("hd" in v)) error("tail of empty list");
+        fiber.stack[fiber.sp - 1] = v.tl;
         break;
       }
       case 61: { // VARIANT_PAYLOAD
@@ -736,17 +998,13 @@ function run(vm) {
         break;
       }
       case 70: { // FOLD_CONTINUE
-        const nPops = op[1];
         const continueValue = fiber.stack[--fiber.sp];
-        for (let i = 0; i < nPops; i++) {
-          if (fiber.sp > 0) fiber.sp--;
-        }
-        fiber.stack[fiber.sp++] = continueValue;
-        // Execute RETURN from fold callback
-        const result = fiber.stack[--fiber.sp];
+        // Restore sp to frame base (cleans up locals + temps)
+        fiber.sp = fiber.frames[fiber.frames.length - 1].baseSp;
+        // Pop the fold callback frame and push result
         if (fiber.frames.length <= 1) error("FOLD_CONTINUE: no frame to return from");
         fiber.frames.pop();
-        fiber.stack[fiber.sp++] = result;
+        fiber.stack[fiber.sp++] = continueValue;
         break;
       }
       case 46: { // ENTER_FUNC
@@ -782,6 +1040,8 @@ function run(vm) {
         const baseSp = fiber.frames[fiber.frames.length - 1].baseSp;
         fiber.sp = baseSp;
         fiber.frames.pop();
+        // Clear any extra_args from over-applications within the unwound frames
+        fiber.extraArgs = [];
         if (fiber.frames.length === 0) {
           const he = findHandlerForFiber(vm, fiber);
           if (he) {
@@ -839,12 +1099,31 @@ function run(vm) {
       }
       case 77: { // GET_LOCAL_CALL
         const fnVal = fiber.stack[--fiber.sp];
-        const arg = f.locals[op[1]];
+        const arg = fiber.stack[f.baseSp + op[1]];
         if (fnVal.tag === "closure") {
-          const baseSp = fiber.sp;
-          const newLocals = new Array(fnVal.proto.num_locals).fill(VUNIT);
-          newLocals[0] = arg;
-          fiber.frames.push({ closure: fnVal, ip: 0, locals: newLocals, baseSp });
+          if (fnVal.proto.arity === 1) {
+            const base = fiber.sp;
+            const numLocals = fnVal.proto.num_locals;
+            fiber.stack.fill(VUNIT, base, base + numLocals);
+            fiber.stack[base] = arg;
+            fiber.sp = base + numLocals;
+            fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
+          } else {
+            fiber.stack[fiber.sp++] = vpartial(fnVal, [arg]);
+          }
+        } else if (fnVal.tag === "partial") {
+          const newArgs = fnVal.args.concat([arg]);
+          if (newArgs.length === fnVal.closure.proto.arity) {
+            const cls = fnVal.closure;
+            const base = fiber.sp;
+            const numLocals = cls.proto.num_locals;
+            fiber.stack.fill(VUNIT, base, base + numLocals);
+            for (let i = 0; i < newArgs.length; i++) fiber.stack[base + i] = newArgs[i];
+            fiber.sp = base + numLocals;
+            fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
+          } else {
+            fiber.stack[fiber.sp++] = vpartial(fnVal.closure, newArgs);
+          }
         } else if (fnVal.tag === "external") {
           const newArgs = fnVal.args.concat([arg]);
           if (newArgs.length === fnVal.arity) {
@@ -858,14 +1137,14 @@ function run(vm) {
         break;
       }
       case 78: { // GET_LOCAL_TUPLE_GET
-        const tup = asTuple(f.locals[op[1]]);
+        const tup = asTuple(fiber.stack[f.baseSp + op[1]]);
         const idx = op[2];
         if (idx >= tup.length) error("tuple index out of bounds");
         fiber.stack[fiber.sp++] = tup[idx];
         break;
       }
       case 79: { // GET_LOCAL_FIELD
-        const rec = asRecord(f.locals[op[1]]);
+        const rec = asRecord(fiber.stack[f.baseSp + op[1]]);
         const name = op[2];
         const entry = rec.find(([n]) => n === name);
         if (!entry) error(`record has no field: ${name}`);
@@ -885,6 +1164,85 @@ function run(vm) {
         }
         break;
       }
+      case 81: { // GET_GLOBAL_CALL
+        const fnVal = fiber.stack[--fiber.sp];
+        const gidx = op[1];
+        const arg = vm.globals.get(gidx);
+        if (arg === undefined) {
+          const name = gidx < vm.globalNames.length ? vm.globalNames[gidx] : "?";
+          error(`undefined global: ${name}`);
+        }
+        if (fnVal.tag === "closure") {
+          if (fnVal.proto.arity === 1) {
+            const base = fiber.sp;
+            const numLocals = fnVal.proto.num_locals;
+            fiber.stack.fill(VUNIT, base, base + numLocals);
+            fiber.stack[base] = arg;
+            fiber.sp = base + numLocals;
+            fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
+          } else {
+            fiber.stack[fiber.sp++] = vpartial(fnVal, [arg]);
+          }
+        } else if (fnVal.tag === "partial") {
+          const newArgs = fnVal.args.concat([arg]);
+          if (newArgs.length === fnVal.closure.proto.arity) {
+            const cls = fnVal.closure;
+            const base = fiber.sp;
+            const numLocals = cls.proto.num_locals;
+            fiber.stack.fill(VUNIT, base, base + numLocals);
+            for (let i = 0; i < newArgs.length; i++) fiber.stack[base + i] = newArgs[i];
+            fiber.sp = base + numLocals;
+            fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
+          } else {
+            fiber.stack[fiber.sp++] = vpartial(fnVal.closure, newArgs);
+          }
+        } else if (fnVal.tag === "external") {
+          const newArgs = fnVal.args.concat([arg]);
+          if (newArgs.length === fnVal.arity) {
+            fiber.stack[fiber.sp++] = fnVal.fn(newArgs);
+          } else {
+            fiber.stack[fiber.sp++] = vexternal(fnVal.name, fnVal.arity, fnVal.fn, newArgs);
+          }
+        } else {
+          error(`expected function, got ${ppValue(fnVal)}`);
+        }
+        break;
+      }
+      case 82: { // GET_GLOBAL_FIELD
+        const gidx = op[1];
+        const name = op[2];
+        const val = vm.globals.get(gidx);
+        if (val === undefined) {
+          const gname = gidx < vm.globalNames.length ? vm.globalNames[gidx] : "?";
+          error(`undefined global: ${gname}`);
+        }
+        const rec = asRecord(val);
+        const entry = rec.find(([n]) => n === name);
+        if (!entry) error(`record has no field: ${name}`);
+        fiber.stack[fiber.sp++] = entry[1];
+        break;
+      }
+      case 85: { // UPDATE_REC
+        const placeholder = fiber.stack[--fiber.sp];
+        const computed = fiber.stack[--fiber.sp];
+        if (placeholder.tag === "list" && computed.tag === "list") {
+          placeholder.hd = computed.hd;
+          placeholder.tl = computed.tl;
+        } else if (placeholder.tag === "tuple" && computed.tag === "tuple") {
+          for (let i = 0; i < computed.v.length; i++) placeholder.v[i] = computed.v[i];
+        } else if (placeholder.tag === "record" && computed.tag === "record") {
+          for (let i = 0; i < computed.v.length; i++) placeholder.v[i] = computed.v[i];
+        } else if (placeholder.tag === "array" && computed.tag === "array") {
+          for (let i = 0; i < computed.v.length; i++) placeholder.v[i] = computed.v[i];
+        } else if (placeholder.tag === "variant" && computed.tag === "variant") {
+          placeholder.tagN = computed.tagN;
+          placeholder.name = computed.name;
+          placeholder.payload = computed.payload;
+        } else {
+          error("UPDATE_REC: type mismatch between placeholder and computed value");
+        }
+        break;
+      }
       case 74: // HALT
         return fiber.sp > 0 ? fiber.stack[fiber.sp - 1] : VUNIT;
       default:
@@ -899,8 +1257,8 @@ function getProto(currentProto, protoIdx) {
   return c.v;
 }
 
-function resolveCapture(frame, cap) {
-  if (cap[0] === "local") return frame.locals[cap[1]];
+function resolveCapture(fiber, frame, cap) {
+  if (cap[0] === "local") return fiber.stack[frame.baseSp + cap[1]];
   if (cap[0] === "upvalue") return frame.closure.upvalues[cap[1]];
   error(`unknown capture type: ${cap[0]}`);
 }
@@ -909,8 +1267,10 @@ function resolveCapture(frame, cap) {
 function executeProto(vm, proto) {
   const fiber = makeFiber();
   const closure = vclosure(proto, []);
-  const locals = new Array(proto.num_locals).fill(VUNIT);
-  fiber.frames.push({ closure, ip: 0, locals, baseSp: 0 });
+  const numLocals = proto.num_locals;
+  fiber.stack.fill(VUNIT, 0, numLocals);
+  fiber.sp = numLocals;
+  fiber.frames.push({ closure, ip: 0, baseSp: 0 });
   vm.currentFiber = fiber;
   try {
     return run(vm);
@@ -944,9 +1304,11 @@ function createVM(globalNames) {
 // --- Call a closure with one argument on an existing VM ---
 function callClosure(vmInst, closure, arg) {
   const fiber = makeFiber();
-  const locals = new Array(closure.proto.num_locals).fill(VUNIT);
-  locals[0] = arg;
-  fiber.frames.push({ closure, ip: 0, locals, baseSp: 0 });
+  const numLocals = closure.proto.num_locals;
+  fiber.stack.fill(VUNIT, 0, numLocals);
+  fiber.stack[0] = arg;
+  fiber.sp = numLocals;
+  fiber.frames.push({ closure, ip: 0, baseSp: 0 });
   vmInst.currentFiber = fiber;
   vmInst.handlerStack = [];
   vmInst.controlStack = [];
@@ -963,7 +1325,7 @@ module.exports = {
   vcontinuation, vref, vmap, varray, vproto,
   asInt, asFloat, asBool, asString, asClosure, asTuple,
   asRecord, asList, asVariant, asContinuation, asByte, asRune,
-  asMap, asArray,
+  asMap, asArray, listToArray,
   valuesEqual, ppValue, runeToUtf8,
   makeFiber, copyFiber,
   run, executeProto, createVM, callClosure,

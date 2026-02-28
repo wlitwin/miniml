@@ -23,7 +23,7 @@ module Optimize =
     let i = Ref.create 0 in
     for (Ref.get i) < len do
       match Array.get code (Ref.get i) with
-      | Bytecode.TAIL_CALL _ -> 
+      | Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _ -> 
         let j = Ref.create ((Ref.get i) + 1) in
         for ((Ref.get j) < len) && (not (is_jump_target targets (Ref.get j))) do
           Array.set actions (Ref.get j) Remove;
@@ -79,7 +79,8 @@ module Optimize =
           Ref.set done_ true
         else
           match op with
-          | Bytecode.JUMP _ | Bytecode.JUMP_IF_FALSE _ | Bytecode.JUMP_IF_TRUE _ | Bytecode.RETURN | Bytecode.FUNC_RETURN | Bytecode.TAIL_CALL _ | Bytecode.MATCH_FAIL _ | Bytecode.HALT | Bytecode.LOOP_BREAK | Bytecode.LOOP_CONTINUE _ | Bytecode.FOLD_CONTINUE _ | Bytecode.ENTER_LOOP _ | Bytecode.JUMP_TABLE _ -> 
+          | Bytecode.RETURN | Bytecode.FUNC_RETURN | Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _ | Bytecode.MATCH_FAIL _ | Bytecode.HALT -> Ref.set done_ true
+          | Bytecode.JUMP _ | Bytecode.JUMP_IF_FALSE _ | Bytecode.JUMP_IF_TRUE _ | Bytecode.LOOP_BREAK | Bytecode.LOOP_CONTINUE _ | Bytecode.FOLD_CONTINUE _ | Bytecode.ENTER_LOOP _ | Bytecode.JUMP_TABLE _ -> 
             Ref.set result false;
             Ref.set done_ true
           | _ -> Ref.set i (Ref.get i + 1)
@@ -112,6 +113,31 @@ module Optimize =
         Ref.set i (Ref.get i + 1)
     end
 
+  pub let mark_dead_stores code targets actions =
+    let len = Array.length code in
+    let i = Ref.create 0 in
+    for (Ref.get i) < len do
+      let handled = Ref.create false in
+      if (((Ref.get i) + 1) < len) && (((Array.get actions (Ref.get i)) = Keep) && (((Array.get actions ((Ref.get i) + 1)) = Keep) && (not (is_jump_target targets ((Ref.get i) + 1))))) do
+        match (Array.get code (Ref.get i), Array.get code ((Ref.get i) + 1)) with
+        | (Bytecode.DUP, Bytecode.SET_LOCAL n) when is_slot_dead code actions targets n ((Ref.get i) + 2) -> 
+          Array.set actions (Ref.get i) Remove;
+          Array.set actions ((Ref.get i) + 1) Remove;
+          Ref.set i ((Ref.get i) + 2);
+          Ref.set handled true
+        | _ -> ()
+
+      end;
+      if not (Ref.get handled) do
+        match Array.get code (Ref.get i) with
+        | Bytecode.SET_LOCAL n when ((Array.get actions (Ref.get i)) = Keep) && (is_slot_dead code actions targets n ((Ref.get i) + 1)) -> 
+          Array.set actions (Ref.get i) (ReplaceWith (Bytecode.POP :: []));
+          Ref.set i (Ref.get i + 1)
+        | _ -> Ref.set i (Ref.get i + 1)
+
+      end
+    end
+
   pub let mark_superinstructions code targets actions =
     let len = Array.length code in
     let i = Ref.create 0 in
@@ -129,6 +155,14 @@ module Optimize =
             Ref.set i ((Ref.get i) + 2)
           | (Bytecode.GET_LOCAL slot, Bytecode.FIELD name) -> 
             Array.set actions (Ref.get i) (ReplaceWith (Bytecode.GET_LOCAL_FIELD (slot, name) :: []));
+            Array.set actions ((Ref.get i) + 1) Remove;
+            Ref.set i ((Ref.get i) + 2)
+          | (Bytecode.GET_GLOBAL idx, Bytecode.CALL arity) -> 
+            Array.set actions (Ref.get i) (ReplaceWith (Bytecode.GET_GLOBAL_CALL (idx, arity) :: []));
+            Array.set actions ((Ref.get i) + 1) Remove;
+            Ref.set i ((Ref.get i) + 2)
+          | (Bytecode.GET_GLOBAL idx, Bytecode.FIELD name) -> 
+            Array.set actions (Ref.get i) (ReplaceWith (Bytecode.GET_GLOBAL_FIELD (idx, name) :: []));
             Array.set actions ((Ref.get i) + 1) Remove;
             Ref.set i ((Ref.get i) + 2)
           | _ -> Ref.set i (Ref.get i + 1)
@@ -153,7 +187,7 @@ module Optimize =
       | Bytecode.TAG_EQ _ -> true
       | _ -> false
       ) && (match Array.get code ((Ref.get pos) + 2) with
-      | Bytecode.JUMP_IF_FALSE _ -> true
+      | Bytecode.JUMP_IF_FALSE t -> t > (Ref.get pos)
       | _ -> false
       ))) do
         let tag =
@@ -249,6 +283,29 @@ module Optimize =
         Ref.set i (Ref.get i + 1)
     end
 
+  pub let mark_push_pop code targets actions =
+    let len = Array.length code in
+    let i = Ref.create 0 in
+    for (Ref.get i) < (len - 1) do
+      if ((Array.get actions (Ref.get i)) = Keep) && (((Array.get actions ((Ref.get i) + 1)) = Keep) && (not (is_jump_target targets ((Ref.get i) + 1)))) do
+        do
+          let is_pure_push =
+            match Array.get code (Ref.get i) with
+            | Bytecode.CONST _ | Bytecode.GET_LOCAL _ | Bytecode.GET_GLOBAL _ | Bytecode.GET_UPVALUE _ | Bytecode.NIL | Bytecode.DUP -> true
+            | _ -> false
+           in
+          match Array.get code ((Ref.get i) + 1) with
+          | Bytecode.POP when is_pure_push -> 
+            Array.set actions (Ref.get i) Remove;
+            Array.set actions ((Ref.get i) + 1) Remove;
+            Ref.set i ((Ref.get i) + 2)
+          | _ -> Ref.set i (Ref.get i + 1)
+
+        end
+      else
+        Ref.set i (Ref.get i + 1)
+    end
+
   pub let rewrite code line_table actions =
     let len = Array.length code in
     let new_code = Ref.create [] in
@@ -303,6 +360,92 @@ module Optimize =
      in
     Array.set code i remapped) code
 
+  pub let thread_jumps code =
+    let len = Array.length code in
+    if len = 0 do
+      ()
+    else do
+      let resolve_target target =
+        let visited = Hashtbl.create 8 in
+        let t = Ref.create target in
+        let continue_ = Ref.create true in
+        for Ref.get continue_ do
+          if ((Ref.get t) < 0) || (((Ref.get t) >= len) || (Hashtbl.has visited (Ref.get t))) do
+            Ref.set continue_ false
+          else
+            match Array.get code (Ref.get t) with
+            | Bytecode.JUMP next -> 
+              Hashtbl.set visited (Ref.get t) ();
+              Ref.set t next
+            | _ -> Ref.set continue_ false
+
+        end;
+        Ref.get t in
+      let control_depth = Array.make len 0 in
+      let depth = Ref.create 0 in
+      let mut i = 0 in
+      for i <= len - 1 do
+        do Array.set control_depth i (Ref.get depth);
+        match Array.get code i with
+        | Bytecode.ENTER_LOOP _ -> Ref.set depth (Ref.get depth + 1)
+        | Bytecode.EXIT_LOOP -> 
+          if (Ref.get depth) > 0 do
+            Ref.set depth (Ref.get depth - 1)
+          end
+        | _ -> ()
+
+        end;
+        i := i + 1
+      end;
+      let mut i = 0 in
+      for i <= len - 1 do
+        do match Array.get code i with
+        | Bytecode.JUMP target -> 
+          let final_target = resolve_target target in
+          if (final_target >= 0) && ((final_target < len) && ((Array.get control_depth i) = 0)) do
+            do
+              match Array.get code final_target with
+              | Bytecode.RETURN -> Array.set code i Bytecode.RETURN
+              | _ -> 
+                if final_target <> target do
+                  Array.set code i (Bytecode.JUMP final_target)
+                end
+
+            end
+          else if final_target <> target do
+            Array.set code i (Bytecode.JUMP final_target)
+          end
+        | Bytecode.JUMP_IF_FALSE target -> 
+          let final_target = resolve_target target in
+          if final_target <> target do
+            Array.set code i (Bytecode.JUMP_IF_FALSE final_target)
+          end
+        | Bytecode.JUMP_IF_TRUE target -> 
+          let final_target = resolve_target target in
+          if final_target <> target do
+            Array.set code i (Bytecode.JUMP_IF_TRUE final_target)
+          end
+        | Bytecode.JUMP_TABLE ((min_tag, targets, default_target)) -> 
+          let changed = Ref.create false in
+          let new_targets = Array.map (fn t -> let final_t = resolve_target t in
+          if final_t <> t do
+            Ref.set changed true
+          end;
+          final_t) targets in
+          let new_default = resolve_target default_target in
+          if new_default <> default_target do
+            Ref.set changed true
+          end;
+          if Ref.get changed do
+            Array.set code i (Bytecode.JUMP_TABLE (min_tag, new_targets, new_default))
+          end
+        | _ -> ()
+
+        end;
+        i := i + 1
+      end
+    end
+
   pub let optimize_code _constants code line_table =
     let len = Array.length code in
     if len = 0 do
@@ -312,19 +455,25 @@ module Optimize =
       let actions = Array.make len Keep in
       mark_dead_after_tail_call code targets actions;
       mark_jump_to_next code actions;
+      mark_dead_stores code targets actions;
       mark_set_get_pairs code targets actions;
+      mark_jump_tables code targets actions;
+      mark_push_pop code targets actions;
       mark_superinstructions code targets actions;
       let any_changes = Ref.create false in
       Array.iter (fn a -> if a <> Keep do
         Ref.set any_changes true
       end) actions;
-      if not (Ref.get any_changes) do
-        (code, line_table)
-      else do
-        let (new_code, new_lines, offset_map) = rewrite code line_table actions in
-        fixup_jumps new_code offset_map;
-        (new_code, new_lines)
-      end
+      let (final_code, final_lines) =
+        if not (Ref.get any_changes) do
+          (code, line_table)
+        else do
+          let (new_code, new_lines, offset_map) = rewrite code line_table actions in
+          fixup_jumps new_code offset_map;
+          (new_code, new_lines)
+        end in
+      thread_jumps final_code;
+      (final_code, final_lines)
     end
 
   pub let rec optimize_proto (proto : Bytecode.prototype) : Bytecode.prototype =

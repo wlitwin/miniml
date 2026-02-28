@@ -188,6 +188,12 @@ module Compiler =
       find_tag 0 variant_def
 
 
+  pub let is_newtype_ctor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | Some info -> List.mem info.ctor_type_name type_env.newtypes
+    | None -> false
+
+
   pub let extract_class_ty_args num_params schema_ty resolved_ty =
     let found = Hashtbl.create num_params in
     let rec go schema_ty resolved_ty =
@@ -334,12 +340,25 @@ module Compiler =
     | Typechecker.TEBinop ((op, e1, e2)) -> compile_binop s op e1 e2
     | Typechecker.TEUnop ((op, e)) -> compile_unop s op e
     | Typechecker.TEApp ((fn_, arg)) -> 
-      compile_expr false s fn_;
-      compile_expr false s arg;
-      if tail do
-        emit s (Bytecode.TAIL_CALL 1)
+      let rec collect_args expr acc =
+        match expr.expr with
+        | Typechecker.TEApp ((inner_fn, inner_arg)) -> collect_args inner_fn (inner_arg :: acc)
+        | _ -> (expr, acc)
+       in
+      let (base_fn, all_args) = collect_args fn_ (arg :: []) in
+      let n = List.length all_args in
+      compile_expr false s base_fn;
+      List.iter (fn a -> compile_expr false s a) all_args;
+      if n > 1 do
+        emit s (if tail do
+          Bytecode.TAIL_CALL_N n
+        else
+          Bytecode.CALL_N n)
       else
-        emit s (Bytecode.CALL 1)
+        emit s (if tail do
+          Bytecode.TAIL_CALL 1
+        else
+          Bytecode.CALL 1)
     | Typechecker.TEFun ((param, body, has_return)) -> compile_function has_return s param body te.ty
     | Typechecker.TELet ((name, _scheme, e1, e2)) -> 
       compile_expr false s e1;
@@ -449,22 +468,31 @@ module Compiler =
       emit s Bytecode.CONS
     | Typechecker.TEConstruct ((name, arg)) -> 
       do
-        let tag =
-          if ((String.length name) > 0) && ((String.get name 0) = #60) do
-            ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
-          else
-            tag_for_constructor s.type_env name in
-        let short_name =
-          match String.rindex_opt name #2e with
-          | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-          | None -> name
-         in
-        match arg with
-        | Some e -> 
-          compile_expr false s e;
-          emit s (Bytecode.MAKE_VARIANT (tag, short_name, true))
-        | None -> emit s (Bytecode.MAKE_VARIANT (tag, short_name, false))
+        if is_newtype_ctor s.type_env name do
+          do
+            match arg with
+            | Some e -> compile_expr tail s e
+            | None -> emit_constant s Bytecode.VUnit
 
+          end
+        else do
+          let tag =
+            if ((String.length name) > 0) && ((String.get name 0) = #60) do
+              ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
+            else
+              tag_for_constructor s.type_env name in
+          let short_name =
+            match String.rindex_opt name #2e with
+            | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+            | None -> name
+           in
+          match arg with
+          | Some e -> 
+            compile_expr false s e;
+            emit s (Bytecode.MAKE_VARIANT (tag, short_name, true))
+          | None -> emit s (Bytecode.MAKE_VARIANT (tag, short_name, false))
+
+        end
       end
     | Typechecker.TEMatch ((scrut, arms, _partial)) -> compile_match tail s scrut arms
     | Typechecker.TESeq ((e1, e2)) -> 
@@ -506,10 +534,6 @@ module Compiler =
       patch s enter_idx (Bytecode.ENTER_LOOP break_target);
       patch s end_jump (Bytecode.JUMP end_target);
       s.loop_start := prev_loop_start
-    | Typechecker.TEMap pairs -> 
-      List.iter (fn (k, v) -> compile_expr false s k;
-      compile_expr false s v) pairs;
-      emit s (Bytecode.MAKE_MAP (List.length pairs))
     | Typechecker.TEArray elems -> 
       List.iter (compile_expr false s) elems;
       emit s (Bytecode.MAKE_ARRAY (List.length elems))
@@ -517,18 +541,33 @@ module Compiler =
       compile_expr false s value_te;
       emit s Bytecode.FUNC_RETURN
     | Typechecker.TELetRecAnd ((bindings, body)) -> 
-      let slots = List.map (fn (name, _) -> let unit_idx = add_constant s Bytecode.VUnit in
-      emit s (Bytecode.CONST unit_idx);
-      emit s Bytecode.MAKE_REF;
+      let binding_info = List.map (fn (name, te) -> let is_fun =
+        match te.expr with
+        | Typechecker.TEFun _ -> true
+        | _ -> false
+       in
       let slot = allocate_local s name in
-      s.mutable_locals := name :: s.mutable_locals;
-      emit s (Bytecode.SET_LOCAL slot);
-      slot) bindings in
-      List.iter2 (fn (_name, fn_te) slot -> compile_expr false s fn_te;
+      if is_fun do
+        let unit_idx = add_constant s Bytecode.VUnit in
+        emit s (Bytecode.CONST unit_idx);
+        emit s Bytecode.MAKE_REF;
+        s.mutable_locals := name :: s.mutable_locals;
+        emit s (Bytecode.SET_LOCAL slot)
+      else do
+        emit_rec_placeholder s te;
+        emit s (Bytecode.SET_LOCAL slot)
+      end;
+      (name, te, slot, is_fun)) bindings in
+      List.iter (fn (_, te, slot, is_fun) -> compile_expr false s te;
       emit s (Bytecode.GET_LOCAL slot);
-      emit s Bytecode.SET_REF) bindings slots;
+      if is_fun do
+        emit s Bytecode.SET_REF
+      else
+        emit s Bytecode.UPDATE_REC) binding_info;
       compile_expr tail s body;
-      List.iter (fn (name, _) -> s.mutable_locals := List.filter (fn n -> n <> name) s.mutable_locals) bindings;
+      List.iter (fn (name, _, _, is_fun) -> if is_fun do
+        s.mutable_locals := List.filter (fn n -> n <> name) s.mutable_locals
+      end) binding_info;
       List.iter (fn _ -> free_local s) bindings
 
   and compile_var_access s name =
@@ -618,7 +657,7 @@ module Compiler =
       let has_custom_instance class_name ty = List.exists (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = 1) && (Types.match_partial_inst inst.inst_tys (Some ty :: [])))) s.type_env.instances in
       let use_structural =
         match resolved with
-        | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte | Types.TRune | Types.TUnit | Types.TList _ | Types.TTuple _ | Types.TVariant _ | Types.TPolyVariant _ | Types.TMap _ | Types.TArray _ | Types.TVar {contents = Types.Unbound _} -> true
+        | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte | Types.TRune | Types.TUnit | Types.TList _ | Types.TTuple _ | Types.TVariant _ | Types.TPolyVariant _ | Types.TArray _ | Types.TVar {contents = Types.Unbound _} -> true
         | Types.TRecord _ -> not (has_custom_instance "Eq" resolved)
         | _ -> false
        in
@@ -822,16 +861,22 @@ module Compiler =
     compile_expr tail s else_e;
     let end_target = current_offset s in
     patch s end_jump (Bytecode.JUMP end_target)
-  and compile_function has_return s param_name body fn_ty =
-    let param_ty_arity = count_arrows fn_ty in
-    let _ = param_ty_arity in
-    let sub = create_state (Some s) 1 s.global_names s.mutable_globals s.type_env param_name in
-    (allocate_local sub param_name; ());
-    if has_return do
+  and compile_function has_return s param_name body _fn_ty =
+    let rec collect_params params body_expr hr =
+      match body_expr.expr with
+      | Typechecker.TEFun ((p, inner, inner_hr)) -> collect_params (p :: params) inner (hr || inner_hr)
+      | _ -> (List.rev params, body_expr, hr)
+     in
+    let (extra_params, final_body, combined_hr) = collect_params [] body has_return in
+    let all_params = param_name :: extra_params in
+    let arity = List.length all_params in
+    let sub = create_state (Some s) arity s.global_names s.mutable_globals s.type_env param_name in
+    List.iter (fn p -> (allocate_local sub p; ())) all_params;
+    if combined_hr do
       emit sub Bytecode.ENTER_FUNC
     end;
-    compile_expr (not has_return) sub body;
-    if has_return do
+    compile_expr (not combined_hr) sub final_body;
+    if combined_hr do
       emit sub Bytecode.EXIT_FUNC
     end;
     emit sub Bytecode.RETURN;
@@ -845,17 +890,81 @@ module Compiler =
     | _ -> 0
 
   and finalize_proto s = {name = s.proto_name; arity = s.arity; num_locals = s.max_locals; code = Dynarray.to_array s.code; constants = Dynarray.to_array s.constants; line_table = Dynarray.to_array s.lines}
+  and emit_rec_placeholder s te =
+    let rec go te =
+      match te.expr with
+      | Typechecker.TECons _ -> 
+        let unit_idx = add_constant s Bytecode.VUnit in
+        emit s (Bytecode.CONST unit_idx);
+        emit s Bytecode.NIL;
+        emit s Bytecode.CONS
+      | Typechecker.TETuple es -> 
+        let unit_idx = add_constant s Bytecode.VUnit in
+        List.iter (fn _ -> emit s (Bytecode.CONST unit_idx)) es;
+        emit s (Bytecode.MAKE_TUPLE (List.length es))
+      | Typechecker.TERecord fields -> 
+        let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
+        let names = List.map fst sorted in
+        let unit_idx = add_constant s Bytecode.VUnit in
+        List.iter (fn _ -> emit s (Bytecode.CONST unit_idx)) names;
+        emit s (Bytecode.MAKE_RECORD names)
+      | Typechecker.TEConstruct ((name, payload_opt)) -> 
+        do
+          if is_newtype_ctor s.type_env name do
+            do
+              match payload_opt with
+              | Some inner -> go inner
+              | None -> error "cannot create placeholder for nullary newtype constructor"
+
+            end
+          else do
+            let tag =
+              if ((String.length name) > 0) && ((String.get name 0) = #60) do
+                ((hash (String.sub name 1 ((String.length name) - 1)))) land 0x3FFFFFFF
+              else
+                tag_for_constructor s.type_env name in
+            let short_name =
+              match String.rindex_opt name #2e with
+              | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+              | None -> name
+             in
+            match payload_opt with
+            | Some _ -> 
+              let unit_idx = add_constant s Bytecode.VUnit in
+              emit s (Bytecode.CONST unit_idx);
+              emit s (Bytecode.MAKE_VARIANT (tag, short_name, true))
+            | None -> emit s (Bytecode.MAKE_VARIANT (tag, short_name, false))
+
+          end
+        end
+      | Typechecker.TEArray es -> 
+        let unit_idx = add_constant s Bytecode.VUnit in
+        List.iter (fn _ -> emit s (Bytecode.CONST unit_idx)) es;
+        emit s (Bytecode.MAKE_ARRAY (List.length es))
+      | Typechecker.TELet ((_, _, _, body)) -> go body
+      | Typechecker.TESeq ((_, body)) -> go body
+      | _ -> error "cannot create placeholder for recursive value binding"
+     in
+    go te
   and compile_let_rec s name fn_expr =
     let slot = allocate_local s name in
     match fn_expr.expr with
     | Typechecker.TEFun ((param, body, has_return)) -> 
-      let sub = create_state (Some s) 1 s.global_names s.mutable_globals s.type_env name in
-      (allocate_local sub param; ());
-      if has_return do
+      let rec collect_params params body_expr hr =
+        match body_expr.expr with
+        | Typechecker.TEFun ((p, inner, inner_hr)) -> collect_params (p :: params) inner (hr || inner_hr)
+        | _ -> (List.rev params, body_expr, hr)
+       in
+      let (extra_params, final_body, combined_hr) = collect_params [] body has_return in
+      let all_params = param :: extra_params in
+      let arity = List.length all_params in
+      let sub = create_state (Some s) arity s.global_names s.mutable_globals s.type_env name in
+      List.iter (fn p -> (allocate_local sub p; ())) all_params;
+      if combined_hr do
         emit sub Bytecode.ENTER_FUNC
       end;
-      compile_expr (not has_return) sub body;
-      if has_return do
+      compile_expr (not combined_hr) sub final_body;
+      if combined_hr do
         emit sub Bytecode.EXIT_FUNC
       end;
       emit sub Bytecode.RETURN;
@@ -873,7 +982,12 @@ module Compiler =
 
       end;
       emit s (Bytecode.SET_LOCAL slot)
-    | _ -> error "let rec must bind a function"
+    | _ -> 
+      emit_rec_placeholder s fn_expr;
+      emit s (Bytecode.SET_LOCAL slot);
+      compile_expr false s fn_expr;
+      emit s (Bytecode.GET_LOCAL slot);
+      emit s Bytecode.UPDATE_REC
 
   and compile_match tail s scrut arms =
     compile_expr false s scrut;
@@ -949,6 +1063,13 @@ module Compiler =
       emit s (Bytecode.SET_LOCAL tl_slot);
       compile_pattern s hd_slot hd_pat fail_jumps;
       compile_pattern s tl_slot tl_pat fail_jumps
+    | Ast.PatConstruct ((name, arg_pat)) when is_newtype_ctor s.type_env name -> 
+      do
+        match arg_pat with
+        | Some sub_pat -> compile_pattern s slot sub_pat fail_jumps
+        | None -> ()
+
+      end
     | Ast.PatConstruct ((name, arg_pat)) -> 
       do
         let tag = tag_for_constructor s.type_env name in
@@ -1036,28 +1157,30 @@ module Compiler =
       emit s (Bytecode.SET_LOCAL elem_slot);
       compile_pattern s elem_slot sub_pat fail_jumps) pats
     | Ast.PatMap entries -> 
-      let has_gidx = find_or_add_global s "__map_has" in
-      let get_gidx = find_or_add_global s "__map_get" in
-      List.iter (fn (key_pat, val_pat) -> let key_val =
+      let has_gidx = find_or_add_global s "Map.has" in
+      let get_gidx = find_or_add_global s "Map.get" in
+      let emit_map_key key_pat =
         match key_pat with
-        | Ast.PatInt n -> Bytecode.VInt n
-        | Ast.PatString s -> Bytecode.VString s
-        | Ast.PatBool b -> Bytecode.VBool b
-        | Ast.PatFloat f -> Bytecode.VFloat f
-        | _ -> error "map pattern keys must be literals"
+        | Ast.PatInt n -> emit_constant s (Bytecode.VInt n)
+        | Ast.PatString str -> emit_constant s (Bytecode.VString str)
+        | Ast.PatBool b -> emit_constant s (Bytecode.VBool b)
+        | Ast.PatFloat f -> emit_constant s (Bytecode.VFloat f)
+        | Ast.PatPin name -> compile_var_access s name
+        | _ -> error "map pattern keys must be literals or pin patterns"
        in
-      emit s (Bytecode.GET_GLOBAL has_gidx);
-      emit s (Bytecode.GET_LOCAL slot);
+      List.iter (fn (key_pat, val_pat) -> emit s (Bytecode.GET_GLOBAL has_gidx);
+      emit_map_key key_pat;
       emit s (Bytecode.CALL 1);
-      emit_constant s key_val;
+      emit s (Bytecode.GET_LOCAL slot);
       emit s (Bytecode.CALL 1);
       Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps);
       let val_slot = allocate_local s "_map_val" in
       emit s (Bytecode.GET_GLOBAL get_gidx);
+      emit_map_key key_pat;
+      emit s (Bytecode.CALL 1);
       emit s (Bytecode.GET_LOCAL slot);
       emit s (Bytecode.CALL 1);
-      emit_constant s key_val;
-      emit s (Bytecode.CALL 1);
+      emit s Bytecode.VARIANT_PAYLOAD;
       emit s (Bytecode.SET_LOCAL val_slot);
       compile_pattern s val_slot val_pat fail_jumps) entries
     | Ast.PatPolyVariant ((tag, arg_pat)) -> 
@@ -1089,6 +1212,12 @@ module Compiler =
     List.iter (fn
       | Typechecker.THReturn ((name, handler_body)) -> Ref.set return_arm (Some (name, handler_body))
       | Typechecker.THOp ((op_name, arg_name, k_name, handler_body)) -> Ref.set op_arms ((op_name, arg_name, k_name, handler_body) :: Ref.get op_arms)
+      | Typechecker.THOpProvide ((op_name, arg_name, value_expr)) -> 
+        let k_name = "__k_provide" in
+        let k_var = {value_expr with expr = Typechecker.TEVar k_name; ty = Types.TUnit} in
+        let resume_expr = {value_expr with expr = Typechecker.TEResume (k_var, value_expr)} in
+        Ref.set op_arms ((op_name, arg_name, k_name, resume_expr) :: Ref.get op_arms)
+      | Typechecker.THOpTry ((op_name, arg_name, fallback_expr)) -> Ref.set op_arms ((op_name, arg_name, "__k_try", fallback_expr) :: Ref.get op_arms)
     ) arms;
     let op_arms = List.rev (Ref.get op_arms) in
     let (ret_name, ret_body) =
@@ -1157,13 +1286,41 @@ module Compiler =
     | Typechecker.TDLetRec ((name, te)) -> 
       Hashtbl.remove s.mutable_globals name;
       let gidx = find_or_add_global s name in
-      compile_expr false s te;
-      emit s (Bytecode.DEF_GLOBAL gidx)
+      let is_fun =
+        match te.expr with
+        | Typechecker.TEFun _ -> true
+        | _ -> false
+       in
+      if is_fun do
+        compile_expr false s te;
+        emit s (Bytecode.DEF_GLOBAL gidx)
+      else do
+        emit_rec_placeholder s te;
+        emit s (Bytecode.DEF_GLOBAL gidx);
+        compile_expr false s te;
+        emit s (Bytecode.GET_GLOBAL gidx);
+        emit s Bytecode.UPDATE_REC
+      end
     | Typechecker.TDLetRecAnd bindings -> 
       List.iter (fn (name, _) -> Hashtbl.remove s.mutable_globals name) bindings;
-      let gidxs = List.map (fn (name, _) -> find_or_add_global s name) bindings in
-      List.iter2 (fn (_name, te) gidx -> compile_expr false s te;
-      emit s (Bytecode.DEF_GLOBAL gidx)) bindings gidxs
+      let binding_info = List.map (fn (name, te) -> let gidx = find_or_add_global s name in
+      let is_fun =
+        match te.expr with
+        | Typechecker.TEFun _ -> true
+        | _ -> false
+       in
+      if not is_fun do
+        emit_rec_placeholder s te;
+        emit s (Bytecode.DEF_GLOBAL gidx)
+      end;
+      (name, te, gidx, is_fun)) bindings in
+      List.iter (fn (_, te, gidx, is_fun) -> compile_expr false s te;
+      if is_fun do
+        emit s (Bytecode.DEF_GLOBAL gidx)
+      else do
+        emit s (Bytecode.GET_GLOBAL gidx);
+        emit s Bytecode.UPDATE_REC
+      end) binding_info
     | Typechecker.TDExpr te -> 
       compile_expr false s te;
       emit s Bytecode.POP

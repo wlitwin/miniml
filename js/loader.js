@@ -43,6 +43,9 @@ const OPCODE_NAMES = [
   "MAKE_MAP", "MAKE_ARRAY", "INDEX", "HALT",
   "RECORD_UPDATE", "RECORD_UPDATE_DYN",
   "GET_LOCAL_CALL", "GET_LOCAL_TUPLE_GET", "GET_LOCAL_FIELD", "JUMP_TABLE",
+  "GET_GLOBAL_CALL", "GET_GLOBAL_FIELD",
+  "CALL_N", "TAIL_CALL_N",
+  "UPDATE_REC",
 ];
 
 // Map string opcode names to numeric tags for the VM switch
@@ -159,6 +162,8 @@ const U32_OPCODES = new Set([
   71, // MAKE_MAP
   72, // MAKE_ARRAY
   76, // RECORD_UPDATE_DYN
+  83, // CALL_N
+  84, // TAIL_CALL_N
 ]);
 
 function loadBundleBinary(arrayBuffer) {
@@ -332,6 +337,16 @@ function loadBundleBinary(arrayBuffer) {
         for (let i = 0; i < tableSize; i++) targets[i] = readU32();
         const defaultTarget = readU32();
         return [80, minTag, targets, defaultTarget];
+      }
+      case 81: { // GET_GLOBAL_CALL
+        const idx = readU32();
+        const arity = readU32();
+        return [81, idx, arity];
+      }
+      case 82: { // GET_GLOBAL_FIELD
+        const idx = readU32();
+        const name = strs[readU32()];
+        return [82, idx, name];
       }
       default:
         throw new Error(`unknown opcode tag: ${tag}`);

@@ -45,13 +45,14 @@ and texpr_kind =
   | TEFoldContinue of texpr
   | TEForLoop of texpr
   | TELetRecAnd of (string * texpr) list * texpr
-  | TEMap of (texpr * texpr) list
   | TEArray of texpr list
   | TEReturn of texpr
 
 and thandle_arm =
   | THReturn of string * texpr
   | THOp of string * string * string * texpr
+  | THOpProvide of string * string * texpr  (* tail-resumptive: op, arg, value_expr *)
+  | THOpTry of string * string * texpr      (* non-resuming: op, arg, fallback_expr *)
 
 type tdecl =
   | TDLet of string * texpr
@@ -92,6 +93,43 @@ let rec strip_loc (expr : Ast.expr) =
   | Ast.ELoc (_, inner) -> strip_loc inner
   | e -> e
 
+(* Check if an expression is "constructive" — safe for recursive let binding.
+   Constructive expressions only build data structures and don't inspect values. *)
+let rec is_constructive (expr : Ast.expr) =
+  match strip_loc expr with
+  | Ast.EInt _ | Ast.EFloat _ | Ast.EBool _ | Ast.EString _
+  | Ast.EByte _ | Ast.ERune _ | Ast.EUnit | Ast.ENil -> true
+  | Ast.EVar _ -> true
+  | Ast.EFun _ -> true
+  | Ast.ECons (hd, tl) -> is_constructive hd && is_constructive tl
+  | Ast.ETuple es | Ast.EList es | Ast.EArray es | Ast.ESet es ->
+    List.for_all is_constructive es
+  | Ast.ERecord fields ->
+    List.for_all (fun (_, e) -> is_constructive e) fields
+  | Ast.EConstruct (_, None) | Ast.EPolyVariant (_, None) -> true
+  | Ast.EConstruct (_, Some e) | Ast.EPolyVariant (_, Some e) ->
+    is_constructive e
+  | Ast.EAnnot (e, _) -> is_constructive e
+  | Ast.ELet (_, e1, e2) -> is_constructive e1 && is_constructive e2
+  | Ast.EMap entries ->
+    List.for_all (fun (k, v) -> is_constructive k && is_constructive v) entries
+  | Ast.EMapTyped (_, entries) ->
+    List.for_all (fun (k, v) -> is_constructive k && is_constructive v) entries
+  | Ast.ECollTyped (_, entries) ->
+    List.for_all is_constructive entries
+  | Ast.ERecordUpdate (base, fields) ->
+    is_constructive base && List.for_all (fun (_, e) -> is_constructive e) fields
+  | _ -> false
+
+(* Check if an expression is immediately linked to a name — a bare alias with no
+   data constructor. Rejects let rec x = x. *)
+let is_immediately_linked name (expr : Ast.expr) =
+  match strip_loc expr with
+  | Ast.EVar n -> n = name
+  | Ast.EAnnot (e, _) ->
+    (match strip_loc e with Ast.EVar n -> n = name | _ -> false)
+  | _ -> false
+
 let try_unify t1 t2 =
   try Types.unify t1 t2
   with Types.Unify_error msg -> error msg
@@ -111,7 +149,6 @@ let rec max_tgen_in_ty = function
   | Types.TList t -> max_tgen_in_ty t
   | Types.TRecord row -> max_tgen_in_rrow row
   | Types.TVariant (_, args) -> List.fold_left (fun acc t -> max acc (max_tgen_in_ty t)) (-1) args
-  | Types.TMap (k, v) -> max (max_tgen_in_ty k) (max_tgen_in_ty v)
   | Types.TArray t -> max_tgen_in_ty t
   | _ -> -1
 
@@ -189,7 +226,6 @@ let subst_tgens inst_tys ty =
     | Types.TRecord row -> Types.TRecord (go_rrow row)
     | Types.TVariant (name, args) -> Types.TVariant (name, List.map go args)
     | Types.TPolyVariant row -> Types.TPolyVariant (go_pv row)
-    | Types.TMap (k, v) -> Types.TMap (go k, go v)
     | t -> t
   and go_eff = function
     | Types.EffRow (label, params, tail) -> Types.EffRow (label, List.map go params, go_eff tail)
@@ -226,7 +262,6 @@ let freshen_arrow_effects level ty =
     | Types.TRecord row -> Types.TRecord (go_rrow row)
     | Types.TVariant (name, args) -> Types.TVariant (name, List.map go args)
     | Types.TPolyVariant row -> Types.TPolyVariant (go_pv row)
-    | Types.TMap (k, v) -> Types.TMap (go k, go v)
     | t -> t
   and go_pv = function
     | Types.PVRow (tag, ty_opt, tail) -> Types.PVRow (tag, Option.map go ty_opt, go_pv tail)
@@ -260,7 +295,6 @@ let freshen_tvars level ty =
     | Types.TRecord row -> Types.TRecord (go_rrow row)
     | Types.TVariant (name, args) -> Types.TVariant (name, List.map go args)
     | Types.TPolyVariant row -> Types.TPolyVariant (go_pv row)
-    | Types.TMap (k, v) -> Types.TMap (go k, go v)
     | t -> t
   and go_eff = function
     | Types.EffVar { contents = Types.EffUnbound _ } as e -> e
@@ -298,6 +332,8 @@ let rec resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.t
     | Ast.TyName "unit" -> Types.TUnit
     | Ast.TyName name ->
       let canonical = resolve_type_alias ctx.type_env name in
+      if List.mem canonical ctx.type_env.Types.hidden_types then
+        error (Printf.sprintf "unknown type: %s" name);
       (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
        | Some (_, 0, ty) -> freshen_tvars level (freshen_arrow_effects level ty)
        | Some (_, n, _) ->
@@ -325,9 +361,10 @@ let rec resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.t
     | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
     | Ast.TyList t -> Types.TList (go t)
     | Ast.TyArray t -> Types.TArray (go t)
-    | Ast.TyMap (k, v) -> Types.TMap (go k, go v)
     | Ast.TyApp (args, name) ->
       let canonical = resolve_type_alias ctx.type_env name in
+      if List.mem canonical ctx.type_env.Types.hidden_types then
+        error (Printf.sprintf "unknown type constructor: %s" name);
       let arg_tys = List.map go args in
       (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
        | Some (_, np, ty) ->
@@ -490,7 +527,6 @@ let find_var_type_in target_name te =
     | TEIndex (e1, e2) -> go e1; go e2
     | TEIf (c, t, e) -> go c; go t; go e
     | TETuple es | TEArray es -> List.iter go es
-    | TEMap kvs -> List.iter (fun (k, v) -> go k; go v) kvs
     | TERecord fields -> List.iter (fun (_, e) -> go e) fields
     | TERecordUpdate (base, overrides) -> go base; List.iter (fun (_, e) -> go e) overrides
     | TERecordUpdateIdx (base, pairs) -> go base; List.iter (fun (i, v) -> go i; go v) pairs
@@ -499,7 +535,8 @@ let find_var_type_in target_name te =
       go scr; List.iter (fun (_, g, body) -> Option.iter go g; go body) arms
     | TEHandle (body, arms) ->
       go body; List.iter (fun arm -> match arm with
-        | THReturn (_, e) -> go e | THOp (_, _, _, e) -> go e) arms
+        | THReturn (_, e) | THOp (_, _, _, e)
+        | THOpProvide (_, _, e) | THOpTry (_, _, e) -> go e) arms
     | TELetRecAnd (bindings, body) ->
       List.iter (fun (_, e) -> go e) bindings; go body
   in
@@ -532,8 +569,6 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
           List.iter2 build_map ss aa | _ -> ())
       | Types.TList s1 -> (match a with Types.TList a1 -> build_map s1 a1 | _ -> ())
       | Types.TArray s1 -> (match a with Types.TArray a1 -> build_map s1 a1 | _ -> ())
-      | Types.TMap (sk, sv) ->
-        (match a with Types.TMap (ak, av) -> build_map sk ak; build_map sv av | _ -> ())
       | Types.TVariant (_, ss) ->
         (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
           List.iter2 build_map ss aa | _ -> ())
@@ -599,8 +634,6 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
             List.iter2 map_tgens ss aa | _ -> ())
         | Types.TList s1 -> (match a with Types.TList a1 -> map_tgens s1 a1 | _ -> ())
         | Types.TArray s1 -> (match a with Types.TArray a1 -> map_tgens s1 a1 | _ -> ())
-        | Types.TMap (sk, sv) ->
-          (match a with Types.TMap (ak, av) -> map_tgens sk ak; map_tgens sv av | _ -> ())
         | Types.TVariant (_, ss) ->
           (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
             List.iter2 map_tgens ss aa | _ -> ())
@@ -710,7 +743,6 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
                 List.iter2 go ss rs
               | Types.TList s1, Types.TList r1 -> go s1 r1
               | Types.TArray s1, Types.TArray r1 -> go s1 r1
-              | Types.TMap (sk, sv), Types.TMap (rk, rv) -> go sk rk; go sv rv
               | Types.TVariant (_, ss), Types.TVariant (_, rs) when List.length ss = List.length rs ->
                 List.iter2 go ss rs
               | _ -> ()
@@ -830,7 +862,6 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
         walk locals e
       | TEIf (c, t, e) -> walk locals c; walk locals t; walk locals e
       | TETuple es | TEArray es -> List.iter (walk locals) es
-      | TEMap kvs -> List.iter (fun (k, v) -> walk locals k; walk locals v) kvs
       | TERecord fields -> List.iter (fun (_, e) -> walk locals e) fields
       | TERecordUpdate (base, overrides) -> walk locals base; List.iter (fun (_, e) -> walk locals e) overrides
       | TERecordUpdateIdx (base, pairs) -> walk locals base; List.iter (fun (i, v) -> walk locals i; walk locals v) pairs
@@ -842,8 +873,8 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
       | TEHandle (body, arms) ->
         walk locals body;
         List.iter (fun arm -> match arm with
-          | THReturn (_, e) -> walk locals e
-          | THOp (_, _, _, e) -> walk locals e) arms
+          | THReturn (_, e) | THOp (_, _, _, e)
+          | THOpProvide (_, _, e) | THOpTry (_, _, e) -> walk locals e) arms
       | TELetRecAnd (bindings, body) ->
         List.iter (fun (_, e) -> walk locals e) bindings; walk locals body
     in
@@ -933,8 +964,6 @@ let build_rgen_map schema_ty actual_ty =
         List.iter2 walk ss aa | _ -> ())
     | Types.TList s1 -> (match a with Types.TList a1 -> walk s1 a1 | _ -> ())
     | Types.TArray s1 -> (match a with Types.TArray a1 -> walk s1 a1 | _ -> ())
-    | Types.TMap (sk, sv) ->
-      (match a with Types.TMap (ak, av) -> walk sk ak; walk sv av | _ -> ())
     | Types.TVariant (_, ss) ->
       (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
         List.iter2 walk ss aa | _ -> ())
@@ -981,8 +1010,6 @@ let infer_record_evidence vars te scheme =
           List.iter2 walk_rmap ss aa | _ -> ())
       | Types.TList s1 -> (match a with Types.TList a1 -> walk_rmap s1 a1 | _ -> ())
       | Types.TArray s1 -> (match a with Types.TArray a1 -> walk_rmap s1 a1 | _ -> ())
-      | Types.TMap (sk, sv) ->
-        (match a with Types.TMap (ak, av) -> walk_rmap sk ak; walk_rmap sv av | _ -> ())
       | Types.TVariant (_, ss) ->
         (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
           List.iter2 walk_rmap ss aa | _ -> ())
@@ -1022,6 +1049,28 @@ let infer_record_evidence vars te scheme =
              | Types.RVar { contents = Types.RUnbound (id, _) } ->
                (match Hashtbl.find_opt rvar_to_rgen id with
                 | Some rgen_idx -> add_evidence rgen_idx (List.map fst overrides)
+                | None -> ())
+             | _ -> ())
+          | _ -> ())
+       | TEField (base_e, field_name) ->
+         (* Field read on polymorphic record: need evidence for the field index *)
+         (match Types.repr base_e.ty with
+          | Types.TRecord row ->
+            (match get_row_tail row with
+             | Types.RVar { contents = Types.RUnbound (id, _) } ->
+               (match Hashtbl.find_opt rvar_to_rgen id with
+                | Some rgen_idx -> add_evidence rgen_idx [field_name]
+                | None -> ())
+             | _ -> ())
+          | _ -> ())
+       | TEFieldAssign (base_e, field_name, _) ->
+         (* Field mutation on polymorphic record: need evidence for the field index *)
+         (match Types.repr base_e.ty with
+          | Types.TRecord row ->
+            (match get_row_tail row with
+             | Types.RVar { contents = Types.RUnbound (id, _) } ->
+               (match Hashtbl.find_opt rvar_to_rgen id with
+                | Some rgen_idx -> add_evidence rgen_idx [field_name]
                 | None -> ())
              | _ -> ())
           | _ -> ())
@@ -1066,7 +1115,6 @@ let infer_record_evidence vars te scheme =
         walk e
       | TEIf (c, t, e) -> walk c; walk t; walk e
       | TETuple es | TEArray es -> List.iter walk es
-      | TEMap kvs -> List.iter (fun (k, v) -> walk k; walk v) kvs
       | TERecord fields -> List.iter (fun (_, e) -> walk e) fields
       | TERecordUpdate (base, overrides) -> walk base; List.iter (fun (_, e) -> walk e) overrides
       | TERecordUpdateIdx (base, pairs) -> walk base; List.iter (fun (i, v) -> walk i; walk v) pairs
@@ -1077,8 +1125,8 @@ let infer_record_evidence vars te scheme =
       | TEHandle (body, arms) ->
         walk body;
         List.iter (fun arm -> match arm with
-          | THReturn (_, e) -> walk e
-          | THOp (_, _, _, e) -> walk e) arms
+          | THReturn (_, e) | THOp (_, _, _, e)
+          | THOpProvide (_, _, e) | THOpTry (_, _, e) -> walk e) arms
       | TELetRecAnd (bindings, body) ->
         List.iter (fun (_, e) -> walk e) bindings; walk body
     in
@@ -1119,8 +1167,6 @@ let improve_fundeps_in_expr vars type_env te =
             List.iter2 map_tgens ss aa | _ -> ())
         | Types.TList s1 -> (match a with Types.TList a1 -> map_tgens s1 a1 | _ -> ())
         | Types.TArray s1 -> (match a with Types.TArray a1 -> map_tgens s1 a1 | _ -> ())
-        | Types.TMap (sk, sv) ->
-          (match a with Types.TMap (ak, av) -> map_tgens sk ak; map_tgens sv av | _ -> ())
         | Types.TVariant (_, ss) ->
           (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
             List.iter2 map_tgens ss aa | _ -> ())
@@ -1206,7 +1252,6 @@ let improve_fundeps_in_expr vars type_env te =
           List.iter2 go ss rs
         | Types.TList s1, Types.TList r1 -> go s1 r1
         | Types.TArray s1, Types.TArray r1 -> go s1 r1
-        | Types.TMap (sk, sv), Types.TMap (rk, rv) -> go sk rk; go sv rv
         | Types.TVariant (_, ss), Types.TVariant (_, rs) when List.length ss = List.length rs ->
           List.iter2 go ss rs
         | _ -> ()
@@ -1288,7 +1333,6 @@ let improve_fundeps_in_expr vars type_env te =
     | TEFieldAssign (e, _, v) -> walk locals e; walk locals v
     | TESeq (e1, e2) -> walk locals e1; walk locals e2
     | TEArray es -> List.iter (walk locals) es
-    | TEMap kvs -> List.iter (fun (k, v) -> walk locals k; walk locals v) kvs
     | TEWhile (c, b) -> walk locals c; walk locals b
     | TEForLoop e -> walk locals e
     | TEReturn e -> walk locals e
@@ -1297,8 +1341,8 @@ let improve_fundeps_in_expr vars type_env te =
     | TEPerform (_, e) -> walk locals e
     | TEHandle (e, arms) ->
       walk locals e; List.iter (fun arm -> match arm with
-        | THReturn (_, body) -> walk locals body
-        | THOp (_, _, _, body) -> walk locals body) arms
+        | THReturn (_, body) | THOp (_, _, _, body)
+        | THOpProvide (_, _, body) | THOpTry (_, _, body) -> walk locals body) arms
     | TEResume (e1, e2) -> walk locals e1; walk locals e2
     | TELetRecAnd (bindings, body) ->
       List.iter (fun (_, e) -> walk locals e) bindings; walk locals body
@@ -1459,7 +1503,18 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
          let e2_te = synth ctx'' level e2 in
          mk (TELetRec (name, stored_scheme, e1_te, e2_te)) e2_te.ty
        end
-     | _ -> error "let rec binding must be a function")
+     | _ when is_constructive e1 && not (is_immediately_linked name e1) ->
+       if type_params <> [] then
+         error "recursive value binding does not support polymorphic type parameters";
+       let val_var = Types.new_tvar (level + 1) in
+       let ctx' = extend_var_mono ctx name val_var in
+       let e1_te = synth ctx' (level + 1) e1 in
+       try_unify val_var e1_te.ty;
+       let scheme = Types.generalize level e1_te.ty in
+       let ctx'' = extend_var ctx name scheme in
+       let e2_te = synth ctx'' level e2 in
+       mk (TELetRec (name, None, e1_te, e2_te)) e2_te.ty
+     | _ -> error "let rec binding must be a function or constructive expression")
   | Ast.EIf (cond, then_e, else_e) ->
     let cond_te = check ctx level cond Types.TBool in
     let then_te = synth ctx level then_e in
@@ -1734,19 +1789,10 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
     try_unify k_te.ty (Types.TCont (v_te.ty, call_eff, ret_ty));
     try_subeffect call_eff ctx.current_eff;
     mk (TEResume (k_te, v_te)) ret_ty
-  | Ast.EMap [] ->
-    let kt = Types.new_tvar level in
-    let vt = Types.new_tvar level in
-    mk (TEMap []) (Types.TMap (kt, vt))
-  | Ast.EMap ((k1, v1) :: rest) ->
-    let k1_te = synth ctx level k1 in
-    let v1_te = synth ctx level v1 in
-    let rest_tes = List.map (fun (k, v) ->
-      let kt = check ctx level k k1_te.ty in
-      let vt = check ctx level v v1_te.ty in
-      (kt, vt)
-    ) rest in
-    mk (TEMap ((k1_te, v1_te) :: rest_tes)) (Types.TMap (k1_te.ty, v1_te.ty))
+  | Ast.EMap pairs ->
+    let pair_list = Ast.EList (List.map (fun (k, v) -> Ast.ETuple [k; v]) pairs) in
+    let desugared = Ast.EApp (Ast.EVar "Map.of_list", pair_list) in
+    synth ctx level desugared
   | Ast.EMapTyped (mod_name, pairs) ->
     let pair_list = Ast.EList (List.map (fun (k, v) -> Ast.ETuple [k; v]) pairs) in
     let desugared = Ast.EApp (Ast.EVar (mod_name ^ ".of_list"), pair_list) in
@@ -1828,7 +1874,15 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
       let typed_bindings = List.map2 (fun (name, _, _, _, _) te -> (name, te)) infos body_tes in
       mk (TELetRecAnd (typed_bindings, body_te)) body_te.ty
     end else begin
-      (* Original monomorphic path *)
+      (* Original monomorphic path — validate non-function bindings are constructive *)
+      let all_names = List.map (fun (name, _, _) -> name) bindings in
+      List.iter (fun (name, _, fn_expr) ->
+        match strip_loc fn_expr with
+        | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
+        | _ when is_constructive fn_expr && not (is_immediately_linked name fn_expr) -> ()
+        | _ -> error (Printf.sprintf "let rec binding for '%s' must be a function or constructive expression" name)
+      ) bindings;
+      ignore all_names;
       let fn_vars = List.map (fun (name, _, _) -> (name, Types.new_tvar (level + 1))) bindings in
       let ctx' = List.fold_left (fun ctx (name, tv) ->
         extend_var_mono ctx name tv
@@ -2075,6 +2129,9 @@ and synth_construct ctx level name arg =
   match List.assoc_opt name ctx.type_env.constructors with
   | None -> error (Printf.sprintf "unknown constructor: %s" name)
   | Some info ->
+    (* Check visibility: reject constructors from private module types *)
+    if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
+      error (Printf.sprintf "unknown constructor: %s" name);
     let qname = qualify_ctor_name ctx.type_env name info in
     (* Fresh tvars for universals (type params) + existentials *)
     let num_fresh = info.ctor_num_params + info.ctor_existentials in
@@ -2135,7 +2192,9 @@ and freeze_texpr te =
     | TEHandle (e, arms) ->
       TEHandle (freeze_texpr e, List.map (fun arm -> match arm with
         | THReturn (n, b) -> THReturn (n, freeze_texpr b)
-        | THOp (eff, x, k, b) -> THOp (eff, x, k, freeze_texpr b)) arms)
+        | THOp (eff, x, k, b) -> THOp (eff, x, k, freeze_texpr b)
+        | THOpProvide (eff, x, b) -> THOpProvide (eff, x, freeze_texpr b)
+        | THOpTry (eff, x, b) -> THOpTry (eff, x, freeze_texpr b)) arms)
     | TEResume (k, v) -> TEResume (freeze_texpr k, freeze_texpr v)
     | TEWhile (c, b) -> TEWhile (freeze_texpr c, freeze_texpr b)
     | TEBreak e -> TEBreak (freeze_texpr e)
@@ -2144,7 +2203,6 @@ and freeze_texpr te =
     | TEForLoop e -> TEForLoop (freeze_texpr e)
     | TELetRecAnd (binds, body) ->
       TELetRecAnd (List.map (fun (n, e) -> (n, freeze_texpr e)) binds, freeze_texpr body)
-    | TEMap pairs -> TEMap (List.map (fun (k, v) -> (freeze_texpr k, freeze_texpr v)) pairs)
     | TEArray es -> TEArray (List.map freeze_texpr es)
     | TEReturn e -> TEReturn (freeze_texpr e)
   in
@@ -2159,6 +2217,8 @@ and check_pattern_gadt ctx level pat scrut_ty =
     (match List.assoc_opt name ctx.type_env.constructors with
      | None -> error (Printf.sprintf "unknown constructor in pattern: %s" name)
      | Some info ->
+       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
+         error (Printf.sprintf "unknown constructor in pattern: %s" name);
        let num_fresh = info.ctor_num_params + info.ctor_existentials in
        let all_fresh = List.init num_fresh (fun _ -> Types.new_tvar level) in
        (* Collect existential tvar refs (indices >= ctor_num_params) *)
@@ -2205,7 +2265,6 @@ and check_existential_escape existential_refs result_ty =
     | Types.TTuple ts -> List.fold_left collect_tvar_refs acc ts
     | Types.TList t -> collect_tvar_refs acc t
     | Types.TArray t -> collect_tvar_refs acc t
-    | Types.TMap (k, v) -> collect_tvar_refs (collect_tvar_refs acc k) v
     | Types.TRecord row -> List.fold_left (fun a (_, t) -> collect_tvar_refs a t) acc (Types.record_row_to_fields row)
     | Types.TVariant (_, args) -> List.fold_left collect_tvar_refs acc args
     | Types.TPolyVariant row ->
@@ -2393,6 +2452,8 @@ and check_pattern ctx level (pat : Ast.pattern) (ty : Types.ty) : (string * Type
     (match List.assoc_opt name ctx.type_env.constructors with
      | None -> error (Printf.sprintf "unknown constructor in pattern: %s" name)
      | Some info ->
+       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
+         error (Printf.sprintf "unknown constructor in pattern: %s" name);
        let fresh_args = List.init info.ctor_num_params (fun _ -> Types.new_tvar level) in
        let expected_variant = Types.TVariant (info.ctor_type_name, fresh_args) in
        try_unify ty expected_variant;
@@ -2460,7 +2521,7 @@ and check_pattern ctx level (pat : Ast.pattern) (ty : Types.ty) : (string * Type
   | Ast.PatMap entries ->
     let key_ty = Types.new_tvar level in
     let val_ty = Types.new_tvar level in
-    try_unify ty (Types.TMap (key_ty, val_ty));
+    try_unify ty (Types.TVariant ("map", [key_ty; val_ty]));
     List.concat_map (fun (kpat, vpat) ->
       check_pattern ctx level kpat key_ty @
       check_pattern ctx level vpat val_ty
@@ -2660,7 +2721,6 @@ let rec uncovered_patterns type_env ty pats =
         else "#[" ^ String.concat "; " (List.init missing_len (fun _ -> "_")) ^ "]"
       in
       [missing_pat]
-    | Types.TMap _ -> ["_"]
     | Types.TInt | Types.TFloat | Types.TString -> ["_"]
     | Types.TUnit ->
       let has_unit = List.exists (fun p ->
@@ -2755,7 +2815,6 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
         | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
         | Ast.TyList t -> Types.TList (go t)
         | Ast.TyArray t -> Types.TArray (go t)
-        | Ast.TyMap (k, v) -> Types.TMap (go k, go v)
         | Ast.TyApp (args, tname) ->
           let canonical = resolve_type_alias pre_ctx.type_env tname in
           let arg_tys = List.map go args in
@@ -2797,7 +2856,6 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
       | Ast.TyArrow (a, b, _) -> collect_annot_vars (collect_annot_vars acc a) b
       | Ast.TyTuple ts -> List.fold_left collect_annot_vars acc ts
       | Ast.TyList t | Ast.TyArray t -> collect_annot_vars acc t
-      | Ast.TyMap (k, v) -> collect_annot_vars (collect_annot_vars acc k) v
       | Ast.TyApp (args, _) -> List.fold_left collect_annot_vars acc args
       | Ast.TyRecord (fs, _) -> List.fold_left (fun a (_, t) -> collect_annot_vars a t) acc fs
       | Ast.TyQualified _ | Ast.TyName _ -> acc
@@ -2892,7 +2950,6 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
           | Ast.TyTuple ts -> Types.TTuple (List.map gadt_resolve ts)
           | Ast.TyList t -> Types.TList (gadt_resolve t)
           | Ast.TyArray t -> Types.TArray (gadt_resolve t)
-          | Ast.TyMap (k, v) -> Types.TMap (gadt_resolve k, gadt_resolve v)
           | Ast.TyApp (args, tname) ->
             let canonical = resolve_type_alias pre_ctx.type_env tname in
             let arg_tys = List.map gadt_resolve args in
@@ -2969,7 +3026,6 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
         | Ast.TyTuple ts -> Types.TTuple (List.map resolve_field ts)
         | Ast.TyList t -> Types.TList (resolve_field t)
         | Ast.TyArray t -> Types.TArray (resolve_field t)
-        | Ast.TyMap (k, v) -> Types.TMap (resolve_field k, resolve_field v)
         | Ast.TyApp (args, n) ->
           let arg_tys = List.map resolve_field args in
           (match List.find_opt (fun (tn, _, _) -> String.equal tn n) pre_ctx.type_env.type_synonyms with
@@ -3054,7 +3110,6 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
       | Ast.TyTuple ts -> Types.TTuple (List.map resolve_alias ts)
       | Ast.TyList t -> Types.TList (resolve_alias t)
       | Ast.TyArray t -> Types.TArray (resolve_alias t)
-      | Ast.TyMap (k, v) -> Types.TMap (resolve_alias k, resolve_alias v)
       | Ast.TyApp (args, tname) ->
         let canonical = resolve_type_alias ctx.type_env tname in
         let arg_tys = List.map resolve_alias args in
@@ -3088,6 +3143,92 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
     let resolved_ty = resolve_alias annot in
     let type_env = { ctx.type_env with
       type_synonyms = (type_name, num_params, resolved_ty) :: ctx.type_env.type_synonyms;
+    } in
+    { ctx with type_env }
+  | Ast.TDNewtype (ctor_name, underlying_annot) ->
+    (* Newtype: register as single-constructor variant with runtime erasure *)
+    let param_tbl = Hashtbl.create 4 in
+    List.iteri (fun i name -> Hashtbl.replace param_tbl name i) type_params;
+    let tvars = Hashtbl.create 4 in
+    let rec resolve_nt = function
+      | Ast.TyVar name ->
+        (match Hashtbl.find_opt param_tbl name with
+         | Some idx -> Types.TGen idx
+         | None ->
+           (match Hashtbl.find_opt tvars name with
+            | Some tv -> tv
+            | None ->
+              let tv = Types.new_tvar 0 in
+              Hashtbl.replace tvars name tv;
+              tv))
+      | Ast.TyName "int" -> Types.TInt
+      | Ast.TyName "float" -> Types.TFloat
+      | Ast.TyName "bool" -> Types.TBool
+      | Ast.TyName "string" -> Types.TString
+      | Ast.TyName "unit" -> Types.TUnit
+      | Ast.TyName name ->
+        let canonical = resolve_type_alias ctx.type_env name in
+        (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
+         | Some (_, 0, ty) -> ty
+         | Some (_, n, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" name n)
+         | None ->
+           (match find_variant_info ctx.type_env name with
+            | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
+            | Some (_, n, _, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" name n)
+            | None ->
+              if List.assoc_opt canonical ctx.type_env.records <> None then
+                let fields = List.assoc canonical ctx.type_env.records in
+                if fields = [] then Types.TRecord Types.RWild
+                else Types.TRecord (Types.fields_to_closed_row fields)
+              else
+                error (Printf.sprintf "unknown type: %s" name)))
+      | Ast.TyArrow (a, b, _) -> Types.TArrow (resolve_nt a, Types.EffEmpty, resolve_nt b)
+      | Ast.TyTuple ts -> Types.TTuple (List.map resolve_nt ts)
+      | Ast.TyList t -> Types.TList (resolve_nt t)
+      | Ast.TyArray t -> Types.TArray (resolve_nt t)
+      | Ast.TyApp (args, tname) ->
+        let canonical = resolve_type_alias ctx.type_env tname in
+        let arg_tys = List.map resolve_nt args in
+        (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
+         | Some (_, np, ty) ->
+           if List.length arg_tys <> np then
+             error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
+           subst_tgens arg_tys ty
+         | None ->
+           (match find_variant_info ctx.type_env tname with
+            | Some (_, np, _, _) ->
+              if List.length arg_tys <> np then
+                error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
+              Types.TVariant (canonical, arg_tys)
+            | None -> error (Printf.sprintf "unknown type constructor: %s" tname)))
+      | Ast.TyRecord (fields, is_open) ->
+        let fields = List.map (fun (n, t) -> (n, resolve_nt t)) fields in
+        let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
+        let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
+        Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
+      | Ast.TyQualified (path, name) ->
+        let qualified = String.concat "." path ^ "." ^ name in
+        resolve_nt (Ast.TyName qualified)
+      | Ast.TyPolyVariant (_kind, tags) ->
+        let row = List.fold_right (fun (tag, payload_annot) acc ->
+          Types.PVRow (tag, Option.map resolve_nt payload_annot, acc)
+        ) tags Types.PVEmpty in
+        Types.TPolyVariant row
+      | Ast.TyWithEffect (ty, _) -> resolve_nt ty
+    in
+    let underlying_ty = resolve_nt underlying_annot in
+    let variant_def = [(ctor_name, Some underlying_ty)] in
+    let ctor_info = Types.{
+      ctor_type_name = type_name;
+      ctor_arg_ty = Some underlying_ty;
+      ctor_num_params = num_params;
+      ctor_return_ty_params = None;
+      ctor_existentials = 0;
+    } in
+    let type_env = { ctx.type_env with
+      variants = (type_name, num_params, variant_def, false) :: ctx.type_env.variants;
+      constructors = (ctor_name, ctor_info) :: ctx.type_env.constructors;
+      newtypes = type_name :: ctx.type_env.newtypes;
     } in
     { ctx with type_env }
 
@@ -3186,7 +3327,6 @@ let process_class_def ctx (class_name : string) (tyvar_names : string list)
       | Ast.TyTuple ts -> Types.TTuple (List.map resolve ts)
       | Ast.TyList t -> Types.TList (resolve t)
       | Ast.TyArray t -> Types.TArray (resolve t)
-      | Ast.TyMap (k, v) -> Types.TMap (resolve k, resolve v)
       | Ast.TyApp (args, name) ->
         let canonical = resolve_type_alias ctx.type_env name in
         let arg_tys = List.map resolve args in
@@ -3293,7 +3433,6 @@ let resolve_inst_tys ctx (annots : Ast.ty_annot list) =
     | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
     | Ast.TyList t -> Types.TList (go t)
     | Ast.TyArray t -> Types.TArray (go t)
-    | Ast.TyMap (k, v) -> Types.TMap (go k, go v)
     | Ast.TyApp (args, name) ->
       let canonical = resolve_type_alias ctx.type_env name in
       let arg_tys = List.map go args in
@@ -3419,8 +3558,6 @@ let extract_tyvar_ids annot ty =
       List.iter2 walk anns tys
     | Ast.TyList a, Types.TList t -> walk a t
     | Ast.TyArray a, Types.TArray t -> walk a t
-    | Ast.TyMap (k1, v1), Types.TMap (k2, v2) ->
-      walk k1 k2; walk v1 v2
     | Ast.TyApp (args, _), Types.TVariant (_, tys) when List.length args = List.length tys ->
       List.iter2 walk args tys
     | Ast.TyWithEffect (a, _), _ -> walk a ty
@@ -3556,7 +3693,6 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
                  List.iter2 go ss rs
                | Types.TList s1, Types.TList r1 -> go s1 r1
                | Types.TArray s1, Types.TArray r1 -> go s1 r1
-               | Types.TMap (sk, sv), Types.TMap (rk, rv) -> go sk rk; go sv rv
                | Types.TVariant (_, ss), Types.TVariant (_, rs)
                  when List.length ss = List.length rs ->
                  List.iter2 go ss rs
@@ -3625,7 +3761,6 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
      | TEResume (e1, e2) -> walk e1; walk e2
      | TEWhile (cond, body) -> walk cond; walk body
      | TEForLoop body -> walk body
-     | TEMap kvs -> List.iter (fun (k, v) -> walk k; walk v) kvs
      | TEArray es -> List.iter walk es
      | TEReturn e -> walk e
      | TEBreak e -> walk e
@@ -3767,6 +3902,11 @@ let open_module_into_ctx ctx mod_name names_opt =
         te
       end else te
     ) type_env minfo.Types.mod_pub_types in
+    (* Import newtypes *)
+    let type_env = List.fold_left (fun te qname ->
+      if List.mem qname te.Types.newtypes then te
+      else { te with Types.newtypes = qname :: te.Types.newtypes }
+    ) type_env minfo.Types.mod_newtypes in
     (* Import submodules *)
     let type_env = List.fold_left (fun te (sub_name, sub_info) ->
       if filter sub_name then
@@ -3796,7 +3936,6 @@ let rec collect_tyvars_annot = function
   | Ast.TyTuple ts -> List.concat_map collect_tyvars_annot ts
   | Ast.TyList t | Ast.TyArray t -> collect_tyvars_annot t
   | Ast.TyApp (args, _) -> List.concat_map collect_tyvars_annot args
-  | Ast.TyMap (k, v) -> collect_tyvars_annot k @ collect_tyvars_annot v
   | Ast.TyRecord (fs, _) -> List.concat_map (fun (_, t) -> collect_tyvars_annot t) fs
   | Ast.TyName _ | Ast.TyQualified _ -> []
   | Ast.TyPolyVariant (_, tags) ->
@@ -3932,8 +4071,12 @@ let generate_derived_instance type_params name def class_name =
     error (Printf.sprintf "cannot derive %s for GADT type %s" class_name name)
   | "Show", Ast.TDVariant ctors -> Some (gen_show_variant type_params name ctors)
   | "Show", Ast.TDRecord fields -> Some (gen_show_record type_params name fields)
+  | "Show", Ast.TDNewtype (ctor_name, underlying) ->
+    Some (gen_show_variant type_params name [(ctor_name, Some underlying, None)])
   | "Eq", Ast.TDVariant ctors -> Some (gen_eq_variant type_params name ctors)
   | "Eq", Ast.TDRecord fields -> Some (gen_eq_record type_params name fields)
+  | "Eq", Ast.TDNewtype (ctor_name, underlying) ->
+    Some (gen_eq_variant type_params name [(ctor_name, Some underlying, None)])
   | _ -> None
 
 let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
@@ -3948,6 +4091,7 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   let pub_mutable_vars = ref [] in
   let pub_types = ref [] in
   let opaque_types = ref [] in
+  let newtypes = ref [] in
   let pub_constructors = ref [] in
   let all_instances = ref [] in
   let submodules = ref [] in
@@ -3956,7 +4100,7 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   (* Process each module body item *)
   let sub_ctx = List.fold_left (fun sub_ctx (item : Ast.module_decl) ->
     let (sub_ctx', tdecl) = check_module_item sub_ctx level prefix item
-      pub_vars pub_mutable_vars pub_types opaque_types pub_constructors all_instances submodules pub_classes typed_decls in
+      pub_vars pub_mutable_vars pub_types opaque_types newtypes pub_constructors all_instances submodules pub_classes typed_decls in
     typed_decls := tdecl :: !typed_decls;
     sub_ctx'
   ) sub_ctx items in
@@ -3967,12 +4111,14 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
     mod_pub_mutable_vars = !pub_mutable_vars;
     mod_pub_types = !pub_types;
     mod_opaque_types = !opaque_types;
+    mod_newtypes = !newtypes;
     mod_pub_constructors = !pub_constructors;
     mod_instances = !all_instances;
     mod_submodules = !submodules;
     mod_pub_classes = !pub_classes;
   } in
-  (* Add module to outer type_env, starting from sub_ctx to preserve inner registrations *)
+  (* Add module to outer type_env, starting from sub_ctx to preserve inner registrations
+     (compiler needs all constructor entries for typed AST compilation) *)
   let outer_type_env = { sub_ctx.type_env with
     Types.modules = (mod_name, minfo) :: ctx.type_env.Types.modules;
   } in
@@ -3980,6 +4126,67 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   let outer_type_env = { outer_type_env with
     Types.type_aliases = ctx.type_env.Types.type_aliases;
   } in
+  (* Track private types — those defined in this module but NOT in pub_types or submodule types *)
+  let new_variants = List.filter (fun (name, _, _, _) ->
+    not (List.exists (fun (n, _, _, _) -> String.equal n name) ctx.type_env.Types.variants)
+  ) sub_ctx.type_env.Types.variants in
+  let new_records = List.filter (fun (name, _) ->
+    not (List.exists (fun (n, _) -> String.equal n name) ctx.type_env.Types.records)
+  ) sub_ctx.type_env.Types.records in
+  let new_synonyms = List.filter (fun (name, _, _) ->
+    not (List.exists (fun (n, _, _) -> String.equal n name) ctx.type_env.Types.type_synonyms)
+  ) sub_ctx.type_env.Types.type_synonyms in
+  (* Collect all type names from pub submodules (they are not "private" to this module) *)
+  let rec submodule_types (info : Types.module_info) =
+    info.Types.mod_pub_types
+    @ List.concat_map (fun (_, sub) -> submodule_types sub) info.mod_submodules
+  in
+  let submod_type_names = List.concat_map (fun (_, info) -> submodule_types info) !submodules in
+  let is_exported name = List.mem name !pub_types || List.mem name submod_type_names in
+  let private_type_names =
+    List.filter_map (fun (name, _, _, _) ->
+      if is_exported name then None else Some name) new_variants
+    @ List.filter_map (fun (name, _) ->
+      if is_exported name then None else Some name) new_records
+    @ List.filter_map (fun (name, _, _) ->
+      if is_exported name then None else Some name) new_synonyms
+  in
+  let outer_type_env = { outer_type_env with
+    Types.hidden_types = private_type_names @ outer_type_env.Types.hidden_types;
+  } in
+  (* Track types whose constructors are hidden (private + opaque) *)
+  let hidden_ctor_type_names = private_type_names @ !opaque_types in
+  let outer_type_env = { outer_type_env with
+    Types.hidden_ctor_types = hidden_ctor_type_names @ outer_type_env.Types.hidden_ctor_types;
+  } in
+  (* Validate: public bindings must not expose private types *)
+  let rec collect_type_names acc ty =
+    match Types.repr ty with
+    | Types.TVariant (name, args) -> List.fold_left collect_type_names (name :: acc) args
+    | Types.TArrow (a, _, b) -> collect_type_names (collect_type_names acc a) b
+    | Types.TTuple ts -> List.fold_left collect_type_names acc ts
+    | Types.TList t | Types.TArray t -> collect_type_names acc t
+    | Types.TRecord row -> collect_row_names acc row
+    | _ -> acc
+  and collect_row_names acc = function
+    | Types.RRow (_, ty, rest) -> collect_row_names (collect_type_names acc ty) rest
+    | _ -> acc
+  in
+  if private_type_names <> [] then
+    List.iter (fun (short, scheme) ->
+      let type_names = collect_type_names [] scheme.Types.body in
+      List.iter (fun tname ->
+        if List.mem tname private_type_names then begin
+          let short_tname = match String.rindex_opt tname '.' with
+            | Some i -> String.sub tname (i + 1) (String.length tname - i - 1)
+            | None -> tname
+          in
+          error (Printf.sprintf
+            "public binding '%s' exposes private type '%s'. Use 'pub type' or 'opaque type' to export it"
+            short short_tname)
+        end
+      ) type_names
+    ) !pub_vars;
   (* Also add all qualified pub vars to outer ctx *)
   let outer_vars = List.fold_left (fun vars (short, scheme) ->
     let qualified = prefix ^ short in
@@ -4011,7 +4218,7 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   (outer_ctx, TDModule (mod_name, List.rev !typed_decls))
 
 and check_module_item sub_ctx level prefix (item : Ast.module_decl)
-    pub_vars pub_mutable_vars pub_types opaque_types pub_constructors all_instances submodules pub_classes typed_decls =
+    pub_vars pub_mutable_vars pub_types opaque_types newtypes pub_constructors all_instances submodules pub_classes typed_decls =
   let decl = item.decl in
   match decl with
   | Ast.DModule (inner_name, inner_items) ->
@@ -4041,6 +4248,10 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
     }} in
     (* Process type under qualified name *)
     let sub_ctx' = process_type_def sub_ctx_with_alias type_params qualified_name def in
+    (* Track newtypes *)
+    (match def with
+     | Ast.TDNewtype _ -> newtypes := qualified_name :: !newtypes
+     | _ -> ());
     (match item.vis with
      | Ast.Public ->
        pub_types := qualified_name :: !pub_types;
@@ -4054,6 +4265,12 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
               pub_constructors := (ctor_name, qual_info) :: !pub_constructors
             | None -> ()
           ) ctors
+        | Ast.TDNewtype (ctor_name, _) ->
+          (match List.assoc_opt ctor_name sub_ctx'.type_env.Types.constructors with
+           | Some info ->
+             let qual_info = { info with Types.ctor_type_name = qualified_name } in
+             pub_constructors := (ctor_name, qual_info) :: !pub_constructors
+           | None -> ())
         | Ast.TDRecord _ | Ast.TDAlias _ -> ())
      | Ast.Opaque ->
        pub_types := qualified_name :: !pub_types;
@@ -4363,6 +4580,10 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
           records = (qualified_name, []) :: ctx.type_env.records;
         }}
       | Ast.TDAlias _ -> ctx
+      | Ast.TDNewtype _ ->
+        { ctx with type_env = { ctx.type_env with
+          variants = (qualified_name, num_params, [], false) :: ctx.type_env.variants;
+        }}
     ) sub_ctx type_defs in
     (* Pass 2a: process record types first so their fields are populated
        before variant constructors reference them *)
@@ -4396,11 +4617,20 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
                pub_constructors := (ctor_name, qual_info) :: !pub_constructors
              | None -> ()
            ) ctors
+         | Ast.TDNewtype (ctor_name, _) ->
+           newtypes := qualified_name :: !newtypes;
+           (match List.assoc_opt ctor_name sub_ctx'.type_env.Types.constructors with
+            | Some info ->
+              let qual_info = { info with Types.ctor_type_name = qualified_name } in
+              pub_constructors := (ctor_name, qual_info) :: !pub_constructors
+            | None -> ())
          | Ast.TDRecord _ | Ast.TDAlias _ -> ())
       | Ast.Opaque ->
         pub_types := qualified_name :: !pub_types;
-        opaque_types := qualified_name :: !opaque_types
-      | Ast.Private -> ()
+        opaque_types := qualified_name :: !opaque_types;
+        (match def with Ast.TDNewtype _ -> newtypes := qualified_name :: !newtypes | _ -> ())
+      | Ast.Private ->
+        (match def with Ast.TDNewtype _ -> newtypes := qualified_name :: !newtypes | _ -> ())
     ) type_defs;
     (* Handle deriving for each type *)
     let sub_ctx' = List.fold_left (fun ctx (type_params, name, def, deriving) ->
@@ -4511,6 +4741,13 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let ctx' = extend_var ctx name scheme in
       (ctx', [TDLetRec (name, te)])
     end else begin
+      (* Validate non-function rec bindings are constructive *)
+      if params = [] then begin
+        match strip_loc body with
+        | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
+        | _ when is_constructive body && not (is_immediately_linked name body) -> ()
+        | _ -> error "let rec binding must be a function or constructive expression"
+      end;
       let eff = Types.new_effvar level in
       let eff_ctx = { ctx with current_eff = eff } in
       let full_body = wrap_params_decl params ret_annot body in
@@ -4634,7 +4871,15 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let typed_bindings = List.map2 (fun (name, _, _, _, _, _) te -> (name, te)) bindings body_tes in
       (ctx'', [TDLetRecAnd typed_bindings])
     end else begin
-      (* Original path: monomorphic recursion *)
+      (* Original path: monomorphic recursion — validate non-function bindings *)
+      List.iter (fun (name, _, params, _, _, body) ->
+        if params = [] then begin
+          match strip_loc body with
+          | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
+          | _ when is_constructive body && not (is_immediately_linked name body) -> ()
+          | _ -> error (Printf.sprintf "let rec binding for '%s' must be a function or constructive expression" name)
+        end
+      ) bindings;
       let fn_vars = List.map (fun (name, _, _, _, _, _) ->
         (name, Types.new_tvar (level + 1))
       ) bindings in
@@ -4677,8 +4922,13 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
         } in
         { ctx with type_env }
       | Ast.TDAlias _ -> ctx
+      | Ast.TDNewtype _ ->
+        let type_env = { ctx.type_env with
+          variants = (name, num_params, [], false) :: ctx.type_env.variants;
+        } in
+        { ctx with type_env }
     ) ctx type_defs in
-    (* Second pass: process records first, then variants/aliases *)
+    (* Second pass: process records first, then variants/aliases/newtypes *)
     let ctx' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
       match def with
       | Ast.TDRecord _ -> process_type_def ctx type_params name def
@@ -4739,8 +4989,6 @@ let build_tgen_map schema_ty actual_ty =
       (match a with Types.TList a1 -> walk s1 a1 | _ -> ())
     | Types.TArray s1 ->
       (match a with Types.TArray a1 -> walk s1 a1 | _ -> ())
-    | Types.TMap (sk, sv) ->
-      (match a with Types.TMap (ak, av) -> walk sk ak; walk sv av | _ -> ())
     | Types.TVariant (_, ss) ->
       (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
         List.iter2 walk ss aa | _ -> ())
@@ -4928,8 +5176,6 @@ and resolve_factory_dict xctx inst arg_types =
         (match a with Types.TList a1 -> walk s1 a1 | _ -> ())
       | Types.TArray s1 ->
         (match a with Types.TArray a1 -> walk s1 a1 | _ -> ())
-      | Types.TMap (sk, sv) ->
-        (match a with Types.TMap (ak, av) -> walk sk ak; walk sv av | _ -> ())
       | Types.TVariant (_, ss) ->
         (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
           List.iter2 walk ss aa | _ -> ())
@@ -5071,12 +5317,16 @@ let rec xform_expr xctx te =
       | THOp (op, p, k, e) ->
         let xctx' = { xctx with xf_locals = k :: p :: xctx.xf_locals } in
         THOp (op, p, k, xform_expr xctx' e)
+      | THOpProvide (op, p, e) ->
+        let xctx' = { xctx with xf_locals = p :: xctx.xf_locals } in
+        THOpProvide (op, p, xform_expr xctx' e)
+      | THOpTry (op, p, e) ->
+        let xctx' = { xctx with xf_locals = p :: xctx.xf_locals } in
+        THOpTry (op, p, xform_expr xctx' e)
     ) arms in
     mk (TEHandle (xform_expr xctx body, arms')) te.ty
   | TEResume (k, e) ->
     mk (TEResume (xform_expr xctx k, xform_expr xctx e)) te.ty
-  | TEMap pairs ->
-    mk (TEMap (List.map (fun (k, v) -> (xform_expr xctx k, xform_expr xctx v)) pairs)) te.ty
   | TEArray es ->
     mk (TEArray (List.map (xform_expr xctx) es)) te.ty
   | TEIndex (base, idx) ->
@@ -5136,7 +5386,6 @@ and xform_class_method xctx name te =
         List.iter2 go ss rs
       | Types.TList s1, Types.TList r1 -> go s1 r1
       | Types.TArray s1, Types.TArray r1 -> go s1 r1
-      | Types.TMap (sk, sv), Types.TMap (rk, rv) -> go sk rk; go sv rv
       | Types.TVariant (_, ss), Types.TVariant (_, rs) when List.length ss = List.length rs ->
         List.iter2 go ss rs
       | _ -> ()
@@ -5197,15 +5446,67 @@ and xform_class_method xctx name te =
            | _ :: _ -> Types.most_specific_inst matching
            | [] -> None
          in
+         (* Compute concrete method type by substituting class type params
+            with instance types. This resolves types for multi-param classes
+            where the original te.ty may have unresolved type variables. *)
+         let resolve_method_type inst =
+           match List.find_opt (fun (n, _) -> n = method_name) class_def.Types.class_methods with
+           | Some (_, method_ty) ->
+             let concrete_ty = List.fold_left (fun ty (i, inst_ty) ->
+               let rec subst t = match t with
+                 | Types.TGen j when j = i -> inst_ty
+                 | Types.TArrow (a, e, r) -> Types.TArrow (subst a, e, subst r)
+                 | Types.TTuple ts -> Types.TTuple (List.map subst ts)
+                 | Types.TList t -> Types.TList (subst t)
+                 | Types.TArray t -> Types.TArray (subst t)
+                 | _ -> t
+               in subst ty
+             ) method_ty (List.mapi (fun i t -> (i, t)) inst.Types.inst_tys) in
+             concrete_ty
+           | None -> te.ty
+         in
          match resolved with
          | Some inst when inst.inst_constraints <> [] && all_concrete ->
            let arg_types = List.filter_map Fun.id type_args in
            let factory = resolve_factory_dict xctx inst arg_types in
-           mk (TEField (factory, method_name)) te.ty
+           let resolved_ty = resolve_method_type inst in
+           mk (TEField (factory, method_name)) resolved_ty
          | Some inst when inst.inst_constraints = [] ->
-           mk (TEField (mk (TEVar inst.inst_dict_name) Types.TUnit, method_name)) te.ty
+           let resolved_ty = resolve_method_type inst in
+           mk (TEField (mk (TEVar inst.inst_dict_name) Types.TUnit, method_name)) resolved_ty
          | _ -> te
-       end else te)
+       end else begin
+         (* No concrete type info — fallback: if there's exactly one unconstrained
+            instance of this class, resolve to it unambiguously *)
+         let singleton_inst = match List.filter (fun (inst : Types.instance_def) ->
+           String.equal inst.inst_class class_def.Types.class_name &&
+           inst.inst_constraints = []
+         ) xctx.xf_type_env.Types.instances with
+           | [inst] -> Some inst
+           | _ -> None
+         in
+         match singleton_inst with
+         | Some inst ->
+           let resolve_method_type inst =
+             match List.find_opt (fun (n, _) -> n = method_name) class_def.Types.class_methods with
+             | Some (_, method_ty) ->
+               let concrete_ty = List.fold_left (fun ty (i, inst_ty) ->
+                 let rec subst t = match t with
+                   | Types.TGen j when j = i -> inst_ty
+                   | Types.TArrow (a, e, r) -> Types.TArrow (subst a, e, subst r)
+                   | Types.TTuple ts -> Types.TTuple (List.map subst ts)
+                   | Types.TList t -> Types.TList (subst t)
+                   | Types.TArray t -> Types.TArray (subst t)
+                   | _ -> t
+                 in subst ty
+               ) method_ty (List.mapi (fun i t -> (i, t)) inst.Types.inst_tys) in
+               concrete_ty
+             | None -> te.ty
+           in
+           let resolved_ty = resolve_method_type inst in
+           mk (TEField (mk (TEVar inst.inst_dict_name) Types.TUnit, method_name)) resolved_ty
+         | None -> te
+       end)
   | None -> te
 
 (* Insert dict args and evidence args when referencing a constrained function *)
@@ -5440,9 +5741,6 @@ let xform_constrained_inst xctx inst_def dict_expr =
              (match a with Types.TList a1 -> walk_class s1 a1 | _ -> ())
            | Types.TArray s1 ->
              (match a with Types.TArray a1 -> walk_class s1 a1 | _ -> ())
-           | Types.TMap (sk, sv) ->
-             (match a with Types.TMap (ak, av) ->
-               walk_class sk ak; walk_class sv av | _ -> ())
            | Types.TVariant (_, ss) ->
              (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
                List.iter2 walk_class ss aa | _ -> ())
@@ -5475,9 +5773,6 @@ let xform_constrained_inst xctx inst_def dict_expr =
              (match a with Types.TList a1 -> walk_inst s1 a1 | _ -> ())
            | Types.TArray s1 ->
              (match a with Types.TArray a1 -> walk_inst s1 a1 | _ -> ())
-           | Types.TMap (sk, sv) ->
-             (match a with Types.TMap (ak, av) ->
-               walk_inst sk ak; walk_inst sv av | _ -> ())
            | Types.TVariant (_, ss) ->
              (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
                List.iter2 walk_inst ss aa | _ -> ())
@@ -5624,3 +5919,191 @@ let check_program_in_ctx (ctx : ctx) (program : Ast.program) : ctx * tprogram =
     (ctx', List.rev_append tdecls decls)
   ) (ctx, []) program in
   (ctx, List.rev decls)
+
+(* ================================================================ *)
+(* Handler arm classification pass                                   *)
+(* Runs after transform_constraints to classify THOp arms into       *)
+(* THOpProvide (tail-resumptive) or THOpTry (non-resuming).          *)
+(* ================================================================ *)
+
+(* Does a handler body contain any TEResume? Don't descend into TEFun/TEHandle *)
+let rec handler_body_has_resume (te : texpr) =
+  match te.expr with
+  | TEResume _ -> true
+  | TELet (_, _, e1, e2) | TESeq (e1, e2) | TELetMut (_, e1, e2) ->
+    handler_body_has_resume e1 || handler_body_has_resume e2
+  | TEIf (_, e1, e2) ->
+    handler_body_has_resume e1 || handler_body_has_resume e2
+  | TEMatch (_, arms, _) ->
+    List.exists (fun (_, _, body) -> handler_body_has_resume body) arms
+  | TELetRec (_, _, _, e2) -> handler_body_has_resume e2
+  | TELetRecAnd (_, e2) -> handler_body_has_resume e2
+  | _ -> false
+
+(* Does a handler body contain any TEPerform or TEResume?
+   Scoped to handler body — don't cross TEFun/TEHandle boundaries *)
+let rec handler_body_has_perform (te : texpr) =
+  match te.expr with
+  | TEPerform _ -> true
+  | TEResume _ -> true
+  | TELet (_, _, e1, e2) | TESeq (e1, e2) | TELetMut (_, e1, e2) ->
+    handler_body_has_perform e1 || handler_body_has_perform e2
+  | TEIf (cond, e1, e2) ->
+    handler_body_has_perform cond ||
+    handler_body_has_perform e1 || handler_body_has_perform e2
+  | TEMatch (scrut, arms, _) ->
+    handler_body_has_perform scrut ||
+    List.exists (fun (_, g, body) ->
+      handler_body_has_perform body ||
+      (match g with Some g -> handler_body_has_perform g | None -> false)
+    ) arms
+  | TELetRec (_, _, _, e2) -> handler_body_has_perform e2
+  | TELetRecAnd (_, e2) -> handler_body_has_perform e2
+  | TEApp (fn, arg) ->
+    handler_body_has_perform fn || handler_body_has_perform arg
+  | TEBinop (_, e1, e2) ->
+    handler_body_has_perform e1 || handler_body_has_perform e2
+  | TEUnop (_, e) -> handler_body_has_perform e
+  | TECons (e1, e2) -> handler_body_has_perform e1 || handler_body_has_perform e2
+  | TETuple es -> List.exists handler_body_has_perform es
+  | TERecord fields -> List.exists (fun (_, e) -> handler_body_has_perform e) fields
+  | _ -> false
+
+(* Check that ALL terminal branches end with TEResume *)
+let rec classify_all_branches_resume (te : texpr) =
+  match te.expr with
+  | TEResume _ -> true
+  | TELet (_, _, _, e2) | TELetRec (_, _, _, e2) | TELetRecAnd (_, e2)
+  | TELetMut (_, _, e2) | TESeq (_, e2) -> classify_all_branches_resume e2
+  | TEIf (_, then_e, else_e) ->
+    classify_all_branches_resume then_e && classify_all_branches_resume else_e
+  | TEMatch (_, arms, _) ->
+    List.for_all (fun (_, _, body) -> classify_all_branches_resume body) arms
+  | _ -> false
+
+(* Check if all TEResume nodes are in tail position *)
+let rec classify_all_resumes_tail (te : texpr) =
+  match te.expr with
+  | TEResume _ -> true
+  | TESeq (_, e2) -> classify_all_resumes_tail e2
+  | TELet (_, _, e1, e2) ->
+    not (handler_body_has_perform e1) && classify_all_resumes_tail e2
+  | TELetRec (_, _, _, e2) -> classify_all_resumes_tail e2
+  | TELetMut (_, e1, e2) ->
+    not (handler_body_has_perform e1) && classify_all_resumes_tail e2
+  | TEIf (_, then_e, else_e) ->
+    classify_all_resumes_tail then_e && classify_all_resumes_tail else_e
+  | TEMatch (_, arms, _) ->
+    List.for_all (fun (_, _, body) -> classify_all_resumes_tail body) arms
+  | _ -> true  (* No resume — safe *)
+
+(* Strip TEResume from tail positions: TEResume(k, val) → val *)
+let rec strip_tail_resume (te : texpr) =
+  match te.expr with
+  | TEResume (_, value) -> value
+  | TELet (r, n, e1, e2) ->
+    { te with expr = TELet (r, n, e1, strip_tail_resume e2) }
+  | TELetRec (r, n, fn_e, e2) ->
+    { te with expr = TELetRec (r, n, fn_e, strip_tail_resume e2) }
+  | TELetRecAnd (binds, e2) ->
+    { te with expr = TELetRecAnd (binds, strip_tail_resume e2) }
+  | TELetMut (n, e1, e2) ->
+    { te with expr = TELetMut (n, e1, strip_tail_resume e2) }
+  | TESeq (e1, e2) ->
+    { te with expr = TESeq (e1, strip_tail_resume e2) }
+  | TEIf (c, t, f) ->
+    { te with expr = TEIf (c, strip_tail_resume t, strip_tail_resume f) }
+  | TEMatch (s, arms, p) ->
+    let arms' = List.map (fun (pat, g, body) ->
+      (pat, g, strip_tail_resume body)) arms in
+    { te with expr = TEMatch (s, arms', p) }
+  | _ -> te
+
+(* Classify a single handler arm *)
+let classify_arm arm =
+  match arm with
+  | THOp (op, arg, _k, body) ->
+    if not (handler_body_has_resume body) && not (handler_body_has_perform body) then
+      THOpTry (op, arg, body)
+    else if handler_body_has_resume body
+         && classify_all_branches_resume body
+         && classify_all_resumes_tail body then
+      THOpProvide (op, arg, strip_tail_resume body)
+    else
+      arm
+  | _ -> arm
+
+(* Walk a texpr to classify all handler arms *)
+let rec classify_texpr (te : texpr) : texpr =
+  let mk e = { te with expr = e } in
+  match te.expr with
+  | TEHandle (body, arms) ->
+    let body' = classify_texpr body in
+    let arms' = List.map (fun arm -> match arm with
+      | THReturn (n, e) -> THReturn (n, classify_texpr e)
+      | THOp (op, arg, k, e) ->
+        classify_arm (THOp (op, arg, k, classify_texpr e))
+      | THOpProvide (op, arg, e) -> THOpProvide (op, arg, classify_texpr e)
+      | THOpTry (op, arg, e) -> THOpTry (op, arg, classify_texpr e)
+    ) arms in
+    mk (TEHandle (body', arms'))
+  | TELet (r, n, e1, e2) ->
+    mk (TELet (r, n, classify_texpr e1, classify_texpr e2))
+  | TELetRec (r, n, fn_e, body) ->
+    mk (TELetRec (r, n, classify_texpr fn_e, classify_texpr body))
+  | TELetRecAnd (binds, body) ->
+    mk (TELetRecAnd (List.map (fun (n, e) -> (n, classify_texpr e)) binds,
+                      classify_texpr body))
+  | TEFun (p, body, f) -> mk (TEFun (p, classify_texpr body, f))
+  | TEApp (fn, arg) -> mk (TEApp (classify_texpr fn, classify_texpr arg))
+  | TEIf (c, t, f) ->
+    mk (TEIf (classify_texpr c, classify_texpr t, classify_texpr f))
+  | TESeq (e1, e2) -> mk (TESeq (classify_texpr e1, classify_texpr e2))
+  | TELetMut (n, e1, e2) ->
+    mk (TELetMut (n, classify_texpr e1, classify_texpr e2))
+  | TEMatch (scrut, arms, p) ->
+    mk (TEMatch (classify_texpr scrut,
+                  List.map (fun (pat, g, body) ->
+                    (pat, Option.map classify_texpr g, classify_texpr body)) arms, p))
+  | TEBinop (op, e1, e2) ->
+    mk (TEBinop (op, classify_texpr e1, classify_texpr e2))
+  | TEUnop (op, e) -> mk (TEUnop (op, classify_texpr e))
+  | TETuple es -> mk (TETuple (List.map classify_texpr es))
+  | TERecord fields ->
+    mk (TERecord (List.map (fun (n, e) -> (n, classify_texpr e)) fields))
+  | TERecordUpdate (base, fields) ->
+    mk (TERecordUpdate (classify_texpr base,
+                         List.map (fun (n, e) -> (n, classify_texpr e)) fields))
+  | TERecordUpdateIdx (base, pairs) ->
+    mk (TERecordUpdateIdx (classify_texpr base,
+                            List.map (fun (i, v) -> (classify_texpr i, classify_texpr v)) pairs))
+  | TEField (e, f) -> mk (TEField (classify_texpr e, f))
+  | TEIndex (e1, e2) -> mk (TEIndex (classify_texpr e1, classify_texpr e2))
+  | TECons (e1, e2) -> mk (TECons (classify_texpr e1, classify_texpr e2))
+  | TEConstruct (name, arg) ->
+    mk (TEConstruct (name, Option.map classify_texpr arg))
+  | TEAssign (n, e) -> mk (TEAssign (n, classify_texpr e))
+  | TEFieldAssign (e1, f, e2) ->
+    mk (TEFieldAssign (classify_texpr e1, f, classify_texpr e2))
+  | TEPerform (name, e) -> mk (TEPerform (name, classify_texpr e))
+  | TEResume (k, v) -> mk (TEResume (classify_texpr k, classify_texpr v))
+  | TEWhile (c, b) -> mk (TEWhile (classify_texpr c, classify_texpr b))
+  | TEBreak e -> mk (TEBreak (classify_texpr e))
+  | TEFoldContinue e -> mk (TEFoldContinue (classify_texpr e))
+  | TEForLoop e -> mk (TEForLoop (classify_texpr e))
+  | TEArray es -> mk (TEArray (List.map classify_texpr es))
+  | TEReturn e -> mk (TEReturn (classify_texpr e))
+  | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _
+  | TEUnit | TEVar _ | TENil | TEContinueLoop -> te
+
+let rec classify_handlers (program : tprogram) : tprogram =
+  List.map (fun decl -> match decl with
+    | TDLet (n, e) -> TDLet (n, classify_texpr e)
+    | TDLetMut (n, e) -> TDLetMut (n, classify_texpr e)
+    | TDLetRec (n, e) -> TDLetRec (n, classify_texpr e)
+    | TDExpr e -> TDExpr (classify_texpr e)
+    | TDLetRecAnd binds ->
+      TDLetRecAnd (List.map (fun (n, e) -> (n, classify_texpr e)) binds)
+    | TDModule (name, decls) -> TDModule (name, classify_handlers decls)
+    | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDOpen _ -> decl
+  ) program

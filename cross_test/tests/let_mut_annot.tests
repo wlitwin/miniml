@@ -117,7 +117,7 @@ arr
 --- test: let mut annotation map
 let mut m : (string, int) map = #{"a": 1} in
 m
---- expect: #{a: 1}
+--- expect: [(a, 1)]
 
 --- test: let mut annotation with user type
 type color = Red | Green | Blue;;

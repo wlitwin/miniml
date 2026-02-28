@@ -1023,15 +1023,12 @@ and emit_apply e fn args =
     if needs_parens_subexpr s_arg then emit e "(";
     emit_expr e s_arg;
     if needs_parens_subexpr s_arg then emit e ")"
-  (* String.contains : string -> char -> bool  →  String.contains : string -> string -> bool *)
+  (* String.contains : string -> char -> bool  →  String.contains : string -> string -> bool
+     OCaml: String.contains haystack char  →  MiniML: String.contains substring haystack *)
   | Pexp_ident { txt = Longident.Ldot (Lident "String", "contains"); _ },
     [(_, s_arg); (_, c_arg)] ->
     emit e "String.contains ";
-    if needs_parens_subexpr s_arg then emit e "(";
-    emit_expr e s_arg;
-    if needs_parens_subexpr s_arg then emit e ")";
-    emit e " ";
-    (* Convert char argument to string *)
+    (* Emit the char/substring argument FIRST (MiniML takes sub, haystack) *)
     (match c_arg.pexp_desc with
      | Pexp_constant c ->
        (match c.pconst_desc with
@@ -1045,7 +1042,12 @@ and emit_apply e fn args =
      | _ ->
        emit e "(String.make 1 ";
        emit_expr e c_arg;
-       emit e ")")
+       emit e ")");
+    emit e " ";
+    (* Then emit the haystack argument *)
+    if needs_parens_subexpr s_arg then emit e "(";
+    emit_expr e s_arg;
+    if needs_parens_subexpr s_arg then emit e ")"
   (* @ operator → List.concat *)
   | Pexp_ident { txt = Lident "@"; _ }, [(_, lhs); (_, rhs)] ->
     emit e "List.concat ";

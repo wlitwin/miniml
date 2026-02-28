@@ -140,6 +140,9 @@ let is_selfhost_type_error msg =
   || contains_substring msg "cannot derive"
   || contains_substring msg "GADT constructor"
   || contains_substring msg "would escape"
+  || contains_substring msg "occurs check"
+  || contains_substring msg "constructive expression"
+  || contains_substring msg "exposes private type"
 
 let run_ocaml state source =
   let outputs = ref [] in

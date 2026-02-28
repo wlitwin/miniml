@@ -18,12 +18,13 @@ Types are represented by the OCaml algebraic type `ty`:
 type ty =
   | TInt | TFloat | TBool | TString | TByte | TRune | TUnit
   | TArrow of ty * eff * ty
+  | TCont of ty * eff * ty
   | TTuple of ty list
   | TList of ty
-  | TRecord of (string * ty) list
+  | TRecord of record_row
   | TVariant of string * ty list
-  | TMap of ty * ty
   | TArray of ty
+  | TPolyVariant of pvrow
   | TVar of tvar ref
   | TGen of int
 ```
@@ -46,6 +47,11 @@ two-argument function like `fun x y -> x + y` has type
 `int -> int -> int`. Arrow is right-associative in the tree: the return type
 of the outer arrow is itself an arrow.
 
+**TCont(a, eff, b)** -- Continuation types used by algebraic effect handlers.
+Structurally identical to `TArrow` (parameter type, effect, return type), but
+distinguished so the typechecker can track that a value is a continuation
+(the `resume` parameter inside an effect handler).
+
 **TTuple(ts)** -- Product types. `(1, true, "hi")` has type
 `TTuple [TInt; TBool; TString]`. The list always has at least two elements in
 practice, but the representation does not enforce this.
@@ -55,9 +61,14 @@ practice, but the representation does not enforce this.
 `TList (TVar _)` where the variable is initially unconstrained and will be
 unified with whatever element type context demands.
 
-**TRecord(fields)** -- Structural record types. `{ name = "Alice"; age = 30 }`
-has type `TRecord [("name", TString); ("age", TInt)]`. Fields are stored as an
-association list of name-type pairs.
+**TRecord(row)** -- Row-typed record types. Records use Rémy-style row types
+for structural subtyping, represented by the `record_row` type (see below).
+`{ name = "Alice"; age = 30 }` has type
+`TRecord(RRow("name", TString, RRow("age", TInt, REmpty)))`. A closed record
+ends with `REmpty`; an open record (one that allows additional fields) ends
+with an `RVar` row variable. This enables row-polymorphic record operations --
+a function like `let get_name r = r.name` infers the type
+`{ name: 'a; .. } -> 'a`, accepting any record that contains a `name` field.
 
 **TVariant(name, params)** -- Named algebraic data types. If you declare
 `type 'a option = None | Some of 'a`, then `Some 42` has type
@@ -67,11 +78,20 @@ string is the type name, and the list holds the type arguments. A
 non-parameterized type like `type color = Red | Green | Blue` uses an empty
 parameter list: `TVariant("color", [])`.
 
-**TMap(k, v)** -- Key-value map types. `Map.of_list [(1, "one"); (2, "two")]`
-has type `TMap(TInt, TString)`.
+**TArray(t)** -- Mutable array types. `#[1; 2; 3]` has type `TArray TInt`.
 
-**TArray(t)** -- Mutable array types. `[| 1; 2; 3 |]` has type
-`TArray TInt`.
+Note: Maps and sets are represented as newtypes via `TVariant`. For example,
+`#{"a": 1}` has type `TVariant("map", [TString; TInt])`. The `newtypes` field
+in `type_env` tracks which variant names are newtypes for constructor erasure.
+
+**TPolyVariant(row)** -- Polymorphic variant types. Like records, these use
+Rémy-style row types, represented by the `pvrow` type (see below). Poly
+variants are created with backtick syntax: `` `Foo `` has type
+`TPolyVariant(PVRow("Foo", None, PVVar(...)))` -- an open row with one tag
+and a row variable tail. `` `Bar 42 `` carries a payload:
+`TPolyVariant(PVRow("Bar", Some TInt, PVVar(...)))`. Exact poly variant types
+(written `` [`Foo | `Bar of int] ``) end with `PVEmpty` instead of a row
+variable.
 
 **TVar(ref)** -- Type inference variables. These are the central mechanism that
 makes inference work. They are explained in detail in the next section.
@@ -215,14 +235,19 @@ tree and following all `TVar` links at every level:
 let rec deep_repr ty =
   match repr ty with
   | TArrow (a, eff, b) -> TArrow (deep_repr a, deep_repr_eff eff, deep_repr b)
+  | TCont (a, eff, b) -> TCont (deep_repr a, deep_repr_eff eff, deep_repr b)
   | TTuple ts -> TTuple (List.map deep_repr ts)
   | TList t -> TList (deep_repr t)
   | TArray t -> TArray (deep_repr t)
-  | TMap (k, v) -> TMap (deep_repr k, deep_repr v)
-  | TRecord fs -> TRecord (List.map (fun (n, t) -> (n, deep_repr t)) fs)
+  | TRecord row -> TRecord (deep_repr_rrow row)
   | TVariant (name, args) -> TVariant (name, List.map deep_repr args)
+  | TPolyVariant row -> TPolyVariant (deep_repr_pvrow row)
   | t -> t
 ```
+
+Note that `deep_repr` also recurses into record rows (`deep_repr_rrow`),
+poly variant rows (`deep_repr_pvrow`), and effect rows (`deep_repr_eff`),
+following their respective link chains and resolving all nested types.
 
 The result is a fully concrete type tree with no remaining `Link` indirections
 anywhere in the structure. Unbound type variables remain as-is (they have no
@@ -240,6 +265,101 @@ the subsequent state rollback. Without `deep_repr`, the restored `TVar` cells
 would lose the GADT-refined information and the result type would revert to its
 pre-match state.
 
+## Record Row Types
+
+Records use Rémy-style row types rather than flat field lists. This enables
+true row polymorphism -- functions can operate on records with a known subset
+of fields while remaining polymorphic over additional fields.
+
+```ocaml
+and record_row =
+  | RRow of string * ty * record_row  (* field name, type, tail *)
+  | RVar of rvar ref                  (* row variable — "and more fields" *)
+  | REmpty                            (* closed — exact record *)
+  | RGen of int                       (* quantified row variable in a scheme *)
+  | RWild                             (* recursive self-reference — unifies with any row *)
+
+and rvar =
+  | RUnbound of int * int             (* id, level *)
+  | RLink of record_row               (* linked by unification *)
+```
+
+A record row is a linked list of field entries ending with a tail. The tail
+determines whether the record is closed or open:
+
+- **REmpty** -- Closed record. Only the listed fields exist. A record literal
+  like `{ x = 1; y = 2 }` produces
+  `TRecord(RRow("x", TInt, RRow("y", TInt, REmpty)))`.
+
+- **RVar** -- Open record. Additional fields may exist. When a function
+  accesses `r.x` without a type annotation, the typechecker infers
+  `TRecord(RRow("x", TVar(...), RVar(...)))` -- the field `x` exists with
+  some type, and the row variable allows the record to have more fields.
+  In user-facing syntax, this is written `{ x: 'a; .. }`.
+
+- **RGen** -- A quantified row variable inside a type scheme. During
+  generalization, unbound `RVar` cells at a deep enough level become `RGen`
+  indices (counted by the scheme's `rquant` field). During instantiation,
+  each `RGen` is replaced with a fresh `RVar`.
+
+- **RWild** -- A special marker for recursive record types that unifies with
+  any row. Used internally for self-referential record definitions.
+
+Row variables use the same union-find pattern as type variables: `RVar` holds
+a mutable `ref` cell, `rrow_repr` follows `RLink` chains with path compression,
+and `rewrite_record_row` performs order-independent field matching.
+
+**Row rewriting.** When unifying two record rows, fields are matched by name
+(not by position). If a field is found, it is removed from the row and its type
+is unified. If a field is not found but the tail is an `RVar`, the variable is
+extended with the missing field. This is the Rémy-style approach: fields can
+appear in any order in the row, and unification rearranges them as needed.
+
+**Record evidence.** When a row-polymorphic function performs a record update
+(`{ r with field = value }`), the compiler needs to know the offset of the
+updated field at runtime. The `record_evidences` field in the scheme tracks
+which fields need offset evidence and which `RGen` row variable they are
+associated with. At call sites, the evidence is resolved to concrete field
+offsets.
+
+## Polymorphic Variant Row Types
+
+Polymorphic variants use a similar row-based representation:
+
+```ocaml
+and pvrow =
+  | PVRow of string * ty option * pvrow  (* tag, optional payload type, tail *)
+  | PVVar of pvvar ref                   (* row variable — open variant *)
+  | PVEmpty                              (* closed row — exact type *)
+  | PVGen of int                         (* quantified row variable in a scheme *)
+
+and pvvar =
+  | PVUnbound of int * int               (* id, level *)
+  | PVLink of pvrow                      (* linked by unification *)
+```
+
+Each tag in a poly variant is a `PVRow` entry. The `ty option` is `None` for
+nullary tags (`` `Foo ``) and `Some ty` for tags with a payload (`` `Bar 42 ``).
+
+Three kinds of poly variant types correspond to the three annotation forms:
+
+- **Exact** (`` [`Foo | `Bar of int] ``): ends with `PVEmpty`. Only the listed
+  tags are allowed.
+- **Lower bound** (`` [> `Foo | `Bar of int] ``): ends with a `PVVar` row
+  variable. At least these tags exist, but more are allowed. This is the
+  default for expressions -- `` `Foo `` gets an open type.
+- **Upper bound** (`` [< `Foo | `Bar of int] ``): used for constraining inputs
+  to accept at most the listed tags.
+
+Unification of poly variant rows follows the same Rémy-style approach as
+records: tags are matched by name, payloads are unified, and row variables
+allow extensibility. The `pv_repr` function follows `PVLink` chains with
+path compression.
+
+During generalization, unbound `PVVar` cells become `PVGen` indices (counted
+by the scheme's `pvquant` field). During instantiation, each `PVGen` is
+replaced with a fresh `PVVar`.
+
 ## Fresh Variables
 
 Whenever the typechecker encounters an expression whose type is not yet known,
@@ -255,10 +375,21 @@ let fresh_id () =
 
 let new_tvar level =
   TVar (ref (Unbound (fresh_id (), level)))
+
+let new_effvar level =
+  EffVar (ref (EffUnbound (fresh_id (), level)))
+
+let new_pvvar level =
+  PVVar (ref (PVUnbound (fresh_id (), level)))
+
+let new_rvar level =
+  RVar (ref (RUnbound (fresh_id (), level)))
 ```
 
-Each call to `new_tvar` produces a variable with a globally unique `id` and the
-given `level`. The `id` ensures that the occurs check (which prevents infinite
+All four kinds of variables share the same global `fresh_id` counter, ensuring
+unique IDs across type variables, effect variables, poly variant row variables,
+and record row variables. Each call to `new_tvar` (or its row equivalents)
+produces a variable with a globally unique `id` and the given `level`. The `id` ensures that the occurs check (which prevents infinite
 types like `'a = 'a list`) can identify whether it has encountered the same
 variable twice. The `level` controls which variables get generalized into
 polymorphic type schemes -- but that mechanism belongs to a later chapter.
@@ -280,22 +411,34 @@ variables:
 
 ```ocaml
 type scheme = {
-  quant: int;
-  constraints: class_constraint list;
-  body: ty;
+  quant: int;                              (* number of quantified type variables *)
+  equant: int;                             (* number of quantified effect variables *)
+  pvquant: int;                            (* number of quantified poly variant row variables *)
+  rquant: int;                             (* number of quantified record row variables *)
+  constraints: class_constraint list;      (* typeclass constraints *)
+  record_evidences: record_evidence list;  (* field offset evidence for row-polymorphic updates *)
+  body: ty;                                (* body containing TGen 0..quant-1 *)
 }
 ```
 
-- `quant` is the number of quantified type variables.
+- `quant` is the number of quantified type variables (`TGen` indices).
+- `equant` is the number of quantified effect variables (`EffGen` indices).
+- `pvquant` is the number of quantified poly variant row variables (`PVGen` indices).
+- `rquant` is the number of quantified record row variables (`RGen` indices).
 - `body` is the type, where `TGen 0` through `TGen (quant - 1)` stand for the
-  quantified positions.
+  quantified positions. Similarly, `EffGen`, `PVGen`, and `RGen` use indices
+  from 0 up to their respective counts.
 - `constraints` lists typeclass constraints on the quantified variables (e.g.
   "the first type variable must be an instance of `Show`").
+- `record_evidences` tracks which record fields need offset evidence for
+  row-polymorphic record update operations.
 
 **Example.** The identity function `let id x = x` gets this scheme:
 
 ```ocaml
-{ quant = 1; constraints = []; body = TArrow(TGen 0, EffEmpty, TGen 0) }
+{ quant = 1; equant = 0; pvquant = 0; rquant = 0;
+  constraints = []; record_evidences = [];
+  body = TArrow(TGen 0, EffEmpty, TGen 0) }
 ```
 
 This represents the type `forall 'a. 'a -> 'a`. The `TGen 0` in both the
@@ -305,7 +448,9 @@ The `EffEmpty` indicates the function is pure.
 A two-parameter polymorphic function like `let const x y = x` gets:
 
 ```ocaml
-{ quant = 2; constraints = []; body = TArrow(TGen 0, EffEmpty, TArrow(TGen 1, EffEmpty, TGen 0)) }
+{ quant = 2; equant = 0; pvquant = 0; rquant = 0;
+  constraints = []; record_evidences = [];
+  body = TArrow(TGen 0, EffEmpty, TArrow(TGen 1, EffEmpty, TGen 0)) }
 ```
 
 This represents `forall 'a 'b. 'a -> 'b -> 'a`. The return type uses `TGen 0`,
@@ -316,11 +461,12 @@ first argument unchanged.
 function `mono` wraps a plain type into a trivial scheme:
 
 ```ocaml
-let mono ty = { quant = 0; constraints = []; body = ty }
+let mono ty = { quant = 0; equant = 0; pvquant = 0; rquant = 0;
+                constraints = []; record_evidences = []; body = ty }
 ```
 
 A monomorphic scheme for `int -> bool` is simply
-`{ quant = 0; constraints = []; body = TArrow(TInt, EffEmpty, TBool) }`.
+`{ quant = 0; ...; constraints = []; body = TArrow(TInt, EffEmpty, TBool) }`.
 
 **Why TGen instead of named variables?** Using de Bruijn-style indices
 (`TGen 0`, `TGen 1`, ...) instead of names avoids alpha-equivalence issues. Two
@@ -353,6 +499,7 @@ type type_env = {
   modules: (string * module_info) list;
   type_aliases: (string * string) list;
   type_synonyms: (string * int * ty) list;
+  newtypes: string list;
 }
 ```
 
@@ -395,6 +542,11 @@ Each field serves a distinct purpose:
 - **type_synonyms** -- Type aliases like `type name = string`. Each entry is
   (name, number of parameters, expanded type). The typechecker expands these
   during type annotation resolution.
+
+- **newtypes** -- A list of type names declared with `newtype`. This tells all
+  three backends (bytecode, JS, native) to erase the constructor at runtime.
+  For example, `newtype email = Email of string` adds `"email"` to this list,
+  and `Email "foo"` compiles to just `"foo"` with no wrapping.
 
 **Constructor info** provides the details needed to typecheck pattern matching
 and construction:
@@ -544,20 +696,28 @@ The typed AST serves two consumers:
 
 ## Summary
 
-The type representation has three layers:
+The type representation has several interconnected layers:
 
 1. **ty** -- The tree structure of types, built from primitives, type
-   constructors (arrow, tuple, list, etc.), and type variables.
+   constructors (arrow, tuple, list, record rows, poly variant rows, etc.),
+   and type variables.
 
-2. **tvar ref** -- Mutable cells that start as `Unbound` and get set to `Link`
-   during unification. This is the union-find structure that makes inference
-   incremental: you can create unknowns, constrain them later, and the
-   constraints propagate through the shared references.
+2. **tvar ref / rvar ref / pvvar ref / effvar ref** -- Mutable cells that
+   start as `Unbound` and get set to `Link` during unification. This is the
+   union-find structure that makes inference incremental. There are four
+   kinds of variables: type variables (`TVar`), effect row variables
+   (`EffVar`), record row variables (`RVar`), and poly variant row variables
+   (`PVVar`).
 
-3. **scheme** -- Frozen polymorphic types where the quantified positions use
-   `TGen` indices instead of mutable variables. Schemes live in the typing
-   context and get instantiated (replacing `TGen` with fresh `TVar`) at each
-   use site.
+3. **record_row / pvrow / eff** -- Row types for records, polymorphic variants,
+   and effects respectively. All three use the same Rémy-style approach:
+   a chain of entries (fields, tags, or effect labels) with a row variable
+   tail for extensibility.
+
+4. **scheme** -- Frozen polymorphic types where the quantified positions use
+   `TGen`, `EffGen`, `RGen`, and `PVGen` indices instead of mutable variables.
+   Schemes live in the typing context and get instantiated (replacing each
+   `*Gen` with a fresh variable) at each use site.
 
 With these structures in hand, the next chapter covers unification: the
 algorithm that takes two types and either makes them equal (by mutating type

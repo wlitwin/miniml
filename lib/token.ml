@@ -31,6 +31,7 @@ type token_kind =
   | MATCH
   | WITH
   | TYPE
+  | NEWTYPE
   | OF
   | CLASS
   | INSTANCE
@@ -39,6 +40,7 @@ type token_kind =
   | PERFORM
   | HANDLE
   | TRY
+  | PROVIDE
   | CONTINUE
   | RESUME
   | RETURN
@@ -129,6 +131,7 @@ let pp_token_kind = function
   | MATCH -> "MATCH"
   | WITH -> "WITH"
   | TYPE -> "TYPE"
+  | NEWTYPE -> "NEWTYPE"
   | OF -> "OF"
   | CLASS -> "CLASS"
   | INSTANCE -> "INSTANCE"
@@ -137,6 +140,7 @@ let pp_token_kind = function
   | PERFORM -> "PERFORM"
   | HANDLE -> "HANDLE"
   | TRY -> "TRY"
+  | PROVIDE -> "PROVIDE"
   | CONTINUE -> "CONTINUE"
   | RESUME -> "RESUME"
   | RETURN -> "RETURN"

@@ -371,7 +371,7 @@ let () =
     expect_stdlib_bool {|Set.mem 5 (Set.of_list [1; 2; 3])|} false);
   test "Set.to_list" (fun () ->
     expect_stdlib_value {|Set.to_list (Set.of_list [3; 1; 2])|}
-      (VList [VInt 2; VInt 1; VInt 3]));
+      (VList [VInt 3; VInt 1; VInt 2]));
   test "Set.union" (fun () ->
     expect_stdlib_int {|Set.size (Set.union (Set.of_list [1; 2]) (Set.of_list [2; 3]))|} 3);
   test "Set.inter" (fun () ->
@@ -468,13 +468,13 @@ let () =
       (VInt 5));
   test "Enum.reduce" (fun () ->
     expect_stdlib_int {|
-      -- @partial
+      @partial
       match Enum.reduce (fn a b -> a + b) [1; 2; 3; 4] with x -> x
     |} 10);
   test "Enum.group_by" (fun () ->
     expect_stdlib_int {|
       let groups = Enum.group_by (fn x -> x / 10) [11; 12; 21; 22; 31];;
-      -- @partial
+      @partial
       match get 1 groups with Some xs -> List.length xs
     |} 2);
 

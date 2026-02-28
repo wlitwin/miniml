@@ -147,6 +147,9 @@ Here is the complete implementation from `lib/types.ml`:
 let generalize level ty =
   let id_map = Hashtbl.create 8 in
   let counter = ref 0 in
+  let ecounter = ref 0 in   (* effect variable counter *)
+  let pvcounter = ref 0 in  (* poly variant row variable counter *)
+  let rcounter = ref 0 in   (* record row variable counter *)
   let rec go ty =
     match repr ty with
     | TVar { contents = Unbound (id, level') } when level' > level ->
@@ -160,16 +163,20 @@ let generalize level ty =
     | TVar { contents = Unbound _ } as t -> t
     | TVar { contents = Link _ } -> assert false
     | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
+    | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
     | TTuple ts -> TTuple (List.map go ts)
     | TList t -> TList (go t)
     | TArray t -> TArray (go t)
-    | TMap (k, v) -> TMap (go k, go v)
-    | TRecord fields -> TRecord (List.map (fun (n, t) -> (n, go t)) fields)
+
+    | TRecord row -> TRecord (go_rrow row)
+    | TPolyVariant row -> TPolyVariant (go_pvrow row)
     | TVariant (name, args) -> TVariant (name, List.map go args)
     | (TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _) as t -> t
+  (* ... and go_eff, go_rrow, go_pvrow for row variables ... *)
   in
   let body = go ty in
-  { quant = !counter; constraints = []; body }
+  { quant = !counter; equant = !ecounter; pvquant = !pvcounter;
+    rquant = !rcounter; constraints = []; record_evidences = []; body }
 ```
 
 Walking through the key parts:
@@ -186,9 +193,14 @@ gets generalized. Variables at the current level or shallower are left
 as live `TVar` cells. They remain part of the global inference state
 and can still be unified later.
 
-**The `Link` assert** (`assert false`) is safe because `repr` was
-called at the top of `go`. After following all links, a `TVar` can
-only be `Unbound`.
+**Row variable generalization.** The `go_eff`, `go_rrow`, and `go_pvrow`
+helpers apply the same level-based generalization to effect row variables,
+record row variables, and poly variant row variables respectively. Each
+has its own counter (`ecounter`, `rcounter`, `pvcounter`) and maps
+unbound row variables at deep levels to `EffGen`, `RGen`, or `PVGen`
+indices. For example, generalizing a function `let get_x r = r.x` turns
+the open record row variable into an `RGen 0`, and the scheme's `rquant`
+is set to `1`.
 
 **The counter** tracks how many distinct variables were generalized.
 This becomes the `quant` field of the resulting scheme, telling
@@ -208,6 +220,9 @@ hashtable alongside the scheme:
 ```ocaml
 let generalize_with_map level ty =
   let counter = ref 0 in
+  let ecounter = ref 0 in
+  let pvcounter = ref 0 in
+  let rcounter = ref 0 in
   let id_map = Hashtbl.create 8 in
   let rec go ty =
     match repr ty with
@@ -221,16 +236,20 @@ let generalize_with_map level ty =
          gen)
     | TVar { contents = Unbound _ } | TVar { contents = Link _ } -> ty
     | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
+    | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
     | TTuple ts -> TTuple (List.map go ts)
     | TList t -> TList (go t)
     | TArray t -> TArray (go t)
-    | TMap (k, v) -> TMap (go k, go v)
-    | TRecord fields -> TRecord (List.map (fun (n, t) -> (n, go t)) fields)
+
+    | TRecord row -> TRecord (go_rrow row)
+    | TPolyVariant row -> TPolyVariant (go_pvrow row)
     | TVariant (name, args) -> TVariant (name, List.map go args)
     | (TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _) as t -> t
+  (* ... and go_eff, go_rrow, go_pvrow ... *)
   in
   let body = go ty in
-  ({ quant = !counter; constraints = []; body }, id_map)
+  ({ quant = !counter; equant = !ecounter; pvquant = !pvcounter;
+     rquant = !rcounter; constraints = []; record_evidences = []; body }, id_map)
 ```
 
 The algorithm is identical. The difference is the return type: it
@@ -288,20 +307,35 @@ Here is the implementation from `lib/types.ml`:
 
 ```ocaml
 let instantiate level (s : scheme) =
-  if s.quant = 0 then s.body
+  if s.quant = 0 && s.equant = 0 && s.pvquant = 0 && s.rquant = 0
+  then s.body
   else begin
     let vars = Array.init s.quant (fun _ -> new_tvar level) in
+    let evars = Array.init s.equant (fun _ -> new_effvar level) in
+    let pvvars = Array.init s.pvquant (fun _ -> new_pvvar level) in
+    let rvars = Array.init s.rquant (fun _ -> new_rvar level) in
     let rec go = function
       | TGen id -> vars.(id)
       | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
+      | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap (k, v) -> TMap (go k, go v)
-      | TRecord fields -> TRecord (List.map (fun (n, t) -> (n, go t)) fields)
+  
+      | TRecord row -> TRecord (go_rrow row)
+      | TPolyVariant row -> TPolyVariant (go_pvrow row)
       | TVariant (name, args) -> TVariant (name, List.map go args)
       | TVar { contents = Link ty } -> go ty
       | t -> t
+    and go_eff = function
+      | EffGen id -> evars.(id)
+      (* ... recurse into EffRow ... *)
+    and go_rrow = function
+      | RGen id -> rvars.(id)
+      (* ... recurse into RRow ... *)
+    and go_pvrow = function
+      | PVGen id -> pvvars.(id)
+      (* ... recurse into PVRow ... *)
     in
     go s.body
   end
@@ -309,19 +343,21 @@ let instantiate level (s : scheme) =
 
 Walking through it:
 
-**Short-circuit for monomorphic schemes.** If `quant = 0`, there are no
-`TGen` nodes and nothing to replace, so the body is returned as-is.
-This is the common case for lambda-bound variables.
+**Short-circuit for monomorphic schemes.** If all quantifier counts are
+zero, there are no generalized variables to replace, so the body is
+returned as-is. This is the common case for lambda-bound variables.
 
-**Fresh variable array.** `Array.init s.quant (fun _ -> new_tvar level)`
-creates one fresh type variable per quantified position, all at the
-current level. The array is indexed by `TGen` index: `TGen 0` maps to
-`vars.(0)`, `TGen 1` to `vars.(1)`, and so on.
+**Fresh variable arrays.** Four arrays are created -- one per kind of
+quantified variable (type, effect, poly variant row, record row). Each
+array has one fresh variable per quantified position, all at the current
+level. `TGen 0` maps to `vars.(0)`, `EffGen 0` to `evars.(0)`,
+`RGen 0` to `rvars.(0)`, and `PVGen 0` to `pvvars.(0)`.
 
 **The replacement walk.** `go` recursively traverses the scheme body.
 When it hits `TGen id`, it returns the corresponding fresh variable
-from the array. Crucially, the *same* `TGen` index always maps to the
-*same* fresh variable. If the scheme body is
+from the `vars` array. The helpers `go_eff`, `go_rrow`, and `go_pvrow`
+do the same for their respective `*Gen` nodes. Crucially, the *same*
+index always maps to the *same* fresh variable. If the scheme body is
 `TArrow(TGen 0, TGen 0)`, the result is `TArrow(v, v)` -- both
 occurrences share the same `TVar` cell. Later unification on one
 occurrence will be visible through the other.
@@ -356,7 +392,7 @@ let instantiate_with_mapping level (s : scheme) =
       | TTuple ts -> TTuple (List.map go ts)
       | TList t -> TList (go t)
       | TArray t -> TArray (go t)
-      | TMap (k, v) -> TMap (go k, go v)
+  
       | TRecord fields -> TRecord (List.map (fun (n, t) -> (n, go t)) fields)
       | TVariant (name, args) -> TVariant (name, List.map go args)
       | t -> t
@@ -440,7 +476,9 @@ id 0 already in the map and returns `TGen 0` again.
 The resulting scheme:
 
 ```
-{ quant = 1; constraints = []; body = TArrow(TGen 0, TGen 0) }
+{ quant = 1; equant = 0; pvquant = 0; rquant = 0;
+  constraints = []; record_evidences = [];
+  body = TArrow(TGen 0, EffEmpty, TGen 0) }
 ```
 
 This is stored in the context: `ctx.vars = [("id", scheme); ...]`.

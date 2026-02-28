@@ -107,7 +107,7 @@ module Lexer =
 
   pub let is_ident_char c = (is_alpha c) || ((is_digit c) || ((c = #5f) || (c = #27)))
 
-  pub let keywords = ("let", Token.LET) :: ("rec", Token.REC) :: ("in", Token.IN) :: ("if", Token.IF) :: ("else", Token.ELSE) :: ("fn", Token.FN) :: ("match", Token.MATCH) :: ("with", Token.WITH) :: ("type", Token.TYPE) :: ("of", Token.OF) :: ("not", Token.NOT) :: ("mod", Token.MOD) :: ("true", Token.TRUE) :: ("false", Token.FALSE) :: ("class", Token.CLASS) :: ("instance", Token.INSTANCE) :: ("effect", Token.EFFECT) :: ("extern", Token.EXTERN) :: ("perform", Token.PERFORM) :: ("handle", Token.HANDLE) :: ("try", Token.TRY) :: ("resume", Token.RESUME) :: ("return", Token.RETURN) :: ("continue", Token.CONTINUE) :: ("mut", Token.MUT) :: ("for", Token.FOR) :: ("do", Token.DO) :: ("break", Token.BREAK) :: ("when", Token.WHEN) :: ("where", Token.WHERE) :: ("module", Token.MODULE) :: ("pub", Token.PUB) :: ("open", Token.OPEN) :: ("end", Token.END) :: ("opaque", Token.OPAQUE) :: ("and", Token.AND) :: ("deriving", Token.DERIVING) :: ("land", Token.LAND) :: ("lor", Token.LOR) :: ("lxor", Token.LXOR) :: ("lnot", Token.LNOT) :: ("lsl", Token.LSL) :: ("lsr", Token.LSR) :: []
+  pub let keywords = ("let", Token.LET) :: ("rec", Token.REC) :: ("in", Token.IN) :: ("if", Token.IF) :: ("else", Token.ELSE) :: ("fn", Token.FN) :: ("match", Token.MATCH) :: ("with", Token.WITH) :: ("type", Token.TYPE) :: ("newtype", Token.NEWTYPE) :: ("of", Token.OF) :: ("not", Token.NOT) :: ("mod", Token.MOD) :: ("true", Token.TRUE) :: ("false", Token.FALSE) :: ("class", Token.CLASS) :: ("instance", Token.INSTANCE) :: ("effect", Token.EFFECT) :: ("extern", Token.EXTERN) :: ("perform", Token.PERFORM) :: ("handle", Token.HANDLE) :: ("try", Token.TRY) :: ("provide", Token.PROVIDE) :: ("resume", Token.RESUME) :: ("return", Token.RETURN) :: ("continue", Token.CONTINUE) :: ("mut", Token.MUT) :: ("for", Token.FOR) :: ("do", Token.DO) :: ("break", Token.BREAK) :: ("when", Token.WHEN) :: ("where", Token.WHERE) :: ("module", Token.MODULE) :: ("pub", Token.PUB) :: ("open", Token.OPEN) :: ("end", Token.END) :: ("opaque", Token.OPAQUE) :: ("and", Token.AND) :: ("deriving", Token.DERIVING) :: ("land", Token.LAND) :: ("lor", Token.LOR) :: ("lxor", Token.LXOR) :: ("lnot", Token.LNOT) :: ("lsl", Token.LSL) :: ("lsr", Token.LSR) :: []
 
   pub let read_number l =
     let loc = current_loc l in
@@ -186,23 +186,19 @@ module Lexer =
       | last :: rest when (String.trim last) = "" -> List.rev rest
       | _ -> lines
      in
-    let indent = List.fold (fn acc line ->
-      do
-        match acc with
-        | Some _ -> acc
-        | None -> 
-          if (String.trim line) = "" do
-            None
-          else do
-            let len = String.length line in
-            let i = Ref.create 0 in
-            for ((Ref.get i) < len) && (((String.get line (Ref.get i)) = #20) || ((String.get line (Ref.get i)) = #09)) do
-              Ref.set i (Ref.get i + 1)
-            end;
-            Some (Ref.get i)
-          end
+    let indent = List.fold (fn acc line -> if (String.trim line) = "" do
+      acc
+    else do
+      let len = String.length line in
+      let i = Ref.create 0 in
+      for ((Ref.get i) < len) && (((String.get line (Ref.get i)) = #20) || ((String.get line (Ref.get i)) = #09)) do
+        Ref.set i (Ref.get i + 1)
+      end;
+      match acc with
+      | None -> Some (Ref.get i)
+      | Some prev -> Some (min prev (Ref.get i))
 
-      end) None lines in
+    end) None lines in
     let indent =
       match indent with
       | Some n -> n
@@ -514,15 +510,10 @@ module Lexer =
         (advance l; ());
         if (not (at_end l)) && ((peek l) = #2d) do
           (advance l; ());
-          let buf = Buffer.create 32 in
           for (not (at_end l)) && ((peek l) <> #0a) do
-            Buffer.add_byte buf (advance l)
+            (advance l; ())
           end;
-          let content = String.trim (Buffer.contents buf) in
-          if content = "@partial" do
-            make_token l PARTIAL loc
-          else
-            next_token l
+          next_token l
         else if (not (at_end l)) && ((peek l) = #3e) do
           (advance l; ());
           make_token l ARROW loc

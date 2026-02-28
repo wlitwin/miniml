@@ -519,7 +519,7 @@ x
 --- test: partial annotation suppresses exhaustiveness
 
       type option = Some of int | None
-      -- @partial
+      @partial
       match Some 5 with
       | Some x -> x
 
@@ -527,7 +527,7 @@ x
 
 --- test: partial annotation on bool match
 
-      -- @partial
+      @partial
       match true with
       | true -> 1
 
@@ -734,6 +734,47 @@ let f = fn () -> 42 in f ()
 --- test: raw string with quotes inside
 {|she said "hi"|}
 --- expect: she said "hi"
+
+--- test: raw string multiline basic dedent
+{|
+    hello
+    world
+|} = "hello\nworld"
+--- expect: true
+
+--- test: raw string multiline preserves relative indent
+{|
+    line one
+      indented
+|} = "line one\n  indented"
+--- expect: true
+
+--- test: raw string multiline first line more indented
+let s = {|
+      indented
+    base
+      indented again
+|} in
+s = "  indented\nbase\n  indented again"
+--- expect: true
+
+--- test: raw string multiline all same indent
+let s = {|
+  a
+  b
+  c
+|} in
+s = "a\nb\nc"
+--- expect: true
+
+--- test: raw string multiline with blank lines
+let s = {|
+    hello
+
+    world
+|} in
+s = "hello\n\nworld"
+--- expect: true
 
 === Print as First-Class Function Tests ===
 
