@@ -7,8 +7,8 @@ instance Iter ('a list) 'a =
 end
 
 instance Iter ('a array) 'a =
-  let fold = fn f -> fn acc -> fn arr ->
-    let rec go = fn a -> fn i ->
+  let fold f acc arr =
+    let rec go a i =
       if i = array_length arr do a
       else go (f a (array_get arr i)) (i + 1)
     in go acc 0

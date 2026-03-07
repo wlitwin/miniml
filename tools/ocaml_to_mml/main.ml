@@ -313,9 +313,11 @@ and emit_pattern e (pat : pattern) =
         ps;
       emit e "]"
   | Ppat_or (p1, p2) ->
+      emit e "(";
       emit_pattern e p1;
       emit e " | ";
-      emit_pattern e p2
+      emit_pattern e p2;
+      emit e ")"
   | Ppat_constraint (p, t) ->
       emit e "(";
       emit_pattern e p;

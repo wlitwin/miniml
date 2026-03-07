@@ -103,7 +103,7 @@ test-file: build  ## Run a specific .tests file on both VMs: make test-file FILE
 
 # ── Translation (OCaml → MiniML) ──────────────────────────
 
-TRANSLATE_FILES = ast token bytecode types match_tree_types lexer typechecker optimize compiler parser serialize js_codegen
+TRANSLATE_FILES = ast token bytecode types match_tree_types match_tree lexer typechecker optimize compiler parser serialize js_codegen
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
@@ -149,7 +149,8 @@ translate-stats: build  ## Show translation stats (lines, TODOs per file)
 SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
                   self_host/types.mml self_host/match_tree_types.mml \
                   self_host/lexer.mml self_host/parser.mml \
-                  self_host/typechecker.mml self_host/optimize.mml self_host/compiler.mml \
+                  self_host/typechecker.mml self_host/match_tree.mml \
+                  self_host/optimize.mml self_host/compiler.mml \
                   self_host/serialize.mml self_host/js_codegen.mml self_host/main.mml
 
 self-host-compile: build  ## Compile the self-hosted compiler to a JSON bundle

@@ -228,7 +228,7 @@ module Compiler =
         if not (Hashtbl.has found i) do
           Hashtbl.set found i ty
         end
-      | (Types.TArrow ((s_a, _, s_r)), Types.TArrow ((r_a, _, r_r))) | (Types.TCont ((s_a, _, s_r)), Types.TCont ((r_a, _, r_r))) -> 
+      | ((Types.TArrow ((s_a, _, s_r)), Types.TArrow ((r_a, _, r_r))) | (Types.TCont ((s_a, _, s_r)), Types.TCont ((r_a, _, r_r)))) -> 
         go s_a r_a;
         go s_r r_r
       | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
@@ -326,7 +326,7 @@ module Compiler =
                   | Some ty -> 
                     do
                       match Types.repr ty with
-                      | Types.TPolyVariant _ | Types.TRecord _ -> true
+                      | (Types.TPolyVariant _ | Types.TRecord _) -> true
                       | _ -> false
 
                     end
@@ -630,7 +630,7 @@ module Compiler =
       compile_expr false s e2;
       let target = current_offset s in
       patch s jump_idx (Bytecode.JUMP_IF_TRUE target)
-    | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> 
+    | (((Ast.Add | Ast.Sub) | Ast.Mul) | Ast.Div) -> 
       do
         let resolved = Types.repr e1.ty in
         match resolved with
@@ -670,12 +670,12 @@ module Compiler =
       compile_expr false s e1;
       compile_expr false s e2;
       emit s Bytecode.MOD
-    | Ast.Eq | Ast.Neq -> 
+    | (Ast.Eq | Ast.Neq) -> 
       let resolved = Types.repr e1.ty in
       let has_custom_instance class_name ty = List.exists (fn (inst : Types.instance_def) -> (inst.inst_class = class_name) && (((List.length inst.inst_tys) = 1) && (Types.match_partial_inst inst.inst_tys (Some ty :: [])))) s.type_env.instances in
       let use_structural =
         match resolved with
-        | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte | Types.TRune | Types.TUnit | Types.TList _ | Types.TTuple _ | Types.TVariant _ | Types.TPolyVariant _ | Types.TArray _ -> true
+        | (((((((((((Types.TInt | Types.TFloat) | Types.TBool) | Types.TString) | Types.TByte) | Types.TRune) | Types.TUnit) | Types.TList _) | Types.TTuple _) | Types.TVariant _) | Types.TPolyVariant _) | Types.TArray _) -> true
         | Types.TRecord _ -> not (has_custom_instance "Eq" resolved)
         | _ -> false
        in
@@ -694,11 +694,11 @@ module Compiler =
             "<>" in
         compile_class_binop s "Eq" method_name e1.ty e1 e2
       end
-    | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> 
+    | (((Ast.Lt | Ast.Gt) | Ast.Le) | Ast.Ge) -> 
       let resolved = Types.repr e1.ty in
       let is_builtin =
         match resolved with
-        | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune -> true
+        | ((((Types.TInt | Types.TFloat) | Types.TString) | Types.TByte) | Types.TRune) -> true
         | _ -> false
        in
       if is_builtin do
@@ -729,7 +729,7 @@ module Compiler =
       emit s (Bytecode.CALL 1);
       compile_expr false s e2;
       emit s (Bytecode.CALL 1)
-    | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> 
+    | ((((Ast.Land | Ast.Lor) | Ast.Lxor) | Ast.Lsl) | Ast.Lsr) -> 
       do
         let resolved = Types.repr e1.ty in
         match resolved with
@@ -1305,7 +1305,7 @@ module Compiler =
       let is_tag_switch = List.forall (fn (test, _, _) ->
         do
           match test with
-          | Match_tree_types.TConstructor _ | Match_tree_types.TPolyVariant _ -> true
+          | (Match_tree_types.TConstructor _ | Match_tree_types.TPolyVariant _) -> true
           | _ -> false
 
         end) cases in
@@ -1332,7 +1332,7 @@ module Compiler =
     let tags = List.map (fn (test, _, _) ->
       do
         match test with
-        | Match_tree_types.TConstructor ((_, tag)) | Match_tree_types.TPolyVariant ((_, tag)) -> tag
+        | (Match_tree_types.TConstructor ((_, tag)) | Match_tree_types.TPolyVariant ((_, tag))) -> tag
         | _ -> 0
 
       end) cases in
@@ -1357,7 +1357,7 @@ module Compiler =
       end;
       List.iter (fn (test, _binds, sub_tree) -> let tag =
         match test with
-        | Match_tree_types.TConstructor ((_, tag)) | Match_tree_types.TPolyVariant ((_, tag)) -> tag
+        | (Match_tree_types.TConstructor ((_, tag)) | Match_tree_types.TPolyVariant ((_, tag))) -> tag
         | _ -> 0
        in
       let target = current_offset s in
@@ -1535,7 +1535,7 @@ module Compiler =
 
   pub let rec compile_decl s (decl : Typechecker.tdecl) =
     match decl with
-    | Typechecker.TDType _ | Typechecker.TDClass _ | Typechecker.TDEffect _ -> ()
+    | ((Typechecker.TDType _ | Typechecker.TDClass _) | Typechecker.TDEffect _) -> ()
     | Typechecker.TDExtern ((name, _)) -> (find_or_add_global s name; ())
     | Typechecker.TDLet ((name, te)) -> 
       do

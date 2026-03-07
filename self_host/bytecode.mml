@@ -216,7 +216,7 @@ module Bytecode =
       | VRecord ((shape, values)) -> "{ " ^ ((String.concat "; " (List.init (Array.length shape.rs_fields) (fn i -> (Array.get shape.rs_fields i) ^ (" = " ^ (pp_value (Array.get values i)))))) ^ " }")
       | VVariant ((_, name, None)) -> name
       | VVariant ((_, name, Some v)) -> name ^ (" " ^ (match v with
-      | VTuple _ | VVariant ((_, _, Some _)) -> "(" ^ ((pp_value v) ^ ")")
+      | (VTuple _ | VVariant ((_, _, Some _))) -> "(" ^ ((pp_value v) ^ ")")
       | _ -> pp_value v
       ))
       | VClosure _ -> "<fun>"

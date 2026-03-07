@@ -119,11 +119,11 @@ module Types =
     match repr ty with
     | TVar {contents = Unbound _} -> false
     | TVar {contents = Link _} -> failwith "assert false"
-    | TArrow ((a, eff, r)) | TCont ((a, eff, r)) -> (is_concrete a) && ((is_concrete_eff eff) && (is_concrete r))
+    | (TArrow ((a, eff, r)) | TCont ((a, eff, r))) -> (is_concrete a) && ((is_concrete_eff eff) && (is_concrete r))
     | TTuple ts -> List.forall is_concrete ts
-    | TList t | TArray t -> is_concrete t
+    | (TList t | TArray t) -> is_concrete t
     | TVariant ((_, args)) -> List.forall is_concrete args
-    | TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _ -> true
+    | (((((((TInt | TFloat) | TBool) | TString) | TByte) | TRune) | TUnit) | TGen _) -> true
     | TRecord row -> is_concrete_rrow row
     | TPolyVariant row -> is_concrete_pv row
 
@@ -141,7 +141,7 @@ module Types =
       | RVar {contents = RLink row} -> is_concrete_rrow row
       | RVar {contents = RUnbound _} -> false
       | REmpty -> true
-      | RGen _ | RWild -> true
+      | (RGen _ | RWild) -> true
 
   and is_concrete_pv =
     fn
@@ -277,7 +277,7 @@ module Types =
       | TTuple ts -> (String.concat "_" (List.map ty_to_str ts)) ^ "_tup"
       | TPolyVariant _ -> "polyvar"
       | TGen i -> $"g{i}"
-      | TArrow _ | TCont _ -> "arrow"
+      | (TArrow _ | TCont _) -> "arrow"
       | TVar _ -> "tvar"
       | _ -> "ty_other"
 
@@ -296,7 +296,7 @@ module Types =
         Ref.set r (Unbound (id2, level))
       end
     | TVar {contents = Link _} -> failwith "assert false"
-    | TArrow ((a, eff, b)) | TCont ((a, eff, b)) -> 
+    | (TArrow ((a, eff, b)) | TCont ((a, eff, b))) -> 
       occurs_check id level a;
       occurs_check_eff_for_ty id level eff;
       occurs_check id level b
@@ -306,7 +306,7 @@ module Types =
     | TRecord row -> occurs_check_rrow_for_ty id level row
     | TVariant ((_, args)) -> List.iter (occurs_check id level) args
     | TPolyVariant row -> occurs_check_pv_for_ty id level row
-    | TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _ -> ()
+    | (((((((TInt | TFloat) | TBool) | TString) | TByte) | TRune) | TUnit) | TGen _) -> ()
 
   and occurs_check_pv_for_ty id level row =
     match pv_repr row with
@@ -344,7 +344,7 @@ module Types =
       end
     | EffVar {contents = EffLink _} -> failwith "assert false"
     | EffRow ((_, _params, tail)) -> occurs_check_eff id level tail
-    | EffEmpty | EffGen _ -> ()
+    | (EffEmpty | EffGen _) -> ()
 
 
   pub let rec occurs_check_pv id level row =
@@ -363,7 +363,7 @@ module Types =
 
       end;
       occurs_check_pv id level tail
-    | PVEmpty | PVGen _ -> ()
+    | (PVEmpty | PVGen _) -> ()
 
 
   pub let rec occurs_check_rrow id level row =
@@ -377,7 +377,7 @@ module Types =
     | RRow ((_, ty, tail)) -> 
       occurs_check id level ty;
       occurs_check_rrow id level tail
-    | REmpty | RGen _ | RWild -> ()
+    | ((REmpty | RGen _) | RWild) -> ()
 
 
   pub let try_match_synonym synonyms ty =
@@ -397,8 +397,8 @@ module Types =
             | Some prev -> prev = actual
 
           end
-        | (TInt, TInt) | (TFloat, TFloat) | (TBool, TBool) | (TString, TString) | (TUnit, TUnit) | (TByte, TByte) | (TRune, TRune) -> true
-        | (TArrow ((p1, _pe, p2)), TArrow ((a1, _ae, a2))) | (TCont ((p1, _pe, p2)), TCont ((a1, _ae, a2))) -> (go p1 a1) && (go p2 a2)
+        | (((((((TInt, TInt) | (TFloat, TFloat)) | (TBool, TBool)) | (TString, TString)) | (TUnit, TUnit)) | (TByte, TByte)) | (TRune, TRune)) -> true
+        | ((TArrow ((p1, _pe, p2)), TArrow ((a1, _ae, a2))) | (TCont ((p1, _pe, p2)), TCont ((a1, _ae, a2)))) -> (go p1 a1) && (go p2 a2)
         | (TList p1, TList a1) -> go p1 a1
         | (TArray p1, TArray a1) -> go p1 a1
         | (TTuple ps, TTuple acts) when (List.length ps) = (List.length acts) -> List.forall2 go ps acts
@@ -461,7 +461,7 @@ module Types =
     | Some ((name, args)) -> 
       do
         match ty with
-        | TArrow ((a, _, _)) | TCont ((a, _, _)) when (try_match_synonym synonyms (repr a)) <> None -> pp_ty_raw_impl synonyms ty
+        | (TArrow ((a, _, _)) | TCont ((a, _, _))) when (try_match_synonym synonyms (repr a)) <> None -> pp_ty_raw_impl synonyms ty
         | _ -> pp_type_con_impl synonyms name args
 
       end
@@ -471,7 +471,7 @@ module Types =
     fn
       | [] -> name
       | arg :: [] -> (match repr arg with
-      | TArrow _ | TCont _ | TTuple _ -> "(" ^ ((pp_ty_impl synonyms arg) ^ ")")
+      | ((TArrow _ | TCont _) | TTuple _) -> "(" ^ ((pp_ty_impl synonyms arg) ^ ")")
       | _ -> pp_ty_impl synonyms arg
       ) ^ (" " ^ name)
       | args -> "(" ^ ((String.concat ", " (List.map (pp_ty_impl synonyms) args)) ^ (") " ^ name))
@@ -483,7 +483,7 @@ module Types =
     | None -> 
       do
         match ty with
-        | TArrow _ | TCont _ | TTuple _ -> true
+        | ((TArrow _ | TCont _) | TTuple _) -> true
         | _ -> false
 
       end
@@ -516,7 +516,7 @@ module Types =
       let inner =
         let a_str =
           match repr a with
-          | TArrow _ | TCont _ when (try_match_synonym synonyms (repr a)) = None -> "(" ^ ((pp_ty_impl synonyms a) ^ ")")
+          | (TArrow _ | TCont _) when (try_match_synonym synonyms (repr a)) = None -> "(" ^ ((pp_ty_impl synonyms a) ^ ")")
           | _ -> pp_ty_impl synonyms a
          in
         if eff_is_trivial eff do
@@ -527,7 +527,7 @@ module Types =
     | TTuple ts -> String.concat " * " (List.map (fn t ->
       do
         match repr t with
-        | TArrow _ | TCont _ when (try_match_synonym synonyms (repr t)) = None -> "(" ^ ((pp_ty_impl synonyms t) ^ ")")
+        | (TArrow _ | TCont _) when (try_match_synonym synonyms (repr t)) = None -> "(" ^ ((pp_ty_impl synonyms t) ^ ")")
         | _ -> pp_ty_impl synonyms t
 
       end) ts)
@@ -542,7 +542,7 @@ module Types =
       let rec is_open r =
         match rrow_repr r with
         | RRow ((_, _, tail)) -> is_open tail
-        | RVar {contents = RUnbound _} | RGen _ | RWild -> true
+        | ((RVar {contents = RUnbound _} | RGen _) | RWild) -> true
         | _ -> false
        in
       let fields_str = String.concat "; " (List.map (fn (n, t) -> n ^ (": " ^ (pp_ty_impl synonyms t))) (collect row)) in
@@ -637,7 +637,7 @@ module Types =
       ()
     else
       match (e1, e2) with
-      | (EffVar ({contents = EffUnbound ((id, level))} as r), eff) | (eff, EffVar ({contents = EffUnbound ((id, level))} as r)) -> 
+      | ((EffVar ({contents = EffUnbound ((id, level))} as r), eff) | (eff, EffVar ({contents = EffUnbound ((id, level))} as r))) -> 
         occurs_check_eff id level eff;
         Ref.set r (EffLink eff)
       | (EffEmpty, EffEmpty) -> ()
@@ -758,7 +758,7 @@ module Types =
       ()
     else
       match (r1, r2) with
-      | (PVVar ({contents = PVUnbound ((id, level))} as r), row) | (row, PVVar ({contents = PVUnbound ((id, level))} as r)) -> 
+      | ((PVVar ({contents = PVUnbound ((id, level))} as r), row) | (row, PVVar ({contents = PVUnbound ((id, level))} as r))) -> 
         occurs_check_pv id level row;
         Ref.set r (PVLink row)
       | (PVEmpty, PVEmpty) -> ()
@@ -849,10 +849,10 @@ module Types =
       ()
     else
       match (r1, r2) with
-      | (RVar ({contents = RUnbound ((id, level))} as r), row) | (row, RVar ({contents = RUnbound ((id, level))} as r)) -> 
+      | ((RVar ({contents = RUnbound ((id, level))} as r), row) | (row, RVar ({contents = RUnbound ((id, level))} as r))) -> 
         occurs_check_rrow id level row;
         Ref.set r (RLink row)
-      | (RWild, _) | (_, RWild) -> ()
+      | ((RWild, _) | (_, RWild)) -> ()
       | (REmpty, REmpty) -> ()
       | (RRow ((f1, ty1, tail1)), RRow ((f2, ty2, tail2))) when f1 = f2 -> 
         unify ty1 ty2;
@@ -939,10 +939,10 @@ module Types =
       ()
     else
       match (t1, t2) with
-      | (TVar ({contents = Unbound ((id, level))} as r), ty) | (ty, TVar ({contents = Unbound ((id, level))} as r)) -> 
+      | ((TVar ({contents = Unbound ((id, level))} as r), ty) | (ty, TVar ({contents = Unbound ((id, level))} as r))) -> 
         occurs_check id level ty;
         Ref.set r (Link ty)
-      | (TArrow ((a1, e1, r1)), TArrow ((a2, e2, r2))) | (TCont ((a1, e1, r1)), TCont ((a2, e2, r2))) -> 
+      | ((TArrow ((a1, e1, r1)), TArrow ((a2, e2, r2))) | (TCont ((a1, e1, r1)), TCont ((a2, e2, r2)))) -> 
         unify a1 a2;
         unify_eff e1 e2;
         unify r1 r2
@@ -954,7 +954,7 @@ module Types =
       | (TList t1', TList t2') -> unify t1' t2'
       | (TArray t1', TArray t2') -> unify t1' t2'
       | (TRecord r1, TRecord r2) -> unify_record_row r1 r2
-      | (TInt, TInt) | (TFloat, TFloat) | (TBool, TBool) | (TString, TString) | (TByte, TByte) | (TRune, TRune) | (TUnit, TUnit) -> ()
+      | (((((((TInt, TInt) | (TFloat, TFloat)) | (TBool, TBool)) | (TString, TString)) | (TByte, TByte)) | (TRune, TRune)) | (TUnit, TUnit)) -> ()
       | (TVariant ((a, args_a)), TVariant ((b, args_b))) when a = b -> 
         if (List.length args_a) <> (List.length args_b) do
           unify_error t1 t2
@@ -986,7 +986,7 @@ module Types =
             gen
 
         end
-      | TVar {contents = Unbound _} | TVar {contents = Link _} -> ty
+      | (TVar {contents = Unbound _} | TVar {contents = Link _}) -> ty
       | TArrow ((a, eff, r)) -> TArrow (go a, go_eff eff, go r)
       | TCont ((a, eff, r)) -> TCont (go a, go_eff eff, go r)
       | TTuple ts -> TTuple (List.map go ts)
@@ -1010,7 +1010,7 @@ module Types =
             gen
 
         end
-      | EffVar {contents = EffUnbound _} | EffVar {contents = EffLink _} -> eff
+      | (EffVar {contents = EffUnbound _} | EffVar {contents = EffLink _}) -> eff
       | EffRow ((label, params, tail)) -> EffRow (label, List.map go params, go_eff tail)
       | EffEmpty -> EffEmpty
       | EffGen _ as e -> e
@@ -1028,7 +1028,7 @@ module Types =
             gen
 
         end
-      | PVVar {contents = PVUnbound _} | PVVar {contents = PVLink _} -> row
+      | (PVVar {contents = PVUnbound _} | PVVar {contents = PVLink _}) -> row
       | PVRow ((tag, ty_opt, tail)) -> PVRow (tag, Option.map go ty_opt, go_pv tail)
       | PVEmpty -> PVEmpty
       | PVGen _ as r -> r
@@ -1046,7 +1046,7 @@ module Types =
             gen
 
         end
-      | RVar {contents = RUnbound _} | RVar {contents = RLink _} -> row
+      | (RVar {contents = RUnbound _} | RVar {contents = RLink _}) -> row
       | RRow ((name, ty, tail)) -> RRow (name, go ty, go_rrow tail)
       | REmpty -> REmpty
       | RGen _ as r -> r
@@ -1081,11 +1081,11 @@ module Types =
           Hashtbl.set remap i (Ref.get counter);
           Ref.set counter (Ref.get counter + 1)
         end
-      | TArrow ((a, _, r)) | TCont ((a, _, r)) -> 
+      | (TArrow ((a, _, r)) | TCont ((a, _, r))) -> 
         collect a;
         collect r
       | TTuple ts -> List.iter collect ts
-      | TList t | TArray t -> collect t
+      | (TList t | TArray t) -> collect t
       | TVariant ((_, ts)) -> List.iter collect ts
       | TRecord row -> collect_rrow row
       | TPolyVariant row -> collect_pvrow row
@@ -1240,9 +1240,9 @@ module Types =
     let t1 = repr t1 in
     let t2 = repr t2 in
     match (t1, t2) with
-    | (TVar _, _) | (_, TVar _) -> true
-    | (TInt, TInt) | (TFloat, TFloat) | (TBool, TBool) | (TString, TString) | (TByte, TByte) | (TRune, TRune) | (TUnit, TUnit) -> true
-    | (TArrow ((a1, _, r1)), TArrow ((a2, _, r2))) | (TCont ((a1, _, r1)), TCont ((a2, _, r2))) -> (types_compatible a1 a2) && (types_compatible r1 r2)
+    | ((TVar _, _) | (_, TVar _)) -> true
+    | (((((((TInt, TInt) | (TFloat, TFloat)) | (TBool, TBool)) | (TString, TString)) | (TByte, TByte)) | (TRune, TRune)) | (TUnit, TUnit)) -> true
+    | ((TArrow ((a1, _, r1)), TArrow ((a2, _, r2))) | (TCont ((a1, _, r1)), TCont ((a2, _, r2)))) -> (types_compatible a1 a2) && (types_compatible r1 r2)
     | (TTuple ts1, TTuple ts2) -> ((List.length ts1) = (List.length ts2)) && (List.forall2 types_compatible ts1 ts2)
     | (TList t1, TList t2) -> types_compatible t1 t2
     | (TArray t1, TArray t2) -> types_compatible t1 t2
@@ -1272,9 +1272,9 @@ module Types =
     let t1 = repr t1 in
     let t2 = repr t2 in
     match (t1, t2) with
-    | (TInt, TInt) | (TFloat, TFloat) | (TBool, TBool) | (TString, TString) | (TByte, TByte) | (TRune, TRune) | (TUnit, TUnit) -> true
+    | (((((((TInt, TInt) | (TFloat, TFloat)) | (TBool, TBool)) | (TString, TString)) | (TByte, TByte)) | (TRune, TRune)) | (TUnit, TUnit)) -> true
     | (TVariant ((a, args_a)), TVariant ((b, args_b))) -> (a = b) && (((List.length args_a) = (List.length args_b)) && (List.forall2 subtype args_a args_b))
-    | (TArrow ((a1, _e1, r1)), TArrow ((a2, _e2, r2))) | (TCont ((a1, _e1, r1)), TCont ((a2, _e2, r2))) -> (subtype a2 a1) && (subtype r1 r2)
+    | ((TArrow ((a1, _e1, r1)), TArrow ((a2, _e2, r2))) | (TCont ((a1, _e1, r1)), TCont ((a2, _e2, r2)))) -> (subtype a2 a1) && (subtype r1 r2)
     | (TRecord r1, TRecord r2) -> 
       let f1 = record_row_to_fields r1 in
       let f2 = record_row_to_fields r2 in
@@ -1296,9 +1296,9 @@ module Types =
     let t1 = repr t1 in
     let t2 = repr t2 in
     match (t1, t2) with
-    | (TInt, TInt) | (TFloat, TFloat) | (TBool, TBool) | (TString, TString) | (TByte, TByte) | (TRune, TRune) | (TUnit, TUnit) -> true
+    | (((((((TInt, TInt) | (TFloat, TFloat)) | (TBool, TBool)) | (TString, TString)) | (TByte, TByte)) | (TRune, TRune)) | (TUnit, TUnit)) -> true
     | (TVariant ((a, args_a)), TVariant ((b, args_b))) -> (a = b) && (((List.length args_a) = (List.length args_b)) && (List.forall2 equal_ty args_a args_b))
-    | (TArrow ((a1, _e1, r1)), TArrow ((a2, _e2, r2))) | (TCont ((a1, _e1, r1)), TCont ((a2, _e2, r2))) -> (equal_ty a1 a2) && (equal_ty r1 r2)
+    | ((TArrow ((a1, _e1, r1)), TArrow ((a2, _e2, r2))) | (TCont ((a1, _e1, r1)), TCont ((a2, _e2, r2)))) -> (equal_ty a1 a2) && (equal_ty r1 r2)
     | (TRecord r1, TRecord r2) -> 
       let f1 = record_row_to_fields r1 in
       let f2 = record_row_to_fields r2 in
@@ -1476,10 +1476,10 @@ module Types =
     let rec count =
       fn
         | TGen _ -> 0
-        | TInt | TFloat | TBool | TString | TByte | TRune | TUnit -> 1
-        | TArrow ((a, _, b)) | TCont ((a, _, b)) -> (count a) + (count b)
+        | ((((((TInt | TFloat) | TBool) | TString) | TByte) | TRune) | TUnit) -> 1
+        | (TArrow ((a, _, b)) | TCont ((a, _, b))) -> (count a) + (count b)
         | TTuple ts -> List.fold (fn acc t -> acc + (count t)) 0 ts
-        | TList a | TArray a -> count a
+        | (TList a | TArray a) -> count a
         | TRecord row -> List.fold (fn acc (_, t) -> acc + (count t)) 0 (record_row_to_fields row)
         | TVariant ((_, ts)) -> List.fold (fn acc t -> acc + (count t)) 0 ts
         | TPolyVariant _ -> 0
@@ -1547,7 +1547,7 @@ module Types =
         | (TArray a, TArray b) -> extract_bindings a b
         | (TTuple ts1, TTuple ts2) when (List.length ts1) = (List.length ts2) -> List.iter2 extract_bindings ts1 ts2
         | (TVariant ((_, args1)), TVariant ((_, args2))) when (List.length args1) = (List.length args2) -> List.iter2 extract_bindings args1 args2
-        | (TArrow ((a1, _, r1)), TArrow ((a2, _, r2))) | (TCont ((a1, _, r1)), TCont ((a2, _, r2))) -> 
+        | ((TArrow ((a1, _, r1)), TArrow ((a2, _, r2))) | (TCont ((a1, _, r1)), TCont ((a2, _, r2)))) -> 
           extract_bindings a1 a2;
           extract_bindings r1 r2
         | _ -> ()

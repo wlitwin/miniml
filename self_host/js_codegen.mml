@@ -241,7 +241,7 @@ module Js_codegen =
     match te.expr with
     | Typechecker.TEPerform ((op_name, _)) -> check_perform op_name
     | Typechecker.TEResume _ -> true
-    | Typechecker.TELet ((_, _, e1, e2)) | Typechecker.TESeq ((e1, e2)) -> (go e1) || (go e2)
+    | (Typechecker.TELet ((_, _, e1, e2)) | Typechecker.TESeq ((e1, e2))) -> (go e1) || (go e2)
     | Typechecker.TEIf ((cond, e1, e2)) -> (go cond) || ((go e1) || (go e2))
     | Typechecker.TEMatch ((scrut, arms, _)) -> (go scrut) || (List.exists (fn (_, g, body) -> (go body) || (match g with
     | Some g -> go g
@@ -254,7 +254,7 @@ module Js_codegen =
         | Some d -> check_tree d
         | None -> false
         )
-        | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> false
+        | (Match_tree_types.DLeaf _ | Match_tree_types.DFail _) -> false
      in
     check_tree cm.tree))
     | Typechecker.TELetRec ((_, _, fn_e, body)) -> (go fn_e) || (go body)
@@ -264,7 +264,7 @@ module Js_codegen =
     | Typechecker.TEHandle ((body, arms)) -> (go body) || (List.exists (fn arm ->
       do
         match arm with
-        | Typechecker.THReturn ((_, e)) | Typechecker.THOp {body = e; _} | Typechecker.THOpProvide ((_, _, e)) | Typechecker.THOpTry ((_, _, e)) -> go e
+        | (((Typechecker.THReturn ((_, e)) | Typechecker.THOp {body = e; _}) | Typechecker.THOpProvide ((_, _, e))) | Typechecker.THOpTry ((_, _, e))) -> go e
 
       end) arms)
     | Typechecker.TELetMut ((_, e1, e2)) -> (go e1) || (go e2)
@@ -542,7 +542,7 @@ module Js_codegen =
       | Typechecker.TEArray es -> 
         let nulls = String.concat ", " (List.map (fn _ -> "null") es) in
         emit_line ctx ($"let {js_name} = \{_arr: [{nulls}]\};")
-      | Typechecker.TELet ((_, _, _, inner)) | Typechecker.TESeq ((_, inner)) -> go inner
+      | (Typechecker.TELet ((_, _, _, inner)) | Typechecker.TESeq ((_, inner))) -> go inner
       | _ -> emit_line ctx ($"let {js_name} = null;")
      in
     go te
@@ -571,7 +571,7 @@ module Js_codegen =
         let tmp = fresh_tmp ctx in
         emit_line ctx ($"const {tmp} = {computed};");
         emit_line ctx ($"for (let _i = 0; _i < {tmp}._arr.length; _i++) {js_name}._arr[_i] = {tmp}._arr[_i];")
-      | Typechecker.TELet ((_, _, _, _inner)) | Typechecker.TESeq ((_, _inner)) -> 
+      | (Typechecker.TELet ((_, _, _, _inner)) | Typechecker.TESeq ((_, _inner))) -> 
         let computed = compile_non_tail ctx te in
         emit_line ctx ($"Object.assign({js_name}, {computed});")
       | _ -> 
@@ -886,11 +886,11 @@ module Js_codegen =
         emit_line ctx "}";
         result
       end
-    | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> 
+    | (((Ast.Add | Ast.Sub) | Ast.Mul) | Ast.Div) -> 
       do
         let resolved = Types.repr e1.ty in
         match resolved with
-        | Types.TInt | Types.TFloat -> 
+        | (Types.TInt | Types.TFloat) -> 
           let a = compile_non_tail ctx e1 in
           let b = compile_non_tail ctx e2 in
           let js_op =
@@ -921,12 +921,12 @@ module Js_codegen =
       let a = compile_non_tail ctx e1 in
       let b = compile_non_tail ctx e2 in
       "(" ^ (a ^ (" % " ^ (b ^ ")")))
-    | Ast.Eq | Ast.Neq -> 
+    | (Ast.Eq | Ast.Neq) -> 
       do
         let resolved = Types.repr e1.ty in
         let is_primitive =
           match resolved with
-          | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte | Types.TRune | Types.TUnit -> true
+          | ((((((Types.TInt | Types.TFloat) | Types.TBool) | Types.TString) | Types.TByte) | Types.TRune) | Types.TUnit) -> true
           | _ -> false
          in
         if is_primitive do
@@ -990,11 +990,11 @@ module Js_codegen =
 
         end
       end
-    | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> 
+    | (((Ast.Lt | Ast.Gt) | Ast.Le) | Ast.Ge) -> 
       let resolved = Types.repr e1.ty in
       let is_builtin =
         match resolved with
-        | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune -> true
+        | ((((Types.TInt | Types.TFloat) | Types.TString) | Types.TByte) | Types.TRune) -> true
         | _ -> false
        in
       if is_builtin do
@@ -1024,7 +1024,7 @@ module Js_codegen =
       let a = compile_non_tail ctx e1 in
       let b = compile_non_tail ctx e2 in
       "(" ^ (a ^ (" + " ^ (b ^ ")")))
-    | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> 
+    | ((((Ast.Land | Ast.Lor) | Ast.Lxor) | Ast.Lsl) | Ast.Lsr) -> 
       do
         let resolved = Types.repr e1.ty in
         match resolved with
@@ -1108,7 +1108,7 @@ module Js_codegen =
       do
         let resolved = Types.repr e.ty in
         match resolved with
-        | Types.TInt | Types.TFloat -> 
+        | (Types.TInt | Types.TFloat) -> 
           let v = compile_non_tail ctx e in
           "(-" ^ (v ^ ")")
         | _ -> compile_class_unop ctx "Num" "neg" e

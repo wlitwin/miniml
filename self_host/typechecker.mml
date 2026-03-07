@@ -106,14 +106,14 @@ module Typechecker =
 
   pub let rec is_constructive (expr : Ast.expr) =
     match strip_loc expr with
-    | Ast.EInt _ | Ast.EFloat _ | Ast.EBool _ | Ast.EString _ | Ast.EByte _ | Ast.ERune _ | Ast.EUnit | Ast.ENil -> true
+    | (((((((Ast.EInt _ | Ast.EFloat _) | Ast.EBool _) | Ast.EString _) | Ast.EByte _) | Ast.ERune _) | Ast.EUnit) | Ast.ENil) -> true
     | Ast.EVar _ -> true
     | Ast.EFun _ -> true
     | Ast.ECons ((hd, tl)) -> (is_constructive hd) && (is_constructive tl)
-    | Ast.ETuple es | Ast.EList es | Ast.EArray es | Ast.ESet es -> List.forall is_constructive es
+    | (((Ast.ETuple es | Ast.EList es) | Ast.EArray es) | Ast.ESet es) -> List.forall is_constructive es
     | Ast.ERecord fields -> List.forall (fn (_, e) -> is_constructive e) fields
-    | Ast.EConstruct ((_, None)) | Ast.EPolyVariant ((_, None)) -> true
-    | Ast.EConstruct ((_, Some e)) | Ast.EPolyVariant ((_, Some e)) -> is_constructive e
+    | (Ast.EConstruct ((_, None)) | Ast.EPolyVariant ((_, None))) -> true
+    | (Ast.EConstruct ((_, Some e)) | Ast.EPolyVariant ((_, Some e))) -> is_constructive e
     | Ast.EAnnot ((e, _)) -> is_constructive e
     | Ast.ELet ((_, e1, e2)) -> (is_constructive e1) && (is_constructive e2)
     | Ast.EMap entries -> List.forall (fn (k, v) -> (is_constructive k) && (is_constructive v)) entries
@@ -157,7 +157,7 @@ module Typechecker =
   pub let rec max_tgen_in_ty =
     fn
       | Types.TGen i -> i
-      | Types.TArrow ((a, _, b)) | Types.TCont ((a, _, b)) -> max (max_tgen_in_ty a) (max_tgen_in_ty b)
+      | (Types.TArrow ((a, _, b)) | Types.TCont ((a, _, b))) -> max (max_tgen_in_ty a) (max_tgen_in_ty b)
       | Types.TTuple ts -> List.fold (fn acc t -> max acc (max_tgen_in_ty t)) (-1) ts
       | Types.TList t -> max_tgen_in_ty t
       | Types.TRecord row -> max_tgen_in_rrow row
@@ -183,7 +183,7 @@ module Typechecker =
 
   pub let max_effgen_in_ty =
     fn
-      | Types.TArrow ((a, eff, b)) | Types.TCont ((a, eff, b)) -> max (max (max_tgen_in_ty a) (max_tgen_in_ty b)) (max_effgen_in_eff eff)
+      | (Types.TArrow ((a, eff, b)) | Types.TCont ((a, eff, b))) -> max (max (max_tgen_in_ty a) (max_tgen_in_ty b)) (max_effgen_in_eff eff)
       | _ -> (-1)
 
 
@@ -449,7 +449,7 @@ module Typechecker =
         | Ast.TyPolyVariant ((kind, tags)) -> 
           let tail =
             match kind with
-            | Ast.PVExact | Ast.PVUpper -> Types.PVEmpty
+            | (Ast.PVExact | Ast.PVUpper) -> Types.PVEmpty
             | Ast.PVLower -> Types.new_pvvar level
            in
           let row = List.fold_right (fn (tag, payload_annot) acc -> Types.PVRow (tag, Option.map go payload_annot, acc)) tags tail in
@@ -637,7 +637,7 @@ module Typechecker =
     match expr with
     | Ast.ELoc ((_, inner)) -> extract_fn_info inner
     | Ast.EAnnot ((inner, _)) when match inner with
-    | Ast.EFun _ | Ast.ELoc ((_, Ast.EFun _)) -> true
+    | (Ast.EFun _ | Ast.ELoc ((_, Ast.EFun _))) -> true
     | _ -> false
      -> extract_fn_info inner
     | Ast.EFun ((param, body)) -> 
@@ -674,11 +674,11 @@ module Typechecker =
 
   pub let iter_texpr_children f te =
     match te.expr with
-    | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> ()
-    | TELet ((_, _, e1, e2)) | TELetRec ((_, _, e1, e2)) | TELetMut ((_, e1, e2)) -> 
+    | (((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TEVar _) | TENil) | TEContinueLoop) -> ()
+    | ((TELet ((_, _, e1, e2)) | TELetRec ((_, _, e1, e2))) | TELetMut ((_, e1, e2))) -> 
       f e1;
       f e2
-    | TEBinop ((_, e1, e2)) | TECons ((e1, e2)) | TESeq ((e1, e2)) | TEResume ((e1, e2)) | TEFieldAssign ((e1, _, e2)) | TEIndex ((e1, e2)) -> 
+    | (((((TEBinop ((_, e1, e2)) | TECons ((e1, e2))) | TESeq ((e1, e2))) | TEResume ((e1, e2))) | TEFieldAssign ((e1, _, e2))) | TEIndex ((e1, e2))) -> 
       f e1;
       f e2
     | TEWhile {tw_cond; tw_body} -> 
@@ -687,12 +687,12 @@ module Typechecker =
     | TEApp ((fn_, arg)) -> 
       f fn_;
       f arg
-    | TEPerform ((_, e)) | TEUnop ((_, e)) | TEFun ((_, e, _)) | TEField ((e, _)) | TEBreak e | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign ((_, e)) -> f e
+    | ((((((((TEPerform ((_, e)) | TEUnop ((_, e))) | TEFun ((_, e, _))) | TEField ((e, _))) | TEBreak e) | TEFoldContinue e) | TEForLoop e) | TEReturn e) | TEAssign ((_, e))) -> f e
     | TEIf ((c, t, e)) -> 
       f c;
       f t;
       f e
-    | TETuple es | TEArray es -> List.iter f es
+    | (TETuple es | TEArray es) -> List.iter f es
     | TERecord fields -> List.iter (fn (_, e) -> f e) fields
     | TERecordUpdate ((base, overrides)) -> 
       f base;
@@ -718,7 +718,7 @@ module Typechecker =
             f guard;
             iter_tree on_true;
             iter_tree on_false
-          | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> ()
+          | (Match_tree_types.DLeaf _ | Match_tree_types.DFail _) -> ()
        in
       iter_tree cm.tree
     | TEHandle ((body, arms)) -> 
@@ -726,7 +726,7 @@ module Typechecker =
       List.iter (fn arm ->
         do
           match arm with
-          | THReturn ((_, e)) | THOp {body = e; _} | THOpProvide ((_, _, e)) | THOpTry ((_, _, e)) -> f e
+          | (((THReturn ((_, e)) | THOp {body = e; _}) | THOpProvide ((_, _, e))) | THOpTry ((_, _, e))) -> f e
 
         end) arms
     | TELetRecAnd ((bindings, body)) -> 
@@ -736,7 +736,7 @@ module Typechecker =
 
   pub let map_texpr_children f te =
     match te.expr with
-    | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> te.expr
+    | (((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TEVar _) | TENil) | TEContinueLoop) -> te.expr
     | TELet ((n, s, e1, e2)) -> TELet (n, s, f e1, f e2)
     | TELetRec ((n, s, e1, e2)) -> TELetRec (n, s, f e1, f e2)
     | TEFun ((p, body, hr)) -> TEFun (p, f body, hr)
@@ -978,7 +978,7 @@ module Typechecker =
             if not (Hashtbl.has param_map i) do
               Hashtbl.set param_map i r
             end
-          | (Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2))) -> 
+          | ((Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2)))) -> 
             go s1 r1;
             go s2 r2
           | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
@@ -1057,7 +1057,7 @@ module Typechecker =
         let has_caty = has_any_caty in
         let all_resolved = List.forall (fn opt -> opt <> None) cc_args in
         let allow = has_tgen && (all_resolved && ((not has_caty) || (match scheme.body with
-        | Types.TArrow _ | Types.TCont _ -> true
+        | (Types.TArrow _ | Types.TCont _) -> true
         | _ -> false
         ))) in
         if allow do
@@ -1073,7 +1073,7 @@ module Typechecker =
             end) cc_args in
           let is_arrow =
             match scheme.body with
-            | Types.TArrow _ | Types.TCont _ -> true
+            | (Types.TArrow _ | Types.TCont _) -> true
             | _ -> false
            in
           if has_unbound_caty && is_arrow do
@@ -1284,10 +1284,10 @@ module Typechecker =
           do
             let class_name_opt =
               match op with
-              | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> Some "Num"
-              | Ast.Eq | Ast.Neq -> Some "Eq"
-              | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> Some "Ord"
-              | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> Some "Bitwise"
+              | (((Ast.Add | Ast.Sub) | Ast.Mul) | Ast.Div) -> Some "Num"
+              | (Ast.Eq | Ast.Neq) -> Some "Eq"
+              | (((Ast.Lt | Ast.Gt) | Ast.Le) | Ast.Ge) -> Some "Ord"
+              | ((((Ast.Land | Ast.Lor) | Ast.Lxor) | Ast.Lsl) | Ast.Lsr) -> Some "Bitwise"
               | _ -> None
              in
             match class_name_opt with
@@ -1312,9 +1312,9 @@ module Typechecker =
 
       and walk_children locals te =
         match te.expr with
-        | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> ()
-        | TELet ((name, Some sch, _e1, e2)) | TELetRec ((name, Some sch, _e1, e2)) -> walk ((name, sch) :: locals) e2
-        | TELet ((name, None, e1, e2)) | TELetRec ((name, None, e1, e2)) -> 
+        | (((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TEVar _) | TENil) | TEContinueLoop) -> ()
+        | (TELet ((name, Some sch, _e1, e2)) | TELetRec ((name, Some sch, _e1, e2))) -> walk ((name, sch) :: locals) e2
+        | (TELet ((name, None, e1, e2)) | TELetRec ((name, None, e1, e2))) -> 
           do
             match Types.repr e1.ty with
             | Types.TVar {contents = Types.Unbound _} -> 
@@ -1339,7 +1339,7 @@ module Typechecker =
           end;
           walk locals e1;
           walk locals e2
-        | TELetMut ((_, e1, e2)) | TEBinop ((_, e1, e2)) | TECons ((e1, e2)) | TESeq ((e1, e2)) | TEResume ((e1, e2)) | TEFieldAssign ((e1, _, e2)) | TEIndex ((e1, e2)) -> 
+        | ((((((TELetMut ((_, e1, e2)) | TEBinop ((_, e1, e2))) | TECons ((e1, e2))) | TESeq ((e1, e2))) | TEResume ((e1, e2))) | TEFieldAssign ((e1, _, e2))) | TEIndex ((e1, e2))) -> 
           walk locals e1;
           walk locals e2
         | TEWhile {tw_cond; tw_body} -> 
@@ -1348,12 +1348,12 @@ module Typechecker =
         | TEApp ((fn_, arg)) -> 
           walk locals fn_;
           walk locals arg
-        | TEPerform ((_, e)) | TEUnop ((_, e)) | TEFun ((_, e, _)) | TEField ((e, _)) | TEBreak e | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign ((_, e)) -> walk locals e
+        | ((((((((TEPerform ((_, e)) | TEUnop ((_, e))) | TEFun ((_, e, _))) | TEField ((e, _))) | TEBreak e) | TEFoldContinue e) | TEForLoop e) | TEReturn e) | TEAssign ((_, e))) -> walk locals e
         | TEIf ((c, t, e)) -> 
           walk locals c;
           walk locals t;
           walk locals e
-        | TETuple es | TEArray es -> List.iter (walk locals) es
+        | (TETuple es | TEArray es) -> List.iter (walk locals) es
         | TERecord fields -> List.iter (fn (_, e) -> walk locals e) fields
         | TERecordUpdate ((base, overrides)) -> 
           walk locals base;
@@ -1372,7 +1372,7 @@ module Typechecker =
           List.iter (fn arm ->
             do
               match arm with
-              | THReturn ((_, e)) | THOp {body = e; _} | THOpProvide ((_, _, e)) | THOpTry ((_, _, e)) -> walk locals e
+              | (((THReturn ((_, e)) | THOp {body = e; _}) | THOpProvide ((_, _, e))) | THOpTry ((_, _, e))) -> walk locals e
 
             end) arms
         | TELetRecAnd ((bindings, body)) -> 
@@ -1833,7 +1833,7 @@ module Typechecker =
             if not (Hashtbl.has found i) do
               Hashtbl.set found i r
             end
-          | (Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2))) -> 
+          | ((Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2)))) -> 
             go s1 r1;
             go s2 r2
           | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
@@ -1899,7 +1899,7 @@ module Typechecker =
 
     and walk_children locals te =
       match te.expr with
-      | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TEVar _ | TENil -> ()
+      | ((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TEVar _) | TENil) -> ()
       | TELet ((name, sch_opt, e1, e2)) -> 
         walk locals e1;
         let locals' =
@@ -1974,7 +1974,7 @@ module Typechecker =
         List.iter (fn arm ->
           do
             match arm with
-            | THReturn ((_, body)) | THOp {body; _} | THOpProvide ((_, _, body)) | THOpTry ((_, _, body)) -> walk locals body
+            | (((THReturn ((_, body)) | THOp {body; _}) | THOpProvide ((_, _, body))) | THOpTry ((_, _, body))) -> walk locals body
 
           end) arms
       | TEResume ((e1, e2)) -> 
@@ -1989,18 +1989,18 @@ module Typechecker =
 
   pub let rec is_syntactic_value (expr : Ast.expr) : bool =
     match expr with
-    | Ast.EInt _ | Ast.EFloat _ | Ast.EBool _ | Ast.EString _ | Ast.EByte _ | Ast.ERune _ | Ast.EUnit -> true
+    | ((((((Ast.EInt _ | Ast.EFloat _) | Ast.EBool _) | Ast.EString _) | Ast.EByte _) | Ast.ERune _) | Ast.EUnit) -> true
     | Ast.EVar _ -> true
     | Ast.EFun _ -> true
     | Ast.ENil -> true
     | Ast.EConstruct ((_, None)) -> true
     | Ast.EConstruct ((_, Some e)) -> is_syntactic_value e
-    | Ast.ETuple es | Ast.EList es -> List.forall is_syntactic_value es
+    | (Ast.ETuple es | Ast.EList es) -> List.forall is_syntactic_value es
     | Ast.ERecord fields -> List.forall (fn (_, e) -> is_syntactic_value e) fields
     | Ast.ECons ((a, b)) -> (is_syntactic_value a) && (is_syntactic_value b)
     | Ast.EPolyVariant ((_, None)) -> true
     | Ast.EPolyVariant ((_, Some e)) -> is_syntactic_value e
-    | Ast.EAnnot ((e, _)) | Ast.ECoerce ((e, _)) | Ast.ELoc ((_, e)) -> is_syntactic_value e
+    | ((Ast.EAnnot ((e, _)) | Ast.ECoerce ((e, _))) | Ast.ELoc ((_, e))) -> is_syntactic_value e
     | _ -> false
 
 
@@ -2028,7 +2028,7 @@ module Typechecker =
 
         end
       | Ast.PatConstruct ((_, _)) -> []
-      | Ast.PatWild | Ast.PatVar _ -> Ast.PatWild :: []
+      | (Ast.PatWild | Ast.PatVar _) -> Ast.PatWild :: []
       | Ast.PatAs ((inner, _)) -> specialize_variant (normalize_pattern inner) ctor_name
       | Ast.PatOr ((p1, p2)) -> List.concat (specialize_variant (normalize_pattern p1) ctor_name) (specialize_variant (normalize_pattern p2) ctor_name)
       | _ -> []
@@ -2038,7 +2038,7 @@ module Typechecker =
   pub let has_wildcard pats = List.exists (fn p ->
     do
       match p with
-      | Ast.PatWild | Ast.PatVar _ -> true
+      | (Ast.PatWild | Ast.PatVar _) -> true
       | _ -> false
 
     end) pats
@@ -2155,7 +2155,7 @@ module Typechecker =
           else
             "#[" ^ ((String.concat "; " (List.init missing_len (fn _ -> "_"))) ^ "]") in
         missing_pat :: []
-      | Types.TInt | Types.TFloat | Types.TString -> "_" :: []
+      | ((Types.TInt | Types.TFloat) | Types.TString) -> "_" :: []
       | Types.TUnit -> 
         let has_unit = List.exists (fn p ->
           do
@@ -2581,7 +2581,7 @@ module Typechecker =
     mk ctx (TEFieldAssign (r_te, field, v_te)) Types.TUnit
   and synth_let_rec ctx level name type_params e1 e2 =
     match strip_loc e1 with
-    | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> 
+    | (Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _))) -> 
       if type_params <> [] do
         let (params, ret_annot, body) = extract_fn_info e1 in
         let (e1_te, scheme) = synth_poly_rec_fn ctx level name "" type_params params ret_annot body in
@@ -2747,7 +2747,7 @@ module Typechecker =
       List.iter (fn (name, _, fn_expr) ->
         do
           match strip_loc fn_expr with
-          | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> ()
+          | (Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _))) -> ()
           | _ when (is_constructive fn_expr) && (not (is_immediately_linked name fn_expr)) -> ()
           | _ -> error ctx ($"let rec binding for '{name}' must be a function or constructive expression")
 
@@ -2853,7 +2853,7 @@ module Typechecker =
     mk ctx (TEHandle (body_te, typed_arms)) result_ty
   and synth_binop ctx level op e1 e2 =
     match op with
-    | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> 
+    | (((Ast.Add | Ast.Sub) | Ast.Mul) | Ast.Div) -> 
       let te1 = synth ctx level e1 in
       let te2 = synth ctx level e2 in
       try_unify ctx te1.ty te2.ty;
@@ -2862,17 +2862,17 @@ module Typechecker =
       let te1 = check ctx level e1 Types.TInt in
       let te2 = check ctx level e2 Types.TInt in
       mk ctx (TEBinop (op, te1, te2)) Types.TInt
-    | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> 
+    | (((Ast.Lt | Ast.Gt) | Ast.Le) | Ast.Ge) -> 
       let te1 = synth ctx level e1 in
       let te2 = synth ctx level e2 in
       try_unify ctx te1.ty te2.ty;
       mk ctx (TEBinop (op, te1, te2)) Types.TBool
-    | Ast.Eq | Ast.Neq -> 
+    | (Ast.Eq | Ast.Neq) -> 
       let te1 = synth ctx level e1 in
       let te2 = synth ctx level e2 in
       try_unify ctx te1.ty te2.ty;
       mk ctx (TEBinop (op, te1, te2)) Types.TBool
-    | Ast.And | Ast.Or -> 
+    | (Ast.And | Ast.Or) -> 
       let te1 = check ctx level e1 Types.TBool in
       let te2 = check ctx level e2 Types.TBool in
       mk ctx (TEBinop (op, te1, te2)) Types.TBool
@@ -2880,7 +2880,7 @@ module Typechecker =
       let te1 = check ctx level e1 Types.TString in
       let te2 = check ctx level e2 Types.TString in
       mk ctx (TEBinop (op, te1, te2)) Types.TString
-    | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> 
+    | ((((Ast.Land | Ast.Lor) | Ast.Lxor) | Ast.Lsl) | Ast.Lsr) -> 
       let te1 = synth ctx level e1 in
       let te2 = synth ctx level e2 in
       try_unify ctx te1.ty te2.ty;
@@ -3029,7 +3029,7 @@ module Typechecker =
           acc
         else
           r :: acc
-      | Types.TArrow ((a, _, b)) | Types.TCont ((a, _, b)) -> collect_tvar_refs (collect_tvar_refs acc a) b
+      | (Types.TArrow ((a, _, b)) | Types.TCont ((a, _, b))) -> collect_tvar_refs (collect_tvar_refs acc a) b
       | Types.TTuple ts -> List.fold collect_tvar_refs acc ts
       | Types.TList t -> collect_tvar_refs acc t
       | Types.TArray t -> collect_tvar_refs acc t
@@ -3415,10 +3415,10 @@ module Typechecker =
               name :: acc
           | Ast.TyArrow ((a, b, _)) -> collect_annot_vars (collect_annot_vars acc a) b
           | Ast.TyTuple ts -> List.fold collect_annot_vars acc ts
-          | Ast.TyList t | Ast.TyArray t -> collect_annot_vars acc t
+          | (Ast.TyList t | Ast.TyArray t) -> collect_annot_vars acc t
           | Ast.TyApp ((args, _)) -> List.fold collect_annot_vars acc args
           | Ast.TyRecord ((fs, _)) -> List.fold (fn a (_, t) -> collect_annot_vars a t) acc fs
-          | Ast.TyQualified _ | Ast.TyName _ -> acc
+          | (Ast.TyQualified _ | Ast.TyName _) -> acc
           | Ast.TyPolyVariant ((_, tags)) -> List.fold (fn a (_, ty_opt) ->
             do
               match ty_opt with
@@ -3698,7 +3698,7 @@ module Typechecker =
         if not (Hashtbl.has mapping name) do
           Hashtbl.set mapping name id
         end
-      | (Ast.TyArrow ((a1, a2, _)), Types.TArrow ((t1, _, t2)) | Types.TCont ((t1, _, t2))) -> 
+      | (Ast.TyArrow ((a1, a2, _)), (Types.TArrow ((t1, _, t2)) | Types.TCont ((t1, _, t2)))) -> 
         walk a1 t1;
         walk a2 t2
       | (Ast.TyTuple anns, Types.TTuple tys) when (List.length anns) = (List.length tys) -> List.iter2 walk anns tys
@@ -3721,7 +3721,7 @@ module Typechecker =
       end) tbl in
       let rec walk_params params ty =
         match (params, Types.repr ty) with
-        | (p :: rest, Types.TArrow ((param_ty, _, ret_ty)) | Types.TCont ((param_ty, _, ret_ty))) -> 
+        | (p :: rest, (Types.TArrow ((param_ty, _, ret_ty)) | Types.TCont ((param_ty, _, ret_ty)))) -> 
           do
             match p.annot with
             | Some annot -> merge_into (extract_tyvar_ids annot param_ty)
@@ -3740,7 +3740,7 @@ module Typechecker =
               ty
             else
               match Types.repr ty with
-              | Types.TArrow ((_, _, rest)) | Types.TCont ((_, _, rest)) -> skip_arrows rest (n - 1)
+              | (Types.TArrow ((_, _, rest)) | Types.TCont ((_, _, rest))) -> skip_arrows rest (n - 1)
               | _ -> ty
            in
           let ret_ty = skip_arrows te_ty (List.length params) in
@@ -3839,7 +3839,7 @@ module Typechecker =
                     if not (Hashtbl.has param_map i) do
                       Hashtbl.set param_map i r
                     end
-                  | (Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2))) -> 
+                  | ((Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2)))) -> 
                     go s1 r1;
                     go s2 r2
                   | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
@@ -4094,10 +4094,10 @@ module Typechecker =
       | Ast.TyVar s -> s :: []
       | Ast.TyArrow ((a, b, _)) -> List.concat (collect_tyvars_annot a) (collect_tyvars_annot b)
       | Ast.TyTuple ts -> List.concat_map collect_tyvars_annot ts
-      | Ast.TyList t | Ast.TyArray t -> collect_tyvars_annot t
+      | (Ast.TyList t | Ast.TyArray t) -> collect_tyvars_annot t
       | Ast.TyApp ((args, _)) -> List.concat_map collect_tyvars_annot args
       | Ast.TyRecord ((fs, _)) -> List.concat_map (fn (_, t) -> collect_tyvars_annot t) fs
-      | Ast.TyName _ | Ast.TyQualified _ -> []
+      | (Ast.TyName _ | Ast.TyQualified _) -> []
       | Ast.TyPolyVariant ((_, tags)) -> List.concat_map (fn (_, ty_opt) ->
         do
           match ty_opt with
@@ -4293,7 +4293,7 @@ module Typechecker =
       | Types.TVariant ((name, args)) -> List.fold collect_type_names (name :: acc) args
       | Types.TArrow ((a, _, b)) -> collect_type_names (collect_type_names acc a) b
       | Types.TTuple ts -> List.fold collect_type_names acc ts
-      | Types.TList t | Types.TArray t -> collect_type_names acc t
+      | (Types.TList t | Types.TArray t) -> collect_type_names acc t
       | Types.TRecord row -> collect_row_names acc row
       | _ -> acc
 
@@ -4379,7 +4379,7 @@ module Typechecker =
                 | None -> ()
 
               end
-            | Ast.TDRecord _ | Ast.TDAlias _ -> ()
+            | (Ast.TDRecord _ | Ast.TDAlias _) -> ()
 
           end
         | Ast.Opaque -> 
@@ -4719,7 +4719,7 @@ module Typechecker =
               | None -> ()
 
             end
-          | Ast.TDRecord _ | Ast.TDAlias _ -> ()
+          | (Ast.TDRecord _ | Ast.TDAlias _) -> ()
 
         end
       | Ast.Opaque -> 
@@ -4846,7 +4846,7 @@ module Typechecker =
       else do
         if params = [] do
           match strip_loc body with
-          | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> ()
+          | (Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _))) -> ()
           | _ when (is_constructive body) && (not (is_immediately_linked name body)) -> ()
           | _ -> error ctx "let rec binding must be a function or constructive expression"
 
@@ -4961,7 +4961,7 @@ module Typechecker =
       else do
         List.iter (fn {lr_name = name; params; body; _} -> if params = [] do
           match strip_loc body with
-          | Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _)) -> ()
+          | (Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _))) -> ()
           | _ when (is_constructive body) && (not (is_immediately_linked name body)) -> ()
           | _ -> error ctx ($"let rec binding for '{name}' must be a function or constructive expression")
 
@@ -5263,7 +5263,7 @@ module Typechecker =
               let is_structural = List.exists (fn ty ->
                 do
                   match Types.repr ty with
-                  | Types.TPolyVariant _ | Types.TRecord _ -> true
+                  | (Types.TPolyVariant _ | Types.TRecord _) -> true
                   | _ -> false
 
                 end) arg_types in
@@ -5357,16 +5357,16 @@ module Typechecker =
   pub let rec pat_bound_names =
     fn
       | Ast.PatVar name -> name :: []
-      | Ast.PatTuple pats | Ast.PatArray pats -> List.concat_map pat_bound_names pats
+      | (Ast.PatTuple pats | Ast.PatArray pats) -> List.concat_map pat_bound_names pats
       | Ast.PatCons ((p1, p2)) -> List.concat (pat_bound_names p1) (pat_bound_names p2)
-      | Ast.PatConstruct ((_, Some p)) | Ast.PatPolyVariant ((_, Some p)) -> pat_bound_names p
+      | (Ast.PatConstruct ((_, Some p)) | Ast.PatPolyVariant ((_, Some p))) -> pat_bound_names p
       | Ast.PatRecord fields -> List.concat_map (fn (_, p) -> pat_bound_names p) fields
       | Ast.PatAs ((p, name)) -> name :: pat_bound_names p
       | Ast.PatOr ((p1, _)) -> pat_bound_names p1
       | Ast.PatMap pairs -> List.concat_map (fn (_, v) -> pat_bound_names v) pairs
       | Ast.PatSet elems -> List.concat_map pat_bound_names elems
       | Ast.PatAnnot ((p, _)) -> pat_bound_names p
-      | Ast.PatWild | Ast.PatInt _ | Ast.PatFloat _ | Ast.PatBool _ | Ast.PatString _ | Ast.PatUnit | Ast.PatNil | Ast.PatPin _ | Ast.PatConstruct ((_, None)) | Ast.PatPolyVariant ((_, None)) -> []
+      | (((((((((Ast.PatWild | Ast.PatInt _) | Ast.PatFloat _) | Ast.PatBool _) | Ast.PatString _) | Ast.PatUnit) | Ast.PatNil) | Ast.PatPin _) | Ast.PatConstruct ((_, None))) | Ast.PatPolyVariant ((_, None))) -> []
 
 
   pub let rec xform_expr xctx te =
@@ -5498,7 +5498,7 @@ module Typechecker =
     | TEFoldContinue e -> mk_xf xctx (TEFoldContinue (xform_expr xctx e)) te.ty
     | TEForLoop e -> mk_xf xctx (TEForLoop (xform_expr xctx e)) te.ty
     | TEReturn e -> mk_xf xctx (TEReturn (xform_expr xctx e)) te.ty
-    | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TENil -> te
+    | (((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TENil) -> te
     | TEMatchTree _ -> te
 
   and xform_class_method xctx name te =
@@ -5547,7 +5547,7 @@ module Typechecker =
                 if not (Hashtbl.has found i) do
                   Hashtbl.set found i r
                 end
-              | (Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2))) -> 
+              | ((Types.TArrow ((s1, _, s2)), Types.TArrow ((r1, _, r2))) | (Types.TCont ((s1, _, s2)), Types.TCont ((r1, _, r2)))) -> 
                 go s1 r1;
                 go s2 r2
               | (Types.TTuple ss, Types.TTuple rs) when (List.length ss) = (List.length rs) -> List.iter2 go ss rs
@@ -5732,8 +5732,8 @@ module Typechecker =
                           | Types.TArrow ((a, _, r)) -> 
                             check a;
                             check r
-                          | Types.TTuple ts | Types.TVariant ((_, ts)) -> List.iter check ts
-                          | Types.TList t | Types.TArray t -> check t
+                          | (Types.TTuple ts | Types.TVariant ((_, ts))) -> List.iter check ts
+                          | (Types.TList t | Types.TArray t) -> check t
                           | _ -> ()
                          in
                         List.iter check arg_types;
@@ -5755,7 +5755,7 @@ module Typechecker =
                           | Some ty -> 
                             do
                               match Types.repr ty with
-                              | Types.TPolyVariant _ | Types.TRecord _ -> true
+                              | (Types.TPolyVariant _ | Types.TRecord _) -> true
                               | _ -> false
 
                             end
@@ -5769,7 +5769,7 @@ module Typechecker =
                             | Some ty -> 
                               do
                                 match Types.repr ty with
-                                | Types.TPolyVariant _ | Types.TRecord _ -> Some (Types.repr ty)
+                                | (Types.TPolyVariant _ | Types.TRecord _) -> Some (Types.repr ty)
                                 | _ -> None
 
                               end
@@ -6198,12 +6198,12 @@ module Typechecker =
     fn tprog -> List.iter (fn tdecl ->
       do
         match tdecl with
-        | TDLet ((_, te)) | TDLetRec ((_, te)) | TDExpr te | TDLetMut ((_, te)) -> improve_fundeps_in_expr vars type_env te
+        | (((TDLet ((_, te)) | TDLetRec ((_, te))) | TDExpr te) | TDLetMut ((_, te))) -> improve_fundeps_in_expr vars type_env te
         | TDLetRecAnd bindings -> List.iter (fn (_, te) -> improve_fundeps_in_expr vars type_env te) bindings
         | TDModule ((_, decls, _)) -> List.iter (fn d ->
           do
             match d with
-            | TDLet ((_, te)) | TDLetRec ((_, te)) | TDExpr te | TDLetMut ((_, te)) -> improve_fundeps_in_expr vars type_env te
+            | (((TDLet ((_, te)) | TDLetRec ((_, te))) | TDExpr te) | TDLetMut ((_, te))) -> improve_fundeps_in_expr vars type_env te
             | TDLetRecAnd bindings -> List.iter (fn (_, te) -> improve_fundeps_in_expr vars type_env te) bindings
             | _ -> ()
 
@@ -6251,7 +6251,7 @@ module Typechecker =
      in
     let decl_names tdecl =
       match tdecl with
-      | TDLet ((name, _)) | TDLetRec ((name, _)) | TDLetMut ((name, _)) -> name :: []
+      | ((TDLet ((name, _)) | TDLetRec ((name, _))) | TDLetMut ((name, _))) -> name :: []
       | TDLetRecAnd bindings -> List.map fst bindings
       | _ -> []
      in
@@ -6294,10 +6294,10 @@ module Typechecker =
     (ctx, List.rev decls)
 
   pub let rec handler_body_walk pred (te : texpr) = (pred te) || (match te.expr with
-  | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> false
+  | (((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TEVar _) | TENil) | TEContinueLoop) -> false
   | TEFun _ -> false
-  | TELetRec ((_, _, _, e2)) | TELetRecAnd ((_, e2)) -> handler_body_walk pred e2
-  | TELet ((_, _, e1, e2)) | TESeq ((e1, e2)) | TELetMut ((_, e1, e2)) | TEBinop ((_, e1, e2)) | TECons ((e1, e2)) | TEResume ((e1, e2)) | TEFieldAssign ((e1, _, e2)) | TEIndex ((e1, e2)) -> (handler_body_walk pred e1) || (handler_body_walk pred e2)
+  | (TELetRec ((_, _, _, e2)) | TELetRecAnd ((_, e2))) -> handler_body_walk pred e2
+  | (((((((TELet ((_, _, e1, e2)) | TESeq ((e1, e2))) | TELetMut ((_, e1, e2))) | TEBinop ((_, e1, e2))) | TECons ((e1, e2))) | TEResume ((e1, e2))) | TEFieldAssign ((e1, _, e2))) | TEIndex ((e1, e2))) -> (handler_body_walk pred e1) || (handler_body_walk pred e2)
   | TEWhile {tw_cond; tw_body} -> (handler_body_walk pred tw_cond) || (handler_body_walk pred tw_body)
   | TEApp ((fn_, arg)) -> (handler_body_walk pred fn_) || (handler_body_walk pred arg)
   | TEIf ((c, t, e)) -> (handler_body_walk pred c) || ((handler_body_walk pred t) || (handler_body_walk pred e))
@@ -6305,8 +6305,8 @@ module Typechecker =
   | Some g -> handler_body_walk pred g
   | None -> false
   )) arms)
-  | TEPerform ((_, e)) | TEUnop ((_, e)) | TEField ((e, _)) | TEBreak e | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign ((_, e)) -> handler_body_walk pred e
-  | TETuple es | TEArray es -> List.exists (handler_body_walk pred) es
+  | (((((((TEPerform ((_, e)) | TEUnop ((_, e))) | TEField ((e, _))) | TEBreak e) | TEFoldContinue e) | TEForLoop e) | TEReturn e) | TEAssign ((_, e))) -> handler_body_walk pred e
+  | (TETuple es | TEArray es) -> List.exists (handler_body_walk pred) es
   | TERecord fields -> List.exists (fn (_, e) -> handler_body_walk pred e) fields
   | TERecordUpdate ((base, overrides)) -> (handler_body_walk pred base) || (List.exists (fn (_, e) -> handler_body_walk pred e) overrides)
   | TERecordUpdateIdx ((base, pairs)) -> (handler_body_walk pred base) || (List.exists (fn (i, v) -> (handler_body_walk pred i) || (handler_body_walk pred v)) pairs)
@@ -6320,7 +6320,7 @@ module Typechecker =
   | TEHandle ((body, arms)) -> (handler_body_walk pred body) || (List.exists (fn arm ->
     do
       match arm with
-      | THReturn ((_, e)) | THOp {body = e; _} | THOpProvide ((_, _, e)) | THOpTry ((_, _, e)) -> handler_body_walk pred e
+      | (((THReturn ((_, e)) | THOp {body = e; _}) | THOpProvide ((_, _, e))) | THOpTry ((_, _, e))) -> handler_body_walk pred e
 
     end) arms)
   | TEMatchTree _ -> false
@@ -6337,7 +6337,7 @@ module Typechecker =
   pub let handler_body_has_perform te = handler_body_walk (fn te ->
     do
       match te.expr with
-      | TEPerform _ | TEResume _ -> true
+      | (TEPerform _ | TEResume _) -> true
       | _ -> false
 
     end) te
@@ -6345,7 +6345,7 @@ module Typechecker =
   pub let rec classify_all_branches_resume (te : texpr) =
     match te.expr with
     | TEResume _ -> true
-    | TELet ((_, _, _, e2)) | TELetRec ((_, _, _, e2)) | TELetRecAnd ((_, e2)) | TELetMut ((_, _, e2)) | TESeq ((_, e2)) -> classify_all_branches_resume e2
+    | ((((TELet ((_, _, _, e2)) | TELetRec ((_, _, _, e2))) | TELetRecAnd ((_, e2))) | TELetMut ((_, _, e2))) | TESeq ((_, e2))) -> classify_all_branches_resume e2
     | TEIf ((_, then_e, else_e)) -> (classify_all_branches_resume then_e) && (classify_all_branches_resume else_e)
     | TEMatch ((_, arms, _)) -> List.forall (fn (_, _, body) -> classify_all_branches_resume body) arms
     | _ -> false
@@ -6416,7 +6416,7 @@ module Typechecker =
       | TDExpr e -> TDExpr (classify_texpr e)
       | TDLetRecAnd binds -> TDLetRecAnd (List.map (fn (n, e) -> (n, classify_texpr e)) binds)
       | TDModule ((name, decls, schemes)) -> TDModule (name, classify_handlers decls, schemes)
-      | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDOpen _ -> decl
+      | ((((TDEffect _ | TDType _) | TDClass _) | TDExtern _) | TDOpen _) -> decl
 
     end) program
 

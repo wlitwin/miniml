@@ -10,6 +10,7 @@ module Main =
   open Ast
   open Types
   open Typechecker
+  open Match_tree
   open Bytecode
   open Compiler
   open Serialize
@@ -150,6 +151,7 @@ module Main =
     let program = Parser.parse_program tokens in
     let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
     let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+    let typed_program2 = Match_tree.lower_program ctx2.type_env typed_program2 in
     if js_capture_mode do
       captured_typed_setups := List.concat captured_typed_setups [(ctx2.type_env, typed_program2)];
       (ctx2, { name = ""; arity = 0; num_locals = 0;
@@ -572,6 +574,7 @@ module Main =
           let program = Parser.parse_program tokens in
           let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
           let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let typed_program2 = Match_tree.lower_program ctx2.type_env typed_program2 in
           let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
           register_externs_from_program typed_program2 global_names;
           let ng_json = build_native_globals_json () in
@@ -627,6 +630,7 @@ module Main =
       let program = Parser.parse_program tokens in
       let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
       let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+      let typed_program2 = Match_tree.lower_program ctx2.type_env typed_program2 in
 
       -- Generate JS
       let js = Js_codegen.compile_program_with_stdlib ctx2.type_env captured_typed_setups typed_program2 in
@@ -693,6 +697,7 @@ module Main =
           let program = Parser.parse_program tokens in
           let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
           let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let typed_program2 = Match_tree.lower_program ctx2.type_env typed_program2 in
           let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
           register_externs_from_program typed_program2 global_names;
 

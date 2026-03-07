@@ -10,7 +10,7 @@ module Optimize =
     Array.iter (fn op ->
       do
         match op with
-        | Bytecode.JUMP t | Bytecode.JUMP_IF_FALSE t | Bytecode.JUMP_IF_TRUE t | Bytecode.ENTER_LOOP t | Bytecode.LOOP_CONTINUE t -> Hashtbl.set targets t ()
+        | ((((Bytecode.JUMP t | Bytecode.JUMP_IF_FALSE t) | Bytecode.JUMP_IF_TRUE t) | Bytecode.ENTER_LOOP t) | Bytecode.LOOP_CONTINUE t) -> Hashtbl.set targets t ()
         | Bytecode.JUMP_TABLE ((_, table, default)) -> 
           Array.iter (fn t -> Hashtbl.set targets t ()) table;
           Hashtbl.set targets default ()
@@ -26,7 +26,7 @@ module Optimize =
     let i = Ref.create 0 in
     for (Ref.get i) < len do
       match Array.get code (Ref.get i) with
-      | Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _ -> 
+      | (Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _) -> 
         let j = Ref.create ((Ref.get i) + 1) in
         for ((Ref.get j) < len) && (not (is_jump_target targets (Ref.get j))) do
           Array.set actions (Ref.get j) Remove;
@@ -51,8 +51,8 @@ module Optimize =
 
   pub let reads_slot op n =
     match op with
-    | Bytecode.GET_LOCAL s | Bytecode.GET_LOCAL_CALL ((s, _)) | Bytecode.GET_LOCAL_TUPLE_GET ((s, _)) | Bytecode.GET_LOCAL_FIELD ((s, _)) -> s = n
-    | Bytecode.CLOSURE ((_, caps)) | Bytecode.CLOSURE_REC ((_, caps, _)) -> List.exists (fn c -> c = (Bytecode.CaptureLocal n)) caps
+    | (((Bytecode.GET_LOCAL s | Bytecode.GET_LOCAL_CALL ((s, _))) | Bytecode.GET_LOCAL_TUPLE_GET ((s, _))) | Bytecode.GET_LOCAL_FIELD ((s, _))) -> s = n
+    | (Bytecode.CLOSURE ((_, caps)) | Bytecode.CLOSURE_REC ((_, caps, _))) -> List.exists (fn c -> c = (Bytecode.CaptureLocal n)) caps
     | _ -> false
 
 
@@ -82,8 +82,8 @@ module Optimize =
           Ref.set done_ true
         else
           match op with
-          | Bytecode.RETURN | Bytecode.FUNC_RETURN | Bytecode.TAIL_CALL _ | Bytecode.TAIL_CALL_N _ | Bytecode.MATCH_FAIL _ | Bytecode.HALT -> Ref.set done_ true
-          | Bytecode.JUMP _ | Bytecode.JUMP_IF_FALSE _ | Bytecode.JUMP_IF_TRUE _ | Bytecode.LOOP_BREAK | Bytecode.LOOP_CONTINUE _ | Bytecode.FOLD_CONTINUE _ | Bytecode.ENTER_LOOP _ | Bytecode.JUMP_TABLE _ -> 
+          | (((((Bytecode.RETURN | Bytecode.FUNC_RETURN) | Bytecode.TAIL_CALL _) | Bytecode.TAIL_CALL_N _) | Bytecode.MATCH_FAIL _) | Bytecode.HALT) -> Ref.set done_ true
+          | (((((((Bytecode.JUMP _ | Bytecode.JUMP_IF_FALSE _) | Bytecode.JUMP_IF_TRUE _) | Bytecode.LOOP_BREAK) | Bytecode.LOOP_CONTINUE _) | Bytecode.FOLD_CONTINUE _) | Bytecode.ENTER_LOOP _) | Bytecode.JUMP_TABLE _) -> 
             Ref.set result false;
             Ref.set done_ true
           | _ -> Ref.set i (Ref.get i + 1)
@@ -223,7 +223,7 @@ module Optimize =
           Ref.set ok false
         end in
       match op with
-      | Bytecode.JUMP t | Bytecode.JUMP_IF_FALSE t | Bytecode.JUMP_IF_TRUE t | Bytecode.ENTER_LOOP t | Bytecode.LOOP_CONTINUE t -> check_target t
+      | ((((Bytecode.JUMP t | Bytecode.JUMP_IF_FALSE t) | Bytecode.JUMP_IF_TRUE t) | Bytecode.ENTER_LOOP t) | Bytecode.LOOP_CONTINUE t) -> check_target t
       | _ -> ()
 
     end) code;
@@ -294,7 +294,7 @@ module Optimize =
         do
           let is_pure_push =
             match Array.get code (Ref.get i) with
-            | Bytecode.CONST _ | Bytecode.GET_LOCAL _ | Bytecode.GET_GLOBAL _ | Bytecode.GET_UPVALUE _ | Bytecode.NIL | Bytecode.DUP -> true
+            | (((((Bytecode.CONST _ | Bytecode.GET_LOCAL _) | Bytecode.GET_GLOBAL _) | Bytecode.GET_UPVALUE _) | Bytecode.NIL) | Bytecode.DUP) -> true
             | _ -> false
            in
           match Array.get code ((Ref.get i) + 1) with

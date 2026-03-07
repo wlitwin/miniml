@@ -1,0 +1,713 @@
+module Match_tree =
+  open Match_tree_types
+
+  pub type pattern_cell =
+    | PCWild
+    | PCConstructor of string * int * pattern_cell option
+    | PCPolyVariant of string * int * pattern_cell option
+    | PCBool of bool
+    | PCInt of int
+    | PCFloat of float
+    | PCString of string
+    | PCNil
+    | PCCons of pattern_cell * pattern_cell
+    | PCTuple of pattern_cell list
+    | PCRecord of (string * int * pattern_cell) list
+    | PCArray of pattern_cell list
+    | PCMapHas of map_key * pattern_cell
+    | PCPin of string
+    | PCOr of pattern_cell * binding list * pattern_cell * binding list
+
+
+  pub type row = {
+    pats: pattern_cell list;
+    arm_idx: int;
+    guard: Typechecker.texpr option;
+    bindings: binding list
+  }
+
+  pub let tag_for_constructor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | None -> failwith ($"match_tree: unknown constructor: {name}")
+    | Some info -> 
+      let (_, _, variant_def, _) = list_find (fn (n, _, _, _) -> n = info.ctor_type_name) type_env.variants in
+      let short_name =
+        match String.rindex_opt name #2e with
+        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+        | None -> name
+       in
+      let rec find_tag i =
+        fn
+          | [] -> failwith ($"match_tree: constructor {name} not found in type")
+          | (cname, _) :: _ when cname = short_name -> i
+          | _ :: rest -> find_tag (i + 1) rest
+       in
+      find_tag 0 variant_def
+
+
+  pub let is_newtype_ctor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | Some info -> List.mem info.ctor_type_name type_env.newtypes
+    | None -> false
+
+
+  pub let all_constructors_for type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | None -> None
+    | Some info -> 
+      do
+        let type_name = info.ctor_type_name in
+        match List.find (fn (n, _, _, _) -> n = type_name) type_env.variants with
+        | Some ((_, _, variant_def, _)) -> Some variant_def
+        | None -> None
+
+      end
+
+
+  pub let record_fields_of_ty type_env ty =
+    (type_env; ());
+    let ty = Types.repr ty in
+    match ty with
+    | Types.TRecord row -> 
+      let rec collect =
+        fn
+          | Types.RRow ((name, _fty, tail)) -> name :: collect tail
+          | Types.RVar {contents = Types.RLink row} -> collect row
+          | _ -> []
+       in
+      let fields = collect row in
+      List.mapi (fn i name -> (name, i)) fields
+    | _ -> []
+
+
+  pub let rec normalize_pattern type_env occ occ_ty (pat : Ast.pattern) : pattern_cell * binding list =
+    match pat with
+    | (Ast.PatWild | Ast.PatUnit) -> (PCWild, [])
+    | Ast.PatVar name -> (PCWild, {var_name = name; bind_occ = occ; bind_ty = occ_ty} :: [])
+    | Ast.PatInt n -> (PCInt n, [])
+    | Ast.PatFloat f -> (PCFloat f, [])
+    | Ast.PatBool b -> (PCBool b, [])
+    | Ast.PatString s -> (PCString s, [])
+    | Ast.PatNil -> (PCNil, [])
+    | Ast.PatCons ((hd, tl)) -> 
+      let elem_ty =
+        match Types.repr occ_ty with
+        | Types.TList t -> t
+        | _ -> occ_ty
+       in
+      let (hd_cell, hd_binds) = normalize_pattern type_env (List.concat occ (AConsHead :: [])) elem_ty hd in
+      let (tl_cell, tl_binds) = normalize_pattern type_env (List.concat occ (AConsTail :: [])) occ_ty tl in
+      (PCCons (hd_cell, tl_cell), List.concat hd_binds tl_binds)
+    | Ast.PatTuple pats -> 
+      let elem_tys =
+        match Types.repr occ_ty with
+        | Types.TTuple ts -> ts
+        | _ -> List.map (fn _ -> occ_ty) pats
+       in
+      let cells_binds = List.mapi (fn i pat -> let ety =
+        if i < (List.length elem_tys) do
+          List.nth elem_tys i
+        else
+          occ_ty in
+      normalize_pattern type_env (List.concat occ (ATupleField i :: [])) ety pat) pats in
+      let cells = List.map fst cells_binds in
+      let binds = List.concat_map snd cells_binds in
+      (PCTuple cells, binds)
+    | Ast.PatRecord fields -> 
+      let field_index_map = record_fields_of_ty type_env occ_ty in
+      let field_ty name =
+        match Types.repr occ_ty with
+        | Types.TRecord row -> 
+          let rec find =
+            fn
+              | Types.RRow ((n, ty, _)) when n = name -> ty
+              | Types.RRow ((_, _, tail)) -> find tail
+              | Types.RVar {contents = Types.RLink row} -> find row
+              | _ -> occ_ty
+           in
+          find row
+        | _ -> occ_ty
+       in
+      let cells_binds = List.map (fn (name, pat) -> let idx =
+        match List.assoc_opt name field_index_map with
+        | Some i -> i
+        | None -> 0
+       in
+      let fty = field_ty name in
+      let (cell, binds) = normalize_pattern type_env (List.concat occ (ARecordField (name, idx) :: [])) fty pat in
+      ((name, idx, cell), binds)) fields in
+      let cells = List.map fst cells_binds in
+      let binds = List.concat_map snd cells_binds in
+      (PCRecord cells, binds)
+    | Ast.PatArray pats -> 
+      let elem_ty =
+        match Types.repr occ_ty with
+        | Types.TArray t -> t
+        | _ -> occ_ty
+       in
+      let cells_binds = List.mapi (fn i pat -> normalize_pattern type_env (List.concat occ (AArrayElem i :: [])) elem_ty pat) pats in
+      let cells = List.map fst cells_binds in
+      let binds = List.concat_map snd cells_binds in
+      (PCArray cells, binds)
+    | Ast.PatConstruct ((name, arg)) when is_newtype_ctor type_env name -> 
+      do
+        match arg with
+        | None -> (PCWild, [])
+        | Some p -> 
+          let underlying_ty =
+            match List.assoc_opt name type_env.constructors with
+            | Some info -> 
+              do
+                match info.ctor_arg_ty with
+                | Some t -> t
+                | None -> occ_ty
+
+              end
+            | None -> occ_ty
+           in
+          normalize_pattern type_env occ underlying_ty p
+
+      end
+    | Ast.PatConstruct ((name, arg)) -> 
+      let tag = tag_for_constructor type_env name in
+      let payload_ty =
+        match List.assoc_opt name type_env.constructors with
+        | Some info -> 
+          do
+            match info.ctor_arg_ty with
+            | Some t -> t
+            | None -> Types.TUnit
+
+          end
+        | None -> Types.TUnit
+       in
+      let (sub_cell, sub_binds) =
+        match arg with
+        | None -> (None, [])
+        | Some p -> 
+          let (cell, binds) = normalize_pattern type_env (List.concat occ (AVariantPayload :: [])) payload_ty p in
+          (Some cell, binds)
+       in
+      (PCConstructor (name, tag, sub_cell), sub_binds)
+    | Ast.PatPolyVariant ((tag_name, arg)) -> 
+      let hash_tag = Types.polyvar_tag tag_name in
+      let payload_ty =
+        match Types.repr occ_ty with
+        | Types.TPolyVariant row -> 
+          let rec find =
+            fn
+              | Types.PVRow ((n, ty_opt, _)) when n = tag_name -> 
+                do
+                  match ty_opt with
+                  | Some t -> t
+                  | None -> Types.TUnit
+
+                end
+              | Types.PVRow ((_, _, tail)) -> find tail
+              | Types.PVVar {contents = Types.PVLink row} -> find row
+              | _ -> Types.TUnit
+           in
+          find row
+        | _ -> Types.TUnit
+       in
+      let (sub_cell, sub_binds) =
+        match arg with
+        | None -> (None, [])
+        | Some p -> 
+          let (cell, binds) = normalize_pattern type_env (List.concat occ (AVariantPayload :: [])) payload_ty p in
+          (Some cell, binds)
+       in
+      (PCPolyVariant (tag_name, hash_tag, sub_cell), sub_binds)
+    | Ast.PatAs ((inner, name)) -> 
+      let (cell, binds) = normalize_pattern type_env occ occ_ty inner in
+      let as_bind = {var_name = name; bind_occ = occ; bind_ty = occ_ty} in
+      (cell, as_bind :: binds)
+    | Ast.PatOr ((p1, p2)) -> 
+      let (cell1, binds1) = normalize_pattern type_env occ occ_ty p1 in
+      let (cell2, binds2) = normalize_pattern type_env occ occ_ty p2 in
+      (PCOr (cell1, binds1, cell2, binds2), [])
+    | Ast.PatMap entries -> 
+      let rec build_map_cells =
+        fn
+          | [] -> (PCWild, [])
+          | (key_pat, val_pat) :: rest -> 
+            let mk =
+              match key_pat with
+              | Ast.PatInt n -> MKInt n
+              | Ast.PatString s -> MKString s
+              | Ast.PatBool b -> MKBool b
+              | Ast.PatFloat f -> MKFloat f
+              | Ast.PatPin name -> MKPin name
+              | _ -> failwith "match_tree: map pattern key must be a literal or pin"
+             in
+            let val_ty = occ_ty in
+            let val_occ = List.concat occ (AMapValue mk :: []) in
+            let (val_cell, val_binds) = normalize_pattern type_env val_occ val_ty val_pat in
+            let (_rest_cell, rest_binds) = build_map_cells rest in
+            (PCMapHas (mk, val_cell), List.concat val_binds rest_binds)
+       in
+      build_map_cells entries
+    | Ast.PatPin name -> (PCPin name, [])
+    | Ast.PatAnnot ((inner, _)) -> normalize_pattern type_env occ occ_ty inner
+    | Ast.PatSet _ -> failwith "match_tree: PatSet should be desugared before lowering"
+
+
+  pub let build_matrix type_env scrutinee_ty arms =
+    let count_map_keys pat =
+      match pat with
+      | Ast.PatMap entries -> max 1 (List.length entries)
+      | _ -> 1
+     in
+    let max_cols = List.fold (fn acc (pat, _, _) -> max acc (count_map_keys pat)) 1 arms in
+    List.mapi (fn arm_idx (pat, guard, _body) -> let (cells, bindings) =
+      match pat with
+      | Ast.PatMap entries when (List.length entries) > 1 -> 
+        let cells_binds = List.map (fn entry -> normalize_pattern type_env [] scrutinee_ty (Ast.PatMap (entry :: []))) entries in
+        (List.map fst cells_binds, List.concat_map snd cells_binds)
+      | _ -> 
+        let (cell, bindings) = normalize_pattern type_env [] scrutinee_ty pat in
+        (cell :: [], bindings)
+     in
+    let padded = List.concat cells (List.init (max_cols - (List.length cells)) (fn _ -> PCWild)) in
+    {pats = padded; arm_idx; guard; bindings}) arms
+
+  pub let rec expand_or_rows rows =
+    let find_or_col pats =
+      let rec go i =
+        fn
+          | [] -> None
+          | PCOr ((p1, b1, p2, b2)) :: _ -> Some (i, p1, b1, p2, b2)
+          | _ :: rest -> go (i + 1) rest
+       in
+      go 0 pats in
+    List.concat_map (fn row ->
+      do
+        match find_or_col row.pats with
+        | Some ((i, p1, binds1, p2, binds2)) -> 
+          let replace pats p = List.mapi (fn j c -> if j = i do
+            p
+          else
+            c) pats in
+          let row1 = {row with pats = replace row.pats p1; bindings = List.concat row.bindings binds1} in
+          let row2 = {row with pats = replace row.pats p2; bindings = List.concat row.bindings binds2} in
+          List.concat (expand_or_rows (row1 :: [])) (expand_or_rows (row2 :: []))
+        | None -> row :: []
+
+      end) rows
+
+  pub type head_ctor =
+    | HCConstructor of string * int * int
+    | HCPolyVariant of string * int * int
+    | HCBool of bool
+    | HCInt of int
+    | HCFloat of float
+    | HCString of string
+    | HCNil
+    | HCCons
+    | HCArrayLen of int
+    | HCTuple of int
+    | HCRecord
+    | HCMapHas of map_key
+    | HCPin of string
+    | HCWild
+
+
+  pub let head_of cell =
+    match cell with
+    | PCWild -> HCWild
+    | PCConstructor ((name, tag, arg)) -> HCConstructor (name, tag, if arg = None do
+      0
+    else
+      1)
+    | PCPolyVariant ((name, hash, arg)) -> HCPolyVariant (name, hash, if arg = None do
+      0
+    else
+      1)
+    | PCBool b -> HCBool b
+    | PCInt n -> HCInt n
+    | PCFloat f -> HCFloat f
+    | PCString s -> HCString s
+    | PCNil -> HCNil
+    | PCCons _ -> HCCons
+    | PCTuple pats -> HCTuple (List.length pats)
+    | PCRecord _ -> HCRecord
+    | PCArray pats -> HCArrayLen (List.length pats)
+    | PCMapHas ((mk, _)) -> HCMapHas mk
+    | PCPin name -> HCPin name
+    | PCOr _ -> HCWild
+
+
+  pub let arity_of =
+    fn
+      | HCConstructor ((_, _, a)) -> a
+      | HCPolyVariant ((_, _, a)) -> a
+      | (((((HCBool _ | HCInt _) | HCFloat _) | HCString _) | HCNil) | HCPin _) -> 0
+      | HCCons -> 2
+      | HCTuple n -> n
+      | HCRecord -> 0
+      | HCArrayLen n -> n
+      | HCMapHas _ -> 1
+      | HCWild -> 0
+
+
+  pub let specialize_row col head row =
+    let cell = List.nth row.pats col in
+    let h = head_of cell in
+    let arity = arity_of head in
+    let remove_col pats = List.filteri (fn i _ -> i <> col) pats in
+    let wild_subs = List.init arity (fn _ -> PCWild) in
+    match h with
+    | HCWild -> Some {row with pats = List.concat wild_subs (remove_col row.pats)}
+    | _ when h = head -> 
+      let sub_pats =
+        match cell with
+        | PCConstructor ((_, _, Some p)) -> p :: []
+        | PCConstructor ((_, _, None)) -> []
+        | PCPolyVariant ((_, _, Some p)) -> p :: []
+        | PCPolyVariant ((_, _, None)) -> []
+        | PCCons ((hd, tl)) -> hd :: tl :: []
+        | PCTuple pats -> pats
+        | PCArray pats -> pats
+        | PCMapHas ((_, vp)) -> vp :: []
+        | _ -> []
+       in
+      Some {row with pats = List.concat sub_pats (remove_col row.pats)}
+    | _ -> None
+
+
+  pub let specialize col head rows = List.filter_map (specialize_row col head) rows
+
+  pub let default_matrix col rows = List.filter_map (fn row -> let cell = List.nth row.pats col in
+  match head_of cell with
+  | HCWild -> Some {row with pats = List.filteri (fn i _ -> i <> col) row.pats}
+  | _ -> None
+  ) rows
+
+  pub let distinct_heads col rows =
+    let heads = List.filter_map (fn row -> let cell = List.nth row.pats col in
+    match head_of cell with
+    | HCWild -> None
+    | h -> Some h
+    ) rows in
+    List.sort_uniq compare heads
+
+  pub let specialize_record col fields row =
+    let cell = List.nth row.pats col in
+    let remove_col pats = List.filteri (fn i _ -> i <> col) pats in
+    match cell with
+    | PCRecord field_pats -> 
+      let sub_pats = List.map (fn (name, _, _) ->
+        do
+          match List.find (fn (n, _, _) -> n = name) field_pats with
+          | Some ((_, _, p)) -> p
+          | None -> PCWild
+
+        end) fields in
+      Some {row with pats = List.concat sub_pats (remove_col row.pats)}
+    | PCWild -> 
+      let wild_subs = List.init (List.length fields) (fn _ -> PCWild) in
+      Some {row with pats = List.concat wild_subs (remove_col row.pats)}
+    | _ -> None
+
+
+  pub let select_column rows =
+    if rows = [] do
+      0
+    else do
+      let num_cols = List.length (List.hd rows).pats in
+      if num_cols <= 1 do
+        0
+      else do
+        let score col =
+          let heads = distinct_heads col rows in
+          let num_heads = List.length heads in
+          let num_wilds = List.length (List.filter (fn row -> (head_of (List.nth row.pats col)) = HCWild) rows) in
+          (num_heads * 1000) - num_wilds in
+        let best = Ref.create 0 in
+        let best_score = Ref.create (score 0) in
+        let mut col = 1 in
+        for col <= num_cols - 1 do
+          let s = score col in
+          if s > (Ref.get best_score) do
+            Ref.set best col;
+            Ref.set best_score s
+          end;
+          col := col + 1
+        end;
+        Ref.get best
+      end
+    end
+
+  pub type col_info = {
+    col_occ: occurrence;
+    col_ty: Types.ty
+  }
+
+  pub let expand_col_info type_env col_infos col head =
+    let parent = List.nth col_infos col in
+    let remove_col lst = List.filteri (fn i _ -> i <> col) lst in
+    let new_cols =
+      match head with
+      | HCConstructor ((name, _, arity)) -> 
+        if arity = 0 do
+          []
+        else do
+          let payload_ty =
+            match List.assoc_opt name type_env.constructors with
+            | Some info -> 
+              do
+                match info.ctor_arg_ty with
+                | Some t -> t
+                | None -> Types.TUnit
+
+              end
+            | None -> Types.TUnit
+           in
+          {col_occ = List.concat parent.col_occ (AVariantPayload :: []); col_ty = payload_ty} :: []
+        end
+      | HCPolyVariant ((tag_name, _, arity)) -> 
+        if arity = 0 do
+          []
+        else do
+          let payload_ty =
+            match Types.repr parent.col_ty with
+            | Types.TPolyVariant row -> 
+              let rec find =
+                fn
+                  | Types.PVRow ((n, ty_opt, _)) when n = tag_name -> 
+                    do
+                      match ty_opt with
+                      | Some t -> t
+                      | None -> Types.TUnit
+
+                    end
+                  | Types.PVRow ((_, _, tail)) -> find tail
+                  | Types.PVVar {contents = Types.PVLink row} -> find row
+                  | _ -> Types.TUnit
+               in
+              find row
+            | _ -> Types.TUnit
+           in
+          {col_occ = List.concat parent.col_occ (AVariantPayload :: []); col_ty = payload_ty} :: []
+        end
+      | HCCons -> 
+        let elem_ty =
+          match Types.repr parent.col_ty with
+          | Types.TList t -> t
+          | _ -> parent.col_ty
+         in
+        {col_occ = List.concat parent.col_occ (AConsHead :: []); col_ty = elem_ty} :: {col_occ = List.concat parent.col_occ (AConsTail :: []); col_ty = parent.col_ty} :: []
+      | HCTuple n -> 
+        let elem_tys =
+          match Types.repr parent.col_ty with
+          | Types.TTuple ts -> ts
+          | _ -> List.init n (fn _ -> parent.col_ty)
+         in
+        List.mapi (fn i _ -> let ty =
+          if i < (List.length elem_tys) do
+            List.nth elem_tys i
+          else
+            parent.col_ty in
+        {col_occ = List.concat parent.col_occ (ATupleField i :: []); col_ty = ty}) (List.init n (fn _ -> ()))
+      | HCArrayLen n -> 
+        let elem_ty =
+          match Types.repr parent.col_ty with
+          | Types.TArray t -> t
+          | _ -> parent.col_ty
+         in
+        List.init n (fn i -> {col_occ = List.concat parent.col_occ (AArrayElem i :: []); col_ty = elem_ty})
+      | HCMapHas mk -> 
+        let val_ty = parent.col_ty in
+        {col_occ = List.concat parent.col_occ (AMapValue mk :: []); col_ty = val_ty} :: []
+      | (((((HCBool _ | HCInt _) | HCFloat _) | HCString _) | HCNil) | HCPin _) -> []
+      | HCWild -> []
+      | HCRecord -> []
+     in
+    List.concat new_cols (remove_col col_infos)
+
+  pub let expand_col_info_record col_infos col fields parent_ty _type_env =
+    let parent = List.nth col_infos col in
+    let remove_col lst = List.filteri (fn i _ -> i <> col) lst in
+    let field_ty name =
+      match Types.repr parent_ty with
+      | Types.TRecord row -> 
+        let rec find =
+          fn
+            | Types.RRow ((n, ty, _)) when n = name -> ty
+            | Types.RRow ((_, _, tail)) -> find tail
+            | Types.RVar {contents = Types.RLink row} -> find row
+            | _ -> parent_ty
+         in
+        find row
+      | _ -> parent_ty
+     in
+    let new_cols = List.map (fn (name, idx, _) -> {col_occ = List.concat parent.col_occ (ARecordField (name, idx) :: []); col_ty = field_ty name}) fields in
+    List.concat new_cols (remove_col col_infos)
+
+  pub let is_complete_signature type_env heads occ_ty =
+    match heads with
+    | [] -> false
+    | HCBool _ :: _ -> (List.exists (fn h -> h = (HCBool true)) heads) && (List.exists (fn h -> h = (HCBool false)) heads)
+    | (HCNil | HCCons) :: _ -> (List.exists (fn h -> h = HCNil) heads) && (List.exists (fn h -> h = HCCons) heads)
+    | HCConstructor ((name, _, _)) :: _ -> 
+      do
+        match all_constructors_for type_env name with
+        | None -> false
+        | Some variant_def -> List.forall (fn (ctor_name, _) -> List.exists (fn h ->
+          do
+            match h with
+            | HCConstructor ((n, _, _)) -> 
+              let short =
+                match String.rindex_opt n #2e with
+                | Some i -> String.sub n (i + 1) (((String.length n) - i) - 1)
+                | None -> n
+               in
+              short = ctor_name
+            | _ -> false
+
+          end) heads) variant_def
+
+      end
+    | HCTuple _ :: _ -> true
+    | HCRecord :: _ -> true
+    | _ -> 
+      (occ_ty; ());
+      false
+
+
+  pub let head_to_test =
+    fn
+      | HCConstructor ((name, tag, _)) -> TConstructor (name, tag)
+      | HCPolyVariant ((name, hash, _)) -> TPolyVariant (name, hash)
+      | HCBool b -> TBoolLit b
+      | HCInt n -> TIntLit n
+      | HCFloat f -> TFloatLit f
+      | HCString s -> TStringLit s
+      | HCNil -> TNil
+      | HCCons -> TCons
+      | HCArrayLen n -> TArrayLen n
+      | HCMapHas mk -> TMapHasKey mk
+      | HCPin name -> TPin name
+      | ((HCTuple _ | HCRecord) | HCWild) -> failwith "match_tree: no test for irrefutable/wild"
+
+
+  pub let rec compile type_env col_infos rows loc =
+    let rows = expand_or_rows rows in
+    match rows with
+    | [] -> DFail loc
+    | first_row :: _ -> 
+      let all_wild = List.forall (fn p -> (head_of p) = HCWild) first_row.pats in
+      if all_wild || (first_row.pats = []) do
+        do
+          match first_row.guard with
+          | None -> DLeaf {arm_idx = first_row.arm_idx; bindings = first_row.bindings}
+          | Some guard -> 
+            let remaining = List.tl rows in
+            let on_false = compile type_env col_infos remaining loc in
+            DGuard {arm_idx = first_row.arm_idx; guard; bindings = first_row.bindings; on_true = DLeaf {arm_idx = first_row.arm_idx; bindings = first_row.bindings}; on_false}
+
+        end
+      else do
+        let col = select_column rows in
+        let col_info = List.nth col_infos col in
+        let has_record = List.exists (fn row ->
+          do
+            match List.nth row.pats col with
+            | PCRecord _ -> true
+            | _ -> false
+
+          end) rows in
+        if has_record do
+          compile_record type_env col_infos rows col loc
+        else do
+          let heads = distinct_heads col rows in
+          let has_tuple = List.exists (fn h ->
+            do
+              match h with
+              | HCTuple _ -> true
+              | _ -> false
+
+            end) heads in
+          if has_tuple && ((List.length heads) = 1) do
+            let head = List.hd heads in
+            let specialized = specialize col head rows in
+            let new_col_infos = expand_col_info type_env col_infos col head in
+            compile type_env new_col_infos specialized loc
+          else do
+            let complete = is_complete_signature type_env heads col_info.col_ty in
+            let cases = List.map (fn head -> let specialized = specialize col head rows in
+            let new_col_infos = expand_col_info type_env col_infos col head in
+            let sub_tree = compile type_env new_col_infos specialized loc in
+            let test = head_to_test head in
+            (test, [], sub_tree)) heads in
+            let default =
+              if complete do
+                None
+              else do
+                let def_rows = default_matrix col rows in
+                if def_rows = [] do
+                  Some (DFail loc)
+                else
+                  Some (compile type_env (List.filteri (fn i _ -> i <> col) col_infos) def_rows loc)
+              end in
+            DSwitch {occ = col_info.col_occ; occ_ty = col_info.col_ty; cases; default}
+          end
+        end
+      end
+
+  and compile_record type_env col_infos rows col loc =
+    let fields = List.find_map (fn row ->
+      do
+        match List.nth row.pats col with
+        | PCRecord fields -> Some fields
+        | _ -> None
+
+      end) rows in
+    match fields with
+    | None -> compile type_env col_infos rows loc
+    | Some fields -> 
+      let parent_ty = (List.nth col_infos col).col_ty in
+      let specialized = List.filter_map (specialize_record col fields) rows in
+      let new_col_infos = expand_col_info_record col_infos col fields parent_ty type_env in
+      compile type_env new_col_infos specialized loc
+
+
+  pub let compile_match type_env (scrutinee : Typechecker.texpr) arms match_kind loc =
+    let scrutinee_ty = scrutinee.ty in
+    let matrix = build_matrix type_env scrutinee_ty arms in
+    let num_cols =
+      match matrix with
+      | row :: _ -> List.length row.pats
+      | [] -> 1
+     in
+    let col_infos = List.init num_cols (fn _ -> {col_occ = []; col_ty = scrutinee_ty}) in
+    let tree = compile type_env col_infos matrix loc in
+    let match_arms = Array.of_list (List.map (fn (_, _, body) -> {arm_body = body}) arms) in
+    {scrutinee; scrutinee_ty; match_arms; tree; loc; match_kind}
+
+  pub let rec lower_texpr type_env (te : Typechecker.texpr) : Typechecker.texpr =
+    match te.expr with
+    | Typechecker.TEMatch ((scrutinee, arms, match_kind)) -> 
+      let scrutinee' = lower_texpr type_env scrutinee in
+      let arms' = List.map (fn (pat, guard, body) -> (pat, Option.map (lower_texpr type_env) guard, lower_texpr type_env body)) arms in
+      let cm = compile_match type_env scrutinee' arms' match_kind te.loc in
+      {te with expr = Typechecker.TEMatchTree cm}
+    | _ -> 
+      let expr' = Typechecker.map_texpr_children (lower_texpr type_env) te in
+      {te with expr = expr'}
+
+
+  pub let rec lower_program type_env (program : Typechecker.tprogram) : Typechecker.tprogram = List.map (fn decl ->
+    do
+      match decl with
+      | Typechecker.TDLet ((n, e)) -> Typechecker.TDLet (n, lower_texpr type_env e)
+      | Typechecker.TDLetMut ((n, e)) -> Typechecker.TDLetMut (n, lower_texpr type_env e)
+      | Typechecker.TDLetRec ((n, e)) -> Typechecker.TDLetRec (n, lower_texpr type_env e)
+      | Typechecker.TDExpr e -> Typechecker.TDExpr (lower_texpr type_env e)
+      | Typechecker.TDLetRecAnd binds -> Typechecker.TDLetRecAnd (List.map (fn (n, e) -> (n, lower_texpr type_env e)) binds)
+      | Typechecker.TDModule ((name, decls, schemes)) -> Typechecker.TDModule (name, lower_program type_env decls, schemes)
+      | ((((Typechecker.TDEffect _ | Typechecker.TDType _) | Typechecker.TDClass _) | Typechecker.TDExtern _) | Typechecker.TDOpen _) -> decl
+
+    end) program
+
+end

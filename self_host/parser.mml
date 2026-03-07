@@ -169,7 +169,7 @@ module Parser =
 
   pub let at_expr_start p =
     match peek_kind p with
-    | Token.INT _ | Token.FLOAT _ | Token.STRING _ | Token.INTERP_STRING _ | Token.BYTE _ | Token.RUNE _ | Token.TRUE | Token.FALSE | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.FN | Token.IF | Token.LET | Token.MATCH | Token.MINUS | Token.NOT | Token.LNOT | Token.PERFORM | Token.HANDLE | Token.TRY | Token.PROVIDE | Token.RESUME | Token.FOR | Token.BREAK | Token.CONTINUE | Token.RETURN | Token.HASH | Token.DO | Token.POLYTAG _ -> true
+    | (((((((((((((((((((((((((((((((Token.INT _ | Token.FLOAT _) | Token.STRING _) | Token.INTERP_STRING _) | Token.BYTE _) | Token.RUNE _) | Token.TRUE) | Token.FALSE) | Token.IDENT _) | Token.UIDENT _) | Token.LPAREN) | Token.LBRACE) | Token.LBRACKET) | Token.FN) | Token.IF) | Token.LET) | Token.MATCH) | Token.MINUS) | Token.NOT) | Token.LNOT) | Token.PERFORM) | Token.HANDLE) | Token.TRY) | Token.PROVIDE) | Token.RESUME) | Token.FOR) | Token.BREAK) | Token.CONTINUE) | Token.RETURN) | Token.HASH) | Token.DO) | Token.POLYTAG _) -> true
     | _ -> false
 
 
@@ -377,7 +377,7 @@ module Parser =
 
   and is_eff_param_start =
     fn
-      | Token.IDENT _ | Token.TYVAR _ | Token.LPAREN | Token.LBRACE -> true
+      | (((Token.IDENT _ | Token.TYVAR _) | Token.LPAREN) | Token.LBRACE) -> true
       | _ -> false
 
   and parse_eff_type_params p =
@@ -626,7 +626,7 @@ module Parser =
   and at_pattern_arg_start p =
     match peek_kind p with
     | Token.IDENT "as" -> false
-    | Token.INT _ | Token.TRUE | Token.FALSE | Token.STRING _ | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACKET | Token.LBRACE | Token.UNDERSCORE | Token.HASH | Token.POLYTAG _ | Token.CARET -> true
+    | ((((((((((((Token.INT _ | Token.TRUE) | Token.FALSE) | Token.STRING _) | Token.IDENT _) | Token.UIDENT _) | Token.LPAREN) | Token.LBRACKET) | Token.LBRACE) | Token.UNDERSCORE) | Token.HASH) | Token.POLYTAG _) | Token.CARET) -> true
     | _ -> false
 
   and parse_pattern_list_elems p =
@@ -689,20 +689,20 @@ module Parser =
       | Token.PIPEARROW -> (1, 2)
       | Token.PIPEPIPE -> (2, 3)
       | Token.AMPAMP -> (4, 5)
-      | Token.EQ | Token.NEQ | Token.LT | Token.GT | Token.LE | Token.GE -> (6, 7)
+      | (((((Token.EQ | Token.NEQ) | Token.LT) | Token.GT) | Token.LE) | Token.GE) -> (6, 7)
       | Token.COLONCOLON -> (9, 8)
-      | Token.PLUS | Token.MINUS -> (10, 11)
+      | (Token.PLUS | Token.MINUS) -> (10, 11)
       | Token.CARET -> (10, 11)
-      | Token.STAR | Token.SLASH | Token.MOD -> (12, 13)
-      | Token.LOR | Token.LXOR -> (10, 11)
-      | Token.LAND | Token.LSL | Token.LSR -> (12, 13)
+      | ((Token.STAR | Token.SLASH) | Token.MOD) -> (12, 13)
+      | (Token.LOR | Token.LXOR) -> (10, 11)
+      | ((Token.LAND | Token.LSL) | Token.LSR) -> (12, 13)
       | Token.BACKTICK_INFIX _ -> (8, 9)
       | _ -> ((-1), (-1))
 
 
   pub let is_binop =
     fn
-      | Token.PLUS | Token.MINUS | Token.STAR | Token.SLASH | Token.MOD | Token.EQ | Token.NEQ | Token.LT | Token.GT | Token.LE | Token.GE | Token.AMPAMP | Token.PIPEPIPE | Token.CARET | Token.COLONCOLON | Token.LAND | Token.LOR | Token.LXOR | Token.LSL | Token.LSR | Token.PIPEARROW | Token.BACKTICK_INFIX _ -> true
+      | (((((((((((((((((((((Token.PLUS | Token.MINUS) | Token.STAR) | Token.SLASH) | Token.MOD) | Token.EQ) | Token.NEQ) | Token.LT) | Token.GT) | Token.LE) | Token.GE) | Token.AMPAMP) | Token.PIPEPIPE) | Token.CARET) | Token.COLONCOLON) | Token.LAND) | Token.LOR) | Token.LXOR) | Token.LSL) | Token.LSR) | Token.PIPEARROW) | Token.BACKTICK_INFIX _) -> true
       | _ -> false
 
 
@@ -1050,7 +1050,7 @@ module Parser =
             expect p Token.RBRACKET;
             Ast.EArray elems
           end
-        | Token.UIDENT name | Token.IDENT name -> 
+        | (Token.UIDENT name | Token.IDENT name) -> 
           do
             (advance p; ());
             match peek_kind p with
@@ -1154,7 +1154,7 @@ module Parser =
 
   and at_atom_start p =
     match peek_kind p with
-    | Token.INT _ | Token.FLOAT _ | Token.STRING _ | Token.INTERP_STRING _ | Token.BYTE _ | Token.RUNE _ | Token.TRUE | Token.FALSE | Token.IDENT _ | Token.UIDENT _ | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.HASH | Token.DOT | Token.POLYTAG _ -> true
+    | (((((((((((((((Token.INT _ | Token.FLOAT _) | Token.STRING _) | Token.INTERP_STRING _) | Token.BYTE _) | Token.RUNE _) | Token.TRUE) | Token.FALSE) | Token.IDENT _) | Token.UIDENT _) | Token.LPAREN) | Token.LBRACE) | Token.LBRACKET) | Token.HASH) | Token.DOT) | Token.POLYTAG _) -> true
     | _ -> false
 
   and is_adjacent p = (p.pos > 0) && (let prev = Array.get p.tokens (p.pos - 1) in
@@ -1186,7 +1186,7 @@ module Parser =
         do
           let arg = parse_postfix p in
           match expr with
-          | Ast.EConstruct ((name, None)) | Ast.ELoc ((_, Ast.EConstruct ((name, None)))) -> loop (Ast.EConstruct (name, Some arg))
+          | (Ast.EConstruct ((name, None)) | Ast.ELoc ((_, Ast.EConstruct ((name, None))))) -> loop (Ast.EConstruct (name, Some arg))
           | _ -> loop (Ast.EApp (expr, arg))
 
         end
@@ -1195,7 +1195,7 @@ module Parser =
     loop fn_
   and is_keyword_expr_start p =
     match peek_kind p with
-    | Token.FN | Token.IF | Token.LET | Token.MATCH | Token.PERFORM | Token.HANDLE | Token.TRY | Token.PROVIDE | Token.RESUME | Token.FOR | Token.BREAK | Token.CONTINUE | Token.RETURN -> true
+    | ((((((((((((Token.FN | Token.IF) | Token.LET) | Token.MATCH) | Token.PERFORM) | Token.HANDLE) | Token.TRY) | Token.PROVIDE) | Token.RESUME) | Token.FOR) | Token.BREAK) | Token.CONTINUE) | Token.RETURN) -> true
     | _ -> false
 
   and parse_expr_bp p min_bp =
@@ -1493,7 +1493,7 @@ module Parser =
     end
   and is_destruct_start p =
     match peek_kind p with
-    | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.UIDENT _ -> true
+    | (((Token.LPAREN | Token.LBRACE) | Token.LBRACKET) | Token.UIDENT _) -> true
     | Token.IDENT _ when (peek_kind_at p 1) = Token.COLONCOLON -> true
     | _ -> false
 
@@ -1681,8 +1681,8 @@ module Parser =
     for ((Ref.get depth) > 0) && ((not (Ref.get hit_eof)) && ((Ref.get i) < max_scan)) do
       do
         match peek_kind_at p (Ref.get i) with
-        | Token.LPAREN | Token.LBRACE | Token.LBRACKET -> Ref.set depth (Ref.get depth + 1)
-        | Token.RPAREN | Token.RBRACE | Token.RBRACKET -> Ref.set depth (Ref.get depth - 1)
+        | ((Token.LPAREN | Token.LBRACE) | Token.LBRACKET) -> Ref.set depth (Ref.get depth + 1)
+        | ((Token.RPAREN | Token.RBRACE) | Token.RBRACKET) -> Ref.set depth (Ref.get depth - 1)
         | Token.EOF -> Ref.set hit_eof true
         | _ -> ()
 
@@ -1704,7 +1704,7 @@ module Parser =
       (advance p; ());
       let acc_pat =
         match peek_kind p with
-        | Token.LPAREN | Token.LBRACE | Token.LBRACKET -> parse_pattern_atom p
+        | ((Token.LPAREN | Token.LBRACE) | Token.LBRACKET) -> parse_pattern_atom p
         | _ -> 
           let name = expect_ident p in
           Ast.PatVar name
@@ -1740,7 +1740,7 @@ module Parser =
       let body = parse_expr p in
       expect p Token.END;
       Ast.EWhileLet (pat, scrutinee, body)
-    | Token.IDENT _ | Token.UNDERSCORE when (peek_kind_at p 1) = Token.IN -> 
+    | (Token.IDENT _ | Token.UNDERSCORE) when (peek_kind_at p 1) = Token.IN -> 
       let var_name =
         if (peek_kind p) = Token.UNDERSCORE do
           (advance p; ());
@@ -1750,7 +1750,7 @@ module Parser =
       expect p Token.IN;
       let coll = parse_expr_bp p 0 in
       parse_for_in_rest p var_name (fn body -> body) coll
-    | Token.LPAREN | Token.LBRACE | Token.LBRACKET when lookahead_in_after_balanced p -> 
+    | ((Token.LPAREN | Token.LBRACE) | Token.LBRACKET) when lookahead_in_after_balanced p -> 
       let pat = parse_pattern_atom p in
       expect p Token.IN;
       let coll = parse_expr_bp p 0 in
@@ -1982,7 +1982,7 @@ module Parser =
       end;
       expect p Token.RBRACE;
       Ast.TDRecord fields
-    | Token.PIPE | Token.UIDENT _ -> parse_variant_ctors p
+    | (Token.PIPE | Token.UIDENT _) -> parse_variant_ctors p
     | _ -> Ast.TDAlias (parse_ty p)
 
 
@@ -2023,7 +2023,7 @@ module Parser =
   pub let rec extract_pat_vars =
     fn
       | Ast.PatVar name -> name :: []
-      | Ast.PatWild | Ast.PatInt _ | Ast.PatFloat _ | Ast.PatBool _ | Ast.PatString _ | Ast.PatUnit | Ast.PatNil -> []
+      | ((((((Ast.PatWild | Ast.PatInt _) | Ast.PatFloat _) | Ast.PatBool _) | Ast.PatString _) | Ast.PatUnit) | Ast.PatNil) -> []
       | Ast.PatTuple pats -> List.concat_map extract_pat_vars pats
       | Ast.PatCons ((hd, tl)) -> List.concat (extract_pat_vars hd) (extract_pat_vars tl)
       | Ast.PatConstruct ((_, None)) -> []
