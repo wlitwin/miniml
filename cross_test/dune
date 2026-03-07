@@ -2,4 +2,5 @@
  (name runner)
  (libraries interpreter unix)
  (modules runner)
- (deps (source_tree tests)))
+ (deps
+  (source_tree tests)))

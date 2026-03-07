@@ -627,6 +627,17 @@ match e with
 #{1: v}
 ```
 
+### Set patterns
+
+```
+#{1}                -- contains 1
+#{1; 2; 3}          -- contains 1, 2, and 3
+#{"hello"; "world"} -- contains both strings
+```
+
+Set patterns check membership — `#{1; 2}` matches any set containing
+at least 1 and 2 (it may contain other elements).
+
 ### Or-patterns
 
 Multiple patterns sharing the same body, separated by `|`:

@@ -5,23 +5,28 @@ let () =
 
   (* Basic GADT declaration and construction *)
   test "GADT basic declaration and construct" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
       IntLit 42 |> fn (IntLit n) -> n
-    |} 42);
+    |}
+        42);
 
   test "GADT construct bool" (fun () ->
-    expect_bool {|
+      expect_bool
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
       BoolLit true |> fn (BoolLit b) -> b
-    |} true);
+    |}
+        true);
 
   test "GADT let function with match" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let f (e : int expr) : int =
@@ -29,11 +34,13 @@ let () =
         | IntLit n -> n
       ;;
       f (IntLit 5)
-    |} 5);
+    |}
+        5);
 
   (* GADT pattern match with type refinement *)
   test "GADT eval with type refinement" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -46,22 +53,26 @@ let () =
           va + vb
       ;;
       eval (Add (IntLit 10, IntLit 20))
-    |} 30);
+    |}
+        30);
 
   (* GADT with no-arg constructor *)
   test "GADT no-arg constructor" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Zero : int expr
       match (Zero : int expr) with
       | IntLit n -> n
       | Zero -> 0
-    |} 0);
+    |}
+        0);
 
   (* Type equality witness *)
   test "GADT type equality witness (Refl)" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type ('a, 'b) eq =
         | Refl : ('a, 'a) eq
       let cast (eq : (int, int) eq) (x : int) : int =
@@ -69,11 +80,13 @@ let () =
         | Refl -> x
       ;;
       cast Refl 42
-    |} 42);
+    |}
+        42);
 
   (* Existential types *)
   test "GADT existential type" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type any_show =
         | AnyShow : 'a * ('a -> string) -> any_show
       let to_s (n : int) : string = string_of_int n
@@ -83,51 +96,61 @@ let () =
         | AnyShow (v, f) -> f v
       ;;
       show_any (AnyShow (42, to_s))
-    |} "42");
+    |}
+        "42");
 
   (* Mixed GADT and regular constructors *)
   test "GADT mixed with regular constructors" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a tagged =
         | IntTag : int -> int tagged
         | Pair of 'a * 'a
       match (IntTag 7 : int tagged) with
       | IntTag n -> n
       | Pair (a, _) -> a
-    |} 7);
+    |}
+        7);
 
   (* GADT constructor used as function *)
   test "GADT constructor as function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
       let make_int = IntLit in
       make_int 99 |> fn (IntLit n) -> n
-    |} 99);
+    |}
+        99);
 
   (* Error: deriving on GADT *)
   test "GADT deriving rejected" (fun () ->
-    expect_type_error_msg {|
+      expect_type_error_msg
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         deriving Show
       ()
-    |} "cannot derive Show for GADT");
+    |}
+        "cannot derive Show for GADT");
 
   (* GADT with multiple type params *)
   test "GADT multiple type params" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type ('a, 'b) pair_type =
         | IntStr : int * string -> (int, string) pair_type
         | BoolUnit : bool -> (bool, unit) pair_type
       match (IntStr (5, "hi") : (int, string) pair_type) with
       | IntStr (n, _) -> n
-    |} 5);
+    |}
+        5);
 
   (* GADT recursive eval function *)
   test "GADT recursive eval" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -146,11 +169,13 @@ let () =
           if eval_bool c do eval_bool t else eval_bool f
       ;;
       eval_int (If (BoolLit true, Add (IntLit 1, IntLit 2), IntLit 0))
-    |} 3);
+    |}
+        3);
 
   (* GADT: return type must match the declared type *)
   test "GADT wrong return type name error" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       type 'a expr =
         | IntLit : int -> int option
       ()
@@ -158,7 +183,8 @@ let () =
 
   (* GADT with partial match that's actually exhaustive *)
   test "GADT exhaustive subset" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a value =
         | VInt : int -> int value
         | VBool : bool -> bool value
@@ -168,11 +194,13 @@ let () =
         | VInt n -> n
       ;;
       get_int (VInt 42)
-    |} 42);
+    |}
+        42);
 
   (* GADT existential with multiple constructors *)
   test "GADT existential heterogeneous list" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type any =
         | Any : 'a -> any
       let rec count_anys (xs : any list) : int =
@@ -181,15 +209,16 @@ let () =
         | _ :: rest -> 1 + count_anys rest
       ;;
       count_anys [Any 1; Any true; Any "hello"]
-    |} 3);
+    |}
+        3);
 
   (* === GADT Edge Cases & Feature Interaction Tests === *)
   Printf.printf "\n=== GADT Edge Cases & Feature Interactions ===\n";
 
   (* --- GADTs + Effects --- *)
-
   test "GADT + effects: perform inside GADT match arm" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -210,10 +239,12 @@ let () =
       with
       | return x -> x
       | log _ k -> resume k ()
-    |} 3);
+    |}
+        3);
 
   test "GADT + effects: stateful GADT evaluator" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -233,10 +264,12 @@ let () =
       | tick () k -> count := count + 1; resume k count
       in
       result + count
-    |} 11);
+    |}
+        11);
 
   test "GADT + effects: existential with effectful function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type task =
         | Task : 'a * ('a -> int) -> task
       effect Log =
@@ -255,12 +288,13 @@ let () =
       with
       | return x -> x + logged
       | log n k -> logged := logged + n; resume k ()
-    |} 84);
+    |}
+        84);
 
   (* --- GADTs + Type Classes --- *)
-
   test "GADT + type classes: constrained function on GADT contents" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a box =
         | IntBox : int -> int box
         | StrBox : string -> string box
@@ -269,10 +303,12 @@ let () =
         | IntBox n -> show n
       ;;
       show_int_box (IntBox 42)
-    |} "42");
+    |}
+        "42");
 
   test "GADT + type classes: existential with Show constraint" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type showable =
         | MkShowable : 'a * ('a -> string) -> showable
       let show_it (s : showable) : string =
@@ -282,10 +318,13 @@ let () =
       let s1 = MkShowable (42, show) in
       let s2 = MkShowable (true, show) in
       show_it s1 ^ " " ^ show_it s2
-    |} "42 true");
+    |}
+        "42 true");
 
-  test "GADT + type classes: custom class method on GADT-wrapped value" (fun () ->
-    expect_string {|
+  test "GADT + type classes: custom class method on GADT-wrapped value"
+    (fun () ->
+      expect_string
+        {|
       class Describe 'a =
         describe : 'a -> string
       end
@@ -302,12 +341,13 @@ let () =
         | Box n -> describe n
       ;;
       describe_box (Box 99)
-    |} "int:99");
+    |}
+        "int:99");
 
   (* --- GADTs + Modules --- *)
-
   test "GADT inside module" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       module Expr =
         pub type 'a t =
           | Lit : int -> int t
@@ -319,10 +359,12 @@ let () =
       end
       ;;
       Expr.eval (Expr.Add (Expr.Lit 10, Expr.Lit 20))
-    |} 30);
+    |}
+        30);
 
   test "GADT module with open" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       module E =
         pub type 'a expr =
           | IntLit : int -> int expr
@@ -336,12 +378,13 @@ let () =
       open E
       ;;
       eval (Neg (IntLit 5))
-    |} (-5));
+    |}
+        (-5));
 
   (* --- GADTs + Pattern Matching Edge Cases --- *)
-
   test "GADT match with guard" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let eval (e : int expr) : int =
@@ -350,10 +393,12 @@ let () =
         | IntLit n -> n
       ;;
       eval (IntLit 200) + eval (IntLit 5)
-    |} 105);
+    |}
+        105);
 
   test "GADT match wildcard arm" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -364,20 +409,24 @@ let () =
         | _ -> 0
       ;;
       simplify (IntLit 5) + simplify (Add (IntLit 1, IntLit 2))
-    |} 5);
+    |}
+        5);
 
   test "GADT nested constructor pattern" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
       match (Add (IntLit 3, IntLit 4) : int expr) with
       | Add (IntLit a, IntLit b) -> a + b
       | _ -> 0
-    |} 7);
+    |}
+        7);
 
   test "GADT match with nested eval" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -390,12 +439,13 @@ let () =
           x + y
       ;;
       eval (Add (IntLit 10, IntLit 20))
-    |} 30);
+    |}
+        30);
 
   (* --- GADTs + Higher-Order Functions --- *)
-
   test "GADT constructor in map" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let rec sum_exprs (es : int expr list) : int =
@@ -408,10 +458,12 @@ let () =
       let nums = [1; 2; 3; 4; 5] in
       let exprs = List.map IntLit nums in
       sum_exprs exprs
-    |} 15);
+    |}
+        15);
 
   test "GADT with pipe operator" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -421,10 +473,12 @@ let () =
         | Add (a, b) -> eval a + eval b
       ;;
       Add (IntLit 10, IntLit 20) |> eval
-    |} 30);
+    |}
+        30);
 
   test "GADT existential in list with fold" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type any_int =
         | Wrap : 'a * ('a -> int) -> any_int
       let unwrap (w : any_int) : int =
@@ -437,12 +491,13 @@ let () =
         Wrap (true, fn b -> if b do 1 else 0)
       ] in
       List.fold (fn acc item -> acc + unwrap item) 0 items
-    |} 13);
+    |}
+        13);
 
   (* --- GADTs + Closures/Lambdas --- *)
-
   test "GADT match inside lambda" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let f = fn (e : int expr) ->
@@ -450,10 +505,12 @@ let () =
         | IntLit n -> n * 2
       ;;
       f (IntLit 21)
-    |} 42);
+    |}
+        42);
 
   test "GADT closure captures GADT value" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let e : int expr = IntLit 42
@@ -462,12 +519,13 @@ let () =
         | IntLit n -> n
       ;;
       f ()
-    |} 42);
+    |}
+        42);
 
   (* --- GADTs + Mutable State --- *)
-
   test "GADT match result stored in mutable" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -479,10 +537,12 @@ let () =
       let mut result = 0 in
       result := eval (Add (IntLit 3, IntLit 7));
       result
-    |} 10);
+    |}
+        10);
 
   test "GADT mutable accumulator" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -499,12 +559,13 @@ let () =
       add_eval (IntLit 20);
       add_eval (IntLit 30);
       total
-    |} 60);
+    |}
+        60);
 
   (* --- GADTs + Mutual Recursion --- *)
-
   test "GADT mutual recursion with even/odd" (fun () ->
-    expect_bool {|
+      expect_bool
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -520,12 +581,13 @@ let () =
           n mod 2 = 0
       ;;
       eval_bool (IsEven (IntLit 4))
-    |} true);
+    |}
+        true);
 
   (* --- Multiple Existentials --- *)
-
   test "GADT multiple existentials" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type packed =
         | Pack : 'a * 'b * ('a -> 'b -> int) -> packed
       let run (p : packed) : int =
@@ -533,12 +595,13 @@ let () =
         | Pack (a, b, f) -> f a b
       ;;
       run (Pack (10, "hello", fn n s -> n + String.length s))
-    |} 15);
+    |}
+        15);
 
   (* --- GADTs + String Interpolation --- *)
-
   test "GADT match with string interpolation" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -548,29 +611,32 @@ let () =
         | Add (a, b) -> $"({show_expr a} + {show_expr b})"
       ;;
       show_expr (Add (IntLit 1, Add (IntLit 2, IntLit 3)))
-    |} "(1 + (2 + 3))");
+    |}
+        "(1 + (2 + 3))");
 
   (* --- GADT Type Safety / Error Cases --- *)
-
   test "GADT type mismatch: wrong arg count in return type" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       type 'a expr =
         | Bad : int -> (int, bool) expr
       ()
     |});
 
   test "GADT deriving Eq also rejected" (fun () ->
-    expect_type_error_msg {|
+      expect_type_error_msg
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         deriving Eq
       ()
-    |} "cannot derive Eq for GADT");
+    |}
+        "cannot derive Eq for GADT");
 
   (* --- GADTs + Exhaustiveness Edge Cases --- *)
-
   test "GADT exhaustive: all constructors for polymorphic match" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -581,12 +647,13 @@ let () =
         | Add (_, _) -> 2
       ;;
       size (IntLit 0) + size (Add (IntLit 1, IntLit 2))
-    |} 3);
+    |}
+        3);
 
   (* --- GADTs + Effects + Type Classes (triple interaction) --- *)
-
   test "GADT + effects + show: effectful Show on GADT content" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -610,12 +677,13 @@ let () =
       | trace s k -> log := log ^ s ^ " "; resume k ()
       in
       log ^ "= " ^ show result
-    |} "+ 3 4 = 7");
+    |}
+        "+ 3 4 = 7");
 
   (* --- GADT + List Operations --- *)
-
   test "GADT values in list operations" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let eval (e : int expr) : int =
@@ -623,24 +691,26 @@ let () =
       ;;
       let exprs : int expr list = [IntLit 1; IntLit 2; IntLit 3; IntLit 4; IntLit 5] in
       List.map eval exprs |> List.fold (fn a b -> a + b) 0
-    |} 15);
+    |}
+        15);
 
   (* --- GADT + Sequence/semicolons --- *)
-
   test "GADT match in sequence" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let e : int expr = IntLit 42
       let _ = "side effect" in
       match e with
       | IntLit n -> n
-    |} 42);
+    |}
+        42);
 
   (* --- GADTs with deeply nested types --- *)
-
   test "GADT with list-typed constructor" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Sum : int expr list -> int expr
@@ -650,10 +720,12 @@ let () =
         | Sum es -> List.fold (fn acc e -> acc + eval e) 0 es
       ;;
       eval (Sum [IntLit 1; IntLit 2; IntLit 3])
-    |} 6);
+    |}
+        6);
 
   test "GADT with function-typed constructor" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Apply : (int -> int) * int expr -> int expr
@@ -663,12 +735,13 @@ let () =
         | Apply (f, x) -> f (eval x)
       ;;
       eval (Apply ((fn x -> x * 2), IntLit 21))
-    |} 42);
+    |}
+        42);
 
   (* --- GADT no type params (pure existential) --- *)
-
   test "GADT no type params: pure existential container" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type box =
         | Box : 'a * ('a -> int) -> box
       let unbox (b : box) : int =
@@ -678,12 +751,13 @@ let () =
       let b1 = Box (42, fn n -> n) in
       let b2 = Box ("hello", fn s -> String.length s) in
       unbox b1 + unbox b2
-    |} 47);
+    |}
+        47);
 
   (* --- GADT + If expression in match body --- *)
-
   test "GADT match body with if-else" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
       let clamp (e : int expr) : int =
@@ -694,12 +768,13 @@ let () =
           else n
       ;;
       clamp (IntLit 150) + clamp (IntLit (-5)) + clamp (IntLit 42)
-    |} 142);
+    |}
+        142);
 
   (* --- GADT + Tuple returns --- *)
-
   test "GADT match returning tuple" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -713,12 +788,13 @@ let () =
       ;;
       let (value, count) = eval_counted (Add (IntLit 1, Add (IntLit 2, IntLit 3))) in
       value + count
-    |} 11);
+    |}
+        11);
 
   (* --- GADT + let bindings inside match arms --- *)
-
   test "GADT let bindings in match arm" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -734,12 +810,13 @@ let () =
           left + right
       ;;
       eval (Add (IntLit 10, IntLit 20))
-    |} 30);
+    |}
+        30);
 
   (* --- GADT + multiple GADT types interacting --- *)
-
   test "GADT multiple GADT types" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a ty =
         | TInt : int ty
         | TBool : bool ty
@@ -755,24 +832,26 @@ let () =
         | VInt n -> n
       ;;
       default_val TInt + get_val (VInt 42)
-    |} 42);
+    |}
+        42);
 
   (* --- GADT + partial application patterns --- *)
-
   test "GADT constructor partial application in pipeline" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       type 'a box =
         | Box : int -> int box
       let unbox (b : int box) : int =
         match b with | Box n -> n
       ;;
       [1; 2; 3] |> List.map Box |> List.map unbox |> List.fold (fn a b -> a + b) 0
-    |} 6);
+    |}
+        6);
 
   (* ====== Explicit effect annotations ====== *)
-
   test "explicit effect annotation: basic / IO" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect IO =
         print_io : string -> unit
       end
@@ -782,17 +861,21 @@ let () =
       with
       | return x -> 0
       | print_io _ k -> resume k ()
-    |} 0);
+    |}
+        0);
 
   test "explicit effect annotation: / pure" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       let add (x: int) : int / pure = x + 1
       ;;
       add 41
-    |} 42);
+    |}
+        42);
 
   test "explicit effect annotation: pure function prevents effects" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect IO =
         print_io : string -> unit
       end
@@ -802,7 +885,8 @@ let () =
     |});
 
   test "explicit effect annotation: multiple effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E1 =
         op1 : unit -> int
       end
@@ -820,10 +904,12 @@ let () =
       with
       | return x -> x
       | op2 () k -> resume k 20
-    |} 30);
+    |}
+        30);
 
   test "explicit effect annotation: HOF with effectful callback" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Counter =
         inc : unit -> unit
       end
@@ -834,10 +920,12 @@ let () =
       with
       | return x -> x + count
       | inc () k -> count := count + 1; resume k ()
-    |} 43);
+    |}
+        43);
 
   test "explicit effect annotation: inferred when omitted" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -849,12 +937,13 @@ let () =
       with
       | return x -> x
       | log _ k -> resume k ()
-    |} 42);
+    |}
+        42);
 
   (* ====== Parameterized effect declarations ====== *)
-
   test "parameterized effect: State 'a" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -868,10 +957,12 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
-    |} 10);
+    |}
+        10);
 
   test "parameterized effect: two performs share type" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -884,10 +975,12 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
-    |} 42);
+    |}
+        42);
 
   test "parameterized effect: string state" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -900,10 +993,12 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
-    |} "world");
+    |}
+        "world");
 
   test "parameterized effect: with explicit effect annotation" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -921,12 +1016,13 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
-    |} 3);
+    |}
+        3);
 
   (* ====== Effect-polymorphic class methods ====== *)
-
   test "effect-polymorphic class method: basic" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Counter =
         inc : unit -> unit
       end
@@ -942,36 +1038,42 @@ let () =
       with
       | return x -> x + count
       | inc () k -> count := count + 1; resume k ()
-    |} 43);
+    |}
+        43);
 
   (* ====== Error cases ====== *)
-
   test "error: unknown effect in annotation" (fun () ->
-    expect_type_error_msg {|
+      expect_type_error_msg
+        {|
       let f (x: int) : int / UnknownEffect = x
-    |} "unknown effect");
+    |}
+        "unknown effect");
 
   test "error: wrong param count for parameterized effect" (fun () ->
-    expect_type_error_msg {|
+      expect_type_error_msg
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
       end
       let f (x: int) : int / State = x
-    |} "expects 1 type parameter");
+    |}
+        "expects 1 type parameter");
 
   test "error: extra params for non-parameterized effect" (fun () ->
-    expect_type_error_msg {|
+      expect_type_error_msg
+        {|
       effect IO =
         print_io : string -> unit
       end
       let f (x: int) : int / IO int = x
-    |} "expects 0 type parameter");
+    |}
+        "expects 0 type parameter");
 
   (* ====== Integration tests ====== *)
-
   test "effect annotations with GADTs" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -987,10 +1089,12 @@ let () =
       with
       | return x -> x
       | log _ k -> resume k ()
-    |} 3);
+    |}
+        3);
 
   test "effect annotations backward compat: existing code unchanged" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Ask =
         ask : unit -> string
       end
@@ -1000,10 +1104,12 @@ let () =
       with
       | return x -> x
       | ask () k -> resume k "hello"
-    |} 5);
+    |}
+        5);
 
   test "parameterized effect: non-parameterized still works" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Counter =
         inc : unit -> unit
       end
@@ -1016,10 +1122,12 @@ let () =
       with
       | return x -> x + n
       | inc () k -> n := n + 1; resume k ()
-    |} 45);
+    |}
+        45);
 
   test "effect annotation on function type in let binding" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect IO =
         print_io : string -> unit
       end
@@ -1031,10 +1139,12 @@ let () =
       with
       | return x -> x
       | print_io _ k -> resume k ()
-    |} 42);
+    |}
+        42);
 
   test "effect annotation nested arrows" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect IO =
         print_io : string -> unit
       end
@@ -1044,14 +1154,15 @@ let () =
       with
       | return x -> x
       | print_io _ k -> resume k ()
-    |} 42);
+    |}
+        42);
 
   (* ====== Stress tests: effect annotation edge cases ====== *)
 
   (* --- Recursive functions with explicit effect annotations --- *)
-
   test "effect annot: recursive function with / IO" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect IO =
         emit : int -> unit
       end
@@ -1065,10 +1176,12 @@ let () =
       with
       | return _ -> total
       | emit v k -> total := total + v; resume k ()
-    |} 15);
+    |}
+        15);
 
   test "effect annot: mutually recursive with explicit effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Trace =
         trace : string -> unit
       end
@@ -1085,12 +1198,13 @@ let () =
       with
       | return x -> x + count
       | trace _ k -> count := count + 1; resume k ()
-    |} 2);
+    |}
+        2);
 
   (* --- Curried functions: effect on innermost arrow only --- *)
-
   test "effect annot: curried function, effect on inner arrow" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -1104,10 +1218,12 @@ let () =
       with
       | return x -> x + logged
       | log _ k -> logged := logged + 1; resume k ()
-    |} 43);
+    |}
+        43);
 
   test "effect annot: three-arg curried function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Tick =
         tick : unit -> unit
       end
@@ -1119,12 +1235,13 @@ let () =
       handle f 10 20 12 with
       | return x -> x + n
       | tick () k -> n := n + 1; resume k ()
-    |} 43);
+    |}
+        43);
 
   (* --- Nested handlers with explicit annotations at each level --- *)
-
   test "effect annot: nested handlers with different effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E1 =
         op1 : unit -> int
       end
@@ -1142,10 +1259,12 @@ let () =
       handle outer () with
       | return x -> x
       | op2 () k -> resume k 32
-    |} 42);
+    |}
+        42);
 
   test "effect annot: deeply nested handlers" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect A =
         get_a : unit -> int
       end
@@ -1169,12 +1288,13 @@ let () =
       with
       | return x -> x
       | get_c () k -> resume k 12
-    |} 42);
+    |}
+        42);
 
   (* --- Parameterized effects with complex type params --- *)
-
   test "effect annot: parameterized effect with tuple type" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1192,10 +1312,12 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
-    |} 42);
+    |}
+        42);
 
   test "effect annot: two different parameterized effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1218,12 +1340,13 @@ let () =
       with
       | return x -> x
       | ask () k -> resume k 42
-    |} 42);
+    |}
+        42);
 
   (* --- HOF with effectful callbacks and annotation unification --- *)
-
   test "effect annot: HOF applies effectful callback twice" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Counter =
         bump : unit -> unit
       end
@@ -1236,10 +1359,12 @@ let () =
       with
       | return x -> x + n
       | bump () k -> n := n + 1; resume k ()
-    |} 44);
+    |}
+        44);
 
   test "effect annot: effectful callback in fold pattern" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : int -> unit
       end
@@ -1254,12 +1379,13 @@ let () =
       with
       | return x -> x * 1000 + sum_logged
       | log v k -> sum_logged := sum_logged + v; resume k ()
-    |} 15015);
+    |}
+        15015);
 
   (* --- Effect annotations in let-in expressions --- *)
-
   test "effect annot: let-in with explicit effect on local function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E =
         ask : unit -> int
       end
@@ -1270,20 +1396,23 @@ let () =
         | ask () k -> resume k 32
       ;;
       result
-    |} 42);
+    |}
+        42);
 
   (* --- Pure annotation edge cases --- *)
-
   test "effect annot: pure function calling another pure function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       let double (x: int) : int / pure = x * 2
       let quad (x: int) : int / pure = double (double x)
       ;;
       quad 10
-    |} 40);
+    |}
+        40);
 
   test "effect annot: pure prevents transitive effects" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect IO =
         print_io : string -> unit
       end
@@ -1294,9 +1423,9 @@ let () =
     |});
 
   (* --- Return type is arrow type with effect --- *)
-
   test "effect annot: function returning effectful closure" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect IO =
         emit : int -> unit
       end
@@ -1311,12 +1440,13 @@ let () =
       with
       | return _ -> total
       | emit v k -> total := total + v; resume k ()
-    |} 42);
+    |}
+        42);
 
   (* --- Effect annotation with partial param annotations --- *)
-
   test "effect annot: some params annotated, some not" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect IO =
         emit : int -> unit
       end
@@ -1328,12 +1458,13 @@ let () =
       handle f 20 22 with
       | return x -> x + v
       | emit n k -> v := n; resume k ()
-    |} 84);
+    |}
+        84);
 
   (* --- Parameterized effect: State used in handler with explicit annotation --- *)
-
   test "effect annot: stateful counter with explicit State int" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1351,12 +1482,13 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
-    |} 10);
+    |}
+        10);
 
   (* --- Effect-polymorphic class method stress tests --- *)
-
   test "effect annot: class method with effect var, pure instance" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       class Transform 'a =
         xform : 'a -> 'a / 'e
       end
@@ -1364,10 +1496,13 @@ let () =
         let xform x = x + 1
       end
       xform 41
-    |} 42);
+    |}
+        42);
 
-  test "effect annot: class method with effect var, effectful instance" (fun () ->
-    expect_int {|
+  test "effect annot: class method with effect var, effectful instance"
+    (fun () ->
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -1383,12 +1518,13 @@ let () =
       with
       | return x -> x + n
       | log _ k -> n := n + 1; resume k ()
-    |} 43);
+    |}
+        43);
 
   (* --- Effect annotation on type expression used as param type --- *)
-
   test "effect annot: explicit arrow with effect in param position" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E =
         op : unit -> int
       end
@@ -1398,12 +1534,13 @@ let () =
         | op () k -> resume k 42
       ;;
       run_with_handler (fn () -> perform op ())
-    |} 42);
+    |}
+        42);
 
   (* --- Parameterized effect error: type mismatch in state --- *)
-
   test "error: parameterized effect type mismatch" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1413,7 +1550,8 @@ let () =
     |});
 
   test "error: two performs disagree on effect type parameter" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1424,7 +1562,8 @@ let () =
     |});
 
   test "error: get and put disagree on effect type parameter" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1436,7 +1575,8 @@ let () =
     |});
 
   test "error: param effect mismatch via annotation on get" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1446,7 +1586,8 @@ let () =
     |});
 
   test "error: param effect handler resume type mismatch" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1460,7 +1601,8 @@ let () =
     |});
 
   test "error: param effect handler body uses both ops with mismatch" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1476,7 +1618,8 @@ let () =
     |});
 
   test "two performs agree on effect type parameter" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1490,10 +1633,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 20);
+    |}
+        20);
 
   test "get and put share type parameter correctly" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1506,10 +1651,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} "updated");
+    |}
+        "updated");
 
   test "param effect annotation matches operations" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1523,10 +1670,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 10);
+    |}
+        10);
 
   test "param effect inferred from single perform" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1539,10 +1688,12 @@ let () =
       | return x -> x ^ "!"
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} "bye!");
+    |}
+        "bye!");
 
   test "param effect with tuple type parameter" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1556,10 +1707,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 42);
+    |}
+        42);
 
   test "param effect with list type parameter" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1575,10 +1728,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 1);
+    |}
+        1);
 
   test "param effect nested handlers different types" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Counter =
         inc : unit -> unit
         count : unit -> int
@@ -1602,10 +1757,12 @@ let () =
       with
       | return x -> x
       | log msg k -> logs := logs ^ msg; resume k ()
-    |} 3);
+    |}
+        3);
 
   test "error: param effect two puts disagree inside handler" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1620,7 +1777,8 @@ let () =
     |});
 
   test "param effect with explicit annotation on multi-arg function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1634,10 +1792,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 30);
+    |}
+        30);
 
   test "param effect recursive function with annotation" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1655,10 +1815,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 15);
+    |}
+        15);
 
   test "two different param effects in same function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1680,10 +1842,12 @@ let () =
       with
       | return x -> x
       | ask () k -> resume k 21
-    |} 42);
+    |}
+        42);
 
   test "error: two different param effects confused type params" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1698,7 +1862,8 @@ let () =
     |});
 
   test "param effect with record type parameter" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1712,10 +1877,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 30);
+    |}
+        30);
 
   test "param effect operations in different branches" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1733,10 +1900,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 1);
+    |}
+        1);
 
   test "param effect in lambda body" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1750,10 +1919,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 99);
+    |}
+        99);
 
   test "param effect with option type parameter" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1768,10 +1939,12 @@ let () =
       | return x -> x
       | put v k -> st := v; resume k ()
       | get () k -> resume k st
-    |} 42);
+    |}
+        42);
 
   test "error: param effect annotation wrong type for get return" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1782,7 +1955,8 @@ let () =
     |});
 
   test "param effect with multi-param effect" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Map 'k 'v =
         lookup : 'k -> 'v
         store : ('k * 'v) -> unit
@@ -1805,10 +1979,12 @@ let () =
         match result with
         | Some v -> resume k2 v
         | None -> resume k2 0
-    |} 99);
+    |}
+        99);
 
   test "error: multi-param effect type mismatch on first param" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect Map 'k 'v =
         lookup : 'k -> 'v
         store : ('k * 'v) -> unit
@@ -1819,7 +1995,8 @@ let () =
     |});
 
   test "error: multi-param effect type mismatch on second param" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect Map 'k 'v =
         lookup : 'k -> 'v
         store : ('k * 'v) -> unit
@@ -1830,7 +2007,8 @@ let () =
     |});
 
   test "param effect annotation preserves constraint across sequence" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1844,12 +2022,13 @@ let () =
       handle f () ; st with
       | return x -> x
       | put v k -> st := st + v; resume k ()
-    |} 6);
+    |}
+        6);
 
   (* --- Multiple effects with param effects --- *)
-
   test "effect annot: mixed param and non-param effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -1870,14 +2049,16 @@ let () =
       | get () k -> resume k st
       | put v k -> st := v; resume k ()
       | emit v k -> emitted := v; resume k ()
-    |} 21);
+    |}
+        21);
 
   (* ======= Locally Abstract Types / Polymorphic Recursion ======= *)
   Printf.printf "\n=== Locally Abstract Types Tests ===\n";
 
   (* Basic polymorphic recursion with GADT *)
   test "LAT: basic GADT eval with polymorphic recursion" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -1892,10 +2073,12 @@ let () =
           if eval cond do eval then_ else eval else_
       ;;
       eval (If (BoolLit true, Add (IntLit 10, IntLit 20), IntLit 0))
-    |} 30);
+    |}
+        30);
 
   test "LAT: GADT eval returns bool" (fun () ->
-    expect_bool {|
+      expect_bool
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -1910,11 +2093,13 @@ let () =
           if eval cond do eval then_ else eval else_
       ;;
       eval (BoolLit false)
-    |} false);
+    |}
+        false);
 
   (* Expression-level let rec with type params *)
   test "LAT: expression-level let rec" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -1929,11 +2114,13 @@ let () =
         eval (If (BoolLit true, IntLit 42, IntLit 0))
       ;;
       result
-    |} 42);
+    |}
+        42);
 
   (* Multiple type params *)
   test "LAT: multiple type params" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type ('a, 'b) either =
         | Left : 'a -> ('a, 'b) either
         | Right : 'b -> ('a, 'b) either
@@ -1946,11 +2133,13 @@ let () =
         | Cons (_, rest) -> 1 + length rest
       ;;
       length (Cons (1, Cons (2, Cons (3, Nil))))
-    |} 3);
+    |}
+        3);
 
   (* Polymorphic recursion: recursive call at different type instantiation *)
   test "LAT: recursive call at different type" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -1964,11 +2153,13 @@ let () =
         | Not inner -> 1 + size inner
       ;;
       size (Neg (Neg (IntLit 0))) + size (Not (BoolLit true))
-    |} 5);
+    |}
+        5);
 
   (* GADT format string — the motivating use case *)
   test "LAT: GADT format string" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type ('a, 'b) fmt =
         | Lit : string * ('a, 'b) fmt -> (string, 'b) fmt
         | IntF : ('a, 'b) fmt -> (string, int -> 'b) fmt
@@ -1982,11 +2173,13 @@ let () =
         | End -> ""
       ;;
       fmt_to_str (Lit ("hello ", IntF (Lit (" world ", StrF End))))
-    |} "hello <int> world <str>");
+    |}
+        "hello <int> world <str>");
 
   (* Declaration-level — regular let rec with type params *)
   test "LAT: declaration-level let rec" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a tree =
         | Leaf : int -> int tree
         | Node : 'a tree * 'a tree -> 'a tree
@@ -1996,19 +2189,23 @@ let () =
         | Node (l, r) -> size l + size r
       ;;
       size (Node (Leaf 1, Node (Leaf 2, Leaf 3)))
-    |} 3);
+    |}
+        3);
 
   (* Without type params, regular let rec still works *)
   test "LAT: regular let rec unchanged" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       let rec fac n = if n <= 1 do 1 else n * fac (n - 1)
       ;;
       fac 5
-    |} 120);
+    |}
+        120);
 
   (* Type params with effect annotation *)
   test "LAT: polymorphic recursion with effect" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -2034,22 +2231,26 @@ let () =
         | log _ k -> count := count + 1; resume k ()
       in
       result + count
-    |} 10);
+    |}
+        10);
 
   (* Error: type variable in type params not used should still work *)
   test "LAT: unused type param still compiles" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       let rec (type 'a) f (x : int) : int = if x <= 0 do 0 else f (x - 1)
       ;;
       f 5
-    |} 0);
+    |}
+        0);
 
   (* ======= LAT Stress Tests ======= *)
   Printf.printf "\n=== LAT Stress Tests ===\n";
 
   (* Full GADT evaluator: int, bool, string return types, nested If *)
   test "LAT stress: full GADT evaluator with three return types" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2072,11 +2273,13 @@ let () =
       eval (If (Eq (Add (IntLit 3, IntLit 4), IntLit 7),
                 IntLit 100,
                 IntLit 0))
-    |} 100);
+    |}
+        100);
 
   (* Deep nesting: if (if true then (1=1) else false) then 42 else 0 *)
   test "LAT stress: deeply nested GADT if-expressions" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2097,11 +2300,13 @@ let () =
       eval (If (Not (If (BoolLit true, BoolLit false, BoolLit true)),
                 Add (IntLit 1, Add (IntLit 2, IntLit 3)),
                 IntLit 0))
-    |} 6);
+    |}
+        6);
 
   (* Polymorphic recursion called at multiple types in one body *)
   test "LAT stress: multiple type instantiations in same body" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2116,11 +2321,14 @@ let () =
           "if(" ^ to_s cond ^ "," ^ to_s t ^ "," ^ to_s f ^ ")"
       ;;
       to_s (If (BoolLit true, IntLit 42, IntLit 0))
-    |} "if(true,42,0)");
+    |}
+        "if(true,42,0)");
 
   (* Expression-level poly recursion used polymorphically after binding *)
-  test "LAT stress: expression-level used at different types after binding" (fun () ->
-    expect_string {|
+  test "LAT stress: expression-level used at different types after binding"
+    (fun () ->
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2141,11 +2349,13 @@ let () =
         string_of_int n ^ " " ^ (if b do "T" else "F") ^ " " ^ string_of_int n2
       ;;
       result
-    |} "30 T 2");
+    |}
+        "30 T 2");
 
   (* Poly recursion inside a module *)
   test "LAT stress: polymorphic recursion inside module" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2161,11 +2371,13 @@ let () =
       end
       ;;
       Eval.eval (If (BoolLit true, Add (IntLit 100, IntLit 23), IntLit 0))
-    |} 123);
+    |}
+        123);
 
   (* GADT with existential + poly recursion *)
   test "LAT stress: existential GADT with poly recursion" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type any_show =
         | AnyShow : 'a * ('a -> string) -> any_show
       type 'a expr =
@@ -2181,11 +2393,13 @@ let () =
       let result = eval_show (Wrap (IntLit 42, string_of_int)) in
       match result with
       | AnyShow (v, f) -> f v
-    |} "42");
+    |}
+        "42");
 
   (* Two GADT type params: polymorphic recursion on a format type *)
   test "LAT stress: format string apply" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type ('r, 'a) fmt =
         | FEnd : (string, string) fmt
         | FLit : string * ('r, 'a) fmt -> (string, 'a) fmt
@@ -2199,11 +2413,13 @@ let () =
         | FStr rest -> 1 + count_holes rest
       ;;
       count_holes (FLit ("x=", FInt (FLit (", s=", FStr FEnd))))
-    |} 2);
+    |}
+        2);
 
   (* Poly recursion with effects: stateful GADT interpreter *)
   test "LAT stress: stateful GADT eval with effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State 'a =
         get : unit -> 'a
         put : 'a -> unit
@@ -2237,11 +2453,13 @@ let () =
         | put v k -> st := v; resume k ()
       in
       result  -- 7 + 7 = 14
-    |} 14);
+    |}
+        14);
 
   (* Poly recursion: multiple type refinements in one function *)
   test "LAT stress: each branch returns different refined type" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a val =
         | VInt : int -> int val
         | VBool : bool -> bool val
@@ -2261,11 +2479,13 @@ let () =
       show_val (VConcat (VStr "hello", VStr "world")) ^ " " ^
       show_val (VNeg (VInt 5)) ^ " " ^
       show_val (VNot (VBool true))
-    |} "concat(hello,world) neg(5) not(true)");
+    |}
+        "concat(hello,world) neg(5) not(true)");
 
   (* Poly recursion: function returns a function type via GADT *)
   test "LAT stress: GADT with function-typed constructor" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2284,11 +2504,13 @@ let () =
       let inc = Lam (fn (x : int expr) -> App (Lam (fn (y : int expr) ->
         IntLit ((fn (IntLit n) -> n) y + 1)), x)) in
       eval (App (inc, IntLit 41))
-    |} 42);
+    |}
+        42);
 
   (* Poly recursion with multiple recursive calls at different types *)
   test "LAT stress: alternating int/bool recursive descent" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a tree =
         | ILeaf : int -> int tree
         | BLeaf : bool -> bool tree
@@ -2315,11 +2537,13 @@ let () =
       depth (INode (BNode (ILeaf 0, BLeaf true, BLeaf false),
                     INode (BLeaf true, ILeaf 1, ILeaf 2),
                     ILeaf 3))
-    |} 2);
+    |}
+        2);
 
   (* GADT + poly recursion computing actual values across type boundaries *)
   test "LAT stress: cross-type computation bool->int->string" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2344,11 +2568,13 @@ let () =
       eval (If (Eq (Add (IntLit 2, IntLit 3), IntLit 5),
                 Concat (StrLit "result=", IntToStr (Add (IntLit 10, IntLit 20))),
                 StrLit "fail"))
-    |} "result=30");
+    |}
+        "result=30");
 
   (* Poly recursion: two mutually reinforcing GADT types *)
   test "LAT stress: poly recursion over two related GADTs" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2372,11 +2598,13 @@ let () =
       ;;
       let expr = If (BoolLit true, Neg (IntLit 5), IntLit 10) in
       count expr + eval expr
-    |} 0);
+    |}
+        0);
 
   (* Poly recursion with pipe operator *)
   test "LAT stress: poly recursion composed with pipe" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2394,11 +2622,13 @@ let () =
       in
       let b = BoolLit true |> eval in
       result ^ " " ^ (if b do "yes" else "no")
-    |} "30 yes");
+    |}
+        "30 yes");
 
   (* Poly recursion result stored in mutable, iterated *)
   test "LAT stress: poly recursion in loop with mutable accumulation" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | Add : int expr * int expr -> int expr
@@ -2415,11 +2645,13 @@ let () =
       for e in exprs with sum = 0 do
         sum + eval e
       end
-    |} 66);
+    |}
+        66);
 
   (* Poly recursion with closure capture *)
   test "LAT stress: poly recursive function captured in closure" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2438,11 +2670,13 @@ let () =
       let n = eval_int (Add (IntLit 10, IntLit 20)) in
       let b = eval_bool (BoolLit true) in
       if b do n + 1 else n
-    |} 31);
+    |}
+        31);
 
   (* Poly recursion: recursive call through helper function *)
   test "LAT stress: poly recursion with local helper" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2461,11 +2695,13 @@ let () =
       eval (If (BoolLit true,
                 Mul (Add (IntLit 2, IntLit 3), IntLit 4),
                 IntLit 0))
-    |} 20);
+    |}
+        20);
 
   (* GADT with string interpolation inside poly recursion *)
   test "LAT stress: string interpolation in poly recursive eval" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2479,11 +2715,13 @@ let () =
         | If (c, t, f) -> $"if {pretty c} then {pretty t} else {pretty f}"
       ;;
       pretty (If (BoolLit true, Add (IntLit 1, IntLit 2), IntLit 0))
-    |} "if true then (1 + 2) else 0");
+    |}
+        "if true then (1 + 2) else 0");
 
   (* Poly recursion: tail-recursive style with accumulator *)
   test "LAT stress: poly recursion with accumulator pattern" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2501,11 +2739,13 @@ let () =
                      Add (IntLit 1, Add (IntLit 2, IntLit 3)),
                      Add (IntLit 4, Add (IntLit 5, IntLit 6))) in
       count_nodes expr
-    |} 15);
+    |}
+        15);
 
   (* Poly recursion: two separate poly rec functions interacting *)
   test "LAT stress: two independent poly rec functions" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2535,11 +2775,14 @@ let () =
       ;;
       let e = If (BoolLit true, Add (IntLit 1, IntLit 2), IntLit 0) in
       $"eval={eval e} depth={depth e}"
-    |} "eval=3 depth=2");
+    |}
+        "eval=3 depth=2");
 
   (* GADT with no-arg constructors across types *)
-  test "LAT stress: GADT with zero-arg constructors at different types" (fun () ->
-    expect_int {|
+  test "LAT stress: GADT with zero-arg constructors at different types"
+    (fun () ->
+      expect_int
+        {|
       type 'a val =
         | VTrue : bool val
         | VFalse : bool val
@@ -2561,11 +2804,13 @@ let () =
       to_int (VSucc (VSucc (VSucc VZero))) +
       to_int (VNot VFalse) +
       to_int VUnit
-    |} 4);
+    |}
+        4);
 
   (* Poly recursion with match guard *)
   test "LAT stress: poly recursion with match guards" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       type 'a expr =
         | IntLit : int -> int expr
         | BoolLit : bool -> bool expr
@@ -2579,6 +2824,7 @@ let () =
         | Add (a, b) -> eval_clamp (IntLit (eval_clamp a + eval_clamp b))
       ;;
       eval_clamp (Add (IntLit 80, IntLit 50))
-    |} 100);
+    |}
+        100);
 
   print_summary ()

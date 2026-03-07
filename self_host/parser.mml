@@ -564,9 +564,33 @@ module Parser =
             (advance p; ());
             Ast.PatMap []
           else do
-            let entries = parse_pattern_map_entries p in
-            expect p Token.RBRACE;
-            Ast.PatMap entries
+            let first_pat = parse_pattern_atom p in
+            if (peek_kind p) = Token.COLON do
+              (advance p; ());
+              let first_val = parse_pattern p in
+              let rest = Ref.create [] in
+              for (peek_kind p) = Token.SEMICOLON do
+                (advance p; ());
+                if (peek_kind p) <> Token.RBRACE do
+                  let key = parse_pattern_atom p in
+                  expect p Token.COLON;
+                  let value = parse_pattern p in
+                  Ref.set rest ((key, value) :: Ref.get rest)
+                end
+              end;
+              expect p Token.RBRACE;
+              Ast.PatMap ((first_pat, first_val) :: List.rev (Ref.get rest))
+            else do
+              let elems = Ref.create (first_pat :: []) in
+              for (peek_kind p) = Token.SEMICOLON do
+                (advance p; ());
+                if (peek_kind p) <> Token.RBRACE do
+                  Ref.set elems (parse_pattern_atom p :: Ref.get elems)
+                end
+              end;
+              expect p Token.RBRACE;
+              Ast.PatSet (List.rev (Ref.get elems))
+            end
           end
         | _ -> error p "expected '[' or '{' after '#' in pattern"
 
@@ -2009,6 +2033,7 @@ module Parser =
       | Ast.PatOr ((p1, _)) -> extract_pat_vars p1
       | Ast.PatArray pats -> List.concat_map extract_pat_vars pats
       | Ast.PatMap entries -> List.concat_map (fn (k, v) -> List.concat (extract_pat_vars k) (extract_pat_vars v)) entries
+      | Ast.PatSet elems -> List.concat_map extract_pat_vars elems
       | Ast.PatPolyVariant ((_, None)) -> []
       | Ast.PatPolyVariant ((_, Some p)) -> extract_pat_vars p
       | Ast.PatPin _ -> []

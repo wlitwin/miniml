@@ -1,7 +1,7 @@
 (** JS code generation: typed AST -> JavaScript source code.
 
-    Walks a [Typechecker.tprogram] and emits JavaScript as a string.
-    Phase 1: direct-style only (no effects/CPS/trampolines). *)
+    Walks a [Typechecker.tprogram] and emits JavaScript as a string. Phase 1:
+    direct-style only (no effects/CPS/trampolines). *)
 
 exception Codegen_error of string
 
@@ -9,7 +9,8 @@ let error msg = raise (Codegen_error msg)
 
 (* ---- JS Runtime ---- *)
 
-let js_runtime = {|"use strict";
+let js_runtime =
+  {|"use strict";
 function _call(f, args) {
   while (args.length > 0) {
     const a = f._arity !== undefined ? f._arity : f.length;
@@ -120,71 +121,142 @@ function _resolve(v) { while (typeof v === 'function' && v._tramp) v = v(); retu
 
 (* ---- Name mangling ---- *)
 
-let js_reserved = [
-  "abstract"; "arguments"; "await"; "boolean"; "break"; "byte"; "case"; "catch";
-  "char"; "class"; "const"; "continue"; "debugger"; "default"; "delete"; "do";
-  "double"; "else"; "enum"; "eval"; "export"; "extends"; "false"; "final";
-  "finally"; "float"; "for"; "function"; "goto"; "if"; "implements"; "import";
-  "in"; "instanceof"; "int"; "interface"; "let"; "long"; "native"; "new"; "null";
-  "package"; "private"; "protected"; "public"; "return"; "short"; "static";
-  "super"; "switch"; "synchronized"; "this"; "throw"; "throws"; "transient";
-  "true"; "try"; "typeof"; "undefined"; "var"; "void"; "volatile"; "while";
-  "with"; "yield"; "of";
-  (* Node.js / browser globals that user code shouldn't shadow *)
-  "process"; "console"; "require"; "module"; "exports";
-  "globalThis"; "global"; "window"; "document"
-]
+let js_reserved =
+  [
+    "abstract";
+    "arguments";
+    "await";
+    "boolean";
+    "break";
+    "byte";
+    "case";
+    "catch";
+    "char";
+    "class";
+    "const";
+    "continue";
+    "debugger";
+    "default";
+    "delete";
+    "do";
+    "double";
+    "else";
+    "enum";
+    "eval";
+    "export";
+    "extends";
+    "false";
+    "final";
+    "finally";
+    "float";
+    "for";
+    "function";
+    "goto";
+    "if";
+    "implements";
+    "import";
+    "in";
+    "instanceof";
+    "int";
+    "interface";
+    "let";
+    "long";
+    "native";
+    "new";
+    "null";
+    "package";
+    "private";
+    "protected";
+    "public";
+    "return";
+    "short";
+    "static";
+    "super";
+    "switch";
+    "synchronized";
+    "this";
+    "throw";
+    "throws";
+    "transient";
+    "true";
+    "try";
+    "typeof";
+    "undefined";
+    "var";
+    "void";
+    "volatile";
+    "while";
+    "with";
+    "yield";
+    "of";
+    (* Node.js / browser globals that user code shouldn't shadow *)
+    "process";
+    "console";
+    "require";
+    "module";
+    "exports";
+    "globalThis";
+    "global";
+    "window";
+    "document";
+  ]
 
 let is_js_reserved name = List.mem name js_reserved
 
 let mangle_name name =
   let buf = Buffer.create (String.length name) in
-  String.iter (fun c ->
-    match c with
-    | '.' -> Buffer.add_char buf '$'
-    | '\'' -> Buffer.add_string buf "$p"
-    | '+' -> Buffer.add_string buf "$plus"
-    | '-' -> Buffer.add_string buf "$minus"
-    | '*' -> Buffer.add_string buf "$star"
-    | '/' -> Buffer.add_string buf "$slash"
-    | '^' -> Buffer.add_string buf "$caret"
-    | '=' -> Buffer.add_string buf "$eq"
-    | '<' -> Buffer.add_string buf "$lt"
-    | '>' -> Buffer.add_string buf "$gt"
-    | '!' -> Buffer.add_string buf "$bang"
-    | ':' -> Buffer.add_string buf "$colon"
-    | '~' -> Buffer.add_string buf "$tilde"
-    | '#' -> Buffer.add_string buf "$hash"
-    | c -> Buffer.add_char buf c
-  ) name;
+  String.iter
+    (fun c ->
+      match c with
+      | '.' -> Buffer.add_char buf '$'
+      | '\'' -> Buffer.add_string buf "$p"
+      | '+' -> Buffer.add_string buf "$plus"
+      | '-' -> Buffer.add_string buf "$minus"
+      | '*' -> Buffer.add_string buf "$star"
+      | '/' -> Buffer.add_string buf "$slash"
+      | '^' -> Buffer.add_string buf "$caret"
+      | '=' -> Buffer.add_string buf "$eq"
+      | '<' -> Buffer.add_string buf "$lt"
+      | '>' -> Buffer.add_string buf "$gt"
+      | '!' -> Buffer.add_string buf "$bang"
+      | ':' -> Buffer.add_string buf "$colon"
+      | '~' -> Buffer.add_string buf "$tilde"
+      | '#' -> Buffer.add_string buf "$hash"
+      | c -> Buffer.add_char buf c)
+    name;
   let result = Buffer.contents buf in
-  if is_js_reserved result then "_mml$" ^ result
-  else result
+  if is_js_reserved result then "_mml$" ^ result else result
 
 (* ---- Context ---- *)
 
 type ctx = {
-  buf: Buffer.t;
-  mutable indent: int;
-  mutable scopes: (string, string) Hashtbl.t list;
-  mutable tmp_counter: int;
-  type_env: Types.type_env;
-  mutable current_fn_name: string option;  (* for self-tail-call optimization *)
-  mutable current_fn_params: string list;  (* param names for TCO *)
-  mutable in_tail_position: bool;
-  mutable tco_used: bool;  (* whether we emitted a continue for TCO *)
-  mutable current_module: string option;  (* for qualifying extern names *)
-  mutable in_cps: bool;  (* compiling in CPS mode *)
-  mutable handler_tail_resume: bool;  (* skip _trampoline on tail resume in handler *)
-  mutable direct_dispatch_ops: (string * string) list;  (* op_name -> direct JS fn *)
-  mutable trywith_ops: string list;  (* ops that compile to throw *)
-  mutable break_flag_name: string;  (* current while loop's break flag *)
-  mutable break_val_name: string;   (* current while loop's break value *)
-  mutable cont_flag_name: string;   (* current while loop's continue flag *)
-  mutable in_fold_loop: bool;       (* inside fold callback body — break/return throw *)
-  mutable fold_cont_pending: bool;  (* next compile_fun is fold callback — wrap in try/catch *)
-  mutable top_level_exports: (string * string) list;  (* (mml_name, js_name) pairs for harness *)
-  function_arities: (string, int) Hashtbl.t;  (* JS name -> actual parameter count *)
+  buf : Buffer.t;
+  mutable indent : int;
+  mutable scopes : (string, string) Hashtbl.t list;
+  mutable tmp_counter : int;
+  type_env : Types.type_env;
+  mutable current_fn_name : string option; (* for self-tail-call optimization *)
+  mutable current_fn_params : string list; (* param names for TCO *)
+  mutable in_tail_position : bool;
+  mutable tco_used : bool; (* whether we emitted a continue for TCO *)
+  mutable current_module : string option; (* for qualifying extern names *)
+  mutable in_cps : bool; (* compiling in CPS mode *)
+  mutable handler_tail_resume : bool;
+      (* skip _trampoline on tail resume in handler *)
+  mutable direct_dispatch_ops : (string * string) list;
+      (* op_name -> direct JS fn *)
+  mutable trywith_ops : string list; (* ops that compile to throw *)
+  mutable break_flag_name : string; (* current while loop's break flag *)
+  mutable break_val_name : string; (* current while loop's break value *)
+  mutable cont_flag_name : string; (* current while loop's continue flag *)
+  mutable in_fold_loop : bool;
+      (* inside fold callback body — break/return throw *)
+  mutable fold_cont_pending : bool;
+      (* next compile_fun is fold callback — wrap in try/catch *)
+  mutable top_level_exports : (string * string) list;
+      (* (mml_name, js_name) pairs for harness *)
+  function_arities : (string, int) Hashtbl.t;
+      (* JS name -> actual parameter count *)
 }
 
 let create_ctx type_env =
@@ -192,7 +264,7 @@ let create_ctx type_env =
   {
     buf = Buffer.create 4096;
     indent = 0;
-    scopes = [tbl];
+    scopes = [ tbl ];
     tmp_counter = 0;
     type_env;
     current_fn_name = None;
@@ -233,14 +305,15 @@ let with_function_ctx ctx ~fn_name ~fn_params ~ddo ~two ~in_fold f =
   ctx.direct_dispatch_ops <- ddo;
   ctx.trywith_ops <- two;
   ctx.in_fold_loop <- in_fold;
-  Fun.protect ~finally:(fun () ->
-    ctx.current_fn_name <- saved_fn;
-    ctx.current_fn_params <- saved_params;
-    ctx.tco_used <- saved_tco;
-    ctx.direct_dispatch_ops <- saved_ddo;
-    ctx.trywith_ops <- saved_two;
-    ctx.in_fold_loop <- saved_in_fold
-  ) f
+  Fun.protect
+    ~finally:(fun () ->
+      ctx.current_fn_name <- saved_fn;
+      ctx.current_fn_params <- saved_params;
+      ctx.tco_used <- saved_tco;
+      ctx.direct_dispatch_ops <- saved_ddo;
+      ctx.trywith_ops <- saved_two;
+      ctx.in_fold_loop <- saved_in_fold)
+    f
 
 let with_loop_ctx ctx ~break_flag ~break_val f =
   let saved_break_flag = ctx.break_flag_name in
@@ -249,11 +322,12 @@ let with_loop_ctx ctx ~break_flag ~break_val f =
   ctx.break_flag_name <- break_flag;
   ctx.break_val_name <- break_val;
   ctx.in_fold_loop <- false;
-  Fun.protect ~finally:(fun () ->
-    ctx.break_flag_name <- saved_break_flag;
-    ctx.break_val_name <- saved_break_val;
-    ctx.in_fold_loop <- saved_in_fold
-  ) f
+  Fun.protect
+    ~finally:(fun () ->
+      ctx.break_flag_name <- saved_break_flag;
+      ctx.break_val_name <- saved_break_val;
+      ctx.in_fold_loop <- saved_in_fold)
+    f
 
 let with_current_module ctx mod_name f =
   let saved = ctx.current_module in
@@ -270,13 +344,13 @@ let with_handle_ops ctx ~trywith_ops ~direct_dispatch_ops f =
   let saved_ddo = ctx.direct_dispatch_ops in
   ctx.trywith_ops <- trywith_ops;
   ctx.direct_dispatch_ops <- direct_dispatch_ops;
-  Fun.protect ~finally:(fun () ->
-    ctx.trywith_ops <- saved_two;
-    ctx.direct_dispatch_ops <- saved_ddo
-  ) f
+  Fun.protect
+    ~finally:(fun () ->
+      ctx.trywith_ops <- saved_two;
+      ctx.direct_dispatch_ops <- saved_ddo)
+    f
 
-let push_scope ctx =
-  ctx.scopes <- Hashtbl.create 8 :: ctx.scopes
+let push_scope ctx = ctx.scopes <- Hashtbl.create 8 :: ctx.scopes
 
 let pop_scope ctx =
   match ctx.scopes with
@@ -291,18 +365,19 @@ let bind_var ctx mml_name js_name =
 let lookup_var ctx name =
   let rec search = function
     | [] ->
-      (* Stdlib is a virtual module (type-level only, no compiled code).
+        (* Stdlib is a virtual module (type-level only, no compiled code).
          Strip the Stdlib. prefix so Stdlib.mod resolves to the builtin $mod etc. *)
-      let base_name = match String.index_opt name '.' with
-        | Some i when String.sub name 0 i = "Stdlib" ->
-          String.sub name (i + 1) (String.length name - i - 1)
-        | _ -> name
-      in
-      mangle_name base_name
-    | tbl :: rest ->
-      match Hashtbl.find_opt tbl name with
-      | Some js -> js
-      | None -> search rest
+        let base_name =
+          match String.index_opt name '.' with
+          | Some i when String.sub name 0 i = "Stdlib" ->
+              String.sub name (i + 1) (String.length name - i - 1)
+          | _ -> name
+        in
+        mangle_name base_name
+    | tbl :: rest -> (
+        match Hashtbl.find_opt tbl name with
+        | Some js -> js
+        | None -> search rest)
   in
   search ctx.scopes
 
@@ -314,35 +389,44 @@ let fresh_tmp ctx =
 (* Deduplicate JS parameter names by appending _2, _3, etc. *)
 let dedup_js_params params =
   let seen = Hashtbl.create 8 in
-  List.map (fun p ->
-    let count = match Hashtbl.find_opt seen p with
-      | Some n -> n | None -> 0 in
-    Hashtbl.replace seen p (count + 1);
-    if count = 0 then p
-    else p ^ "_" ^ string_of_int (count + 1)
-  ) params
+  List.map
+    (fun p ->
+      let count =
+        match Hashtbl.find_opt seen p with Some n -> n | None -> 0
+      in
+      Hashtbl.replace seen p (count + 1);
+      if count = 0 then p else p ^ "_" ^ string_of_int (count + 1))
+    params
 
 let emit ctx s = Buffer.add_string ctx.buf s
+
 let emit_indent ctx =
-  for _ = 1 to ctx.indent do Buffer.add_string ctx.buf "  " done
+  for _ = 1 to ctx.indent do
+    Buffer.add_string ctx.buf "  "
+  done
+
 let emit_line ctx s =
-  emit_indent ctx; emit ctx s; emit ctx "\n"
+  emit_indent ctx;
+  emit ctx s;
+  emit ctx "\n"
 
 (* ---- String escaping ---- *)
 
 let escape_js_string s =
   let buf = Buffer.create (String.length s + 2) in
   Buffer.add_char buf '"';
-  String.iter (fun c ->
-    match c with
-    | '"' -> Buffer.add_string buf "\\\""
-    | '\\' -> Buffer.add_string buf "\\\\"
-    | '\n' -> Buffer.add_string buf "\\n"
-    | '\r' -> Buffer.add_string buf "\\r"
-    | '\t' -> Buffer.add_string buf "\\t"
-    | c when Char.code c < 32 -> Buffer.add_string buf (Printf.sprintf "\\x%02x" (Char.code c))
-    | c -> Buffer.add_char buf c
-  ) s;
+  String.iter
+    (fun c ->
+      match c with
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\r' -> Buffer.add_string buf "\\r"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | c when Char.code c < 32 ->
+          Buffer.add_string buf (Printf.sprintf "\\x%02x" (Char.code c))
+      | c -> Buffer.add_char buf c)
+    s;
   Buffer.add_char buf '"';
   Buffer.contents buf
 
@@ -352,18 +436,23 @@ let tag_for_constructor type_env name =
   match List.assoc_opt name type_env.Types.constructors with
   | None -> error (Printf.sprintf "unknown constructor: %s" name)
   | Some info ->
-    let (_, _, variant_def, _) = List.find (fun (n, _, _, _) ->
-      String.equal n info.Types.ctor_type_name) type_env.Types.variants in
-    let short_name = match String.rindex_opt name '.' with
-      | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-      | None -> name
-    in
-    let rec find_tag idx = function
-      | [] -> error (Printf.sprintf "constructor %s not found in variant" name)
-      | (cname, _) :: _ when String.equal cname short_name -> idx
-      | _ :: rest -> find_tag (idx + 1) rest
-    in
-    find_tag 0 variant_def
+      let _, _, variant_def, _ =
+        List.find
+          (fun (n, _, _, _) -> String.equal n info.Types.ctor_type_name)
+          type_env.Types.variants
+      in
+      let short_name =
+        match String.rindex_opt name '.' with
+        | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+        | None -> name
+      in
+      let rec find_tag idx = function
+        | [] ->
+            error (Printf.sprintf "constructor %s not found in variant" name)
+        | (cname, _) :: _ when String.equal cname short_name -> idx
+        | _ :: rest -> find_tag (idx + 1) rest
+      in
+      find_tag 0 variant_def
 
 let short_constructor_name name =
   match String.rindex_opt name '.' with
@@ -382,37 +471,46 @@ let rec expr_has_perform_with ~check_perform (te : Typechecker.texpr) =
   match te.expr with
   | Typechecker.TEPerform (op_name, _) -> check_perform op_name
   | Typechecker.TEResume _ -> true
-  | Typechecker.TELet (_, _, e1, e2)
-  | Typechecker.TESeq (e1, e2) -> go e1 || go e2
+  | Typechecker.TELet (_, _, e1, e2) | Typechecker.TESeq (e1, e2) ->
+      go e1 || go e2
   | Typechecker.TEIf (cond, e1, e2) -> go cond || go e1 || go e2
   | Typechecker.TEMatch (scrut, arms, _) ->
-    go scrut ||
-    List.exists (fun (_, g, body) ->
-      go body || (match g with Some g -> go g | None -> false)
-    ) arms
+      go scrut
+      || List.exists
+           (fun (_, g, body) ->
+             go body || match g with Some g -> go g | None -> false)
+           arms
   | Typechecker.TEMatchTree cm ->
-    go cm.Match_tree_types.scrutinee ||
-    Array.exists (fun arm -> go arm.Match_tree_types.arm_body) cm.match_arms ||
-    (let rec check_tree = function
-      | Match_tree_types.DGuard { guard; on_true; on_false; _ } ->
-        go guard || check_tree on_true || check_tree on_false
-      | Match_tree_types.DSwitch { cases; default; _ } ->
-        List.exists (fun (_, _, sub) -> check_tree sub) cases ||
-        (match default with Some d -> check_tree d | None -> false)
-      | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> false
-    in check_tree cm.tree)
+      go cm.Match_tree_types.scrutinee
+      || Array.exists
+           (fun arm -> go arm.Match_tree_types.arm_body)
+           cm.match_arms
+      ||
+      let rec check_tree = function
+        | Match_tree_types.DGuard { guard; on_true; on_false; _ } ->
+            go guard || check_tree on_true || check_tree on_false
+        | Match_tree_types.DSwitch { cases; default; _ } -> (
+            List.exists (fun (_, _, sub) -> check_tree sub) cases
+            || match default with Some d -> check_tree d | None -> false)
+        | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> false
+      in
+      check_tree cm.tree
   | Typechecker.TELetRec (_, _, fn_e, body) -> go fn_e || go body
   | Typechecker.TELetRecAnd (bindings, body) ->
-    List.exists (fun (_, e) -> go e) bindings || go body
+      List.exists (fun (_, e) -> go e) bindings || go body
   | Typechecker.TEFun (_, body, _) -> go body
   | Typechecker.TEApp (fn, arg) -> go fn || go arg
   | Typechecker.TEHandle (body, arms) ->
-    go body ||
-    List.exists (fun arm -> match arm with
-      | Typechecker.THReturn (_, e) | Typechecker.THOp { body = e; _ }
-      | Typechecker.THOpProvide (_, _, e) | Typechecker.THOpTry (_, _, e) ->
-        go e
-    ) arms
+      go body
+      || List.exists
+           (fun arm ->
+             match arm with
+             | Typechecker.THReturn (_, e)
+             | Typechecker.THOp { body = e; _ }
+             | Typechecker.THOpProvide (_, _, e)
+             | Typechecker.THOpTry (_, _, e) ->
+                 go e)
+           arms
   | Typechecker.TELetMut (_, e1, e2) -> go e1 || go e2
   | Typechecker.TEWhile { tw_cond; tw_body } -> go tw_cond || go tw_body
   | Typechecker.TECons (e1, e2) -> go e1 || go e2
@@ -426,7 +524,9 @@ let expr_has_perform te =
   expr_has_perform_with ~check_perform:(fun _ -> true) te
 
 let expr_has_unhandled_perform handled_ops te =
-  expr_has_perform_with ~check_perform:(fun op -> not (List.mem op handled_ops)) te
+  expr_has_perform_with
+    ~check_perform:(fun op -> not (List.mem op handled_ops))
+    te
 
 (* Check if all TEResume in body are in tail position (safe to skip _trampoline) *)
 let rec all_resumes_are_tail (te : Typechecker.texpr) =
@@ -434,17 +534,19 @@ let rec all_resumes_are_tail (te : Typechecker.texpr) =
   | Typechecker.TEResume _ -> true
   | Typechecker.TESeq (_, e2) -> all_resumes_are_tail e2
   | Typechecker.TELet (_, _, e1, e2) ->
-    not (expr_has_perform e1) && all_resumes_are_tail e2
+      (not (expr_has_perform e1)) && all_resumes_are_tail e2
   | Typechecker.TELetRec (_, _, _, e2) -> all_resumes_are_tail e2
   | Typechecker.TELetMut (_, e1, e2) ->
-    not (expr_has_perform e1) && all_resumes_are_tail e2
+      (not (expr_has_perform e1)) && all_resumes_are_tail e2
   | Typechecker.TEIf (_, then_e, else_e) ->
-    all_resumes_are_tail then_e && all_resumes_are_tail else_e
+      all_resumes_are_tail then_e && all_resumes_are_tail else_e
   | Typechecker.TEMatch (_, arms, _) ->
-    List.for_all (fun (_, _, body) -> all_resumes_are_tail body) arms
+      List.for_all (fun (_, _, body) -> all_resumes_are_tail body) arms
   | Typechecker.TEMatchTree cm ->
-    Array.for_all (fun arm -> all_resumes_are_tail arm.Match_tree_types.arm_body) cm.match_arms
-  | _ -> true  (* No resume — safe *)
+      Array.for_all
+        (fun arm -> all_resumes_are_tail arm.Match_tree_types.arm_body)
+        cm.match_arms
+  | _ -> true (* No resume — safe *)
 
 (* ---- Expression compilation ---- *)
 
@@ -463,12 +565,12 @@ let rec compile_non_tail ctx te =
 and compile_expr ctx (te : Typechecker.texpr) : string =
   match te.expr with
   | Typechecker.TEInt n ->
-    if n < 0 then Printf.sprintf "(%d)" n
-    else string_of_int n
+      if n < 0 then Printf.sprintf "(%d)" n else string_of_int n
   | Typechecker.TEFloat f ->
-    let s = Printf.sprintf "%.17g" f in
-    if String.contains s '.' || String.contains s 'e' || String.contains s 'i'
-    then s else s ^ ".0"
+      let s = Printf.sprintf "%.17g" f in
+      if String.contains s '.' || String.contains s 'e' || String.contains s 'i'
+      then s
+      else s ^ ".0"
   | Typechecker.TEBool true -> "true"
   | Typechecker.TEBool false -> "false"
   | Typechecker.TEString s -> escape_js_string s
@@ -476,210 +578,189 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
   | Typechecker.TERune n -> string_of_int n
   | Typechecker.TEUnit -> "undefined"
   | Typechecker.TENil -> "null"
-
   | Typechecker.TEVar name -> lookup_var ctx name
-
-  | Typechecker.TELet (name, _scheme, e1, e2) ->
-    compile_let ctx name e1 e2
-
+  | Typechecker.TELet (name, _scheme, e1, e2) -> compile_let ctx name e1 e2
   | Typechecker.TELetRec (name, _scheme, fn_expr, body) ->
-    compile_letrec ctx name fn_expr body
-
+      compile_letrec ctx name fn_expr body
   | Typechecker.TELetRecAnd (bindings, body) ->
-    compile_letrec_and ctx bindings body
-
+      compile_letrec_and ctx bindings body
   | Typechecker.TEFun (param, body, has_return) ->
-    compile_fun ctx param body has_return
-
+      compile_fun ctx param body has_return
   | Typechecker.TEApp (fn, arg) ->
-    let result = compile_app ctx te fn arg in
-    if ctx.in_cps then "_resolve(" ^ result ^ ")" else result
-
-  | Typechecker.TEBinop (op, e1, e2) ->
-    compile_binop ctx op e1 e2
-
-  | Typechecker.TEUnop (op, e) ->
-    compile_unop ctx op e
-
-  | Typechecker.TEIf (cond, then_e, else_e) ->
-    compile_if ctx cond then_e else_e
-
+      let result = compile_app ctx te fn arg in
+      if ctx.in_cps then "_resolve(" ^ result ^ ")" else result
+  | Typechecker.TEBinop (op, e1, e2) -> compile_binop ctx op e1 e2
+  | Typechecker.TEUnop (op, e) -> compile_unop ctx op e
+  | Typechecker.TEIf (cond, then_e, else_e) -> compile_if ctx cond then_e else_e
   | Typechecker.TETuple exprs ->
-    let elts = List.map (compile_non_tail ctx) exprs in
-    "[" ^ String.concat ", " elts ^ "]"
-
+      let elts = List.map (compile_non_tail ctx) exprs in
+      "[" ^ String.concat ", " elts ^ "]"
   | Typechecker.TERecord fields ->
-    let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-    let field_strs = List.map (fun (name, e) ->
-      let js_name = mangle_name name in
-      let v = compile_non_tail ctx e in
-      if js_name = name then name ^ ": " ^ v
-      else Printf.sprintf "%s: %s" js_name v
-    ) sorted in
-    "({" ^ String.concat ", " field_strs ^ "})"
-
-  | Typechecker.TERecordUpdate (base, overrides) ->
-    let base_js = compile_non_tail ctx base in
-    let field_strs = List.map (fun (name, e) ->
-      let js_name = mangle_name name in
-      js_name ^ ": " ^ compile_non_tail ctx e
-    ) overrides in
-    "({..." ^ base_js ^ ", " ^ String.concat ", " field_strs ^ "})"
-
-  | Typechecker.TERecordUpdateIdx (base, pairs) ->
-    let tmp = fresh_tmp ctx in
-    let base_tmp = fresh_tmp ctx in
-    let base_js = compile_non_tail ctx base in
-    emit_line ctx (Printf.sprintf "let %s; const %s = %s;" tmp base_tmp base_js);
-    let pair_strs = List.map (fun (idx_e, val_e) ->
-      let idx_js = compile_non_tail ctx idx_e in
-      let val_js = compile_non_tail ctx val_e in
-      Printf.sprintf "[Object.keys(%s).sort()[%s]]: %s" base_tmp idx_js val_js
-    ) pairs in
-    Printf.sprintf "(%s = {...%s, %s}, %s)" tmp base_tmp (String.concat ", " pair_strs) tmp
-
-  | Typechecker.TEField (e, field) ->
-    let base = compile_non_tail ctx e in
-    base ^ "." ^ mangle_name field
-
-  | Typechecker.TEIndex (base_e, idx_e) ->
-    let base = compile_non_tail ctx base_e in
-    let idx = compile_non_tail ctx idx_e in
-    let resolved = Types.repr base_e.ty in
-    (match resolved with
-     | Types.TString -> base ^ ".charCodeAt(" ^ idx ^ ")"
-     | Types.TArray _ -> base ^ "._arr[" ^ idx ^ "]"
-     | _ -> base ^ "[" ^ idx ^ "]")
-
-  | Typechecker.TECons (hd, tl) ->
-    let hd_js = compile_non_tail ctx hd in
-    let tl_js = compile_non_tail ctx tl in
-    "({_hd: " ^ hd_js ^ ", _tl: " ^ tl_js ^ "})"
-
-  | Typechecker.TEConstruct (name, arg) ->
-    if is_newtype_ctor ctx.type_env name then begin
-      (* Newtype constructor: erased at runtime *)
-      match arg with
-      | Some e -> compile_non_tail ctx e
-      | None -> "undefined"
-    end else begin
-      let tag = if String.length name > 0 && name.[0] = '`' then
-        Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-      else
-        tag_for_constructor ctx.type_env name
+      let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
+      let field_strs =
+        List.map
+          (fun (name, e) ->
+            let js_name = mangle_name name in
+            let v = compile_non_tail ctx e in
+            if js_name = name then name ^ ": " ^ v
+            else Printf.sprintf "%s: %s" js_name v)
+          sorted
       in
-      let sname = short_constructor_name name in
-      (match arg with
-       | Some e ->
-         let v = compile_non_tail ctx e in
-         Printf.sprintf "({_tag: %d, _name: %s, _val: %s})" tag (escape_js_string sname) v
-       | None ->
-         Printf.sprintf "({_tag: %d, _name: %s})" tag (escape_js_string sname))
-    end
-
+      "({" ^ String.concat ", " field_strs ^ "})"
+  | Typechecker.TERecordUpdate (base, overrides) ->
+      let base_js = compile_non_tail ctx base in
+      let field_strs =
+        List.map
+          (fun (name, e) ->
+            let js_name = mangle_name name in
+            js_name ^ ": " ^ compile_non_tail ctx e)
+          overrides
+      in
+      "({..." ^ base_js ^ ", " ^ String.concat ", " field_strs ^ "})"
+  | Typechecker.TERecordUpdateIdx (base, pairs) ->
+      let tmp = fresh_tmp ctx in
+      let base_tmp = fresh_tmp ctx in
+      let base_js = compile_non_tail ctx base in
+      emit_line ctx
+        (Printf.sprintf "let %s; const %s = %s;" tmp base_tmp base_js);
+      let pair_strs =
+        List.map
+          (fun (idx_e, val_e) ->
+            let idx_js = compile_non_tail ctx idx_e in
+            let val_js = compile_non_tail ctx val_e in
+            Printf.sprintf "[Object.keys(%s).sort()[%s]]: %s" base_tmp idx_js
+              val_js)
+          pairs
+      in
+      Printf.sprintf "(%s = {...%s, %s}, %s)" tmp base_tmp
+        (String.concat ", " pair_strs)
+        tmp
+  | Typechecker.TEField (e, field) ->
+      let base = compile_non_tail ctx e in
+      base ^ "." ^ mangle_name field
+  | Typechecker.TEIndex (base_e, idx_e) -> (
+      let base = compile_non_tail ctx base_e in
+      let idx = compile_non_tail ctx idx_e in
+      let resolved = Types.repr base_e.ty in
+      match resolved with
+      | Types.TString -> base ^ ".charCodeAt(" ^ idx ^ ")"
+      | Types.TArray _ -> base ^ "._arr[" ^ idx ^ "]"
+      | _ -> base ^ "[" ^ idx ^ "]")
+  | Typechecker.TECons (hd, tl) ->
+      let hd_js = compile_non_tail ctx hd in
+      let tl_js = compile_non_tail ctx tl in
+      "({_hd: " ^ hd_js ^ ", _tl: " ^ tl_js ^ "})"
+  | Typechecker.TEConstruct (name, arg) ->
+      if is_newtype_ctor ctx.type_env name then begin
+        (* Newtype constructor: erased at runtime *)
+        match arg with
+        | Some e -> compile_non_tail ctx e
+        | None -> "undefined"
+      end
+      else begin
+        let tag =
+          if String.length name > 0 && name.[0] = '`' then
+            Types.polyvar_tag (String.sub name 1 (String.length name - 1))
+          else tag_for_constructor ctx.type_env name
+        in
+        let sname = short_constructor_name name in
+        match arg with
+        | Some e ->
+            let v = compile_non_tail ctx e in
+            Printf.sprintf "({_tag: %d, _name: %s, _val: %s})" tag
+              (escape_js_string sname) v
+        | None ->
+            Printf.sprintf "({_tag: %d, _name: %s})" tag
+              (escape_js_string sname)
+      end
   | Typechecker.TEMatch (scrut, arms, _partial) ->
-    compile_match ctx scrut arms te.loc
-
-  | Typechecker.TEMatchTree cm ->
-    compile_js_match_tree ctx cm
-
-  | Typechecker.TESeq (e1, e2) ->
-    compile_seq ctx e1 e2
-
+      compile_match ctx scrut arms te.loc
+  | Typechecker.TEMatchTree cm -> compile_js_match_tree ctx cm
+  | Typechecker.TESeq (e1, e2) -> compile_seq ctx e1 e2
   | Typechecker.TELetMut (name, init, body) ->
-    compile_let_mut ctx name init body
-
+      compile_let_mut ctx name init body
   | Typechecker.TEAssign (name, e) ->
-    let js_name = lookup_var ctx name in
-    let v = compile_non_tail ctx e in
-    "(" ^ js_name ^ " = " ^ v ^ ", undefined)"
-
+      let js_name = lookup_var ctx name in
+      let v = compile_non_tail ctx e in
+      "(" ^ js_name ^ " = " ^ v ^ ", undefined)"
   | Typechecker.TEFieldAssign (record_e, field, value_e) ->
-    let base = compile_non_tail ctx record_e in
-    let v = compile_non_tail ctx value_e in
-    "(" ^ base ^ "." ^ mangle_name field ^ " = " ^ v ^ ", undefined)"
-
+      let base = compile_non_tail ctx record_e in
+      let v = compile_non_tail ctx value_e in
+      "(" ^ base ^ "." ^ mangle_name field ^ " = " ^ v ^ ", undefined)"
   | Typechecker.TEWhile { tw_cond; tw_body } ->
-    compile_while ctx tw_cond tw_body
-
+      compile_while ctx tw_cond tw_body
   | Typechecker.TEBreak value_te ->
-    let v = compile_non_tail ctx value_te in
-    if ctx.in_fold_loop then
-      "_throw_break(" ^ v ^ ")"
-    else begin
-      emit_line ctx (Printf.sprintf "%s = %s;" ctx.break_val_name v);
-      emit_line ctx (Printf.sprintf "%s = true;" ctx.break_flag_name);
-      emit_line ctx "break;";
-      "undefined"
-    end
-
+      let v = compile_non_tail ctx value_te in
+      if ctx.in_fold_loop then "_throw_break(" ^ v ^ ")"
+      else begin
+        emit_line ctx (Printf.sprintf "%s = %s;" ctx.break_val_name v);
+        emit_line ctx (Printf.sprintf "%s = true;" ctx.break_flag_name);
+        emit_line ctx "break;";
+        "undefined"
+      end
   | Typechecker.TEContinueLoop ->
-    emit_line ctx "continue;";
-    "undefined"
-
+      emit_line ctx "continue;";
+      "undefined"
   | Typechecker.TEFoldContinue value_te ->
-    let v = compile_non_tail ctx value_te in
-    "_throw_fold_cont(" ^ v ^ ")"
-
+      let v = compile_non_tail ctx value_te in
+      "_throw_fold_cont(" ^ v ^ ")"
   | Typechecker.TEForLoop fold_te ->
-    let result = fresh_tmp ctx in
-    ctx.fold_cont_pending <- true;
-    emit_line ctx (Printf.sprintf "let %s;" result);
-    emit_line ctx "try {";
-    ctx.indent <- ctx.indent + 1;
-    let fold_js = compile_non_tail ctx fold_te in
-    emit_line ctx (Printf.sprintf "%s = %s;" result fold_js);
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "} catch(_e) {";
-    ctx.indent <- ctx.indent + 1;
-    emit_line ctx (Printf.sprintf "if (_e && _e._tag === \"_break\") %s = _e._val;" result);
-    emit_line ctx "else throw _e;";
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}";
-    result
-
+      let result = fresh_tmp ctx in
+      ctx.fold_cont_pending <- true;
+      emit_line ctx (Printf.sprintf "let %s;" result);
+      emit_line ctx "try {";
+      ctx.indent <- ctx.indent + 1;
+      let fold_js = compile_non_tail ctx fold_te in
+      emit_line ctx (Printf.sprintf "%s = %s;" result fold_js);
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "} catch(_e) {";
+      ctx.indent <- ctx.indent + 1;
+      emit_line ctx
+        (Printf.sprintf "if (_e && _e._tag === \"_break\") %s = _e._val;" result);
+      emit_line ctx "else throw _e;";
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      result
   | Typechecker.TEArray elts ->
-    let elt_strs = List.map (compile_non_tail ctx) elts in
-    "{_arr: [" ^ String.concat ", " elt_strs ^ "]}"
-
+      let elt_strs = List.map (compile_non_tail ctx) elts in
+      "{_arr: [" ^ String.concat ", " elt_strs ^ "]}"
   | Typechecker.TEReturn value_te ->
-    let v = compile_non_tail ctx value_te in
-    "_throw_return(" ^ v ^ ")"
-
-  | Typechecker.TEPerform (op_name, arg) ->
-    (match List.assoc_opt op_name ctx.direct_dispatch_ops with
-     | Some direct_fn ->
-       (* Simple handler direct dispatch — no CPS, no trampoline *)
-       let arg_js = compile_non_tail ctx arg in
-       direct_fn ^ "(" ^ arg_js ^ ")"
-     | None when List.mem op_name ctx.trywith_ops ->
-       (* Try/with — throw to be caught at handle boundary *)
-       let arg_js = compile_non_tail ctx arg in
-       let result = fresh_tmp ctx in
-       emit_line ctx (Printf.sprintf "throw {_e: \"%s\", _v: %s};" op_name arg_js);
-       emit_line ctx (Printf.sprintf "const %s = undefined;" result);
-       result
-     | None ->
-       (* Perform in direct-style context — trampoline to flatten handler bounces *)
-       let arg_js = compile_non_tail ctx arg in
-       let result = fresh_tmp ctx in
-       emit_line ctx (Printf.sprintf
-         "const %s = _trampoline(function() { return _h[\"%s\"](%s, function(_r) { return _r; }); });"
-         result op_name arg_js);
-       result)
-
-  | Typechecker.TEHandle (body, arms) ->
-    compile_handle ctx body arms
-
+      let v = compile_non_tail ctx value_te in
+      "_throw_return(" ^ v ^ ")"
+  | Typechecker.TEPerform (op_name, arg) -> (
+      match List.assoc_opt op_name ctx.direct_dispatch_ops with
+      | Some direct_fn ->
+          (* Simple handler direct dispatch — no CPS, no trampoline *)
+          let arg_js = compile_non_tail ctx arg in
+          direct_fn ^ "(" ^ arg_js ^ ")"
+      | None when List.mem op_name ctx.trywith_ops ->
+          (* Try/with — throw to be caught at handle boundary *)
+          let arg_js = compile_non_tail ctx arg in
+          let result = fresh_tmp ctx in
+          emit_line ctx
+            (Printf.sprintf "throw {_e: \"%s\", _v: %s};" op_name arg_js);
+          emit_line ctx (Printf.sprintf "const %s = undefined;" result);
+          result
+      | None ->
+          (* Perform in direct-style context — trampoline to flatten handler bounces *)
+          let arg_js = compile_non_tail ctx arg in
+          let result = fresh_tmp ctx in
+          emit_line ctx
+            (Printf.sprintf
+               "const %s = _trampoline(function() { return _h[\"%s\"](%s, \
+                function(_r) { return _r; }); });"
+               result op_name arg_js);
+          result)
+  | Typechecker.TEHandle (body, arms) -> compile_handle ctx body arms
   | Typechecker.TEResume (k_expr, val_expr) ->
-    let k_js = compile_non_tail ctx k_expr in
-    let v_js = compile_non_tail ctx val_expr in
-    if ctx.handler_tail_resume then
-      (* Tail resume in handler — no trampoline, bounce wrapper handles it *)
-      k_js ^ "(" ^ v_js ^ ")"
-    else
-      (* Non-tail resume — trampoline to synchronously process k's bounces *)
-      "_trampoline(function() { return " ^ k_js ^ "(" ^ v_js ^ "); })"
+      let k_js = compile_non_tail ctx k_expr in
+      let v_js = compile_non_tail ctx val_expr in
+      if ctx.handler_tail_resume then
+        (* Tail resume in handler — no trampoline, bounce wrapper handles it *)
+        k_js ^ "(" ^ v_js ^ ")"
+      else
+        (* Non-tail resume — trampoline to synchronously process k's bounces *)
+        "_trampoline(function() { return " ^ k_js ^ "(" ^ v_js ^ "); })"
 
 (* ---- Let bindings ---- *)
 
@@ -687,14 +768,17 @@ and compile_let ctx name e1 e2 =
   let v1 = compile_non_tail ctx e1 in
   let js_name = mangle_name name in
   (* Use a unique name to avoid const redeclaration in same JS block *)
-  let actual_name = if js_name = "_" then fresh_tmp ctx
-    else js_name ^ "_" ^ string_of_int ctx.tmp_counter ^ "" |> fun n ->
-      ctx.tmp_counter <- ctx.tmp_counter + 1; n
+  let actual_name =
+    if js_name = "_" then fresh_tmp ctx
+    else
+      js_name ^ "_" ^ string_of_int ctx.tmp_counter ^ "" |> fun n ->
+      ctx.tmp_counter <- ctx.tmp_counter + 1;
+      n
   in
   (* Propagate function arity from the compiled expression to the alias *)
   (match Hashtbl.find_opt ctx.function_arities v1 with
-   | Some a -> Hashtbl.replace ctx.function_arities actual_name a
-   | None -> ());
+  | Some a -> Hashtbl.replace ctx.function_arities actual_name a
+  | None -> ());
   push_scope ctx;
   bind_var ctx name actual_name;
   let result = fresh_tmp ctx in
@@ -708,40 +792,50 @@ and emit_js_placeholder ctx js_name te =
   let rec go te =
     match te.Typechecker.expr with
     | Typechecker.TECons _ ->
-      emit_line ctx (Printf.sprintf "let %s = {_hd: null, _tl: null};" js_name)
+        emit_line ctx
+          (Printf.sprintf "let %s = {_hd: null, _tl: null};" js_name)
     | Typechecker.TETuple es ->
-      let nulls = String.concat ", " (List.map (fun _ -> "null") es) in
-      emit_line ctx (Printf.sprintf "let %s = [%s];" js_name nulls)
+        let nulls = String.concat ", " (List.map (fun _ -> "null") es) in
+        emit_line ctx (Printf.sprintf "let %s = [%s];" js_name nulls)
     | Typechecker.TERecord fields ->
-      let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      let field_strs = List.map (fun (name, _) ->
-        mangle_name name ^ ": null") sorted in
-      emit_line ctx (Printf.sprintf "let %s = {%s};" js_name (String.concat ", " field_strs))
-    | Typechecker.TEConstruct (name, payload_opt) ->
-      if is_newtype_ctor ctx.type_env name then
-        (match payload_opt with
-         | Some inner -> go inner
-         | None -> error "cannot create placeholder for nullary newtype constructor")
-      else begin
-        let tag = if String.length name > 0 && name.[0] = '`' then
-          Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-        else tag_for_constructor ctx.type_env name
+        let sorted =
+          List.sort (fun (a, _) (b, _) -> String.compare a b) fields
         in
-        let sname = short_constructor_name name in
-        (match payload_opt with
-         | Some _ ->
-           emit_line ctx (Printf.sprintf "let %s = {_tag: %d, _name: %s, _val: null};"
-             js_name tag (escape_js_string sname))
-         | None ->
-           emit_line ctx (Printf.sprintf "let %s = {_tag: %d, _name: %s};"
-             js_name tag (escape_js_string sname)))
-      end
+        let field_strs =
+          List.map (fun (name, _) -> mangle_name name ^ ": null") sorted
+        in
+        emit_line ctx
+          (Printf.sprintf "let %s = {%s};" js_name
+             (String.concat ", " field_strs))
+    | Typechecker.TEConstruct (name, payload_opt) ->
+        if is_newtype_ctor ctx.type_env name then
+          match payload_opt with
+          | Some inner -> go inner
+          | None ->
+              error "cannot create placeholder for nullary newtype constructor"
+        else begin
+          let tag =
+            if String.length name > 0 && name.[0] = '`' then
+              Types.polyvar_tag (String.sub name 1 (String.length name - 1))
+            else tag_for_constructor ctx.type_env name
+          in
+          let sname = short_constructor_name name in
+          match payload_opt with
+          | Some _ ->
+              emit_line ctx
+                (Printf.sprintf "let %s = {_tag: %d, _name: %s, _val: null};"
+                   js_name tag (escape_js_string sname))
+          | None ->
+              emit_line ctx
+                (Printf.sprintf "let %s = {_tag: %d, _name: %s};" js_name tag
+                   (escape_js_string sname))
+        end
     | Typechecker.TEArray es ->
-      let nulls = String.concat ", " (List.map (fun _ -> "null") es) in
-      emit_line ctx (Printf.sprintf "let %s = {_arr: [%s]};" js_name nulls)
-    | Typechecker.TELet (_, _, _, inner) | Typechecker.TESeq (_, inner) -> go inner
-    | _ ->
-      emit_line ctx (Printf.sprintf "let %s = null;" js_name)
+        let nulls = String.concat ", " (List.map (fun _ -> "null") es) in
+        emit_line ctx (Printf.sprintf "let %s = {_arr: [%s]};" js_name nulls)
+    | Typechecker.TELet (_, _, _, inner) | Typechecker.TESeq (_, inner) ->
+        go inner
+    | _ -> emit_line ctx (Printf.sprintf "let %s = null;" js_name)
   in
   go te
 
@@ -749,41 +843,49 @@ and emit_js_backpatch ctx js_name te =
   let rec go te =
     match te.Typechecker.expr with
     | Typechecker.TECons _ ->
-      let computed = compile_non_tail ctx te in
-      emit_line ctx (Printf.sprintf "%s._hd = %s._hd; %s._tl = %s._tl;"
-        js_name computed js_name computed)
+        let computed = compile_non_tail ctx te in
+        emit_line ctx
+          (Printf.sprintf "%s._hd = %s._hd; %s._tl = %s._tl;" js_name computed
+             js_name computed)
     | Typechecker.TETuple _ ->
-      let computed = compile_non_tail ctx te in
-      let tmp = fresh_tmp ctx in
-      emit_line ctx (Printf.sprintf "const %s = %s;" tmp computed);
-      emit_line ctx (Printf.sprintf "for (let _i = 0; _i < %s.length; _i++) %s[_i] = %s[_i];"
-        tmp js_name tmp)
+        let computed = compile_non_tail ctx te in
+        let tmp = fresh_tmp ctx in
+        emit_line ctx (Printf.sprintf "const %s = %s;" tmp computed);
+        emit_line ctx
+          (Printf.sprintf
+             "for (let _i = 0; _i < %s.length; _i++) %s[_i] = %s[_i];" tmp
+             js_name tmp)
     | Typechecker.TERecord _ ->
-      let computed = compile_non_tail ctx te in
-      emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
-    | Typechecker.TEConstruct (name, _) when is_newtype_ctor ctx.type_env name ->
-      go te  (* newtype is erased — backpatch the underlying *)
+        let computed = compile_non_tail ctx te in
+        emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
+    | Typechecker.TEConstruct (name, _) when is_newtype_ctor ctx.type_env name
+      ->
+        go te (* newtype is erased — backpatch the underlying *)
     | Typechecker.TEConstruct _ ->
-      let computed = compile_non_tail ctx te in
-      let tmp = fresh_tmp ctx in
-      emit_line ctx (Printf.sprintf "const %s = %s;" tmp computed);
-      emit_line ctx (Printf.sprintf
-        "%s._tag = %s._tag; %s._name = %s._name; if (\"_val\" in %s) %s._val = %s._val;"
-        js_name tmp js_name tmp tmp js_name tmp)
+        let computed = compile_non_tail ctx te in
+        let tmp = fresh_tmp ctx in
+        emit_line ctx (Printf.sprintf "const %s = %s;" tmp computed);
+        emit_line ctx
+          (Printf.sprintf
+             "%s._tag = %s._tag; %s._name = %s._name; if (\"_val\" in %s) \
+              %s._val = %s._val;"
+             js_name tmp js_name tmp tmp js_name tmp)
     | Typechecker.TEArray _ ->
-      let computed = compile_non_tail ctx te in
-      let tmp = fresh_tmp ctx in
-      emit_line ctx (Printf.sprintf "const %s = %s;" tmp computed);
-      emit_line ctx (Printf.sprintf
-        "for (let _i = 0; _i < %s._arr.length; _i++) %s._arr[_i] = %s._arr[_i];"
-        tmp js_name tmp)
+        let computed = compile_non_tail ctx te in
+        let tmp = fresh_tmp ctx in
+        emit_line ctx (Printf.sprintf "const %s = %s;" tmp computed);
+        emit_line ctx
+          (Printf.sprintf
+             "for (let _i = 0; _i < %s._arr.length; _i++) %s._arr[_i] = \
+              %s._arr[_i];"
+             tmp js_name tmp)
     | Typechecker.TELet (_, _, _, _inner) | Typechecker.TESeq (_, _inner) ->
-      (* Compile the whole expression, but backpatch based on inner shape *)
-      let computed = compile_non_tail ctx te in
-      emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
+        (* Compile the whole expression, but backpatch based on inner shape *)
+        let computed = compile_non_tail ctx te in
+        emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
     | _ ->
-      let computed = compile_non_tail ctx te in
-      emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
+        let computed = compile_non_tail ctx te in
+        emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
   in
   go te
 
@@ -792,11 +894,10 @@ and compile_letrec ctx name fn_expr body =
   push_scope ctx;
   bind_var ctx name js_name;
   (match fn_expr.Typechecker.expr with
-   | Typechecker.TEFun _ ->
-     compile_named_function ctx js_name fn_expr
-   | _ ->
-     emit_js_placeholder ctx js_name fn_expr;
-     emit_js_backpatch ctx js_name fn_expr);
+  | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+  | _ ->
+      emit_js_placeholder ctx js_name fn_expr;
+      emit_js_backpatch ctx js_name fn_expr);
   let result = fresh_tmp ctx in
   let v = compile_expr ctx body in
   emit_line ctx (Printf.sprintf "const %s = %s;" result v);
@@ -806,26 +907,29 @@ and compile_letrec ctx name fn_expr body =
 and compile_letrec_and ctx bindings body =
   push_scope ctx;
   (* Bind all names and emit placeholders for non-function bindings *)
-  List.iter (fun (name, te) ->
-    let js_name = mangle_name name in
-    bind_var ctx name js_name;
-    match te.Typechecker.expr with
-    | Typechecker.TEFun _ -> ()
-    | _ -> emit_js_placeholder ctx js_name te
-  ) bindings;
+  List.iter
+    (fun (name, te) ->
+      let js_name = mangle_name name in
+      bind_var ctx name js_name;
+      match te.Typechecker.expr with
+      | Typechecker.TEFun _ -> ()
+      | _ -> emit_js_placeholder ctx js_name te)
+    bindings;
   (* Compile functions first, then backpatch values *)
-  List.iter (fun (name, fn_expr) ->
-    let js_name = mangle_name name in
-    match fn_expr.Typechecker.expr with
-    | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
-    | _ -> ()
-  ) bindings;
-  List.iter (fun (name, te) ->
-    let js_name = mangle_name name in
-    match te.Typechecker.expr with
-    | Typechecker.TEFun _ -> ()
-    | _ -> emit_js_backpatch ctx js_name te
-  ) bindings;
+  List.iter
+    (fun (name, fn_expr) ->
+      let js_name = mangle_name name in
+      match fn_expr.Typechecker.expr with
+      | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+      | _ -> ())
+    bindings;
+  List.iter
+    (fun (name, te) ->
+      let js_name = mangle_name name in
+      match te.Typechecker.expr with
+      | Typechecker.TEFun _ -> ()
+      | _ -> emit_js_backpatch ctx js_name te)
+    bindings;
   let result = fresh_tmp ctx in
   let v = compile_expr ctx body in
   emit_line ctx (Printf.sprintf "const %s = %s;" result v);
@@ -839,42 +943,78 @@ and compile_fun ctx param body has_return =
   let rec collect_params params hr body_expr =
     match body_expr.Typechecker.expr with
     | Typechecker.TEFun (p, inner, inner_hr) ->
-      collect_params (p :: params) (hr || inner_hr) inner
+        collect_params (p :: params) (hr || inner_hr) inner
     | _ -> (List.rev params, hr, body_expr)
   in
-  let (all_params, has_return, final_body) = collect_params [param] has_return body in
+  let all_params, has_return, final_body =
+    collect_params [ param ] has_return body
+  in
   let js_params = dedup_js_params (List.map mangle_name all_params) in
   let fn_name = fresh_tmp ctx in
   (* Record actual JS arity for this anonymous function *)
   Hashtbl.replace ctx.function_arities fn_name (List.length js_params);
   emit_indent ctx;
-  emit ctx (Printf.sprintf "function %s(%s) " fn_name (String.concat ", " js_params));
+  emit ctx
+    (Printf.sprintf "function %s(%s) " fn_name (String.concat ", " js_params));
   emit ctx "{\n";
   ctx.indent <- ctx.indent + 1;
   push_scope ctx;
-  List.iter2 (fun mml_name js_name -> bind_var ctx mml_name js_name) all_params js_params;
+  List.iter2
+    (fun mml_name js_name -> bind_var ctx mml_name js_name)
+    all_params js_params;
   (* Check if this function is a fold callback *)
   let is_fold_cb = ctx.fold_cont_pending in
   ctx.fold_cont_pending <- false;
-  with_function_ctx ctx ~fn_name:None ~fn_params:[] ~ddo:[] ~two:[] ~in_fold:is_fold_cb (fun () ->
-    let needs_return_catch = has_return && not is_fold_cb in
-    if expr_has_perform final_body then begin
-      (* CPS-compile function body for effect support, wrapped in trampoline.
+  with_function_ctx ctx ~fn_name:None ~fn_params:[] ~ddo:[] ~two:[]
+    ~in_fold:is_fold_cb (fun () ->
+      let needs_return_catch = has_return && not is_fold_cb in
+      if expr_has_perform final_body then begin
+        (* CPS-compile function body for effect support, wrapped in trampoline.
          Set in_cps so non-tail function calls within the body get _resolve wrapping,
          which is needed because re-entrant trampoline calls return bounces. *)
-      with_in_cps ctx true (fun () ->
+        with_in_cps ctx true (fun () ->
+            if needs_return_catch then begin
+              emit_line ctx "try {";
+              ctx.indent <- ctx.indent + 1
+            end;
+            emit_line ctx "return _trampoline(function() {";
+            ctx.indent <- ctx.indent + 1;
+            if is_fold_cb then begin
+              emit_line ctx "try {";
+              ctx.indent <- ctx.indent + 1
+            end;
+            compile_cps ctx final_body (fun v ->
+                emit_line ctx (Printf.sprintf "return %s;" v));
+            if is_fold_cb then begin
+              ctx.indent <- ctx.indent - 1;
+              emit_line ctx "} catch(_e) {";
+              ctx.indent <- ctx.indent + 1;
+              emit_line ctx
+                "if (_e && _e._tag === \"_fold_cont\") return _e._val;";
+              emit_line ctx "throw _e;";
+              ctx.indent <- ctx.indent - 1;
+              emit_line ctx "}"
+            end;
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "});");
         if needs_return_catch then begin
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "} catch(_e) {";
+          ctx.indent <- ctx.indent + 1;
+          emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
+          emit_line ctx "throw _e;";
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}"
+        end
+      end
+      else begin
+        let needs_try = is_fold_cb || has_return in
+        if needs_try then begin
           emit_line ctx "try {";
           ctx.indent <- ctx.indent + 1
         end;
-        emit_line ctx "return _trampoline(function() {";
-        ctx.indent <- ctx.indent + 1;
-        if is_fold_cb then begin
-          emit_line ctx "try {";
-          ctx.indent <- ctx.indent + 1
-        end;
-        compile_cps ctx final_body (fun v ->
-          emit_line ctx (Printf.sprintf "return %s;" v));
+        let v = compile_expr ctx final_body in
+        emit_line ctx (Printf.sprintf "return %s;" v);
         if is_fold_cb then begin
           ctx.indent <- ctx.indent - 1;
           emit_line ctx "} catch(_e) {";
@@ -883,44 +1023,17 @@ and compile_fun ctx param body has_return =
           emit_line ctx "throw _e;";
           ctx.indent <- ctx.indent - 1;
           emit_line ctx "}"
-        end;
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "});");
-      if needs_return_catch then begin
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "} catch(_e) {";
-        ctx.indent <- ctx.indent + 1;
-        emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
-        emit_line ctx "throw _e;";
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "}"
-      end
-    end else begin
-      let needs_try = is_fold_cb || has_return in
-      if needs_try then begin
-        emit_line ctx "try {";
-        ctx.indent <- ctx.indent + 1
-      end;
-      let v = compile_expr ctx final_body in
-      emit_line ctx (Printf.sprintf "return %s;" v);
-      if is_fold_cb then begin
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "} catch(_e) {";
-        ctx.indent <- ctx.indent + 1;
-        emit_line ctx "if (_e && _e._tag === \"_fold_cont\") return _e._val;";
-        emit_line ctx "throw _e;";
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "}"
-      end else if has_return then begin
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "} catch(_e) {";
-        ctx.indent <- ctx.indent + 1;
-        emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
-        emit_line ctx "throw _e;";
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "}"
-      end
-    end);
+        end
+        else if has_return then begin
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "} catch(_e) {";
+          ctx.indent <- ctx.indent + 1;
+          emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
+          emit_line ctx "throw _e;";
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}"
+        end
+      end);
   pop_scope ctx;
   ctx.indent <- ctx.indent - 1;
   emit_line ctx "}";
@@ -930,78 +1043,93 @@ and compile_named_function ctx js_name fn_expr =
   let rec collect_params params hr body_expr =
     match body_expr.Typechecker.expr with
     | Typechecker.TEFun (p, inner, inner_hr) ->
-      collect_params (p :: params) (hr || inner_hr) inner
+        collect_params (p :: params) (hr || inner_hr) inner
     | _ -> (List.rev params, hr, body_expr)
   in
   match fn_expr.Typechecker.expr with
   | Typechecker.TEFun (param, body, has_return) ->
-    let (all_params, has_return, final_body) = collect_params [param] has_return body in
-    let js_params = dedup_js_params (List.map mangle_name all_params) in
-    (* Record actual JS arity for this function *)
-    Hashtbl.replace ctx.function_arities js_name (List.length js_params);
-    (* Emit function header *)
-    emit_indent ctx;
-    emit ctx (Printf.sprintf "function %s(%s) " js_name (String.concat ", " js_params));
-    emit ctx "{\n";
-    ctx.indent <- ctx.indent + 1;
-    push_scope ctx;
-    List.iter2 (fun mml_name js_nm -> bind_var ctx mml_name js_nm) all_params js_params;
-    ctx.in_tail_position <- true;
-    (* Record position where body starts *)
-    let body_code_start = Buffer.length ctx.buf in
-    let tco_was_used = with_function_ctx ctx
-      ~fn_name:(Some js_name) ~fn_params:js_params ~ddo:[] ~two:[] ~in_fold:false (fun () ->
-      if expr_has_perform final_body then begin
-        (* CPS-compile function body for effect support, wrapped in tagged trampoline.
+      let all_params, has_return, final_body =
+        collect_params [ param ] has_return body
+      in
+      let js_params = dedup_js_params (List.map mangle_name all_params) in
+      (* Record actual JS arity for this function *)
+      Hashtbl.replace ctx.function_arities js_name (List.length js_params);
+      (* Emit function header *)
+      emit_indent ctx;
+      emit ctx
+        (Printf.sprintf "function %s(%s) " js_name
+           (String.concat ", " js_params));
+      emit ctx "{\n";
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      List.iter2
+        (fun mml_name js_nm -> bind_var ctx mml_name js_nm)
+        all_params js_params;
+      ctx.in_tail_position <- true;
+      (* Record position where body starts *)
+      let body_code_start = Buffer.length ctx.buf in
+      let tco_was_used =
+        with_function_ctx ctx ~fn_name:(Some js_name) ~fn_params:js_params
+          ~ddo:[] ~two:[] ~in_fold:false (fun () ->
+            if expr_has_perform final_body then begin
+              (* CPS-compile function body for effect support, wrapped in tagged trampoline.
            Tag = function name, so recursive calls become pass-throughs (stack-safe).
            Set in_cps so non-tail function calls get _resolve wrapping. *)
-        with_in_cps ctx true (fun () ->
-          emit_line ctx (Printf.sprintf "return _trampoline(function() {" );
-          ctx.indent <- ctx.indent + 1;
-          compile_cps ctx final_body (fun v ->
-            emit_line ctx (Printf.sprintf "return %s;" v));
-          ctx.indent <- ctx.indent - 1;
-          emit_line ctx (Printf.sprintf "}, %s);" js_name))
-      end else if has_return then begin
-        emit_line ctx "try {";
-        ctx.indent <- ctx.indent + 1;
-        let v = compile_expr ctx final_body in
-        emit_line ctx (Printf.sprintf "return %s;" v);
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "} catch(_e) {";
-        ctx.indent <- ctx.indent + 1;
-        emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
-        emit_line ctx "throw _e;";
-        ctx.indent <- ctx.indent - 1;
-        emit_line ctx "}"
-      end else begin
-        let v = compile_expr ctx final_body in
-        emit_line ctx (Printf.sprintf "return %s;" v)
+              with_in_cps ctx true (fun () ->
+                  emit_line ctx
+                    (Printf.sprintf "return _trampoline(function() {");
+                  ctx.indent <- ctx.indent + 1;
+                  compile_cps ctx final_body (fun v ->
+                      emit_line ctx (Printf.sprintf "return %s;" v));
+                  ctx.indent <- ctx.indent - 1;
+                  emit_line ctx (Printf.sprintf "}, %s);" js_name))
+            end
+            else if has_return then begin
+              emit_line ctx "try {";
+              ctx.indent <- ctx.indent + 1;
+              let v = compile_expr ctx final_body in
+              emit_line ctx (Printf.sprintf "return %s;" v);
+              ctx.indent <- ctx.indent - 1;
+              emit_line ctx "} catch(_e) {";
+              ctx.indent <- ctx.indent + 1;
+              emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
+              emit_line ctx "throw _e;";
+              ctx.indent <- ctx.indent - 1;
+              emit_line ctx "}"
+            end
+            else begin
+              let v = compile_expr ctx final_body in
+              emit_line ctx (Printf.sprintf "return %s;" v)
+            end;
+            ctx.tco_used)
+      in
+      ctx.in_tail_position <- false;
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1;
+      (* If TCO was used, wrap the body in while(true) *)
+      if tco_was_used then begin
+        let full_code = Buffer.contents ctx.buf in
+        let body_code =
+          String.sub full_code body_code_start
+            (String.length full_code - body_code_start)
+        in
+        let before_body = String.sub full_code 0 body_code_start in
+        Buffer.clear ctx.buf;
+        Buffer.add_string ctx.buf before_body;
+        let indent_str = String.make ((ctx.indent + 1) * 2) ' ' in
+        Buffer.add_string ctx.buf (indent_str ^ "while (true) {\n");
+        let body_lines = String.split_on_char '\n' body_code in
+        List.iter
+          (fun line ->
+            if String.length line > 0 then
+              Buffer.add_string ctx.buf ("  " ^ line ^ "\n"))
+          body_lines;
+        Buffer.add_string ctx.buf (indent_str ^ "}\n")
       end;
-      ctx.tco_used) in
-    ctx.in_tail_position <- false;
-    pop_scope ctx;
-    ctx.indent <- ctx.indent - 1;
-    (* If TCO was used, wrap the body in while(true) *)
-    if tco_was_used then begin
-      let full_code = Buffer.contents ctx.buf in
-      let body_code = String.sub full_code body_code_start (String.length full_code - body_code_start) in
-      let before_body = String.sub full_code 0 body_code_start in
-      Buffer.clear ctx.buf;
-      Buffer.add_string ctx.buf before_body;
-      let indent_str = String.make ((ctx.indent + 1) * 2) ' ' in
-      Buffer.add_string ctx.buf (indent_str ^ "while (true) {\n");
-      let body_lines = String.split_on_char '\n' body_code in
-      List.iter (fun line ->
-        if String.length line > 0 then
-          Buffer.add_string ctx.buf ("  " ^ line ^ "\n")
-      ) body_lines;
-      Buffer.add_string ctx.buf (indent_str ^ "}\n");
-    end;
-    emit_line ctx "}"
+      emit_line ctx "}"
   | _ ->
-    let v = compile_expr ctx fn_expr in
-    emit_line ctx (Printf.sprintf "const %s = %s;" js_name v)
+      let v = compile_expr ctx fn_expr in
+      emit_line ctx (Printf.sprintf "const %s = %s;" js_name v)
 
 (* ---- Function application ---- *)
 
@@ -1010,78 +1138,88 @@ and compile_app ctx _te fn arg =
   let rec collect_args expr acc =
     match expr.Typechecker.expr with
     | Typechecker.TEApp (inner_fn, inner_arg) ->
-      collect_args inner_fn (inner_arg :: acc)
+        collect_args inner_fn (inner_arg :: acc)
     | _ -> (expr, acc)
   in
-  let (base_fn, all_args) = collect_args fn [arg] in
+  let base_fn, all_args = collect_args fn [ arg ] in
   let n = List.length all_args in
   (* Check for self-tail-call optimization *)
-  let is_self_call = match ctx.current_fn_name, base_fn.Typechecker.expr with
+  let is_self_call =
+    match (ctx.current_fn_name, base_fn.Typechecker.expr) with
     | Some fn_name, Typechecker.TEVar var_name ->
-      String.equal (mangle_name var_name) fn_name &&
-      n = List.length ctx.current_fn_params
+        String.equal (mangle_name var_name) fn_name
+        && n = List.length ctx.current_fn_params
     | _ -> false
   in
   if is_self_call && ctx.in_tail_position then begin
     (* Self-tail-call: emit parameter reassignment *)
     ctx.tco_used <- true;
-    let arg_tmps = List.map (fun a ->
-      let tmp = fresh_tmp ctx in
-      let v = compile_non_tail ctx a in
-      emit_line ctx (Printf.sprintf "const %s = %s;" tmp v);
-      tmp
-    ) all_args in
-    List.iter2 (fun param tmp ->
-      emit_line ctx (Printf.sprintf "%s = %s;" param tmp)
-    ) ctx.current_fn_params arg_tmps;
+    let arg_tmps =
+      List.map
+        (fun a ->
+          let tmp = fresh_tmp ctx in
+          let v = compile_non_tail ctx a in
+          emit_line ctx (Printf.sprintf "const %s = %s;" tmp v);
+          tmp)
+        all_args
+    in
+    List.iter2
+      (fun param tmp -> emit_line ctx (Printf.sprintf "%s = %s;" param tmp))
+      ctx.current_fn_params arg_tmps;
     emit_line ctx "continue;";
     "undefined" (* unreachable, but we need to return something *)
-  end else begin
+  end
+  else begin
     let fn_js = compile_non_tail ctx base_fn in
     (* Function arguments are always non-tail: set in_cps so nested function
        calls within arguments get _resolve wrapping in CPS context *)
     let args_js =
       if ctx.direct_dispatch_ops <> [] then
-        with_in_cps ctx true (fun () -> List.map (compile_non_tail ctx) all_args)
-      else
-        List.map (compile_non_tail ctx) all_args
+        with_in_cps ctx true (fun () ->
+            List.map (compile_non_tail ctx) all_args)
+      else List.map (compile_non_tail ctx) all_args
     in
     (* Check if we know the actual JS arity from the function definition.
        We prefer the definition-based arity over count_arrows because
        count_arrows is confused by higher-order functions (e.g. id : ('a -> 'a)
        instantiated to (int->int->int) -> (int->int->int) counts 3 arrows
        but id only takes 1 JS parameter). *)
-    let actual_arity = match base_fn.Typechecker.expr with
+    let actual_arity =
+      match base_fn.Typechecker.expr with
       | Typechecker.TEVar name ->
-        let js_nm = lookup_var ctx name in
-        Hashtbl.find_opt ctx.function_arities js_nm
+          let js_nm = lookup_var ctx name in
+          Hashtbl.find_opt ctx.function_arities js_nm
       | _ -> None
     in
-    let known_arity = match actual_arity with
+    let known_arity =
+      match actual_arity with
       | Some _ -> actual_arity
-      | None ->
-        (match base_fn.Typechecker.expr with
-         | Typechecker.TEVar _ ->
-           (* For variables without a function_arities entry (parameters, closures),
+      | None -> (
+          match base_fn.Typechecker.expr with
+          | Typechecker.TEVar _ ->
+              (* For variables without a function_arities entry (parameters, closures),
               count_arrows can over-count when type aliases expand function types,
               e.g. 'a seq = ('a -> unit) -> unit makes f : 'a -> 'b seq look like
               arity 2 but f may have 1 JS parameter.
               Single-arg calls are always safe: f must have >= 1 JS param if typed
               as a function. For multi-arg calls, fall back to _call which handles
               arity mismatches correctly via partial application. *)
-           if n = 1 then count_arrows base_fn.ty else None
-         | _ -> count_arrows base_fn.ty)
+              if n = 1 then count_arrows base_fn.ty else None
+          | _ -> count_arrows base_fn.ty)
     in
     (* Detect dict/evidence args — their presence means the function's type
        may not include arrows for these implicit params, so we must use _call
        for correct partial application *)
-    let has_implicit_args = List.exists (fun (a : Typechecker.texpr) ->
-      match a.expr with
-      | Typechecker.TEVar name ->
-        (String.length name >= 7 && String.sub name 0 7 = "__dict_") ||
-        (String.length name >= 5 && String.sub name 0 5 = "__ev_")
-      | _ -> false
-    ) all_args in
+    let has_implicit_args =
+      List.exists
+        (fun (a : Typechecker.texpr) ->
+          match a.expr with
+          | Typechecker.TEVar name ->
+              (String.length name >= 7 && String.sub name 0 7 = "__dict_")
+              || (String.length name >= 5 && String.sub name 0 5 = "__ev_")
+          | _ -> false)
+        all_args
+    in
     if known_arity = Some n && not has_implicit_args then
       (* Direct call *)
       fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
@@ -1104,213 +1242,284 @@ and count_arrows ty =
 and compile_binop ctx op e1 e2 =
   match op with
   | Ast.And ->
-    let a = compile_non_tail ctx e1 in
-    let buf_before = Buffer.length ctx.buf in
-    let b = compile_non_tail ctx e2 in
-    if Buffer.length ctx.buf = buf_before then
-      (* e2 is pure — safe to use && directly *)
-      "(" ^ a ^ " && " ^ b ^ ")"
-    else begin
-      (* e2 emitted statements — need if-else for proper short-circuiting *)
-      let stmts = Buffer.sub ctx.buf buf_before (Buffer.length ctx.buf - buf_before) in
-      Buffer.truncate ctx.buf buf_before;
-      let result = fresh_tmp ctx in
-      emit_line ctx (Printf.sprintf "let %s;" result);
-      emit_line ctx (Printf.sprintf "if (%s) {" a);
-      ctx.indent <- ctx.indent + 1;
-      Buffer.add_string ctx.buf stmts;
-      emit_line ctx (Printf.sprintf "%s = %s;" result b);
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "} else {";
-      ctx.indent <- ctx.indent + 1;
-      emit_line ctx (Printf.sprintf "%s = false;" result);
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "}";
-      result
-    end
+      let a = compile_non_tail ctx e1 in
+      let buf_before = Buffer.length ctx.buf in
+      let b = compile_non_tail ctx e2 in
+      if Buffer.length ctx.buf = buf_before then
+        (* e2 is pure — safe to use && directly *)
+        "(" ^ a ^ " && " ^ b ^ ")"
+      else begin
+        (* e2 emitted statements — need if-else for proper short-circuiting *)
+        let stmts =
+          Buffer.sub ctx.buf buf_before (Buffer.length ctx.buf - buf_before)
+        in
+        Buffer.truncate ctx.buf buf_before;
+        let result = fresh_tmp ctx in
+        emit_line ctx (Printf.sprintf "let %s;" result);
+        emit_line ctx (Printf.sprintf "if (%s) {" a);
+        ctx.indent <- ctx.indent + 1;
+        Buffer.add_string ctx.buf stmts;
+        emit_line ctx (Printf.sprintf "%s = %s;" result b);
+        ctx.indent <- ctx.indent - 1;
+        emit_line ctx "} else {";
+        ctx.indent <- ctx.indent + 1;
+        emit_line ctx (Printf.sprintf "%s = false;" result);
+        ctx.indent <- ctx.indent - 1;
+        emit_line ctx "}";
+        result
+      end
   | Ast.Or ->
-    let a = compile_non_tail ctx e1 in
-    let buf_before = Buffer.length ctx.buf in
-    let b = compile_non_tail ctx e2 in
-    if Buffer.length ctx.buf = buf_before then
-      (* e2 is pure — safe to use || directly *)
-      "(" ^ a ^ " || " ^ b ^ ")"
-    else begin
-      (* e2 emitted statements — need if-else for proper short-circuiting *)
-      let stmts = Buffer.sub ctx.buf buf_before (Buffer.length ctx.buf - buf_before) in
-      Buffer.truncate ctx.buf buf_before;
-      let result = fresh_tmp ctx in
-      emit_line ctx (Printf.sprintf "let %s;" result);
-      emit_line ctx (Printf.sprintf "if (%s) {" a);
-      ctx.indent <- ctx.indent + 1;
-      emit_line ctx (Printf.sprintf "%s = true;" result);
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "} else {";
-      ctx.indent <- ctx.indent + 1;
-      Buffer.add_string ctx.buf stmts;
-      emit_line ctx (Printf.sprintf "%s = %s;" result b);
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "}";
-      result
-    end
-  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
-    let resolved = Types.repr e1.ty in
-    (match resolved with
-     | Types.TInt | Types.TFloat ->
-       let a = compile_non_tail ctx e1 in
-       let b = compile_non_tail ctx e2 in
-       let js_op = match op with
-         | Ast.Add -> "+" | Ast.Sub -> "-"
-         | Ast.Mul -> "*" | Ast.Div -> "/"
-         | _ -> assert false in
-       if resolved = Types.TInt && op = Ast.Div then
-         "((" ^ a ^ " " ^ js_op ^ " " ^ b ^ ") | 0)"  (* integer division *)
-       else
-         "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
-     | _ ->
-       let method_name = match op with
-         | Ast.Add -> "+" | Ast.Sub -> "-" | Ast.Mul -> "*" | Ast.Div -> "/"
-         | _ -> assert false in
-       compile_class_binop ctx "Num" method_name e1 e2)
+      let a = compile_non_tail ctx e1 in
+      let buf_before = Buffer.length ctx.buf in
+      let b = compile_non_tail ctx e2 in
+      if Buffer.length ctx.buf = buf_before then
+        (* e2 is pure — safe to use || directly *)
+        "(" ^ a ^ " || " ^ b ^ ")"
+      else begin
+        (* e2 emitted statements — need if-else for proper short-circuiting *)
+        let stmts =
+          Buffer.sub ctx.buf buf_before (Buffer.length ctx.buf - buf_before)
+        in
+        Buffer.truncate ctx.buf buf_before;
+        let result = fresh_tmp ctx in
+        emit_line ctx (Printf.sprintf "let %s;" result);
+        emit_line ctx (Printf.sprintf "if (%s) {" a);
+        ctx.indent <- ctx.indent + 1;
+        emit_line ctx (Printf.sprintf "%s = true;" result);
+        ctx.indent <- ctx.indent - 1;
+        emit_line ctx "} else {";
+        ctx.indent <- ctx.indent + 1;
+        Buffer.add_string ctx.buf stmts;
+        emit_line ctx (Printf.sprintf "%s = %s;" result b);
+        ctx.indent <- ctx.indent - 1;
+        emit_line ctx "}";
+        result
+      end
+  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> (
+      let resolved = Types.repr e1.ty in
+      match resolved with
+      | Types.TInt | Types.TFloat ->
+          let a = compile_non_tail ctx e1 in
+          let b = compile_non_tail ctx e2 in
+          let js_op =
+            match op with
+            | Ast.Add -> "+"
+            | Ast.Sub -> "-"
+            | Ast.Mul -> "*"
+            | Ast.Div -> "/"
+            | _ -> assert false
+          in
+          if resolved = Types.TInt && op = Ast.Div then
+            "((" ^ a ^ " " ^ js_op ^ " " ^ b ^ ") | 0)" (* integer division *)
+          else "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
+      | _ ->
+          let method_name =
+            match op with
+            | Ast.Add -> "+"
+            | Ast.Sub -> "-"
+            | Ast.Mul -> "*"
+            | Ast.Div -> "/"
+            | _ -> assert false
+          in
+          compile_class_binop ctx "Num" method_name e1 e2)
   | Ast.Mod ->
-    let a = compile_non_tail ctx e1 in
-    let b = compile_non_tail ctx e2 in
-    "(" ^ a ^ " % " ^ b ^ ")"
+      let a = compile_non_tail ctx e1 in
+      let b = compile_non_tail ctx e2 in
+      "(" ^ a ^ " % " ^ b ^ ")"
   | Ast.Eq | Ast.Neq ->
-    let resolved = Types.repr e1.ty in
-    let is_primitive = match resolved with
-      | Types.TInt | Types.TFloat | Types.TBool | Types.TString
-      | Types.TByte | Types.TRune | Types.TUnit -> true
-      | _ -> false
-    in
-    if is_primitive then begin
-      let a = compile_non_tail ctx e1 in
-      let b = compile_non_tail ctx e2 in
-      let js_op = if op = Ast.Eq then "===" else "!==" in
-      "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
-    end else begin
-      (* Check for custom Eq instance (non-factory only) before structural _eq *)
-      let conc_ty = Types.repr e1.ty in
-      let custom_eq = match List.find_opt (fun (c : Types.class_def) ->
-        String.equal c.class_name "Eq") ctx.type_env.Types.classes with
-      | Some class_def ->
-        let num_params = List.length class_def.class_params in
-        let partial = List.init num_params (fun _ -> Some conc_ty) in
-        let concrete_partial = List.map (fun opt -> match opt with
-          | Some ty -> (match Types.repr ty with
-            | Types.TVar { contents = Types.Unbound _ } -> None
-            | _ -> Some (Types.repr ty))
-          | None -> None) partial in
-        let matching = List.filter (fun (inst : Types.instance_def) ->
-          String.equal inst.inst_class "Eq" &&
-          List.length inst.inst_tys = num_params &&
-          inst.inst_constraints = [] &&
-          Types.match_partial_inst inst.inst_tys concrete_partial
-        ) ctx.type_env.Types.instances in
-        (match matching with
-         | [inst] -> Some inst
-         | _ :: _ -> Types.most_specific_inst matching
-         | [] -> None)
-      | None -> None
+      let resolved = Types.repr e1.ty in
+      let is_primitive =
+        match resolved with
+        | Types.TInt | Types.TFloat | Types.TBool | Types.TString | Types.TByte
+        | Types.TRune | Types.TUnit ->
+            true
+        | _ -> false
       in
-      match custom_eq with
-      | Some inst ->
-        let method_name = if op = Ast.Eq then "=" else "<>" in
-        let dict_access =
-          mangle_name inst.Types.inst_dict_name ^ "." ^ mangle_name method_name in
+      if is_primitive then begin
         let a = compile_non_tail ctx e1 in
         let b = compile_non_tail ctx e2 in
-        "_call(" ^ dict_access ^ ", [" ^ a ^ ", " ^ b ^ "])"
-      | None ->
-        let a = compile_non_tail ctx e1 in
-        let b = compile_non_tail ctx e2 in
-        let eq_call = "_eq(" ^ a ^ ", " ^ b ^ ")" in
-        if op = Ast.Eq then eq_call
-        else "!" ^ eq_call
-    end
+        let js_op = if op = Ast.Eq then "===" else "!==" in
+        "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
+      end
+      else begin
+        (* Check for custom Eq instance (non-factory only) before structural _eq *)
+        let conc_ty = Types.repr e1.ty in
+        let custom_eq =
+          match
+            List.find_opt
+              (fun (c : Types.class_def) -> String.equal c.class_name "Eq")
+              ctx.type_env.Types.classes
+          with
+          | Some class_def -> (
+              let num_params = List.length class_def.class_params in
+              let partial = List.init num_params (fun _ -> Some conc_ty) in
+              let concrete_partial =
+                List.map
+                  (fun opt ->
+                    match opt with
+                    | Some ty -> (
+                        match Types.repr ty with
+                        | Types.TVar { contents = Types.Unbound _ } -> None
+                        | _ -> Some (Types.repr ty))
+                    | None -> None)
+                  partial
+              in
+              let matching =
+                List.filter
+                  (fun (inst : Types.instance_def) ->
+                    String.equal inst.inst_class "Eq"
+                    && List.length inst.inst_tys = num_params
+                    && inst.inst_constraints = []
+                    && Types.match_partial_inst inst.inst_tys concrete_partial)
+                  ctx.type_env.Types.instances
+              in
+              match matching with
+              | [ inst ] -> Some inst
+              | _ :: _ -> Types.most_specific_inst matching
+              | [] -> None)
+          | None -> None
+        in
+        match custom_eq with
+        | Some inst ->
+            let method_name = if op = Ast.Eq then "=" else "<>" in
+            let dict_access =
+              mangle_name inst.Types.inst_dict_name
+              ^ "." ^ mangle_name method_name
+            in
+            let a = compile_non_tail ctx e1 in
+            let b = compile_non_tail ctx e2 in
+            "_call(" ^ dict_access ^ ", [" ^ a ^ ", " ^ b ^ "])"
+        | None ->
+            let a = compile_non_tail ctx e1 in
+            let b = compile_non_tail ctx e2 in
+            let eq_call = "_eq(" ^ a ^ ", " ^ b ^ ")" in
+            if op = Ast.Eq then eq_call else "!" ^ eq_call
+      end
   | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge ->
-    let resolved = Types.repr e1.ty in
-    let is_builtin = match resolved with
-      | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune -> true
-      | _ -> false in
-    if is_builtin then begin
+      let resolved = Types.repr e1.ty in
+      let is_builtin =
+        match resolved with
+        | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune
+          ->
+            true
+        | _ -> false
+      in
+      if is_builtin then begin
+        let a = compile_non_tail ctx e1 in
+        let b = compile_non_tail ctx e2 in
+        let js_op =
+          match op with
+          | Ast.Lt -> "<"
+          | Ast.Gt -> ">"
+          | Ast.Le -> "<="
+          | Ast.Ge -> ">="
+          | _ -> assert false
+        in
+        "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
+      end
+      else begin
+        let method_name =
+          match op with
+          | Ast.Lt -> "<"
+          | Ast.Gt -> ">"
+          | Ast.Le -> "<="
+          | Ast.Ge -> ">="
+          | _ -> assert false
+        in
+        compile_class_binop ctx "Ord" method_name e1 e2
+      end
+  | Ast.Concat ->
       let a = compile_non_tail ctx e1 in
       let b = compile_non_tail ctx e2 in
-      let js_op = match op with
-        | Ast.Lt -> "<" | Ast.Gt -> ">" | Ast.Le -> "<=" | Ast.Ge -> ">="
-        | _ -> assert false in
-      "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
-    end else begin
-      let method_name = match op with
-        | Ast.Lt -> "<" | Ast.Gt -> ">" | Ast.Le -> "<=" | Ast.Ge -> ">="
-        | _ -> assert false in
-      compile_class_binop ctx "Ord" method_name e1 e2
-    end
-  | Ast.Concat ->
-    let a = compile_non_tail ctx e1 in
-    let b = compile_non_tail ctx e2 in
-    "(" ^ a ^ " + " ^ b ^ ")"
-  | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr ->
-    let resolved = Types.repr e1.ty in
-    (match resolved with
-     | Types.TInt ->
-       let a = compile_non_tail ctx e1 in
-       let b = compile_non_tail ctx e2 in
-       let js_op = match op with
-         | Ast.Land -> "&" | Ast.Lor -> "|" | Ast.Lxor -> "^"
-         | Ast.Lsl -> "<<" | Ast.Lsr -> ">>"
-         | _ -> assert false in
-       "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
-     | _ ->
-       let method_name = match op with
-         | Ast.Land -> "land" | Ast.Lor -> "lor" | Ast.Lxor -> "lxor"
-         | Ast.Lsl -> "lsl" | Ast.Lsr -> "lsr" | _ -> assert false in
-       compile_class_binop ctx "Bitwise" method_name e1 e2)
+      "(" ^ a ^ " + " ^ b ^ ")"
+  | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> (
+      let resolved = Types.repr e1.ty in
+      match resolved with
+      | Types.TInt ->
+          let a = compile_non_tail ctx e1 in
+          let b = compile_non_tail ctx e2 in
+          let js_op =
+            match op with
+            | Ast.Land -> "&"
+            | Ast.Lor -> "|"
+            | Ast.Lxor -> "^"
+            | Ast.Lsl -> "<<"
+            | Ast.Lsr -> ">>"
+            | _ -> assert false
+          in
+          "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
+      | _ ->
+          let method_name =
+            match op with
+            | Ast.Land -> "land"
+            | Ast.Lor -> "lor"
+            | Ast.Lxor -> "lxor"
+            | Ast.Lsl -> "lsl"
+            | Ast.Lsr -> "lsr"
+            | _ -> assert false
+          in
+          compile_class_binop ctx "Bitwise" method_name e1 e2)
   | Ast.Pipe ->
-    let fn_js = compile_non_tail ctx e2 in
-    let arg_js = compile_non_tail ctx e1 in
-    "_call(" ^ fn_js ^ ", [" ^ arg_js ^ "])"
+      let fn_js = compile_non_tail ctx e2 in
+      let arg_js = compile_non_tail ctx e1 in
+      "_call(" ^ fn_js ^ ", [" ^ arg_js ^ "])"
 
 and resolve_class_dict_access ctx class_name method_name operand_ty =
   let conc_ty = Types.repr operand_ty in
-  let class_def = match List.find_opt (fun (c : Types.class_def) ->
-    String.equal c.class_name class_name) ctx.type_env.Types.classes with
+  let class_def =
+    match
+      List.find_opt
+        (fun (c : Types.class_def) -> String.equal c.class_name class_name)
+        ctx.type_env.Types.classes
+    with
     | Some cd -> cd
-    | None -> error (Printf.sprintf "class %s not found" class_name) in
+    | None -> error (Printf.sprintf "class %s not found" class_name)
+  in
   let num_params = List.length class_def.class_params in
   let partial = List.init num_params (fun _ -> Some conc_ty) in
-  let concrete_partial = List.map (fun opt ->
-    match opt with
-    | Some ty ->
-      (match Types.repr ty with
-       | Types.TVar { contents = Types.Unbound _ } -> None
-       | _ -> Some (Types.repr ty))
-    | None -> None
-  ) partial in
-  let matching = List.filter (fun (inst : Types.instance_def) ->
-    String.equal inst.inst_class class_name &&
-    List.length inst.inst_tys = num_params &&
-    Types.match_partial_inst inst.inst_tys concrete_partial
-  ) ctx.type_env.Types.instances in
+  let concrete_partial =
+    List.map
+      (fun opt ->
+        match opt with
+        | Some ty -> (
+            match Types.repr ty with
+            | Types.TVar { contents = Types.Unbound _ } -> None
+            | _ -> Some (Types.repr ty))
+        | None -> None)
+      partial
+  in
+  let matching =
+    List.filter
+      (fun (inst : Types.instance_def) ->
+        String.equal inst.inst_class class_name
+        && List.length inst.inst_tys = num_params
+        && Types.match_partial_inst inst.inst_tys concrete_partial)
+      ctx.type_env.Types.instances
+  in
   match matching with
-  | [inst] ->
-    mangle_name inst.Types.inst_dict_name ^ "." ^ mangle_name method_name
+  | [ inst ] ->
+      mangle_name inst.Types.inst_dict_name ^ "." ^ mangle_name method_name
   | [] ->
-    error (Printf.sprintf "no instance of %s for type %s"
-      class_name (Types.pp_ty conc_ty))
-  | _ ->
-    (match Types.most_specific_inst matching with
-     | Some inst ->
-       if inst.Types.inst_constraints = [] then
-         mangle_name (inst.Types.inst_dict_name ^ "$" ^ method_name)
-       else
-         mangle_name inst.Types.inst_dict_name ^ "." ^ mangle_name method_name
-     | None ->
-       error (Printf.sprintf "ambiguous instance for %s method %s"
-         class_name method_name))
+      error
+        (Printf.sprintf "no instance of %s for type %s" class_name
+           (Types.pp_ty conc_ty))
+  | _ -> (
+      match Types.most_specific_inst matching with
+      | Some inst ->
+          if inst.Types.inst_constraints = [] then
+            mangle_name (inst.Types.inst_dict_name ^ "$" ^ method_name)
+          else
+            mangle_name inst.Types.inst_dict_name
+            ^ "." ^ mangle_name method_name
+      | None ->
+          error
+            (Printf.sprintf "ambiguous instance for %s method %s" class_name
+               method_name))
 
 and compile_class_binop ctx class_name method_name e1 e2 =
-  let dict_access = resolve_class_dict_access ctx class_name method_name e1.ty in
+  let dict_access =
+    resolve_class_dict_access ctx class_name method_name e1.ty
+  in
   let a = compile_non_tail ctx e1 in
   let b = compile_non_tail ctx e2 in
   "_call(" ^ dict_access ^ ", [" ^ a ^ ", " ^ b ^ "])"
@@ -1319,25 +1528,23 @@ and compile_class_binop ctx class_name method_name e1 e2 =
 
 and compile_unop ctx op (e : Typechecker.texpr) =
   match op with
-  | Ast.Neg ->
-    let resolved = Types.repr e.ty in
-    (match resolved with
-     | Types.TInt | Types.TFloat ->
-       let v = compile_non_tail ctx e in
-       "(-" ^ v ^ ")"
-     | _ ->
-       compile_class_unop ctx "Num" "neg" e)
+  | Ast.Neg -> (
+      let resolved = Types.repr e.ty in
+      match resolved with
+      | Types.TInt | Types.TFloat ->
+          let v = compile_non_tail ctx e in
+          "(-" ^ v ^ ")"
+      | _ -> compile_class_unop ctx "Num" "neg" e)
   | Ast.Not ->
-    let v = compile_non_tail ctx e in
-    "(!" ^ v ^ ")"
-  | Ast.Lnot ->
-    let resolved = Types.repr e.ty in
-    (match resolved with
-     | Types.TInt ->
-       let v = compile_non_tail ctx e in
-       "(~" ^ v ^ ")"
-     | _ ->
-       compile_class_unop ctx "Bitwise" "lnot" e)
+      let v = compile_non_tail ctx e in
+      "(!" ^ v ^ ")"
+  | Ast.Lnot -> (
+      let resolved = Types.repr e.ty in
+      match resolved with
+      | Types.TInt ->
+          let v = compile_non_tail ctx e in
+          "(~" ^ v ^ ")"
+      | _ -> compile_class_unop ctx "Bitwise" "lnot" e)
 
 and compile_class_unop ctx class_name method_name (e : Typechecker.texpr) =
   let dict_access = resolve_class_dict_access ctx class_name method_name e.ty in
@@ -1394,18 +1601,19 @@ and compile_while ctx cond body =
   let break_flag = fresh_tmp ctx in
   let break_val = fresh_tmp ctx in
   with_loop_ctx ctx ~break_flag ~break_val (fun () ->
-    emit_line ctx (Printf.sprintf "let %s = undefined;" result);
-    emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
-    emit_line ctx "while (true) {";
-    ctx.indent <- ctx.indent + 1;
-    let c = compile_expr ctx cond in
-    emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
-    let v_body = compile_expr ctx body in
-    emit_line ctx (v_body ^ ";");
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}";
-    emit_line ctx (Printf.sprintf "%s = %s ? %s : undefined;" result break_flag break_val);
-    result)
+      emit_line ctx (Printf.sprintf "let %s = undefined;" result);
+      emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
+      emit_line ctx "while (true) {";
+      ctx.indent <- ctx.indent + 1;
+      let c = compile_expr ctx cond in
+      emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
+      let v_body = compile_expr ctx body in
+      emit_line ctx (v_body ^ ";");
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      emit_line ctx
+        (Printf.sprintf "%s = %s ? %s : undefined;" result break_flag break_val);
+      result)
 
 (* ---- Pattern matching ---- *)
 
@@ -1418,179 +1626,206 @@ and compile_match ctx scrut arms loc =
   emit_line ctx (Printf.sprintf "const %s = %s;" scrut_tmp scrut_js);
   emit_line ctx (Printf.sprintf "%s: {" label);
   ctx.indent <- ctx.indent + 1;
-  List.iter (fun (pat, guard, body) ->
-    let (conds, bindings) = compile_pattern ctx scrut_tmp pat in
-    let cond_str = match conds with
-      | [] -> "true"
-      | _ -> String.concat " && " conds
-    in
-    emit_line ctx (Printf.sprintf "if (%s) {" cond_str);
-    ctx.indent <- ctx.indent + 1;
-    push_scope ctx;
-    List.iter (fun (mml_name, js_expr) ->
-      let base = mangle_name mml_name in
-      (* If this pattern variable shadows a TCO parameter, rename it to
-         avoid creating a const that blocks the parameter reassignment. *)
-      let js_name =
-        if List.mem base ctx.current_fn_params
-        then base ^ "_" ^ string_of_int ctx.tmp_counter
-             |> fun n -> ctx.tmp_counter <- ctx.tmp_counter + 1; n
-        else base
+  List.iter
+    (fun (pat, guard, body) ->
+      let conds, bindings = compile_pattern ctx scrut_tmp pat in
+      let cond_str =
+        match conds with [] -> "true" | _ -> String.concat " && " conds
       in
-      bind_var ctx mml_name js_name;
-      emit_line ctx (Printf.sprintf "const %s = %s;" js_name js_expr)
-    ) bindings;
-    (match guard with
-     | Some g ->
-       let guard_js = compile_expr ctx g in
-       emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
-       ctx.indent <- ctx.indent + 1;
-       let b = compile_expr ctx body in
-       emit_line ctx (Printf.sprintf "%s = %s;" result b);
-       emit_line ctx (Printf.sprintf "break %s;" label);
-       ctx.indent <- ctx.indent - 1;
-       emit_line ctx "}"
-     | None ->
-       let b = compile_expr ctx body in
-       emit_line ctx (Printf.sprintf "%s = %s;" result b);
-       emit_line ctx (Printf.sprintf "break %s;" label));
-    pop_scope ctx;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}"
-  ) arms;
+      emit_line ctx (Printf.sprintf "if (%s) {" cond_str);
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      List.iter
+        (fun (mml_name, js_expr) ->
+          let base = mangle_name mml_name in
+          (* If this pattern variable shadows a TCO parameter, rename it to
+         avoid creating a const that blocks the parameter reassignment. *)
+          let js_name =
+            if List.mem base ctx.current_fn_params then (
+              base ^ "_" ^ string_of_int ctx.tmp_counter |> fun n ->
+              ctx.tmp_counter <- ctx.tmp_counter + 1;
+              n)
+            else base
+          in
+          bind_var ctx mml_name js_name;
+          emit_line ctx (Printf.sprintf "const %s = %s;" js_name js_expr))
+        bindings;
+      (match guard with
+      | Some g ->
+          let guard_js = compile_expr ctx g in
+          emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
+          ctx.indent <- ctx.indent + 1;
+          let b = compile_expr ctx body in
+          emit_line ctx (Printf.sprintf "%s = %s;" result b);
+          emit_line ctx (Printf.sprintf "break %s;" label);
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}"
+      | None ->
+          let b = compile_expr ctx body in
+          emit_line ctx (Printf.sprintf "%s = %s;" result b);
+          emit_line ctx (Printf.sprintf "break %s;" label));
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}")
+    arms;
   emit_line ctx (Printf.sprintf "_match_fail(\"line %d\");" loc.Token.line);
   ctx.indent <- ctx.indent - 1;
   emit_line ctx "}";
   result
 
 (* Returns (conditions: string list, bindings: (mml_name * js_expr) list) *)
-and compile_pattern ctx scrutinee (pat : Ast.pattern) : (string list * (string * string) list) =
+and compile_pattern ctx scrutinee (pat : Ast.pattern) :
+    string list * (string * string) list =
   match pat with
   | Ast.PatWild -> ([], [])
-  | Ast.PatVar name -> ([], [(name, scrutinee)])
-  | Ast.PatInt n -> ([Printf.sprintf "%s === %d" scrutinee n], [])
-  | Ast.PatFloat f -> ([Printf.sprintf "%s === %s" scrutinee (Printf.sprintf "%.17g" f)], [])
-  | Ast.PatBool true -> ([scrutinee], [])
-  | Ast.PatBool false -> (["!" ^ scrutinee], [])
-  | Ast.PatString s -> ([Printf.sprintf "%s === %s" scrutinee (escape_js_string s)], [])
+  | Ast.PatVar name -> ([], [ (name, scrutinee) ])
+  | Ast.PatInt n -> ([ Printf.sprintf "%s === %d" scrutinee n ], [])
+  | Ast.PatFloat f ->
+      ([ Printf.sprintf "%s === %s" scrutinee (Printf.sprintf "%.17g" f) ], [])
+  | Ast.PatBool true -> ([ scrutinee ], [])
+  | Ast.PatBool false -> ([ "!" ^ scrutinee ], [])
+  | Ast.PatString s ->
+      ([ Printf.sprintf "%s === %s" scrutinee (escape_js_string s) ], [])
   | Ast.PatUnit -> ([], [])
-  | Ast.PatNil -> ([scrutinee ^ " === null"], [])
+  | Ast.PatNil -> ([ scrutinee ^ " === null" ], [])
   | Ast.PatCons (hd_pat, tl_pat) ->
-    let hd_expr = scrutinee ^ "._hd" in
-    let tl_expr = scrutinee ^ "._tl" in
-    let (hd_conds, hd_binds) = compile_pattern ctx hd_expr hd_pat in
-    let (tl_conds, tl_binds) = compile_pattern ctx tl_expr tl_pat in
-    let conds = (scrutinee ^ " !== null") :: hd_conds @ tl_conds in
-    (conds, hd_binds @ tl_binds)
+      let hd_expr = scrutinee ^ "._hd" in
+      let tl_expr = scrutinee ^ "._tl" in
+      let hd_conds, hd_binds = compile_pattern ctx hd_expr hd_pat in
+      let tl_conds, tl_binds = compile_pattern ctx tl_expr tl_pat in
+      let conds = ((scrutinee ^ " !== null") :: hd_conds) @ tl_conds in
+      (conds, hd_binds @ tl_binds)
   | Ast.PatTuple pats ->
-    let all_conds = ref [] in
-    let all_binds = ref [] in
-    List.iteri (fun i sub_pat ->
-      let elem_expr = Printf.sprintf "%s[%d]" scrutinee i in
-      let (c, b) = compile_pattern ctx elem_expr sub_pat in
-      all_conds := !all_conds @ c;
-      all_binds := !all_binds @ b
-    ) pats;
-    (!all_conds, !all_binds)
-  | Ast.PatConstruct (name, arg_pat) when is_newtype_ctor ctx.type_env name ->
-    (* Newtype constructor: erased at runtime — match sub-pattern directly *)
-    (match arg_pat with
-     | Some sub_pat -> compile_pattern ctx scrutinee sub_pat
-     | None -> ([], []))
-  | Ast.PatConstruct (name, arg_pat) ->
-    let tag = if String.length name > 0 && name.[0] = '`' then
-      Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-    else
-      tag_for_constructor ctx.type_env name
-    in
-    let conds = [Printf.sprintf "%s._tag === %d" scrutinee tag] in
-    (match arg_pat with
-     | None -> (conds, [])
-     | Some sub_pat ->
-       let payload_expr = scrutinee ^ "._val" in
-       let (sub_conds, sub_binds) = compile_pattern ctx payload_expr sub_pat in
-       (conds @ sub_conds, sub_binds))
+      let all_conds = ref [] in
+      let all_binds = ref [] in
+      List.iteri
+        (fun i sub_pat ->
+          let elem_expr = Printf.sprintf "%s[%d]" scrutinee i in
+          let c, b = compile_pattern ctx elem_expr sub_pat in
+          all_conds := !all_conds @ c;
+          all_binds := !all_binds @ b)
+        pats;
+      (!all_conds, !all_binds)
+  | Ast.PatConstruct (name, arg_pat) when is_newtype_ctor ctx.type_env name -> (
+      (* Newtype constructor: erased at runtime — match sub-pattern directly *)
+      match arg_pat with
+      | Some sub_pat -> compile_pattern ctx scrutinee sub_pat
+      | None -> ([], []))
+  | Ast.PatConstruct (name, arg_pat) -> (
+      let tag =
+        if String.length name > 0 && name.[0] = '`' then
+          Types.polyvar_tag (String.sub name 1 (String.length name - 1))
+        else tag_for_constructor ctx.type_env name
+      in
+      let conds = [ Printf.sprintf "%s._tag === %d" scrutinee tag ] in
+      match arg_pat with
+      | None -> (conds, [])
+      | Some sub_pat ->
+          let payload_expr = scrutinee ^ "._val" in
+          let sub_conds, sub_binds = compile_pattern ctx payload_expr sub_pat in
+          (conds @ sub_conds, sub_binds))
   | Ast.PatRecord field_pats ->
-    let all_conds = ref [] in
-    let all_binds = ref [] in
-    List.iter (fun (fname, sub_pat) ->
-      let field_expr = scrutinee ^ "." ^ mangle_name fname in
-      let (c, b) = compile_pattern ctx field_expr sub_pat in
-      all_conds := !all_conds @ c;
-      all_binds := !all_binds @ b
-    ) field_pats;
-    (!all_conds, !all_binds)
+      let all_conds = ref [] in
+      let all_binds = ref [] in
+      List.iter
+        (fun (fname, sub_pat) ->
+          let field_expr = scrutinee ^ "." ^ mangle_name fname in
+          let c, b = compile_pattern ctx field_expr sub_pat in
+          all_conds := !all_conds @ c;
+          all_binds := !all_binds @ b)
+        field_pats;
+      (!all_conds, !all_binds)
   | Ast.PatAs (inner_pat, name) ->
-    let (conds, binds) = compile_pattern ctx scrutinee inner_pat in
-    (conds, binds @ [(name, scrutinee)])
+      let conds, binds = compile_pattern ctx scrutinee inner_pat in
+      (conds, binds @ [ (name, scrutinee) ])
   | Ast.PatOr (p1, p2) ->
-    let (conds1, binds1) = compile_pattern ctx scrutinee p1 in
-    let (conds2, binds2) = compile_pattern ctx scrutinee p2 in
-    let cond1 = match conds1 with [] -> "true" | cs -> String.concat " && " cs in
-    let cond2 = match conds2 with [] -> "true" | cs -> String.concat " && " cs in
-    let or_cond = "(" ^ cond1 ^ " || " ^ cond2 ^ ")" in
-    (* For or-patterns, variable names must match on both sides,
+      let conds1, binds1 = compile_pattern ctx scrutinee p1 in
+      let conds2, binds2 = compile_pattern ctx scrutinee p2 in
+      let cond1 =
+        match conds1 with [] -> "true" | cs -> String.concat " && " cs
+      in
+      let cond2 =
+        match conds2 with [] -> "true" | cs -> String.concat " && " cs
+      in
+      let or_cond = "(" ^ cond1 ^ " || " ^ cond2 ^ ")" in
+      (* For or-patterns, variable names must match on both sides,
        but extraction paths may differ. Use conditional bindings. *)
-    let binds = if binds1 = binds2 then binds1
-      else
-        List.map (fun (name, expr1) ->
-          let expr2 = List.assoc name binds2 in
-          if expr1 = expr2 then (name, expr1)
-          else (name, Printf.sprintf "(%s ? %s : %s)" cond1 expr1 expr2)
-        ) binds1
-    in
-    ([or_cond], binds)
+      let binds =
+        if binds1 = binds2 then binds1
+        else
+          List.map
+            (fun (name, expr1) ->
+              let expr2 = List.assoc name binds2 in
+              if expr1 = expr2 then (name, expr1)
+              else (name, Printf.sprintf "(%s ? %s : %s)" cond1 expr1 expr2))
+            binds1
+      in
+      ([ or_cond ], binds)
   | Ast.PatArray pats ->
-    let len_cond = Printf.sprintf "%s._arr.length === %d" scrutinee (List.length pats) in
-    let all_conds = ref [len_cond] in
-    let all_binds = ref [] in
-    List.iteri (fun i sub_pat ->
-      let elem_expr = Printf.sprintf "%s._arr[%d]" scrutinee i in
-      let (c, b) = compile_pattern ctx elem_expr sub_pat in
-      all_conds := !all_conds @ c;
-      all_binds := !all_binds @ b
-    ) pats;
-    (!all_conds, !all_binds)
-  | Ast.PatPolyVariant (tag, arg_pat) ->
-    let num_tag = Types.polyvar_tag tag in
-    let conds = [Printf.sprintf "%s._tag === %d" scrutinee num_tag] in
-    (match arg_pat with
-     | None -> (conds, [])
-     | Some sub_pat ->
-       let payload_expr = scrutinee ^ "._val" in
-       let (sub_conds, sub_binds) = compile_pattern ctx payload_expr sub_pat in
-       (conds @ sub_conds, sub_binds))
+      let len_cond =
+        Printf.sprintf "%s._arr.length === %d" scrutinee (List.length pats)
+      in
+      let all_conds = ref [ len_cond ] in
+      let all_binds = ref [] in
+      List.iteri
+        (fun i sub_pat ->
+          let elem_expr = Printf.sprintf "%s._arr[%d]" scrutinee i in
+          let c, b = compile_pattern ctx elem_expr sub_pat in
+          all_conds := !all_conds @ c;
+          all_binds := !all_binds @ b)
+        pats;
+      (!all_conds, !all_binds)
+  | Ast.PatPolyVariant (tag, arg_pat) -> (
+      let num_tag = Types.polyvar_tag tag in
+      let conds = [ Printf.sprintf "%s._tag === %d" scrutinee num_tag ] in
+      match arg_pat with
+      | None -> (conds, [])
+      | Some sub_pat ->
+          let payload_expr = scrutinee ^ "._val" in
+          let sub_conds, sub_binds = compile_pattern ctx payload_expr sub_pat in
+          (conds @ sub_conds, sub_binds))
   | Ast.PatPin name ->
-    let js_name = lookup_var ctx name in
-    ([Printf.sprintf "_eq(%s, %s)" scrutinee js_name], [])
-  | Ast.PatAnnot (inner_pat, _) ->
-    compile_pattern ctx scrutinee inner_pat
+      let js_name = lookup_var ctx name in
+      ([ Printf.sprintf "_eq(%s, %s)" scrutinee js_name ], [])
+  | Ast.PatAnnot (inner_pat, _) -> compile_pattern ctx scrutinee inner_pat
   | Ast.PatMap entries ->
-    let all_conds = ref [] in
-    let all_binds = ref [] in
-    let emit_key_expr key_pat = match key_pat with
-      | Ast.PatInt n -> string_of_int n
-      | Ast.PatString s -> escape_js_string s
-      | Ast.PatBool b -> if b then "true" else "false"
-      | Ast.PatFloat f -> Printf.sprintf "%g" f
-      | Ast.PatPin name -> lookup_var ctx name
-      | _ -> error "map pattern keys must be literals or pin patterns"
-    in
-    List.iter (fun (key_pat, val_pat) ->
-      let key_expr = emit_key_expr key_pat in
-      (* Condition: Map.has(key, map) *)
-      all_conds := !all_conds @ [Printf.sprintf "%s(%s, %s)" (mangle_name "Map.has") key_expr scrutinee];
-      (* Extract value: Map.get(key, map) returns Some(v), unwrap with ._val *)
-      let val_expr = Printf.sprintf "%s(%s, %s)._val" (mangle_name "Map.get") key_expr scrutinee in
-      let (c, b) = compile_pattern ctx val_expr val_pat in
-      all_conds := !all_conds @ c;
-      all_binds := !all_binds @ b
-    ) entries;
-    (!all_conds, !all_binds)
+      let all_conds = ref [] in
+      let all_binds = ref [] in
+      let emit_key_expr key_pat =
+        match key_pat with
+        | Ast.PatInt n -> string_of_int n
+        | Ast.PatString s -> escape_js_string s
+        | Ast.PatBool b -> if b then "true" else "false"
+        | Ast.PatFloat f -> Printf.sprintf "%g" f
+        | Ast.PatPin name -> lookup_var ctx name
+        | _ -> error "map pattern keys must be literals or pin patterns"
+      in
+      List.iter
+        (fun (key_pat, val_pat) ->
+          let key_expr = emit_key_expr key_pat in
+          (* Condition: Map.has(key, map) *)
+          all_conds :=
+            !all_conds
+            @ [
+                Printf.sprintf "%s(%s, %s)" (mangle_name "Map.has") key_expr
+                  scrutinee;
+              ];
+          (* Extract value: Map.get(key, map) returns Some(v), unwrap with ._val *)
+          let val_expr =
+            Printf.sprintf "%s(%s, %s)._val" (mangle_name "Map.get") key_expr
+              scrutinee
+          in
+          let c, b = compile_pattern ctx val_expr val_pat in
+          all_conds := !all_conds @ c;
+          all_binds := !all_binds @ b)
+        entries;
+      (!all_conds, !all_binds)
+  | Ast.PatSet _ -> failwith "PatSet should be desugared before JS codegen"
 
 (* ---- Decision tree match compilation ---- *)
 
-and compile_js_match_tree ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) =
+and compile_js_match_tree ctx
+    (cm : Typechecker.texpr Match_tree_types.compiled_match) =
   let scrut_js = compile_non_tail ctx cm.scrutinee in
   let scrut_tmp = fresh_tmp ctx in
   let result = fresh_tmp ctx in
@@ -1604,180 +1839,182 @@ and compile_js_match_tree ctx (cm : Typechecker.texpr Match_tree_types.compiled_
   emit_line ctx "}";
   result
 
-and emit_dtree_js ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) scrut_tmp result label =
+and emit_dtree_js ctx (cm : Typechecker.texpr Match_tree_types.compiled_match)
+    scrut_tmp result label =
   emit_dtree_js_node ctx cm scrut_tmp result label cm.tree
 
 and emit_dtree_js_node ctx cm scrut_tmp result label tree =
   match tree with
   | Match_tree_types.DLeaf { arm_idx; bindings } ->
-    push_scope ctx;
-    emit_bindings_js ctx scrut_tmp bindings;
-    let arm = cm.Match_tree_types.match_arms.(arm_idx) in
-    let body_js = compile_expr ctx arm.arm_body in
-    emit_line ctx (Printf.sprintf "%s = %s;" result body_js);
-    emit_line ctx (Printf.sprintf "break %s;" label);
-    pop_scope ctx
-
+      push_scope ctx;
+      emit_bindings_js ctx scrut_tmp bindings;
+      let arm = cm.Match_tree_types.match_arms.(arm_idx) in
+      let body_js = compile_expr ctx arm.arm_body in
+      emit_line ctx (Printf.sprintf "%s = %s;" result body_js);
+      emit_line ctx (Printf.sprintf "break %s;" label);
+      pop_scope ctx
   | Match_tree_types.DFail loc ->
-    emit_line ctx (Printf.sprintf "_match_fail(\"line %d\");" loc.Token.line)
-
+      emit_line ctx (Printf.sprintf "_match_fail(\"line %d\");" loc.Token.line)
   | Match_tree_types.DGuard { guard; bindings; on_true; on_false; _ } ->
-    push_scope ctx;
-    emit_bindings_js ctx scrut_tmp bindings;
-    let guard_js = compile_expr ctx guard in
-    emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
-    ctx.indent <- ctx.indent + 1;
-    emit_dtree_js_node ctx cm scrut_tmp result label on_true;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "} else {";
-    ctx.indent <- ctx.indent + 1;
-    pop_scope ctx;
-    emit_dtree_js_node ctx cm scrut_tmp result label on_false;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}"
-
-  | Match_tree_types.DSwitch { occ; cases; default; _ } ->
-    let occ_js = emit_occurrence_js ctx scrut_tmp occ in
-    List.iter (fun (test, _binds, sub_tree) ->
-      let cond_js = emit_test_js ctx occ_js test in
-      emit_line ctx (Printf.sprintf "if (%s) {" cond_js);
+      push_scope ctx;
+      emit_bindings_js ctx scrut_tmp bindings;
+      let guard_js = compile_expr ctx guard in
+      emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
       ctx.indent <- ctx.indent + 1;
-      emit_dtree_js_node ctx cm scrut_tmp result label sub_tree;
+      emit_dtree_js_node ctx cm scrut_tmp result label on_true;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "} else {";
+      ctx.indent <- ctx.indent + 1;
+      pop_scope ctx;
+      emit_dtree_js_node ctx cm scrut_tmp result label on_false;
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}"
-    ) cases;
-    (match default with
-     | Some def_tree -> emit_dtree_js_node ctx cm scrut_tmp result label def_tree
-     | None ->
-       emit_line ctx (Printf.sprintf "_match_fail(\"line %d\");" cm.loc.Token.line))
+  | Match_tree_types.DSwitch { occ; cases; default; _ } -> (
+      let occ_js = emit_occurrence_js ctx scrut_tmp occ in
+      List.iter
+        (fun (test, _binds, sub_tree) ->
+          let cond_js = emit_test_js ctx occ_js test in
+          emit_line ctx (Printf.sprintf "if (%s) {" cond_js);
+          ctx.indent <- ctx.indent + 1;
+          emit_dtree_js_node ctx cm scrut_tmp result label sub_tree;
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}")
+        cases;
+      match default with
+      | Some def_tree ->
+          emit_dtree_js_node ctx cm scrut_tmp result label def_tree
+      | None ->
+          emit_line ctx
+            (Printf.sprintf "_match_fail(\"line %d\");" cm.loc.Token.line))
 
 and emit_occurrence_js ctx scrut_tmp (occ : Match_tree_types.occurrence) =
-  List.fold_left (fun js step ->
-    match step with
-    | Match_tree_types.ATupleField i -> Printf.sprintf "%s[%d]" js i
-    | Match_tree_types.ARecordField (name, _) -> js ^ "." ^ mangle_name name
-    | Match_tree_types.AVariantPayload -> js ^ "._val"
-    | Match_tree_types.AConsHead -> js ^ "._hd"
-    | Match_tree_types.AConsTail -> js ^ "._tl"
-    | Match_tree_types.AArrayElem i -> Printf.sprintf "%s._arr[%d]" js i
-    | Match_tree_types.AMapValue mk ->
-      let key_js = match mk with
-        | Match_tree_types.MKInt n -> string_of_int n
-        | Match_tree_types.MKString s -> escape_js_string s
-        | Match_tree_types.MKBool b -> if b then "true" else "false"
-        | Match_tree_types.MKFloat f -> Printf.sprintf "%.17g" f
-        | Match_tree_types.MKPin name -> lookup_var ctx name
-      in
-      Printf.sprintf "%s(%s, %s)._val" (mangle_name "Map.get") key_js js
-  ) scrut_tmp occ
+  List.fold_left
+    (fun js step ->
+      match step with
+      | Match_tree_types.ATupleField i -> Printf.sprintf "%s[%d]" js i
+      | Match_tree_types.ARecordField (name, _) -> js ^ "." ^ mangle_name name
+      | Match_tree_types.AVariantPayload -> js ^ "._val"
+      | Match_tree_types.AConsHead -> js ^ "._hd"
+      | Match_tree_types.AConsTail -> js ^ "._tl"
+      | Match_tree_types.AArrayElem i -> Printf.sprintf "%s._arr[%d]" js i
+      | Match_tree_types.AMapValue mk ->
+          let key_js =
+            match mk with
+            | Match_tree_types.MKInt n -> string_of_int n
+            | Match_tree_types.MKString s -> escape_js_string s
+            | Match_tree_types.MKBool b -> if b then "true" else "false"
+            | Match_tree_types.MKFloat f -> Printf.sprintf "%.17g" f
+            | Match_tree_types.MKPin name -> lookup_var ctx name
+          in
+          Printf.sprintf "%s(%s, %s)._val" (mangle_name "Map.get") key_js js)
+    scrut_tmp occ
 
 and emit_test_js ctx occ_js (test : Match_tree_types.test) =
   match test with
   | Match_tree_types.TConstructor (_, tag) ->
-    Printf.sprintf "%s._tag === %d" occ_js tag
+      Printf.sprintf "%s._tag === %d" occ_js tag
   | Match_tree_types.TPolyVariant (_, hash) ->
-    Printf.sprintf "%s._tag === %d" occ_js hash
+      Printf.sprintf "%s._tag === %d" occ_js hash
   | Match_tree_types.TBoolLit true -> occ_js
   | Match_tree_types.TBoolLit false -> "!" ^ occ_js
-  | Match_tree_types.TIntLit n ->
-    Printf.sprintf "%s === %d" occ_js n
+  | Match_tree_types.TIntLit n -> Printf.sprintf "%s === %d" occ_js n
   | Match_tree_types.TFloatLit f ->
-    Printf.sprintf "%s === %s" occ_js (Printf.sprintf "%.17g" f)
+      Printf.sprintf "%s === %s" occ_js (Printf.sprintf "%.17g" f)
   | Match_tree_types.TStringLit s ->
-    Printf.sprintf "%s === %s" occ_js (escape_js_string s)
+      Printf.sprintf "%s === %s" occ_js (escape_js_string s)
   | Match_tree_types.TUnit -> "true"
-  | Match_tree_types.TNil ->
-    occ_js ^ " === null"
-  | Match_tree_types.TCons ->
-    occ_js ^ " !== null"
+  | Match_tree_types.TNil -> occ_js ^ " === null"
+  | Match_tree_types.TCons -> occ_js ^ " !== null"
   | Match_tree_types.TArrayLen n ->
-    Printf.sprintf "%s._arr.length === %d" occ_js n
+      Printf.sprintf "%s._arr.length === %d" occ_js n
   | Match_tree_types.TMapHasKey mk ->
-    let key_js = match mk with
-      | Match_tree_types.MKInt n -> string_of_int n
-      | Match_tree_types.MKString s -> escape_js_string s
-      | Match_tree_types.MKBool b -> if b then "true" else "false"
-      | Match_tree_types.MKFloat f -> Printf.sprintf "%g" f
-      | Match_tree_types.MKPin name -> lookup_var ctx name
-    in
-    Printf.sprintf "%s(%s, %s)" (mangle_name "Map.has") key_js occ_js
+      let key_js =
+        match mk with
+        | Match_tree_types.MKInt n -> string_of_int n
+        | Match_tree_types.MKString s -> escape_js_string s
+        | Match_tree_types.MKBool b -> if b then "true" else "false"
+        | Match_tree_types.MKFloat f -> Printf.sprintf "%g" f
+        | Match_tree_types.MKPin name -> lookup_var ctx name
+      in
+      Printf.sprintf "%s(%s, %s)" (mangle_name "Map.has") key_js occ_js
   | Match_tree_types.TPin name ->
-    let js_name = lookup_var ctx name in
-    Printf.sprintf "_eq(%s, %s)" occ_js js_name
+      let js_name = lookup_var ctx name in
+      Printf.sprintf "_eq(%s, %s)" occ_js js_name
 
 and emit_bindings_js ctx scrut_tmp (bindings : Match_tree_types.binding list) =
-  List.iter (fun (b : Match_tree_types.binding) ->
-    let js_expr = emit_occurrence_js ctx scrut_tmp b.bind_occ in
-    let js_name =
-      let base = mangle_name b.var_name in
-      if List.mem base ctx.current_fn_params
-      then begin
-        let n = ctx.tmp_counter in
-        ctx.tmp_counter <- n + 1;
-        base ^ "_" ^ string_of_int n
-      end
-      else base
-    in
-    bind_var ctx b.var_name js_name;
-    emit_line ctx (Printf.sprintf "const %s = %s;" js_name js_expr)
-  ) bindings
+  List.iter
+    (fun (b : Match_tree_types.binding) ->
+      let js_expr = emit_occurrence_js ctx scrut_tmp b.bind_occ in
+      let js_name =
+        let base = mangle_name b.var_name in
+        if List.mem base ctx.current_fn_params then begin
+          let n = ctx.tmp_counter in
+          ctx.tmp_counter <- n + 1;
+          base ^ "_" ^ string_of_int n
+        end
+        else base
+      in
+      bind_var ctx b.var_name js_name;
+      emit_line ctx (Printf.sprintf "const %s = %s;" js_name js_expr))
+    bindings
 
-and compile_js_match_tree_cps ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) cont =
+and compile_js_match_tree_cps ctx
+    (cm : Typechecker.texpr Match_tree_types.compiled_match) cont =
   let scrut_js = compile_non_tail ctx cm.scrutinee in
   let scrut_tmp = fresh_tmp ctx in
   emit_line ctx (Printf.sprintf "const %s = %s;" scrut_tmp scrut_js);
   let matched = fresh_tmp ctx in
   emit_line ctx (Printf.sprintf "let %s = false;" matched);
   emit_dtree_js_cps ctx cm scrut_tmp matched cont cm.tree;
-  emit_line ctx (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched cm.loc.Token.line)
+  emit_line ctx
+    (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched
+       cm.loc.Token.line)
 
 and emit_dtree_js_cps ctx cm scrut_tmp matched cont tree =
   match tree with
   | Match_tree_types.DLeaf { arm_idx; bindings } ->
-    push_scope ctx;
-    emit_bindings_js ctx scrut_tmp bindings;
-    emit_line ctx (Printf.sprintf "%s = true;" matched);
-    let arm = cm.Match_tree_types.match_arms.(arm_idx) in
-    compile_cps ctx arm.arm_body cont;
-    pop_scope ctx
-
+      push_scope ctx;
+      emit_bindings_js ctx scrut_tmp bindings;
+      emit_line ctx (Printf.sprintf "%s = true;" matched);
+      let arm = cm.Match_tree_types.match_arms.(arm_idx) in
+      compile_cps ctx arm.arm_body cont;
+      pop_scope ctx
   | Match_tree_types.DFail loc ->
-    emit_line ctx (Printf.sprintf "_match_fail(\"line %d\");" loc.Token.line)
-
+      emit_line ctx (Printf.sprintf "_match_fail(\"line %d\");" loc.Token.line)
   | Match_tree_types.DGuard { guard; bindings; on_true; on_false; _ } ->
-    push_scope ctx;
-    emit_bindings_js ctx scrut_tmp bindings;
-    let guard_js = compile_non_tail ctx guard in
-    emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched guard_js);
-    ctx.indent <- ctx.indent + 1;
-    emit_dtree_js_cps ctx cm scrut_tmp matched cont on_true;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}";
-    pop_scope ctx;
-    emit_line ctx (Printf.sprintf "if (!%s) {" matched);
-    ctx.indent <- ctx.indent + 1;
-    emit_dtree_js_cps ctx cm scrut_tmp matched cont on_false;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}"
-
-  | Match_tree_types.DSwitch { occ; cases; default; _ } ->
-    let occ_js = emit_occurrence_js ctx scrut_tmp occ in
-    List.iter (fun (test, _binds, sub_tree) ->
-      let cond_js = emit_test_js ctx occ_js test in
-      emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched cond_js);
+      push_scope ctx;
+      emit_bindings_js ctx scrut_tmp bindings;
+      let guard_js = compile_non_tail ctx guard in
+      emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched guard_js);
       ctx.indent <- ctx.indent + 1;
-      emit_dtree_js_cps ctx cm scrut_tmp matched cont sub_tree;
+      emit_dtree_js_cps ctx cm scrut_tmp matched cont on_true;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      pop_scope ctx;
+      emit_line ctx (Printf.sprintf "if (!%s) {" matched);
+      ctx.indent <- ctx.indent + 1;
+      emit_dtree_js_cps ctx cm scrut_tmp matched cont on_false;
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}"
-    ) cases;
-    (match default with
-     | Some def_tree ->
-       emit_line ctx (Printf.sprintf "if (!%s) {" matched);
-       ctx.indent <- ctx.indent + 1;
-       emit_dtree_js_cps ctx cm scrut_tmp matched cont def_tree;
-       ctx.indent <- ctx.indent - 1;
-       emit_line ctx "}"
-     | None -> ())
+  | Match_tree_types.DSwitch { occ; cases; default; _ } -> (
+      let occ_js = emit_occurrence_js ctx scrut_tmp occ in
+      List.iter
+        (fun (test, _binds, sub_tree) ->
+          let cond_js = emit_test_js ctx occ_js test in
+          emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched cond_js);
+          ctx.indent <- ctx.indent + 1;
+          emit_dtree_js_cps ctx cm scrut_tmp matched cont sub_tree;
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}")
+        cases;
+      match default with
+      | Some def_tree ->
+          emit_line ctx (Printf.sprintf "if (!%s) {" matched);
+          ctx.indent <- ctx.indent + 1;
+          emit_dtree_js_cps ctx cm scrut_tmp matched cont def_tree;
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}"
+      | None -> ())
 
 (* ---- Handle / CPS compilation for algebraic effects ---- *)
 
@@ -1792,13 +2029,15 @@ and compile_handle_trywith ctx body op_arms return_arm result =
   (* Install _h handlers that throw (for called functions) *)
   emit_line ctx (Printf.sprintf "_h = Object.assign({}, %s, {" h_saved);
   ctx.indent <- ctx.indent + 1;
-  List.iter (fun (op_name, arg_name, k_name, _) ->
-    let arg_js = mangle_name arg_name in
-    let k_js = mangle_name k_name in
-    emit_line ctx (Printf.sprintf
-      "\"%s\": function(%s, %s) { throw {_e: \"%s\", _v: %s}; },"
-      op_name arg_js k_js op_name arg_js)
-  ) op_arms;
+  List.iter
+    (fun (op_name, arg_name, k_name, _) ->
+      let arg_js = mangle_name arg_name in
+      let k_js = mangle_name k_name in
+      emit_line ctx
+        (Printf.sprintf
+           "\"%s\": function(%s, %s) { throw {_e: \"%s\", _v: %s}; }," op_name
+           arg_js k_js op_name arg_js))
+    op_arms;
   ctx.indent <- ctx.indent - 1;
   emit_line ctx "});";
 
@@ -1812,47 +2051,51 @@ and compile_handle_trywith ctx body op_arms return_arm result =
 
   with_handle_ops ctx
     ~trywith_ops:(handled_op_names @ ctx.trywith_ops)
-    ~direct_dispatch_ops:(List.filter
-      (fun (op, _) -> not (List.mem op handled_op_names)) ctx.direct_dispatch_ops)
+    ~direct_dispatch_ops:
+      (List.filter
+         (fun (op, _) -> not (List.mem op handled_op_names))
+         ctx.direct_dispatch_ops)
     (fun () ->
       if body_needs_cps then begin
         (* Body has unhandled performs — CPS + trampoline, try/with ops still throw *)
         emit_line ctx "return _trampoline(function() {";
         ctx.indent <- ctx.indent + 1;
         with_in_cps ctx true (fun () ->
-          compile_cps ctx body (fun body_result ->
-            match return_arm with
-            | Some (ret_name, ret_body) ->
-              let ret_js = mangle_name ret_name in
-              let actual_ret = ret_js ^ "_" ^ string_of_int ctx.tmp_counter in
-              ctx.tmp_counter <- ctx.tmp_counter + 1;
-              push_scope ctx;
-              bind_var ctx ret_name actual_ret;
-              emit_line ctx (Printf.sprintf "const %s = %s;" actual_ret body_result);
-              let v = compile_non_tail ctx ret_body in
-              emit_line ctx (Printf.sprintf "return %s;" v);
-              pop_scope ctx
-            | None ->
-              emit_line ctx (Printf.sprintf "return %s;" body_result)
-          ));
+            compile_cps ctx body (fun body_result ->
+                match return_arm with
+                | Some (ret_name, ret_body) ->
+                    let ret_js = mangle_name ret_name in
+                    let actual_ret =
+                      ret_js ^ "_" ^ string_of_int ctx.tmp_counter
+                    in
+                    ctx.tmp_counter <- ctx.tmp_counter + 1;
+                    push_scope ctx;
+                    bind_var ctx ret_name actual_ret;
+                    emit_line ctx
+                      (Printf.sprintf "const %s = %s;" actual_ret body_result);
+                    let v = compile_non_tail ctx ret_body in
+                    emit_line ctx (Printf.sprintf "return %s;" v);
+                    pop_scope ctx
+                | None ->
+                    emit_line ctx (Printf.sprintf "return %s;" body_result)));
         ctx.indent <- ctx.indent - 1;
         emit_line ctx "});"
-      end else begin
+      end
+      else begin
         (* Body is fully direct — compile directly *)
         let body_v = compile_non_tail ctx body in
-        (match return_arm with
-         | Some (ret_name, ret_body) ->
-           let ret_js = mangle_name ret_name in
-           let actual_ret = ret_js ^ "_" ^ string_of_int ctx.tmp_counter in
-           ctx.tmp_counter <- ctx.tmp_counter + 1;
-           push_scope ctx;
-           bind_var ctx ret_name actual_ret;
-           emit_line ctx (Printf.sprintf "const %s = %s;" actual_ret body_v);
-           let rv = compile_non_tail ctx ret_body in
-           emit_line ctx (Printf.sprintf "return %s;" rv);
-           pop_scope ctx
-         | None ->
-           emit_line ctx (Printf.sprintf "return %s;" body_v))
+        match return_arm with
+        | Some (ret_name, ret_body) ->
+            let ret_js = mangle_name ret_name in
+            let actual_ret = ret_js ^ "_" ^ string_of_int ctx.tmp_counter in
+            ctx.tmp_counter <- ctx.tmp_counter + 1;
+            push_scope ctx;
+            bind_var ctx ret_name actual_ret;
+            emit_line ctx (Printf.sprintf "const %s = %s;" actual_ret body_v);
+            let rv = compile_non_tail ctx ret_body in
+            emit_line ctx (Printf.sprintf "return %s;" rv);
+            pop_scope ctx
+        | None -> emit_line ctx (Printf.sprintf "return %s;" body_v)
       end);
 
   ctx.indent <- ctx.indent - 1;
@@ -1860,20 +2103,22 @@ and compile_handle_trywith ctx body op_arms return_arm result =
   emit_line ctx "} catch (_exc) {";
   ctx.indent <- ctx.indent + 1;
   let first = ref true in
-  List.iter (fun (op_name, arg_name, _k_name, handler_body) ->
-    let prefix = if !first then "if" else "} else if" in
-    first := false;
-    emit_line ctx (Printf.sprintf "%s (_exc && _exc._e === \"%s\") {" prefix op_name);
-    ctx.indent <- ctx.indent + 1;
-    push_scope ctx;
-    let arg_js = mangle_name arg_name in
-    bind_var ctx arg_name arg_js;
-    emit_line ctx (Printf.sprintf "const %s = _exc._v;" arg_js);
-    let v = compile_non_tail ctx handler_body in
-    emit_line ctx (Printf.sprintf "return %s;" v);
-    pop_scope ctx;
-    ctx.indent <- ctx.indent - 1
-  ) op_arms;
+  List.iter
+    (fun (op_name, arg_name, _k_name, handler_body) ->
+      let prefix = if !first then "if" else "} else if" in
+      first := false;
+      emit_line ctx
+        (Printf.sprintf "%s (_exc && _exc._e === \"%s\") {" prefix op_name);
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      let arg_js = mangle_name arg_name in
+      bind_var ctx arg_name arg_js;
+      emit_line ctx (Printf.sprintf "const %s = _exc._v;" arg_js);
+      let v = compile_non_tail ctx handler_body in
+      emit_line ctx (Printf.sprintf "return %s;" v);
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1)
+    op_arms;
   emit_line ctx "} else { throw _exc; }";
   ctx.indent <- ctx.indent - 1;
   emit_line ctx (Printf.sprintf "} finally { _h = %s; }" h_saved);
@@ -1888,31 +2133,36 @@ and compile_handle ctx body arms =
   let provide_ops = ref [] in
   let try_ops = ref [] in
   let full_ops = ref [] in
-  List.iter (fun arm ->
-    match arm with
-    | Typechecker.THReturn (name, body) -> return_arm := Some (name, body)
-    | Typechecker.THOp { op_name = op; arg; k; body } ->
-      full_ops := (op, arg, k, body) :: !full_ops
-    | Typechecker.THOpProvide (op, arg, body) ->
-      provide_ops := (op, arg, body) :: !provide_ops
-    | Typechecker.THOpTry (op, arg, body) ->
-      try_ops := (op, arg, body) :: !try_ops
-  ) arms;
+  List.iter
+    (fun arm ->
+      match arm with
+      | Typechecker.THReturn (name, body) -> return_arm := Some (name, body)
+      | Typechecker.THOp { op_name = op; arg; k; body } ->
+          full_ops := (op, arg, k, body) :: !full_ops
+      | Typechecker.THOpProvide (op, arg, body) ->
+          provide_ops := (op, arg, body) :: !provide_ops
+      | Typechecker.THOpTry (op, arg, body) ->
+          try_ops := (op, arg, body) :: !try_ops)
+    arms;
   let provide_ops = List.rev !provide_ops in
   let try_ops = List.rev !try_ops in
   let full_ops = List.rev !full_ops in
 
   (* All-trywith fast path: no provide or full ops, return arm is pure *)
-  let return_arm_pure = match !return_arm with
+  let return_arm_pure =
+    match !return_arm with
     | Some (_, rb) -> not (expr_has_perform rb)
-    | None -> true in
+    | None -> true
+  in
 
   if full_ops = [] && provide_ops = [] && try_ops <> [] && return_arm_pure then begin
     (* Convert try_ops to the format compile_handle_trywith expects *)
-    let trywith_arms = List.map (fun (op, arg, body) ->
-      (op, arg, "__k_try", body)) try_ops in
+    let trywith_arms =
+      List.map (fun (op, arg, body) -> (op, arg, "__k_try", body)) try_ops
+    in
     compile_handle_trywith ctx body trywith_arms !return_arm result
-  end else begin
+  end
+  else begin
     (* Simple ops come from provide_ops (tail-resumptive, already stripped of TEResume) *)
     let simple_ops = List.map (fun (op, _, _) -> op) provide_ops in
 
@@ -1927,139 +2177,166 @@ and compile_handle ctx body arms =
     (* For provide ops: emit direct handler functions.
        Save/restore direct_dispatch_ops around the whole handler block. *)
     let saved_direct_ops = ctx.direct_dispatch_ops in
-    Fun.protect ~finally:(fun () -> ctx.direct_dispatch_ops <- saved_direct_ops) (fun () ->
-    List.iter (fun (op_name, arg_name, value_body) ->
-      let direct_fn = fresh_tmp ctx in
-      let arg_js = mangle_name arg_name in
-      emit_line ctx (Printf.sprintf "function %s(%s) {" direct_fn arg_js);
-      ctx.indent <- ctx.indent + 1;
-      push_scope ctx;
-      bind_var ctx arg_name arg_js;
-      (* THOpProvide bodies have TEResume stripped — compile directly as value *)
-      let v = compile_non_tail ctx value_body in
-      emit_line ctx (Printf.sprintf "return %s;" v);
-      pop_scope ctx;
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "}";
-      ctx.direct_dispatch_ops <- (op_name, direct_fn) :: ctx.direct_dispatch_ops
-    ) provide_ops;
+    Fun.protect
+      ~finally:(fun () -> ctx.direct_dispatch_ops <- saved_direct_ops)
+      (fun () ->
+        List.iter
+          (fun (op_name, arg_name, value_body) ->
+            let direct_fn = fresh_tmp ctx in
+            let arg_js = mangle_name arg_name in
+            emit_line ctx (Printf.sprintf "function %s(%s) {" direct_fn arg_js);
+            ctx.indent <- ctx.indent + 1;
+            push_scope ctx;
+            bind_var ctx arg_name arg_js;
+            (* THOpProvide bodies have TEResume stripped — compile directly as value *)
+            let v = compile_non_tail ctx value_body in
+            emit_line ctx (Printf.sprintf "return %s;" v);
+            pop_scope ctx;
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "}";
+            ctx.direct_dispatch_ops <-
+              (op_name, direct_fn) :: ctx.direct_dispatch_ops)
+          provide_ops;
 
-    (* Remove stale direct dispatch entries for ops handled by full CPS or try arms.
+        (* Remove stale direct dispatch entries for ops handled by full CPS or try arms.
        Without this, a nested handler's full/try arm for the same op would be bypassed
        because perform would find the outer handler's direct dispatch entry. *)
-    let shadowed_ops = List.map (fun (op, _, _, _) -> op) full_ops
-                     @ List.map (fun (op, _, _) -> op) try_ops in
-    if shadowed_ops <> [] then
-      ctx.direct_dispatch_ops <- List.filter
-        (fun (op, _) -> not (List.mem op shadowed_ops)) ctx.direct_dispatch_ops;
+        let shadowed_ops =
+          List.map (fun (op, _, _, _) -> op) full_ops
+          @ List.map (fun (op, _, _) -> op) try_ops
+        in
+        if shadowed_ops <> [] then
+          ctx.direct_dispatch_ops <-
+            List.filter
+              (fun (op, _) -> not (List.mem op shadowed_ops))
+              ctx.direct_dispatch_ops;
 
-    (* Install _h with handler functions *)
-    emit_line ctx (Printf.sprintf "_h = Object.assign({}, %s, {" h_saved);
-    ctx.indent <- ctx.indent + 1;
+        (* Install _h with handler functions *)
+        emit_line ctx (Printf.sprintf "_h = Object.assign({}, %s, {" h_saved);
+        ctx.indent <- ctx.indent + 1;
 
-    (* Emit provide ops as CPS wrappers calling direct functions *)
-    List.iter (fun (op_name, arg_name, _) ->
-      let arg_js = mangle_name arg_name in
-      let k_js = "_k" in
-      let direct_fn = List.assoc op_name ctx.direct_dispatch_ops in
-      emit_line ctx (Printf.sprintf
-        "\"%s\": function(%s, %s) { return _bounce(function() { return %s(%s(%s)); }); },"
-        op_name arg_js k_js k_js direct_fn arg_js)
-    ) provide_ops;
+        (* Emit provide ops as CPS wrappers calling direct functions *)
+        List.iter
+          (fun (op_name, arg_name, _) ->
+            let arg_js = mangle_name arg_name in
+            let k_js = "_k" in
+            let direct_fn = List.assoc op_name ctx.direct_dispatch_ops in
+            emit_line ctx
+              (Printf.sprintf
+                 "\"%s\": function(%s, %s) { return _bounce(function() { \
+                  return %s(%s(%s)); }); },"
+                 op_name arg_js k_js k_js direct_fn arg_js))
+          provide_ops;
 
-    (* Emit try ops: handler body never resumes, just returns the fallback value *)
-    List.iter (fun (op_name, arg_name, fallback_body) ->
-      let arg_js = mangle_name arg_name in
-      let k_js = "_k" in
-      emit_line ctx (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_js);
-      ctx.indent <- ctx.indent + 1;
-      push_scope ctx;
-      bind_var ctx arg_name arg_js;
-      let v = compile_non_tail ctx fallback_body in
-      emit_line ctx (Printf.sprintf "return _bounce(function() { return %s; });" v);
-      pop_scope ctx;
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "},"
-    ) try_ops;
+        (* Emit try ops: handler body never resumes, just returns the fallback value *)
+        List.iter
+          (fun (op_name, arg_name, fallback_body) ->
+            let arg_js = mangle_name arg_name in
+            let k_js = "_k" in
+            emit_line ctx
+              (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_js);
+            ctx.indent <- ctx.indent + 1;
+            push_scope ctx;
+            bind_var ctx arg_name arg_js;
+            let v = compile_non_tail ctx fallback_body in
+            emit_line ctx
+              (Printf.sprintf "return _bounce(function() { return %s; });" v);
+            pop_scope ctx;
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "},")
+          try_ops;
 
-    (* Emit full CPS ops *)
-    List.iter (fun (op_name, arg_name, k_name, handler_body) ->
-      let arg_js = mangle_name arg_name in
-      let k_js = mangle_name k_name in
-      let k_raw = "_k_raw" in
-      emit_line ctx (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_raw);
-      ctx.indent <- ctx.indent + 1;
-      (* Wrap continuation with one-shot checking *)
-      let k_used = fresh_tmp ctx in
-      emit_line ctx (Printf.sprintf "let %s = false;" k_used);
-      emit_line ctx (Printf.sprintf "const %s = function(_v) { if (%s) throw new Error(\"Effect continuation already resumed\"); %s = true; return %s(_v); };" k_js k_used k_used k_raw);
-      emit_line ctx (Printf.sprintf "%s._k_raw = %s;" k_js k_raw);
-      push_scope ctx;
-      bind_var ctx arg_name arg_js;
-      bind_var ctx k_name k_js;
-      let v = with_handler_tail_resume ctx (all_resumes_are_tail handler_body) (fun () ->
-        compile_non_tail ctx handler_body) in
-      emit_line ctx (Printf.sprintf "return _bounce(function() { return %s; });" v);
-      pop_scope ctx;
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "},"
-    ) full_ops;
+        (* Emit full CPS ops *)
+        List.iter
+          (fun (op_name, arg_name, k_name, handler_body) ->
+            let arg_js = mangle_name arg_name in
+            let k_js = mangle_name k_name in
+            let k_raw = "_k_raw" in
+            emit_line ctx
+              (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_raw);
+            ctx.indent <- ctx.indent + 1;
+            (* Wrap continuation with one-shot checking *)
+            let k_used = fresh_tmp ctx in
+            emit_line ctx (Printf.sprintf "let %s = false;" k_used);
+            emit_line ctx
+              (Printf.sprintf
+                 "const %s = function(_v) { if (%s) throw new Error(\"Effect \
+                  continuation already resumed\"); %s = true; return %s(_v); \
+                  };"
+                 k_js k_used k_used k_raw);
+            emit_line ctx (Printf.sprintf "%s._k_raw = %s;" k_js k_raw);
+            push_scope ctx;
+            bind_var ctx arg_name arg_js;
+            bind_var ctx k_name k_js;
+            let v =
+              with_handler_tail_resume ctx (all_resumes_are_tail handler_body)
+                (fun () -> compile_non_tail ctx handler_body)
+            in
+            emit_line ctx
+              (Printf.sprintf "return _bounce(function() { return %s; });" v);
+            pop_scope ctx;
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "},")
+          full_ops;
 
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "});";
+        ctx.indent <- ctx.indent - 1;
+        emit_line ctx "});";
 
-    (* Compile body — direct style if all performs are handled by simple ops *)
-    let body_needs_cps =
-      if simple_ops = [] then expr_has_perform body
-      else expr_has_unhandled_perform simple_ops body in
+        (* Compile body — direct style if all performs are handled by simple ops *)
+        let body_needs_cps =
+          if simple_ops = [] then expr_has_perform body
+          else expr_has_unhandled_perform simple_ops body
+        in
 
-    emit_line ctx "try {";
-    ctx.indent <- ctx.indent + 1;
+        emit_line ctx "try {";
+        ctx.indent <- ctx.indent + 1;
 
-    if body_needs_cps then begin
-      (* Body has unhandled performs — use CPS + trampoline *)
-      emit_line ctx "return _trampoline(function() {";
-      ctx.indent <- ctx.indent + 1;
-      with_in_cps ctx true (fun () ->
-        compile_cps ctx body (fun body_result ->
+        if body_needs_cps then begin
+          (* Body has unhandled performs — use CPS + trampoline *)
+          emit_line ctx "return _trampoline(function() {";
+          ctx.indent <- ctx.indent + 1;
+          with_in_cps ctx true (fun () ->
+              compile_cps ctx body (fun body_result ->
+                  match !return_arm with
+                  | Some (ret_name, ret_body) ->
+                      let ret_js = mangle_name ret_name in
+                      let actual_ret =
+                        ret_js ^ "_" ^ string_of_int ctx.tmp_counter
+                      in
+                      ctx.tmp_counter <- ctx.tmp_counter + 1;
+                      push_scope ctx;
+                      bind_var ctx ret_name actual_ret;
+                      emit_line ctx
+                        (Printf.sprintf "const %s = %s;" actual_ret body_result);
+                      let v = compile_non_tail ctx ret_body in
+                      emit_line ctx (Printf.sprintf "return %s;" v);
+                      pop_scope ctx
+                  | None ->
+                      emit_line ctx (Printf.sprintf "return %s;" body_result)));
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "});"
+        end
+        else begin
+          (* Body is fully direct — no CPS, no trampoline *)
+          let body_v = compile_non_tail ctx body in
           match !return_arm with
           | Some (ret_name, ret_body) ->
-            let ret_js = mangle_name ret_name in
-            let actual_ret = ret_js ^ "_" ^ string_of_int ctx.tmp_counter in
-            ctx.tmp_counter <- ctx.tmp_counter + 1;
-            push_scope ctx;
-            bind_var ctx ret_name actual_ret;
-            emit_line ctx (Printf.sprintf "const %s = %s;" actual_ret body_result);
-            let v = compile_non_tail ctx ret_body in
-            emit_line ctx (Printf.sprintf "return %s;" v);
-            pop_scope ctx
-          | None ->
-            emit_line ctx (Printf.sprintf "return %s;" body_result)
-        ));
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "});"
-    end else begin
-      (* Body is fully direct — no CPS, no trampoline *)
-      let body_v = compile_non_tail ctx body in
-      (match !return_arm with
-       | Some (ret_name, ret_body) ->
-         let ret_js = mangle_name ret_name in
-         let actual_ret = ret_js ^ "_" ^ string_of_int ctx.tmp_counter in
-         ctx.tmp_counter <- ctx.tmp_counter + 1;
-         push_scope ctx;
-         bind_var ctx ret_name actual_ret;
-         emit_line ctx (Printf.sprintf "const %s = %s;" actual_ret body_v);
-         let rv = compile_non_tail ctx ret_body in
-         emit_line ctx (Printf.sprintf "return %s;" rv);
-         pop_scope ctx
-       | None ->
-         emit_line ctx (Printf.sprintf "return %s;" body_v))
-    end;
+              let ret_js = mangle_name ret_name in
+              let actual_ret = ret_js ^ "_" ^ string_of_int ctx.tmp_counter in
+              ctx.tmp_counter <- ctx.tmp_counter + 1;
+              push_scope ctx;
+              bind_var ctx ret_name actual_ret;
+              emit_line ctx (Printf.sprintf "const %s = %s;" actual_ret body_v);
+              let rv = compile_non_tail ctx ret_body in
+              emit_line ctx (Printf.sprintf "return %s;" rv);
+              pop_scope ctx
+          | None -> emit_line ctx (Printf.sprintf "return %s;" body_v)
+        end;
 
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx (Printf.sprintf "} finally { _h = %s; }" h_saved));
+        ctx.indent <- ctx.indent - 1;
+        emit_line ctx (Printf.sprintf "} finally { _h = %s; }" h_saved));
+
     (* Fun.protect closes here — direct_dispatch_ops restored *)
-
     ctx.indent <- ctx.indent - 1;
     emit_line ctx "})();"
   end;
@@ -2078,107 +2355,95 @@ and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
      tail-position calls return raw bounces to the trampoline (stack-safe). *)
   match te.expr with
   (* Compound expressions: always recurse to ensure proper _resolve *)
-  | Typechecker.TELet (name, _, e1, e2) ->
-    compile_let_cps ctx name e1 e2 cont
-
+  | Typechecker.TELet (name, _, e1, e2) -> compile_let_cps ctx name e1 e2 cont
   | Typechecker.TELetRec (name, _, fn_expr, body) ->
-    compile_letrec_cps ctx name fn_expr body cont
-
+      compile_letrec_cps ctx name fn_expr body cont
   | Typechecker.TELetRecAnd (bindings, body) ->
-    compile_letrec_and_cps ctx bindings body cont
-
-  | Typechecker.TESeq (e1, e2) ->
-    compile_seq_cps ctx e1 e2 cont
-
+      compile_letrec_and_cps ctx bindings body cont
+  | Typechecker.TESeq (e1, e2) -> compile_seq_cps ctx e1 e2 cont
   | Typechecker.TEIf (cond, then_e, else_e) ->
-    compile_if_cps ctx cond then_e else_e cont
-
+      compile_if_cps ctx cond then_e else_e cont
   | Typechecker.TEMatch (scrut, arms, _partial) ->
-    compile_match_cps ctx scrut arms te.loc cont
-
-  | Typechecker.TEMatchTree cm ->
-    compile_js_match_tree_cps ctx cm cont
-
+      compile_match_cps ctx scrut arms te.loc cont
+  | Typechecker.TEMatchTree cm -> compile_js_match_tree_cps ctx cm cont
   | Typechecker.TELetMut (name, init, body) ->
-    if expr_has_perform init then begin
-      compile_cps ctx init (fun init_v ->
+      if expr_has_perform init then begin
+        compile_cps ctx init (fun init_v ->
+            let js_name = mangle_name name in
+            let actual_name = js_name ^ "_" ^ string_of_int ctx.tmp_counter in
+            ctx.tmp_counter <- ctx.tmp_counter + 1;
+            push_scope ctx;
+            bind_var ctx name actual_name;
+            emit_line ctx
+              (Printf.sprintf "let %s = _resolve(%s);" actual_name init_v);
+            compile_cps ctx body cont;
+            pop_scope ctx)
+      end
+      else begin
+        let v = compile_non_tail ctx init in
         let js_name = mangle_name name in
         let actual_name = js_name ^ "_" ^ string_of_int ctx.tmp_counter in
         ctx.tmp_counter <- ctx.tmp_counter + 1;
         push_scope ctx;
         bind_var ctx name actual_name;
-        emit_line ctx (Printf.sprintf "let %s = _resolve(%s);" actual_name init_v);
+        emit_line ctx (Printf.sprintf "let %s = _resolve(%s);" actual_name v);
         compile_cps ctx body cont;
-        pop_scope ctx)
-    end else begin
-      let v = compile_non_tail ctx init in
-      let js_name = mangle_name name in
-      let actual_name = js_name ^ "_" ^ string_of_int ctx.tmp_counter in
-      ctx.tmp_counter <- ctx.tmp_counter + 1;
-      push_scope ctx;
-      bind_var ctx name actual_name;
-      emit_line ctx (Printf.sprintf "let %s = _resolve(%s);" actual_name v);
-      compile_cps ctx body cont;
-      pop_scope ctx
+        pop_scope ctx
       end
-
-    | Typechecker.TEWhile { tw_cond; tw_body } ->
+  | Typechecker.TEWhile { tw_cond; tw_body } ->
       compile_while_cps ctx tw_cond tw_body cont
-
-    (* Non-compound expressions: use expr_has_perform guard *)
-    | Typechecker.TEApp _ when not (expr_has_perform te) ->
+  (* Non-compound expressions: use expr_has_perform guard *)
+  | Typechecker.TEApp _ when not (expr_has_perform te) ->
       (* Function call in potential tail position: temporarily clear in_cps
          so the call itself doesn't get _resolve (preserving trampoline stack safety).
          Arguments still get _resolve via compile_app's arg compilation. *)
       let v = with_in_cps ctx false (fun () -> compile_non_tail ctx te) in
       cont v
-
-    | _ when not (expr_has_perform te) ->
+  | _ when not (expr_has_perform te) ->
       let v = compile_non_tail ctx te in
       cont v
-
-    | Typechecker.TEPerform (op_name, arg) ->
+  | Typechecker.TEPerform (op_name, arg) ->
       compile_perform_cps ctx op_name arg cont
-
-    | Typechecker.TEHandle _ ->
+  | Typechecker.TEHandle _ ->
       let v = compile_non_tail ctx te in
       cont v
-
-    | Typechecker.TEResume (k_expr, val_expr) ->
+  | Typechecker.TEResume (k_expr, val_expr) ->
       let k_js = compile_non_tail ctx k_expr in
       let v_js = compile_non_tail ctx val_expr in
-      emit_line ctx (Printf.sprintf "return _bounce(function() { return %s(%s); });" k_js v_js)
-
-    | Typechecker.TEApp (fn, arg) ->
-      compile_app_cps ctx te fn arg cont
-
-    | _ ->
+      emit_line ctx
+        (Printf.sprintf "return _bounce(function() { return %s(%s); });" k_js
+           v_js)
+  | Typechecker.TEApp (fn, arg) -> compile_app_cps ctx te fn arg cont
+  | _ ->
       let v = compile_non_tail ctx te in
       cont v
 
 and compile_letrec_and_cps ctx bindings body cont =
   push_scope ctx;
   (* Bind all names and emit placeholders for non-function bindings *)
-  List.iter (fun (name, te) ->
-    let js_name = mangle_name name in
-    bind_var ctx name js_name;
-    match te.Typechecker.expr with
-    | Typechecker.TEFun _ -> ()
-    | _ -> emit_js_placeholder ctx js_name te
-  ) bindings;
+  List.iter
+    (fun (name, te) ->
+      let js_name = mangle_name name in
+      bind_var ctx name js_name;
+      match te.Typechecker.expr with
+      | Typechecker.TEFun _ -> ()
+      | _ -> emit_js_placeholder ctx js_name te)
+    bindings;
   (* Compile functions first, then backpatch values *)
-  List.iter (fun (name, fn_expr) ->
-    let js_name = mangle_name name in
-    match fn_expr.Typechecker.expr with
-    | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
-    | _ -> ()
-  ) bindings;
-  List.iter (fun (name, te) ->
-    let js_name = mangle_name name in
-    match te.Typechecker.expr with
-    | Typechecker.TEFun _ -> ()
-    | _ -> emit_js_backpatch ctx js_name te
-  ) bindings;
+  List.iter
+    (fun (name, fn_expr) ->
+      let js_name = mangle_name name in
+      match fn_expr.Typechecker.expr with
+      | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+      | _ -> ())
+    bindings;
+  List.iter
+    (fun (name, te) ->
+      let js_name = mangle_name name in
+      match te.Typechecker.expr with
+      | Typechecker.TEFun _ -> ()
+      | _ -> emit_js_backpatch ctx js_name te)
+    bindings;
   compile_cps ctx body cont;
   pop_scope ctx
 
@@ -2187,75 +2452,85 @@ and compile_while_cps ctx cond body cont =
   let break_flag = fresh_tmp ctx in
   let break_val = fresh_tmp ctx in
   with_loop_ctx ctx ~break_flag ~break_val (fun () ->
-    emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
-    emit_line ctx (Printf.sprintf "function %s() {" loop_fn);
-    ctx.indent <- ctx.indent + 1;
-    let c = compile_non_tail ctx cond in
-    emit_line ctx (Printf.sprintf "if (!(%s)) {" c);
-    ctx.indent <- ctx.indent + 1;
-    cont "undefined";
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}";
-    compile_cps ctx body (fun body_val ->
-      emit_line ctx (Printf.sprintf "%s;" body_val);
-      emit_line ctx (Printf.sprintf "if (%s) {" break_flag);
+      emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
+      emit_line ctx (Printf.sprintf "function %s() {" loop_fn);
       ctx.indent <- ctx.indent + 1;
-      cont break_val;
+      let c = compile_non_tail ctx cond in
+      emit_line ctx (Printf.sprintf "if (!(%s)) {" c);
+      ctx.indent <- ctx.indent + 1;
+      cont "undefined";
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}";
-      emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn));
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}";
-    emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn))
+      compile_cps ctx body (fun body_val ->
+          emit_line ctx (Printf.sprintf "%s;" body_val);
+          emit_line ctx (Printf.sprintf "if (%s) {" break_flag);
+          ctx.indent <- ctx.indent + 1;
+          cont break_val;
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}";
+          emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn));
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn))
 
 and compile_perform_cps ctx op_name (arg : Typechecker.texpr) cont =
   match List.assoc_opt op_name ctx.direct_dispatch_ops with
   | Some direct_fn ->
-    (* Simple handler direct dispatch in CPS context *)
-    let arg_js = compile_non_tail ctx arg in
-    let result_var = fresh_tmp ctx in
-    emit_line ctx (Printf.sprintf "const %s = %s(%s);" result_var direct_fn arg_js);
-    cont result_var
+      (* Simple handler direct dispatch in CPS context *)
+      let arg_js = compile_non_tail ctx arg in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx
+        (Printf.sprintf "const %s = %s(%s);" result_var direct_fn arg_js);
+      cont result_var
   | None when List.mem op_name ctx.trywith_ops ->
-    (* Try/with in CPS context — throw *)
-    let arg_js = compile_non_tail ctx arg in
-    emit_line ctx (Printf.sprintf "throw {_e: \"%s\", _v: %s};" op_name arg_js)
-    (* cont is never called — throw unwinds *)
+      (* Try/with in CPS context — throw *)
+      let arg_js = compile_non_tail ctx arg in
+      emit_line ctx
+        (Printf.sprintf "throw {_e: \"%s\", _v: %s};" op_name arg_js)
+      (* cont is never called — throw unwinds *)
   | None ->
-    let arg_js = compile_non_tail ctx arg in
-    let result_var = fresh_tmp ctx in
-    emit_line ctx (Printf.sprintf "return _h[\"%s\"](%s, function(%s) {"
-      op_name arg_js result_var);
-    ctx.indent <- ctx.indent + 1;
-    emit_line ctx "return _bounce(function() {";
-    ctx.indent <- ctx.indent + 1;
-    cont result_var;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "});";
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "});";
+      let arg_js = compile_non_tail ctx arg in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx
+        (Printf.sprintf "return _h[\"%s\"](%s, function(%s) {" op_name arg_js
+           result_var);
+      ctx.indent <- ctx.indent + 1;
+      emit_line ctx "return _bounce(function() {";
+      ctx.indent <- ctx.indent + 1;
+      cont result_var;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "});";
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "});"
 
 and compile_let_cps ctx name e1 e2 cont =
   if expr_has_perform e1 then begin
     (* e1 is effectful — CPS-compile it, then bind result and CPS-compile e2 *)
     compile_cps ctx e1 (fun v1 ->
-      let js_name = mangle_name name in
-      let actual_name = if js_name = "_" then fresh_tmp ctx
-        else js_name ^ "_" ^ string_of_int ctx.tmp_counter |> fun n ->
-          ctx.tmp_counter <- ctx.tmp_counter + 1; n
-      in
-      push_scope ctx;
-      bind_var ctx name actual_name;
-      emit_line ctx (Printf.sprintf "const %s = _resolve(%s);" actual_name v1);
-      compile_cps ctx e2 cont;
-      pop_scope ctx)
-  end else begin
+        let js_name = mangle_name name in
+        let actual_name =
+          if js_name = "_" then fresh_tmp ctx
+          else
+            js_name ^ "_" ^ string_of_int ctx.tmp_counter |> fun n ->
+            ctx.tmp_counter <- ctx.tmp_counter + 1;
+            n
+        in
+        push_scope ctx;
+        bind_var ctx name actual_name;
+        emit_line ctx (Printf.sprintf "const %s = _resolve(%s);" actual_name v1);
+        compile_cps ctx e2 cont;
+        pop_scope ctx)
+  end
+  else begin
     (* e1 is pure — compile directly, then CPS-compile e2 *)
     let v1 = compile_non_tail ctx e1 in
     let js_name = mangle_name name in
-    let actual_name = if js_name = "_" then fresh_tmp ctx
-      else js_name ^ "_" ^ string_of_int ctx.tmp_counter |> fun n ->
-        ctx.tmp_counter <- ctx.tmp_counter + 1; n
+    let actual_name =
+      if js_name = "_" then fresh_tmp ctx
+      else
+        js_name ^ "_" ^ string_of_int ctx.tmp_counter |> fun n ->
+        ctx.tmp_counter <- ctx.tmp_counter + 1;
+        n
     in
     push_scope ctx;
     bind_var ctx name actual_name;
@@ -2269,20 +2544,20 @@ and compile_letrec_cps ctx name fn_expr body cont =
   push_scope ctx;
   bind_var ctx name js_name;
   (match fn_expr.Typechecker.expr with
-   | Typechecker.TEFun _ ->
-     compile_named_function ctx js_name fn_expr
-   | _ ->
-     emit_js_placeholder ctx js_name fn_expr;
-     emit_js_backpatch ctx js_name fn_expr);
+  | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+  | _ ->
+      emit_js_placeholder ctx js_name fn_expr;
+      emit_js_backpatch ctx js_name fn_expr);
   compile_cps ctx body cont;
   pop_scope ctx
 
 and compile_seq_cps ctx e1 e2 cont =
   if expr_has_perform e1 then begin
     compile_cps ctx e1 (fun v1 ->
-      emit_line ctx (Printf.sprintf "_resolve(%s);" v1);
-      compile_cps ctx e2 cont)
-  end else begin
+        emit_line ctx (Printf.sprintf "_resolve(%s);" v1);
+        compile_cps ctx e2 cont)
+  end
+  else begin
     let v1 = compile_non_tail ctx e1 in
     emit_line ctx (Printf.sprintf "_resolve(%s);" v1);
     compile_cps ctx e2 cont
@@ -2308,37 +2583,39 @@ and compile_match_cps ctx scrut arms loc cont =
   (* Use a done flag to avoid duplicate cont calls in JS *)
   let matched = fresh_tmp ctx in
   emit_line ctx (Printf.sprintf "let %s = false;" matched);
-  List.iter (fun (pat, guard, body) ->
-    let (conds, bindings) = compile_pattern ctx scrut_tmp pat in
-    let cond_str = match conds with
-      | [] -> "true"
-      | _ -> String.concat " && " conds
-    in
-    emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched cond_str);
-    ctx.indent <- ctx.indent + 1;
-    push_scope ctx;
-    List.iter (fun (mml_name, js_expr) ->
-      let js_nm = mangle_name mml_name in
-      bind_var ctx mml_name js_nm;
-      emit_line ctx (Printf.sprintf "const %s = %s;" js_nm js_expr)
-    ) bindings;
-    (match guard with
-     | Some g ->
-       let guard_js = compile_non_tail ctx g in
-       emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
-       ctx.indent <- ctx.indent + 1;
-       emit_line ctx (Printf.sprintf "%s = true;" matched);
-       compile_cps ctx body cont;
-       ctx.indent <- ctx.indent - 1;
-       emit_line ctx "}"
-     | None ->
-       emit_line ctx (Printf.sprintf "%s = true;" matched);
-       compile_cps ctx body cont);
-    pop_scope ctx;
-    ctx.indent <- ctx.indent - 1;
-    emit_line ctx "}"
-  ) arms;
-  emit_line ctx (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched loc.Token.line)
+  List.iter
+    (fun (pat, guard, body) ->
+      let conds, bindings = compile_pattern ctx scrut_tmp pat in
+      let cond_str =
+        match conds with [] -> "true" | _ -> String.concat " && " conds
+      in
+      emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched cond_str);
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      List.iter
+        (fun (mml_name, js_expr) ->
+          let js_nm = mangle_name mml_name in
+          bind_var ctx mml_name js_nm;
+          emit_line ctx (Printf.sprintf "const %s = %s;" js_nm js_expr))
+        bindings;
+      (match guard with
+      | Some g ->
+          let guard_js = compile_non_tail ctx g in
+          emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
+          ctx.indent <- ctx.indent + 1;
+          emit_line ctx (Printf.sprintf "%s = true;" matched);
+          compile_cps ctx body cont;
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}"
+      | None ->
+          emit_line ctx (Printf.sprintf "%s = true;" matched);
+          compile_cps ctx body cont);
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}")
+    arms;
+  emit_line ctx
+    (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched loc.Token.line)
 
 and compile_app_cps ctx _te fn arg cont =
   (* For function application in CPS context:
@@ -2347,19 +2624,18 @@ and compile_app_cps ctx _te fn arg cont =
   let rec collect_args expr acc =
     match expr.Typechecker.expr with
     | Typechecker.TEApp (inner_fn, inner_arg) ->
-      collect_args inner_fn (inner_arg :: acc)
+        collect_args inner_fn (inner_arg :: acc)
     | _ -> (expr, acc)
   in
-  let (base_fn, all_args) = collect_args fn [arg] in
+  let base_fn, all_args = collect_args fn [ arg ] in
   (* For now, compile arguments and function directly, then call *)
   let fn_js = compile_non_tail ctx base_fn in
   let args_js = List.map (compile_non_tail ctx) all_args in
   let n = List.length all_args in
   let known_arity = count_arrows base_fn.ty in
-  let call_expr = if known_arity = Some n then
-    fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
-  else
-    "_call(" ^ fn_js ^ ", [" ^ String.concat ", " args_js ^ "])"
+  let call_expr =
+    if known_arity = Some n then fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
+    else "_call(" ^ fn_js ^ ", [" ^ String.concat ", " args_js ^ "])"
   in
   let result_var = fresh_tmp ctx in
   emit_line ctx (Printf.sprintf "const %s = _resolve(%s);" result_var call_expr);
@@ -2370,143 +2646,151 @@ and compile_app_cps ctx _te fn arg cont =
 and compile_decl ctx (decl : Typechecker.tdecl) =
   match decl with
   | Typechecker.TDLet (name, te) ->
-    if String.equal name "_" then begin
-      let v = compile_expr ctx te in
-      emit_line ctx (Printf.sprintf "%s;" v)
-    end else begin
-      (* Check if name already bound in any scope to avoid JS redeclaration *)
+      if String.equal name "_" then begin
+        let v = compile_expr ctx te in
+        emit_line ctx (Printf.sprintf "%s;" v)
+      end
+      else begin
+        (* Check if name already bound in any scope to avoid JS redeclaration *)
+        let base_name = mangle_name name in
+        let js_name =
+          if List.exists (fun tbl -> Hashtbl.mem tbl name) ctx.scopes then
+            fresh_tmp ctx ^ "_" ^ base_name
+          else base_name
+        in
+        (match te.expr with
+        | Typechecker.TEFun _ ->
+            compile_named_function ctx js_name te;
+            bind_var ctx name js_name
+        | _ ->
+            let v = compile_expr ctx te in
+            emit_line ctx (Printf.sprintf "const %s = %s;" js_name v);
+            bind_var ctx name js_name);
+        if List.length ctx.scopes = 1 && is_exportable_name name then
+          ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports
+      end
+  | Typechecker.TDLetMut (name, te) ->
       let base_name = mangle_name name in
       let js_name =
-        if List.exists (fun tbl -> Hashtbl.mem tbl name) ctx.scopes
-        then fresh_tmp ctx ^ "_" ^ base_name
+        if List.exists (fun tbl -> Hashtbl.mem tbl name) ctx.scopes then
+          fresh_tmp ctx ^ "_" ^ base_name
         else base_name
       in
-      (match te.expr with
-       | Typechecker.TEFun _ ->
-         compile_named_function ctx js_name te;
-         bind_var ctx name js_name
-       | _ ->
-         let v = compile_expr ctx te in
-         emit_line ctx (Printf.sprintf "const %s = %s;" js_name v);
-         bind_var ctx name js_name);
-      if List.length ctx.scopes = 1 && is_exportable_name name then
-        ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports
-    end
-
-  | Typechecker.TDLetMut (name, te) ->
-    let base_name = mangle_name name in
-    let js_name =
-      if List.exists (fun tbl -> Hashtbl.mem tbl name) ctx.scopes
-      then fresh_tmp ctx ^ "_" ^ base_name
-      else base_name
-    in
-    let v = compile_expr ctx te in
-    emit_line ctx (Printf.sprintf "let %s = %s;" js_name v);
-    bind_var ctx name js_name;
-    if List.length ctx.scopes = 1 && is_exportable_name name then
-      ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports
-
-  | Typechecker.TDLetRec (name, te) ->
-    let base_name = mangle_name name in
-    let js_name =
-      if List.exists (fun tbl -> Hashtbl.mem tbl name) ctx.scopes
-      then fresh_tmp ctx ^ "_" ^ base_name
-      else base_name
-    in
-    bind_var ctx name js_name;
-    (match te.Typechecker.expr with
-     | Typechecker.TEFun _ ->
-       compile_named_function ctx js_name te
-     | _ ->
-       emit_js_placeholder ctx js_name te;
-       emit_js_backpatch ctx js_name te);
-    if List.length ctx.scopes = 1 && is_exportable_name name then
-      ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports
-
-  | Typechecker.TDLetRecAnd bindings ->
-    let named_bindings = List.map (fun (name, te) ->
-      let base_name = mangle_name name in
-      let js_name = match ctx.scopes with
-        | tbl :: _ when Hashtbl.mem tbl name -> fresh_tmp ctx ^ "_" ^ base_name
-        | _ -> base_name
-      in
-      (name, js_name, te)
-    ) bindings in
-    List.iter (fun (name, js_name, te) ->
+      let v = compile_expr ctx te in
+      emit_line ctx (Printf.sprintf "let %s = %s;" js_name v);
       bind_var ctx name js_name;
       if List.length ctx.scopes = 1 && is_exportable_name name then
-        ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports;
-      match te.Typechecker.expr with
-      | Typechecker.TEFun _ -> ()
-      | _ -> emit_js_placeholder ctx js_name te
-    ) named_bindings;
-    (* Compile functions first *)
-    List.iter (fun (_name, js_name, fn_expr) ->
-      match fn_expr.Typechecker.expr with
-      | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
-      | _ -> ()
-    ) named_bindings;
-    (* Backpatch non-function bindings *)
-    List.iter (fun (_name, js_name, te) ->
-      match te.Typechecker.expr with
-      | Typechecker.TEFun _ -> ()
-      | _ -> emit_js_backpatch ctx js_name te
-    ) named_bindings
-
-  | Typechecker.TDType _ -> ()  (* type declarations don't generate code *)
+        ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports
+  | Typechecker.TDLetRec (name, te) ->
+      let base_name = mangle_name name in
+      let js_name =
+        if List.exists (fun tbl -> Hashtbl.mem tbl name) ctx.scopes then
+          fresh_tmp ctx ^ "_" ^ base_name
+        else base_name
+      in
+      bind_var ctx name js_name;
+      (match te.Typechecker.expr with
+      | Typechecker.TEFun _ -> compile_named_function ctx js_name te
+      | _ ->
+          emit_js_placeholder ctx js_name te;
+          emit_js_backpatch ctx js_name te);
+      if List.length ctx.scopes = 1 && is_exportable_name name then
+        ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports
+  | Typechecker.TDLetRecAnd bindings ->
+      let named_bindings =
+        List.map
+          (fun (name, te) ->
+            let base_name = mangle_name name in
+            let js_name =
+              match ctx.scopes with
+              | tbl :: _ when Hashtbl.mem tbl name ->
+                  fresh_tmp ctx ^ "_" ^ base_name
+              | _ -> base_name
+            in
+            (name, js_name, te))
+          bindings
+      in
+      List.iter
+        (fun (name, js_name, te) ->
+          bind_var ctx name js_name;
+          if List.length ctx.scopes = 1 && is_exportable_name name then
+            ctx.top_level_exports <- (name, js_name) :: ctx.top_level_exports;
+          match te.Typechecker.expr with
+          | Typechecker.TEFun _ -> ()
+          | _ -> emit_js_placeholder ctx js_name te)
+        named_bindings;
+      (* Compile functions first *)
+      List.iter
+        (fun (_name, js_name, fn_expr) ->
+          match fn_expr.Typechecker.expr with
+          | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+          | _ -> ())
+        named_bindings;
+      (* Backpatch non-function bindings *)
+      List.iter
+        (fun (_name, js_name, te) ->
+          match te.Typechecker.expr with
+          | Typechecker.TEFun _ -> ()
+          | _ -> emit_js_backpatch ctx js_name te)
+        named_bindings
+  | Typechecker.TDType _ -> () (* type declarations don't generate code *)
   | Typechecker.TDClass _ -> ()
   | Typechecker.TDEffect _ -> ()
-
   | Typechecker.TDExpr te ->
-    let v = compile_expr ctx te in
-    emit_line ctx (Printf.sprintf "_last_val = %s;" v);
-    let ty_tag = match Types.repr te.ty with
-      | Types.TFloat -> "\"float\""
-      | Types.TByte -> "\"byte\""
-      | _ -> "null"
-    in
-    emit_line ctx (Printf.sprintf "_last_ty = %s;" ty_tag)
-
+      let v = compile_expr ctx te in
+      emit_line ctx (Printf.sprintf "_last_val = %s;" v);
+      let ty_tag =
+        match Types.repr te.ty with
+        | Types.TFloat -> "\"float\""
+        | Types.TByte -> "\"byte\""
+        | _ -> "null"
+      in
+      emit_line ctx (Printf.sprintf "_last_ty = %s;" ty_tag)
   | Typechecker.TDExtern (name, _scheme) ->
-    (* External declarations — name is already qualified by typechecker *)
-    let js_name = mangle_name name in
-    (* Emit fallback for user-defined externs: if the function isn't already
+      (* External declarations — name is already qualified by typechecker *)
+      let js_name = mangle_name name in
+      (* Emit fallback for user-defined externs: if the function isn't already
        defined by js_builtins, look it up from globalThis._mmlExterns.
        Uses typeof check + var so builtin function declarations are not shadowed. *)
-    emit_line ctx (Printf.sprintf
-      "if (typeof %s === \"undefined\") { if (globalThis._mmlExterns && globalThis._mmlExterns[%s]) var %s = globalThis._mmlExterns[%s]; else throw new Error(\"extern \" + %s + \" not provided\"); }"
-      js_name (escape_js_string name) js_name (escape_js_string name) (escape_js_string name));
-    bind_var ctx name js_name
-
+      emit_line ctx
+        (Printf.sprintf
+           "if (typeof %s === \"undefined\") { if (globalThis._mmlExterns && \
+            globalThis._mmlExterns[%s]) var %s = globalThis._mmlExterns[%s]; \
+            else throw new Error(\"extern \" + %s + \" not provided\"); }"
+           js_name (escape_js_string name) js_name (escape_js_string name)
+           (escape_js_string name));
+      bind_var ctx name js_name
   | Typechecker.TDModule (mod_name, decls, _) ->
-    with_current_module ctx (Some mod_name) (fun () ->
-      push_scope ctx;
-      List.iter (compile_decl ctx) decls);
-    (* Re-export module bindings with qualified names *)
-    (match ctx.scopes with
-     | current :: _ ->
-       Hashtbl.iter (fun mml_name js_name ->
-         let qualified = mod_name ^ "." ^ mml_name in
-         (* Bind in parent scope with qualified name *)
-         (match ctx.scopes with
-          | _ :: parent :: _ ->
-            Hashtbl.replace parent qualified js_name;
-            Hashtbl.replace parent mml_name js_name
-          | _ -> ())
-       ) current
-     | [] -> ());
-    pop_scope ctx
-
+      with_current_module ctx (Some mod_name) (fun () ->
+          push_scope ctx;
+          List.iter (compile_decl ctx) decls);
+      (* Re-export module bindings with qualified names *)
+      (match ctx.scopes with
+      | current :: _ ->
+          Hashtbl.iter
+            (fun mml_name js_name ->
+              let qualified = mod_name ^ "." ^ mml_name in
+              (* Bind in parent scope with qualified name *)
+              match ctx.scopes with
+              | _ :: parent :: _ ->
+                  Hashtbl.replace parent qualified js_name;
+                  Hashtbl.replace parent mml_name js_name
+              | _ -> ())
+            current
+      | [] -> ());
+      pop_scope ctx
   | Typechecker.TDOpen aliases ->
-    (* Bind the aliased names *)
-    List.iter (fun (short_name, qualified_name) ->
-      let js_name = lookup_var ctx qualified_name in
-      bind_var ctx short_name js_name
-    ) aliases
+      (* Bind the aliased names *)
+      List.iter
+        (fun (short_name, qualified_name) ->
+          let js_name = lookup_var ctx qualified_name in
+          bind_var ctx short_name js_name)
+        aliases
 
 (* ---- Builtins JS ---- *)
 
-let js_builtins = {|// --- Builtins ---
+let js_builtins =
+  {|// --- Builtins ---
 let _output_count = 0;
 function print(v) {
   _output_count++;
@@ -2988,12 +3272,16 @@ function __cache_set(key, val) {
 (* ---- Entry point ---- *)
 
 let emit_exports ctx =
-  emit ctx "var _mml_exports = {\"_result\": _last_val, \"_call\": _call, \"_pp\": _pp";
-  List.iter (fun (mml_name, js_name) ->
-    emit ctx (Printf.sprintf ", %s: %s" (escape_js_string mml_name) js_name)
-  ) (List.rev ctx.top_level_exports);
+  emit ctx
+    "var _mml_exports = {\"_result\": _last_val, \"_call\": _call, \"_pp\": _pp";
+  List.iter
+    (fun (mml_name, js_name) ->
+      emit ctx (Printf.sprintf ", %s: %s" (escape_js_string mml_name) js_name))
+    (List.rev ctx.top_level_exports);
   emit ctx "};\n";
-  emit ctx "if (typeof globalThis !== \"undefined\") globalThis._mmlExports = _mml_exports;\n"
+  emit ctx
+    "if (typeof globalThis !== \"undefined\") globalThis._mmlExports = \
+     _mml_exports;\n"
 
 let compile_program type_env (program : Typechecker.tprogram) : string =
   let ctx = create_ctx type_env in
@@ -3006,7 +3294,10 @@ let compile_program type_env (program : Typechecker.tprogram) : string =
   (* Compile all declarations *)
   List.iter (compile_decl ctx) program;
   (* Print last value — suppress unit only when there was explicit output *)
-  emit ctx "{ const _r = _last_ty === \"float\" ? string_of_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
+  emit ctx
+    "{ const _r = _last_ty === \"float\" ? string_of_float(_last_val) : \
+     _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val); if \
+     (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
   emit_exports ctx;
   Buffer.contents ctx.buf
 
@@ -3017,20 +3308,22 @@ let compile_program_with_stdlib type_env
   emit ctx js_runtime;
   emit ctx js_builtins;
   emit ctx "// --- Stdlib ---\n";
-  List.iter (fun (_te, prog) ->
-    (* Compile each stdlib declaration, rolling back on failure *)
-    List.iter (fun decl ->
-      let saved_pos = Buffer.length ctx.buf in
-      let saved_indent = ctx.indent in
-      try compile_decl ctx decl
-      with Codegen_error _ ->
-        (* Roll back partial output *)
-        let full = Buffer.contents ctx.buf in
-        Buffer.clear ctx.buf;
-        Buffer.add_string ctx.buf (String.sub full 0 saved_pos);
-        ctx.indent <- saved_indent
-    ) prog
-  ) stdlib_programs;
+  List.iter
+    (fun (_te, prog) ->
+      (* Compile each stdlib declaration, rolling back on failure *)
+      List.iter
+        (fun decl ->
+          let saved_pos = Buffer.length ctx.buf in
+          let saved_indent = ctx.indent in
+          try compile_decl ctx decl
+          with Codegen_error _ ->
+            (* Roll back partial output *)
+            let full = Buffer.contents ctx.buf in
+            Buffer.clear ctx.buf;
+            Buffer.add_string ctx.buf (String.sub full 0 saved_pos);
+            ctx.indent <- saved_indent)
+        prog)
+    stdlib_programs;
   emit ctx "// --- Compiled MiniML ---\n";
   emit ctx "let _last_val;\n";
   emit ctx "let _last_ty = null;\n";
@@ -3038,7 +3331,10 @@ let compile_program_with_stdlib type_env
   let stdlib_exports = ctx.top_level_exports in
   ctx.top_level_exports <- [];
   List.iter (compile_decl ctx) user_program;
-  emit ctx "{ const _r = _last_ty === \"float\" ? string_of_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
+  emit ctx
+    "{ const _r = _last_ty === \"float\" ? string_of_float(_last_val) : \
+     _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val); if \
+     (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
   (* Only export user-program bindings, not stdlib internals *)
   let user_exports = ctx.top_level_exports in
   ctx.top_level_exports <- user_exports;

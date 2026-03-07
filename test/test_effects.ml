@@ -4,7 +4,8 @@ let () =
   Printf.printf "=== Algebraic Effects Tests ===\n";
 
   test "basic effect handle return" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Greeting =
         greet : unit -> string
       end
@@ -12,10 +13,12 @@ let () =
         42
       with
       | return x -> x
-    |} 42);
+    |}
+        42);
 
   test "perform and handle" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect Ask =
         ask : unit -> string
       end
@@ -24,10 +27,12 @@ let () =
       with
       | return x -> x
       | ask () k -> resume k "hello"
-    |} "hello");
+    |}
+        "hello");
 
   test "continue with value" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Val =
         get_val : unit -> int
       end
@@ -37,10 +42,12 @@ let () =
       with
       | return x -> x
       | get_val () k -> resume k 10
-    |} 11);
+    |}
+        11);
 
   test "multiple performs" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Val =
         get_val : int -> int
       end
@@ -51,10 +58,12 @@ let () =
       with
       | return x -> x
       | get_val n k -> resume k (n + 10)
-    |} 23);
+    |}
+        23);
 
   test "state effect get/put" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State =
         get : unit -> int
         put : int -> unit
@@ -67,10 +76,12 @@ let () =
       | return x -> x
       | get () k -> resume k 10
       | put v k -> resume k ()
-    |} 10);
+    |}
+        10);
 
   test "handler without continue" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Abort =
         abort : int -> unit
       end
@@ -80,10 +91,12 @@ let () =
       with
       | return x -> x
       | abort v k -> v
-    |} 42);
+    |}
+        42);
 
   test "nested handles" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Inner =
         inner_op : unit -> int
       end
@@ -101,10 +114,12 @@ let () =
       with
       | return x -> x
       | outer_op () k -> resume k 20
-    |} 30);
+    |}
+        30);
 
   test "continue result" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Eff =
         op : unit -> int
       end
@@ -113,10 +128,12 @@ let () =
       with
       | return x -> x + 100
       | op () k -> resume k 42
-    |} 142);
+    |}
+        142);
 
   test "unhandled effect error" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect Unhandled =
         boom : unit -> int
       end
@@ -124,7 +141,8 @@ let () =
     |});
 
   test "one-shot continuation error" (fun () ->
-    expect_runtime_error {|
+      expect_runtime_error
+        {|
       effect Eff =
         op : unit -> int
       end
@@ -138,7 +156,8 @@ let () =
     |});
 
   test "effect with computed arg" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Math =
         double : int -> int
       end
@@ -147,10 +166,12 @@ let () =
       with
       | return x -> x
       | double n k -> resume k (n * 2)
-    |} 14);
+    |}
+        14);
 
   test "copy continuation multi-shot" (fun () ->
-    expect_value {|
+      expect_value
+        {|
       let rec append xs ys = match xs with
         | [] -> ys
         | x :: rest -> x :: append rest ys
@@ -168,15 +189,18 @@ let () =
         let a = resume k true in
         let b = resume k2 false in
         append a b
-    |} (Interpreter.Bytecode.VList [
-      Interpreter.Bytecode.VInt 1;
-      Interpreter.Bytecode.VInt 0;
-      Interpreter.Bytecode.VInt 0;
-      Interpreter.Bytecode.VInt 0;
-    ]));
+    |}
+        (Interpreter.Bytecode.VList
+           [
+             Interpreter.Bytecode.VInt 1;
+             Interpreter.Bytecode.VInt 0;
+             Interpreter.Bytecode.VInt 0;
+             Interpreter.Bytecode.VInt 0;
+           ]));
 
   test "copy continuation simple" (fun () ->
-    expect_value {|
+      expect_value
+        {|
       let rec append xs ys = match xs with
         | [] -> ys
         | x :: rest -> x :: append rest ys
@@ -192,24 +216,26 @@ let () =
         let a = resume k 1 in
         let b = resume k2 2 in
         append a b
-    |} (Interpreter.Bytecode.VList [
-      Interpreter.Bytecode.VInt 1;
-      Interpreter.Bytecode.VInt 2;
-    ]));
+    |}
+        (Interpreter.Bytecode.VList
+           [ Interpreter.Bytecode.VInt 1; Interpreter.Bytecode.VInt 2 ]));
 
   Printf.printf "\n=== Try/With Tests ===\n";
 
   test "try/with basic return" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Exn =
         raise : string -> 'a
       end
       try 42 with
       | raise msg -> 0
-    |} 42);
+    |}
+        42);
 
   test "try/with catch exception" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect Exn =
         raise : string -> 'a
       end
@@ -217,10 +243,12 @@ let () =
         perform raise "oops"
       with
       | raise msg -> msg
-    |} "oops");
+    |}
+        "oops");
 
   test "try/with no continuation" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Exn =
         raise : string -> 'a
       end
@@ -230,10 +258,12 @@ let () =
         else x
       with
       | raise msg -> 0
-    |} 0);
+    |}
+        0);
 
   test "try/with multiple operations" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect IO =
         file_not_found : string -> 'a
       end
@@ -245,19 +275,23 @@ let () =
       with
       | file_not_found path -> "missing: " ^ path
       | invalid_input msg -> "invalid: " ^ msg
-    |} "invalid: bad data");
+    |}
+        "invalid: bad data");
 
   test "try/with value passes through" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect Exn =
         raise : string -> 'a
       end
       try "hello" with
       | raise msg -> "caught"
-    |} "hello");
+    |}
+        "hello");
 
   test "try/with unit arg" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Exn =
         fail : unit -> 'a
       end
@@ -265,13 +299,15 @@ let () =
         perform fail ()
       with
       | fail () -> 99
-    |} 99);
+    |}
+        99);
 
   Printf.printf "\n=== Effect Typing Tests ===\n";
 
   (* Top-level enforcement: bare perform is a compile error *)
   test "unhandled effect at top level" (fun () ->
-    expect_type_error {|
+      expect_type_error
+        {|
       effect MyEff =
         my_op : unit -> int
       end
@@ -280,7 +316,8 @@ let () =
 
   (* Handled effects are OK at top level *)
   test "handled effect at top level" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect MyEff =
         my_op : unit -> int
       end
@@ -289,11 +326,13 @@ let () =
       with
       | return x -> x
       | my_op () k -> resume k 42
-    |} 42);
+    |}
+        42);
 
   (* Effect in function, handled at call site *)
   test "effectful function handled by caller" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Ask =
         ask : unit -> int
       end
@@ -303,11 +342,13 @@ let () =
       with
       | return x -> x
       | ask () k -> resume k 10
-    |} 11);
+    |}
+        11);
 
   (* Multiple effects, handle one, other must still be handled *)
   test "multiple effects partial handle" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E1 =
         op1 : unit -> int
       end
@@ -323,11 +364,13 @@ let () =
       with
       | return x -> x
       | op2 () k -> resume k 20
-    |} 30);
+    |}
+        30);
 
   (* Nested handlers *)
   test "nested handlers" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Outer =
         get_outer : unit -> int
       end
@@ -343,11 +386,13 @@ let () =
       with
       | return x -> x
       | get_outer () k -> resume k 10
-    |} 15);
+    |}
+        15);
 
   (* Effect polymorphism: higher-order function with effectful callback *)
   test "effectful callback in higher-order function" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Counter =
         inc : unit -> unit
       end
@@ -359,22 +404,26 @@ let () =
       with
       | return x -> x
       | inc () k -> resume k ()
-    |} 0);
+    |}
+        0);
 
   (* For loop with break still works (internal __Break effect) *)
   test "for loop break with effect tracking" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       let mut sum = 0 in
       for x in [1; 2; 3; 4; 5] do
         if x > 3 do break
         else sum := sum + x
       end;
       sum
-    |} 6);
+    |}
+        6);
 
   (* Handler removes effect: result is pure *)
   test "handler produces pure result" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Tick =
         tick : unit -> unit
       end
@@ -387,13 +436,15 @@ let () =
       | tick () k -> resume k ()
       in
       result + 1
-    |} 43);
+    |}
+        43);
 
   (* --- Typeclass + effect interaction --- *)
 
   (* Constrained function that performs effects *)
   test "constrained fn performs effect" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect Log =
         log : string -> unit
       end
@@ -407,11 +458,13 @@ let () =
       with
       | return x -> x
       | log msg k -> resume k ()
-    |} "42");
+    |}
+        "42");
 
   (* Multiple constraints + effects *)
   test "multi-constraint fn with effect" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Acc =
         add : int -> unit
       end
@@ -427,11 +480,13 @@ let () =
       with
       | return x -> x
       | add n k -> total := total + n; resume k ()
-    |} 3);
+    |}
+        3);
 
   (* Type class method used inside handler body *)
   test "typeclass method in effectful context" (fun () ->
-    expect_string {|
+      expect_string
+        {|
       effect Collect =
         emit : string -> unit
       end
@@ -446,13 +501,15 @@ let () =
       with
       | return _ -> buf
       | emit s k -> buf := buf ^ s ^ ","; resume k ()
-    |} "1,true,hi,");
+    |}
+        "1,true,hi,");
 
   (* --- HOF + effect stress tests --- *)
 
   (* List.map with effectful callback *)
   test "List.map with effectful callback" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Counter =
         inc : unit -> unit
       end
@@ -463,11 +520,13 @@ let () =
       with
       | return x -> x + count
       | inc () k -> count := count + 1; resume k ()
-    |} 15);
+    |}
+        15);
 
   (* List.filter with effectful predicate *)
   test "List.filter with effectful predicate" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Log =
         log : int -> unit
       end
@@ -481,11 +540,13 @@ let () =
       with
       | return x -> x * 100 + logged
       | log n k -> logged := logged + n; resume k ()
-    |} 215);
+    |}
+        215);
 
   (* Nested HOFs: map inside filter with effects *)
   test "nested HOFs with effects" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Track =
         hit : unit -> unit
       end
@@ -498,11 +559,13 @@ let () =
       with
       | return x -> x + hits
       | hit () k -> hits := hits + 1; resume k ()
-    |} 22);
+    |}
+        22);
 
   (* Effectful fold *)
   test "fold with effectful accumulator fn" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Notify =
         notify : int -> unit
       end
@@ -515,13 +578,15 @@ let () =
       with
       | return x -> x + notifications
       | notify n k -> notifications := notifications + n; resume k ()
-    |} 27);
+    |}
+        27);
 
   (* --- Closures + effects --- *)
 
   (* Closure capturing effectful operation, called later *)
   test "closure captures effect and called in handler" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect State =
         get : unit -> int
         put : int -> unit
@@ -541,11 +606,13 @@ let () =
       | return x -> x
       | get () k -> resume k st
       | put n k -> st := n; resume k ()
-    |} 13);
+    |}
+        13);
 
   (* Higher-order function returning effectful closure *)
   test "HOF returns effectful closure" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E =
         op : int -> int
       end
@@ -556,13 +623,15 @@ let () =
       with
       | return x -> x
       | op n k -> resume k (n + 1)
-    |} 18);
+    |}
+        18);
 
   (* --- Pipe operator + effects --- *)
 
   (* Effect through pipe chain *)
   test "effects through pipe" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Tap =
         tap : int -> unit
       end
@@ -575,13 +644,15 @@ let () =
       with
       | return x -> x + tapped
       | tap n k -> tapped := tapped + n; resume k ()
-    |} 65);
+    |}
+        65);
 
   (* --- Match arms + effects --- *)
 
   (* Effect in different match arms *)
   test "effect in match arms" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -596,13 +667,15 @@ let () =
       with
       | return x -> x
       | log s k -> msgs := msgs ^ s; resume k ()
-    |} 37);
+    |}
+        37);
 
   (* --- Mutual recursion + effects --- *)
 
   (* Mutually recursive functions with effects *)
   test "mutual recursion with effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Ping =
         ping : int -> unit
       end
@@ -619,13 +692,15 @@ let () =
       with
       | return x -> x + pings
       | ping n k -> pings := pings + 1; resume k ()
-    |} 7);
+    |}
+        7);
 
   (* --- Complex handler patterns --- *)
 
   (* Handler that transforms the result *)
   test "handler transforms result" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Choose =
         choose : unit -> bool
       end
@@ -638,11 +713,13 @@ let () =
       | choose () k ->
         let a = resume k true in
         a
-    |} 20);
+    |}
+        20);
 
   (* Inner handler handles one effect, outer handles another *)
   test "layered handlers different effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect A =
         op_a : unit -> int
       end
@@ -662,11 +739,13 @@ let () =
       with
       | return x -> x
       | op_b () k -> resume k 7
-    |} 107);
+    |}
+        107);
 
   (* Effect handler inside a loop *)
   test "handler inside for loop" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect Fail =
         fail : unit -> int
       end
@@ -683,13 +762,15 @@ let () =
         sum := sum + safe_div 30 b
       end;
       sum
-    |} 29);
+    |}
+        29);
 
   (* --- Record with effectful functions --- *)
 
   (* Record field is an effectful function *)
   test "record with effectful function field" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -706,13 +787,15 @@ let () =
       with
       | return x -> x
       | log s k -> logged := logged ^ s ^ ";"; resume k ()
-    |} 42);
+    |}
+        42);
 
   (* --- Break + user effects combined --- *)
 
   (* Effect used inside a for loop (no break) *)
   test "effect inside for loop" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Count =
         count : unit -> unit
       end
@@ -724,11 +807,13 @@ let () =
       with
       | return x -> x
       | count () k -> resume k ()
-    |} 5);
+    |}
+        5);
 
   (* Effect used inside fold-for loop *)
   test "effect inside fold-for loop" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Tap =
         tap : int -> unit
       end
@@ -741,13 +826,15 @@ let () =
       with
       | return x -> x + tapped
       | tap n k -> tapped := tapped + n; resume k ()
-    |} 120);
+    |}
+        120);
 
   (* --- Deeply nested HOF chains --- *)
 
   (* compose effectful functions *)
   test "compose effectful functions" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E =
         op : int -> int
       end
@@ -760,11 +847,13 @@ let () =
       with
       | return x -> x
       | op n k -> resume k n
-    |} 11);
+    |}
+        11);
 
   (* apply_n: apply function n times *)
   test "apply function n times with effects" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Step =
         step : int -> int
       end
@@ -777,13 +866,15 @@ let () =
       with
       | return x -> x
       | step n k -> resume k n
-    |} 5);
+    |}
+        5);
 
   (* --- Edge cases --- *)
 
   (* Effect in let binding inside handler *)
   test "effectful let binding in handler" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Gen =
         next : unit -> int
       end
@@ -796,11 +887,13 @@ let () =
       with
       | return x -> x
       | next () k -> counter := counter + 1; resume k counter
-    |} 6);
+    |}
+        6);
 
   (* Unit-returning effectful expression *)
   test "unit effect in sequence" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect Log =
         log : string -> unit
       end
@@ -813,11 +906,13 @@ let () =
       with
       | return x -> x + count
       | log _ k -> count := count + 1; resume k ()
-    |} 102);
+    |}
+        102);
 
   (* Seq with effects *)
   test "Seq with effects" (fun () ->
-    expect_stdlib_int {|
+      expect_stdlib_int
+        {|
       effect E =
         observe : int -> unit
       end
@@ -829,12 +924,14 @@ let () =
       with
       | return x -> x + observed
       | observe n k -> observed := observed + n; resume k ()
-    |} 20);
+    |}
+        20);
 
   Printf.printf "\n=== Perform Parsing Tests ===\n";
 
   test "perform with field access no parens" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E = put : int -> unit end
       let mut received = 0 in
       handle
@@ -844,10 +941,12 @@ let () =
       with
       | return x -> x
       | put v k -> received := v; resume k ()
-    |} 42);
+    |}
+        42);
 
   test "perform with chained field access" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E = send : int -> unit end
       let mut received = 0 in
       handle
@@ -857,10 +956,12 @@ let () =
       with
       | return x -> x
       | send v k -> received := v; resume k ()
-    |} 99);
+    |}
+        99);
 
   test "perform with indexing" (fun () ->
-    expect_int {|
+      expect_int
+        {|
       effect E = send : int -> unit end
       let mut received = 0 in
       handle
@@ -870,6 +971,7 @@ let () =
       with
       | return x -> x
       | send v k -> received := v; resume k ()
-    |} 20);
+    |}
+        20);
 
   print_summary ()

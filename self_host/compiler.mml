@@ -1261,6 +1261,7 @@ module Compiler =
       emit s Bytecode.EQ;
       Ref.set fail_jumps (emit_idx s (Bytecode.JUMP_IF_FALSE 0) :: Ref.get fail_jumps)
     | Ast.PatAnnot ((inner_pat, _)) -> compile_pattern s slot inner_pat fail_jumps
+    | Ast.PatSet _ -> error "PatSet should be desugared before compilation"
 
   and compile_match_tree tail s (cm : Typechecker.texpr Match_tree_types.compiled_match) =
     compile_expr false s cm.scrutinee;

@@ -17,20 +17,20 @@ type map_key =
 
 type access =
   | ATupleField of int
-  | ARecordField of string * int    (* field name, positional index *)
-  | AVariantPayload                 (* unwrap variant constructor's payload *)
+  | ARecordField of string * int (* field name, positional index *)
+  | AVariantPayload (* unwrap variant constructor's payload *)
   | AConsHead
   | AConsTail
   | AArrayElem of int
-  | AMapValue of map_key            (* extract value from map by key *)
+  | AMapValue of map_key (* extract value from map by key *)
 
 type occurrence = access list
 
 (* ---- Tests ---- *)
 
 type test =
-  | TConstructor of string * int    (* constructor name, tag *)
-  | TPolyVariant of string * int    (* tag name, hash tag *)
+  | TConstructor of string * int (* constructor name, tag *)
+  | TPolyVariant of string * int (* tag name, hash tag *)
   | TBoolLit of bool
   | TIntLit of int
   | TFloatLit of float
@@ -44,45 +44,36 @@ type test =
 
 (* ---- Bindings ---- *)
 
-type binding = {
-  var_name: string;
-  bind_occ: occurrence;
-  bind_ty: Types.ty;
-}
+type binding = { var_name : string; bind_occ : occurrence; bind_ty : Types.ty }
 
 (* ---- Decision tree ---- *)
 
 type 'expr dtree =
   | DSwitch of {
-      occ: occurrence;
-      occ_ty: Types.ty;
-      cases: (test * binding list * 'expr dtree) list;
-      default: 'expr dtree option;
+      occ : occurrence;
+      occ_ty : Types.ty;
+      cases : (test * binding list * 'expr dtree) list;
+      default : 'expr dtree option;
     }
   | DGuard of {
-      arm_idx: int;
-      guard: 'expr;
-      bindings: binding list;
-      on_true: 'expr dtree;
-      on_false: 'expr dtree;
+      arm_idx : int;
+      guard : 'expr;
+      bindings : binding list;
+      on_true : 'expr dtree;
+      on_false : 'expr dtree;
     }
-  | DLeaf of {
-      arm_idx: int;
-      bindings: binding list;
-    }
+  | DLeaf of { arm_idx : int; bindings : binding list }
   | DFail of Token.loc
 
 (* ---- Compiled match ---- *)
 
-type 'expr match_arm = {
-  arm_body: 'expr;
-}
+type 'expr match_arm = { arm_body : 'expr }
 
 type 'expr compiled_match = {
-  scrutinee: 'expr;
-  scrutinee_ty: Types.ty;
-  match_arms: 'expr match_arm array;
-  tree: 'expr dtree;
-  loc: Token.loc;
-  match_kind: Ast.match_kind;
+  scrutinee : 'expr;
+  scrutinee_ty : Types.ty;
+  match_arms : 'expr match_arm array;
+  tree : 'expr dtree;
+  loc : Token.loc;
+  match_kind : Ast.match_kind;
 }

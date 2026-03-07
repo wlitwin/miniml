@@ -3,10 +3,7 @@
 
 (* --- Reader --- *)
 
-type reader = {
-  data: string;
-  mutable pos: int;
-}
+type reader = { data : string; mutable pos : int }
 
 let make_reader data = { data; pos = 0 }
 
@@ -26,8 +23,9 @@ let read_u32 r =
 let read_i64 r =
   let n = ref 0L in
   for i = 0 to 7 do
-    n := Int64.logor !n
-      (Int64.shift_left (Int64.of_int (Char.code r.data.[r.pos + i])) (i * 8))
+    n :=
+      Int64.logor !n
+        (Int64.shift_left (Int64.of_int (Char.code r.data.[r.pos + i])) (i * 8))
   done;
   r.pos <- r.pos + 8;
   Int64.to_int !n
@@ -35,8 +33,9 @@ let read_i64 r =
 let read_f64 r =
   let bits = ref 0L in
   for i = 0 to 7 do
-    bits := Int64.logor !bits
-      (Int64.shift_left (Int64.of_int (Char.code r.data.[r.pos + i])) (i * 8))
+    bits :=
+      Int64.logor !bits
+        (Int64.shift_left (Int64.of_int (Char.code r.data.[r.pos + i])) (i * 8))
   done;
   r.pos <- r.pos + 8;
   Int64.float_of_bits !bits
@@ -46,18 +45,18 @@ let read_f64 r =
 let read_string_table r =
   let count = read_u32 r in
   Array.init count (fun _ ->
-    let len = read_u32 r in
-    let s = String.sub r.data r.pos len in
-    r.pos <- r.pos + len;
-    s)
+      let len = read_u32 r in
+      let s = String.sub r.data r.pos len in
+      r.pos <- r.pos + len;
+      s)
 
 let read_captures r =
   let count = read_u32 r in
   List.init count (fun _ ->
-    let kind = read_u8 r in
-    let idx = read_u32 r in
-    if kind = 0 then Bytecode.CaptureLocal idx
-    else Bytecode.CaptureUpvalue idx)
+      let kind = read_u8 r in
+      let idx = read_u32 r in
+      if kind = 0 then Bytecode.CaptureLocal idx
+      else Bytecode.CaptureUpvalue idx)
 
 let read_opcode r strs =
   let tag = read_u8 r in
@@ -101,14 +100,14 @@ let read_opcode r strs =
   | 36 -> Bytecode.JUMP_IF_FALSE (read_u32 r)
   | 37 -> Bytecode.JUMP_IF_TRUE (read_u32 r)
   | 38 ->
-    let proto_idx = read_u32 r in
-    let caps = read_captures r in
-    Bytecode.CLOSURE (proto_idx, caps)
+      let proto_idx = read_u32 r in
+      let caps = read_captures r in
+      Bytecode.CLOSURE (proto_idx, caps)
   | 39 ->
-    let proto_idx = read_u32 r in
-    let caps = read_captures r in
-    let self = read_u32 r in
-    Bytecode.CLOSURE_REC (proto_idx, caps, self)
+      let proto_idx = read_u32 r in
+      let caps = read_captures r in
+      let self = read_u32 r in
+      Bytecode.CLOSURE_REC (proto_idx, caps, self)
   | 40 -> Bytecode.CALL (read_u32 r)
   | 41 -> Bytecode.TAIL_CALL (read_u32 r)
   | 42 -> Bytecode.RETURN
@@ -118,16 +117,16 @@ let read_opcode r strs =
   | 46 -> Bytecode.MAKE_TUPLE (read_u32 r)
   | 47 -> Bytecode.TUPLE_GET (read_u32 r)
   | 48 ->
-    let count = read_u32 r in
-    let fields = List.init count (fun _ -> strs.(read_u32 r)) in
-    Bytecode.MAKE_RECORD fields
+      let count = read_u32 r in
+      let fields = List.init count (fun _ -> strs.(read_u32 r)) in
+      Bytecode.MAKE_RECORD fields
   | 49 -> Bytecode.FIELD strs.(read_u32 r)
   | 50 -> Bytecode.SET_FIELD strs.(read_u32 r)
   | 51 ->
-    let tag_val = read_u32 r in
-    let name = strs.(read_u32 r) in
-    let has_payload = read_u8 r <> 0 in
-    Bytecode.MAKE_VARIANT (tag_val, name, has_payload)
+      let tag_val = read_u32 r in
+      let name = strs.(read_u32 r) in
+      let has_payload = read_u8 r <> 0 in
+      Bytecode.MAKE_VARIANT (tag_val, name, has_payload)
   | 52 -> Bytecode.CONS
   | 53 -> Bytecode.NIL
   | 54 -> Bytecode.TAG_EQ (read_u32 r)
@@ -149,36 +148,36 @@ let read_opcode r strs =
   | 70 -> Bytecode.INDEX
   | 71 -> Bytecode.HALT
   | 72 ->
-    let count = read_u32 r in
-    let fields = List.init count (fun _ -> strs.(read_u32 r)) in
-    Bytecode.RECORD_UPDATE fields
+      let count = read_u32 r in
+      let fields = List.init count (fun _ -> strs.(read_u32 r)) in
+      Bytecode.RECORD_UPDATE fields
   | 73 -> Bytecode.RECORD_UPDATE_DYN (read_u32 r)
   | 74 ->
-    let slot = read_u32 r in
-    let arity = read_u32 r in
-    Bytecode.GET_LOCAL_CALL (slot, arity)
+      let slot = read_u32 r in
+      let arity = read_u32 r in
+      Bytecode.GET_LOCAL_CALL (slot, arity)
   | 75 ->
-    let slot = read_u32 r in
-    let idx = read_u32 r in
-    Bytecode.GET_LOCAL_TUPLE_GET (slot, idx)
+      let slot = read_u32 r in
+      let idx = read_u32 r in
+      Bytecode.GET_LOCAL_TUPLE_GET (slot, idx)
   | 76 ->
-    let slot = read_u32 r in
-    let name = strs.(read_u32 r) in
-    Bytecode.GET_LOCAL_FIELD (slot, name)
+      let slot = read_u32 r in
+      let name = strs.(read_u32 r) in
+      Bytecode.GET_LOCAL_FIELD (slot, name)
   | 77 ->
-    let min_tag = read_u32 r in
-    let table_size = read_u32 r in
-    let targets = Array.init table_size (fun _ -> read_u32 r) in
-    let default = read_u32 r in
-    Bytecode.JUMP_TABLE (min_tag, targets, default)
+      let min_tag = read_u32 r in
+      let table_size = read_u32 r in
+      let targets = Array.init table_size (fun _ -> read_u32 r) in
+      let default = read_u32 r in
+      Bytecode.JUMP_TABLE (min_tag, targets, default)
   | 78 ->
-    let idx = read_u32 r in
-    let arity = read_u32 r in
-    Bytecode.GET_GLOBAL_CALL (idx, arity)
+      let idx = read_u32 r in
+      let arity = read_u32 r in
+      Bytecode.GET_GLOBAL_CALL (idx, arity)
   | 79 ->
-    let idx = read_u32 r in
-    let name = strs.(read_u32 r) in
-    Bytecode.GET_GLOBAL_FIELD (idx, name)
+      let idx = read_u32 r in
+      let name = strs.(read_u32 r) in
+      Bytecode.GET_GLOBAL_FIELD (idx, name)
   | 80 -> Bytecode.CALL_N (read_u32 r)
   | 81 -> Bytecode.TAIL_CALL_N (read_u32 r)
   | 82 -> Bytecode.UPDATE_REC
@@ -196,17 +195,17 @@ let rec read_value r strs =
   | 6 -> Bytecode.VUnit
   | 7 -> Bytecode.VProto (read_prototype r strs)
   | 8 ->
-    let count = read_u32 r in
-    Bytecode.VTuple (Array.init count (fun _ -> read_value r strs))
+      let count = read_u32 r in
+      Bytecode.VTuple (Array.init count (fun _ -> read_value r strs))
   | 9 ->
-    let count = read_u32 r in
-    Bytecode.VList (List.init count (fun _ -> read_value r strs))
+      let count = read_u32 r in
+      Bytecode.VList (List.init count (fun _ -> read_value r strs))
   | 10 ->
-    let tag_val = read_u32 r in
-    let name = strs.(read_u32 r) in
-    let has_payload = read_u8 r <> 0 in
-    let payload = if has_payload then Some (read_value r strs) else None in
-    Bytecode.VVariant (tag_val, name, payload)
+      let tag_val = read_u32 r in
+      let name = strs.(read_u32 r) in
+      let has_payload = read_u8 r <> 0 in
+      let payload = if has_payload then Some (read_value r strs) else None in
+      Bytecode.VVariant (tag_val, name, payload)
   | n -> failwith (Printf.sprintf "unknown value tag: %d" n)
 
 and read_prototype r strs =
@@ -227,60 +226,71 @@ let read_header r =
   let magic = String.sub r.data r.pos 4 in
   r.pos <- r.pos + 4;
   if magic <> "MMLB" then
-    failwith (Printf.sprintf "invalid binary bundle magic: %S (expected MMLB)" magic);
+    failwith
+      (Printf.sprintf "invalid binary bundle magic: %S (expected MMLB)" magic);
   let version = read_u32 r in
   if version <> 1 then
     failwith (Printf.sprintf "unsupported binary bundle version: %d" version)
 
 let run_prototype globals proto =
-  let program = Bytecode.{
-    main = proto;
-    global_names = [||];
-  } in
+  let program = Bytecode.{ main = proto; global_names = [||] } in
   Vm.execute_with_globals program globals
 
-let resolve_native_globals r strs (builtins : Deserialize.builtin_table) globals =
+let resolve_native_globals r strs (builtins : Deserialize.builtin_table) globals
+    =
   let count = read_u32 r in
   for _ = 1 to count do
     let idx = read_u32 r in
     let kind = read_u8 r in
     match kind with
-    | 0 -> (* external *)
-      let name = strs.(read_u32 r) in
-      let arity = read_u32 r in
-      let impl = match Hashtbl.find_opt builtins name with
-        | Some b -> b.impl
-        | None -> (fun _ -> raise (Vm.Runtime_error
-            (Printf.sprintf "unregistered builtin: %s" name)))
-      in
-      Hashtbl.replace globals idx (Bytecode.VExternal {
-        ext_name = name;
-        ext_arity = arity;
-        ext_fn = impl;
-        ext_args = [];
-      })
-    | 1 -> (* dict *)
-      let num_fields = read_u32 r in
-      let methods = List.init num_fields (fun _ ->
-        let field_name = strs.(read_u32 r) in
-        let ext_name = strs.(read_u32 r) in
-        let ext_arity = read_u32 r in
-        let impl = match Hashtbl.find_opt builtins ext_name with
+    | 0 ->
+        (* external *)
+        let name = strs.(read_u32 r) in
+        let arity = read_u32 r in
+        let impl =
+          match Hashtbl.find_opt builtins name with
           | Some b -> b.impl
-          | None -> (fun _ -> raise (Vm.Runtime_error
-              (Printf.sprintf "unregistered builtin: %s" ext_name)))
+          | None ->
+              fun _ ->
+                raise
+                  (Vm.Runtime_error
+                     (Printf.sprintf "unregistered builtin: %s" name))
         in
-        (field_name, Bytecode.VExternal {
-          ext_name;
-          ext_arity;
-          ext_fn = impl;
-          ext_args = [];
-        })
-      ) in
-      let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) methods in
-      let field_names = List.map fst sorted in
-      let values = Array.of_list (List.map snd sorted) in
-      Hashtbl.replace globals idx (Bytecode.make_record field_names values)
+        Hashtbl.replace globals idx
+          (Bytecode.VExternal
+             {
+               ext_name = name;
+               ext_arity = arity;
+               ext_fn = impl;
+               ext_args = [];
+             })
+    | 1 ->
+        (* dict *)
+        let num_fields = read_u32 r in
+        let methods =
+          List.init num_fields (fun _ ->
+              let field_name = strs.(read_u32 r) in
+              let ext_name = strs.(read_u32 r) in
+              let ext_arity = read_u32 r in
+              let impl =
+                match Hashtbl.find_opt builtins ext_name with
+                | Some b -> b.impl
+                | None ->
+                    fun _ ->
+                      raise
+                        (Vm.Runtime_error
+                           (Printf.sprintf "unregistered builtin: %s" ext_name))
+              in
+              ( field_name,
+                Bytecode.VExternal
+                  { ext_name; ext_arity; ext_fn = impl; ext_args = [] } ))
+        in
+        let sorted =
+          List.sort (fun (a, _) (b, _) -> String.compare a b) methods
+        in
+        let field_names = List.map fst sorted in
+        let values = Array.of_list (List.map snd sorted) in
+        Hashtbl.replace globals idx (Bytecode.make_record field_names values)
     | n -> failwith (Printf.sprintf "unknown native global kind: %d" n)
   done
 
@@ -322,4 +332,9 @@ let prepare_bundle_binary data (builtins : Deserialize.builtin_table) =
   done;
   (* Main proto *)
   let main_proto = read_prototype r strs in
-  Deserialize.{ prepared_globals = globals; prepared_main = main_proto; prepared_global_names = global_names }
+  Deserialize.
+    {
+      prepared_globals = globals;
+      prepared_main = main_proto;
+      prepared_global_names = global_names;
+    }

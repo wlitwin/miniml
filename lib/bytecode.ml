@@ -1,6 +1,4 @@
-type capture =
-  | CaptureLocal of int
-  | CaptureUpvalue of int
+type capture = CaptureLocal of int | CaptureUpvalue of int
 
 type opcode =
   | CONST of int
@@ -55,7 +53,8 @@ type opcode =
   | FIELD of string
   | SET_FIELD of string
   | RECORD_UPDATE of string list
-  | RECORD_UPDATE_DYN of int   (* n fields; stack: base, idx1, val1, ..., idxN, valN *)
+  | RECORD_UPDATE_DYN of
+      int (* n fields; stack: base, idx1, val1, ..., idxN, valN *)
   | MAKE_VARIANT of int * string * bool
   | CONS
   | NIL
@@ -91,8 +90,8 @@ type opcode =
   | UPDATE_REC
 
 type record_shape = {
-  rs_fields: string array;
-  rs_index: (string, int) Hashtbl.t;
+  rs_fields : string array;
+  rs_index : (string, int) Hashtbl.t;
 }
 
 type value =
@@ -115,61 +114,55 @@ type value =
   | VRef of value ref
   | VArray of value array
 
-and closure = {
-  fn_proto: prototype;
-  upvalues: value array;
-}
+and closure = { fn_proto : prototype; upvalues : value array }
 
 and prototype = {
-  name: string;
-  arity: int;
-  num_locals: int;
-  code: opcode array;
-  constants: value array;
-  line_table: int array;
+  name : string;
+  arity : int;
+  num_locals : int;
+  code : opcode array;
+  constants : value array;
+  line_table : int array;
 }
 
 and external_fn = {
-  ext_name: string;
-  ext_arity: int;
-  ext_fn: value list -> value;
-  ext_args: value list;
+  ext_name : string;
+  ext_arity : int;
+  ext_fn : value list -> value;
+  ext_args : value list;
 }
 
 and call_frame = {
-  frame_closure: closure;
-  mutable frame_ip: int;
-  frame_base_sp: int;
+  frame_closure : closure;
+  mutable frame_ip : int;
+  frame_base_sp : int;
 }
 
 and fiber = {
-  fiber_stack: value array;
-  mutable fiber_sp: int;
-  mutable fiber_frames: call_frame list;
-  mutable fiber_frame_depth: int;
-  mutable fiber_extra_args: value list list;
+  fiber_stack : value array;
+  mutable fiber_sp : int;
+  mutable fiber_frames : call_frame list;
+  mutable fiber_frame_depth : int;
+  mutable fiber_extra_args : value list list;
 }
 
 and handler_entry = {
-  he_return: value;
-  he_ops: (string * value) list;
-  he_body_fiber: fiber;
-  he_parent_fiber: fiber;
+  he_return : value;
+  he_ops : (string * value) list;
+  he_body_fiber : fiber;
+  he_parent_fiber : fiber;
 }
 
 and continuation_data = {
-  cd_fiber: fiber;
-  cd_return_handler: value;
-  cd_op_handlers: (string * value) list;
-  cd_body_fiber: fiber;
-  cd_intermediate_handlers: handler_entry list;
-  mutable cd_used: bool;
+  cd_fiber : fiber;
+  cd_return_handler : value;
+  cd_op_handlers : (string * value) list;
+  cd_body_fiber : fiber;
+  cd_intermediate_handlers : handler_entry list;
+  mutable cd_used : bool;
 }
 
-type compiled_program = {
-  main: prototype;
-  global_names: string array;
-}
+type compiled_program = { main : prototype; global_names : string array }
 
 let make_record_shape (field_names : string list) : record_shape =
   let fields = Array.of_list field_names in
@@ -184,57 +177,61 @@ let make_record (field_names : string list) (values : value array) : value =
 let rec pp_value = function
   | VInt n -> string_of_int n
   | VFloat f ->
-    let s = Printf.sprintf "%g" f in
-    if String.contains s '.' || String.contains s 'e' then s
-    else s ^ "."
+      let s = Printf.sprintf "%g" f in
+      if String.contains s '.' || String.contains s 'e' then s else s ^ "."
   | VBool true -> "true"
   | VBool false -> "false"
   | VString s -> s
   | VByte n -> Printf.sprintf "#%02x" n
   | VRune cp ->
-    if cp < 0x80 then Printf.sprintf "'%c'" (Char.chr cp)
-    else
-      let buf = Buffer.create 6 in
-      Buffer.add_char buf '\'';
-      if cp < 0x800 then begin
-        Buffer.add_char buf (Char.chr (0xC0 lor (cp lsr 6)));
-        Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-      end else if cp < 0x10000 then begin
-        Buffer.add_char buf (Char.chr (0xE0 lor (cp lsr 12)));
-        Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
-        Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-      end else begin
-        Buffer.add_char buf (Char.chr (0xF0 lor (cp lsr 18)));
-        Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 12) land 0x3F)));
-        Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
-        Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-      end;
-      Buffer.add_char buf '\'';
-      Buffer.contents buf
+      if cp < 0x80 then Printf.sprintf "'%c'" (Char.chr cp)
+      else
+        let buf = Buffer.create 6 in
+        Buffer.add_char buf '\'';
+        if cp < 0x800 then begin
+          Buffer.add_char buf (Char.chr (0xC0 lor (cp lsr 6)));
+          Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
+        end
+        else if cp < 0x10000 then begin
+          Buffer.add_char buf (Char.chr (0xE0 lor (cp lsr 12)));
+          Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
+          Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
+        end
+        else begin
+          Buffer.add_char buf (Char.chr (0xF0 lor (cp lsr 18)));
+          Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 12) land 0x3F)));
+          Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
+          Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
+        end;
+        Buffer.add_char buf '\'';
+        Buffer.contents buf
   | VUnit -> "()"
   | VTuple vs ->
-    "(" ^ String.concat ", " (Array.to_list (Array.map pp_value vs)) ^ ")"
-  | VList vs ->
-    "[" ^ String.concat "; " (List.map pp_value vs) ^ "]"
+      "(" ^ String.concat ", " (Array.to_list (Array.map pp_value vs)) ^ ")"
+  | VList vs -> "[" ^ String.concat "; " (List.map pp_value vs) ^ "]"
   | VRecord (shape, values) ->
-    "{ " ^ String.concat "; " (List.init (Array.length shape.rs_fields) (fun i ->
-      shape.rs_fields.(i) ^ " = " ^ pp_value values.(i)
-    )) ^ " }"
+      "{ "
+      ^ String.concat "; "
+          (List.init (Array.length shape.rs_fields) (fun i ->
+               shape.rs_fields.(i) ^ " = " ^ pp_value values.(i)))
+      ^ " }"
   | VVariant (_, name, None) -> name
-  | VVariant (_, name, Some v) ->
-    name ^ " " ^ (match v with
+  | VVariant (_, name, Some v) -> (
+      name ^ " "
+      ^
+      match v with
       | VTuple _ | VVariant (_, _, Some _) -> "(" ^ pp_value v ^ ")"
       | _ -> pp_value v)
   | VClosure _ -> "<fun>"
   | VPartial _ -> "<fun>"
   | VExternal ext ->
-    if ext.ext_args = [] then Printf.sprintf "<external:%s>" ext.ext_name
-    else "<fun>"
+      if ext.ext_args = [] then Printf.sprintf "<external:%s>" ext.ext_name
+      else "<fun>"
   | VProto p -> Printf.sprintf "<proto:%s>" p.name
   | VContinuation _ -> "<continuation>"
   | VRef r -> Printf.sprintf "ref(%s)" (pp_value !r)
   | VArray arr ->
-    "#[" ^ String.concat "; " (Array.to_list (Array.map pp_value arr)) ^ "]"
+      "#[" ^ String.concat "; " (Array.to_list (Array.map pp_value arr)) ^ "]"
 
 let pp_capture = function
   | CaptureLocal i -> Printf.sprintf "local(%d)" i
@@ -280,11 +277,12 @@ let pp_opcode = function
   | JUMP_IF_FALSE off -> Printf.sprintf "JUMP_IF_FALSE %d" off
   | JUMP_IF_TRUE off -> Printf.sprintf "JUMP_IF_TRUE %d" off
   | CLOSURE (i, caps) ->
-    Printf.sprintf "CLOSURE %d [%s]" i
-      (String.concat ", " (List.map pp_capture caps))
+      Printf.sprintf "CLOSURE %d [%s]" i
+        (String.concat ", " (List.map pp_capture caps))
   | CLOSURE_REC (i, caps, self) ->
-    Printf.sprintf "CLOSURE_REC %d [%s] self=%d" i
-      (String.concat ", " (List.map pp_capture caps)) self
+      Printf.sprintf "CLOSURE_REC %d [%s] self=%d" i
+        (String.concat ", " (List.map pp_capture caps))
+        self
   | CALL n -> Printf.sprintf "CALL %d" n
   | TAIL_CALL n -> Printf.sprintf "TAIL_CALL %d" n
   | RETURN -> "RETURN"
@@ -294,14 +292,14 @@ let pp_opcode = function
   | MAKE_TUPLE n -> Printf.sprintf "MAKE_TUPLE %d" n
   | TUPLE_GET i -> Printf.sprintf "TUPLE_GET %d" i
   | MAKE_RECORD fields ->
-    Printf.sprintf "MAKE_RECORD [%s]" (String.concat ", " fields)
+      Printf.sprintf "MAKE_RECORD [%s]" (String.concat ", " fields)
   | FIELD name -> Printf.sprintf "FIELD %s" name
   | SET_FIELD name -> Printf.sprintf "SET_FIELD %s" name
   | RECORD_UPDATE fields ->
-    Printf.sprintf "RECORD_UPDATE [%s]" (String.concat ", " fields)
+      Printf.sprintf "RECORD_UPDATE [%s]" (String.concat ", " fields)
   | RECORD_UPDATE_DYN n -> Printf.sprintf "RECORD_UPDATE_DYN %d" n
   | MAKE_VARIANT (tag, name, has_payload) ->
-    Printf.sprintf "MAKE_VARIANT %d %s %b" tag name has_payload
+      Printf.sprintf "MAKE_VARIANT %d %s %b" tag name has_payload
   | CONS -> "CONS"
   | NIL -> "NIL"
   | TAG_EQ tag -> Printf.sprintf "TAG_EQ %d" tag
@@ -322,28 +320,42 @@ let pp_opcode = function
   | MAKE_ARRAY n -> Printf.sprintf "MAKE_ARRAY %d" n
   | INDEX -> "INDEX"
   | HALT -> "HALT"
-  | GET_LOCAL_CALL (slot, arity) -> Printf.sprintf "GET_LOCAL_CALL %d %d" slot arity
-  | GET_LOCAL_TUPLE_GET (slot, idx) -> Printf.sprintf "GET_LOCAL_TUPLE_GET %d %d" slot idx
-  | GET_LOCAL_FIELD (slot, name) -> Printf.sprintf "GET_LOCAL_FIELD %d %s" slot name
-  | GET_GLOBAL_CALL (idx, arity) -> Printf.sprintf "GET_GLOBAL_CALL %d %d" idx arity
-  | GET_GLOBAL_FIELD (idx, name) -> Printf.sprintf "GET_GLOBAL_FIELD %d %s" idx name
+  | GET_LOCAL_CALL (slot, arity) ->
+      Printf.sprintf "GET_LOCAL_CALL %d %d" slot arity
+  | GET_LOCAL_TUPLE_GET (slot, idx) ->
+      Printf.sprintf "GET_LOCAL_TUPLE_GET %d %d" slot idx
+  | GET_LOCAL_FIELD (slot, name) ->
+      Printf.sprintf "GET_LOCAL_FIELD %d %s" slot name
+  | GET_GLOBAL_CALL (idx, arity) ->
+      Printf.sprintf "GET_GLOBAL_CALL %d %d" idx arity
+  | GET_GLOBAL_FIELD (idx, name) ->
+      Printf.sprintf "GET_GLOBAL_FIELD %d %s" idx name
   | JUMP_TABLE (min_tag, targets, default) ->
-    Printf.sprintf "JUMP_TABLE min=%d [%s] default=%d" min_tag
-      (String.concat "," (Array.to_list (Array.map string_of_int targets))) default
+      Printf.sprintf "JUMP_TABLE min=%d [%s] default=%d" min_tag
+        (String.concat "," (Array.to_list (Array.map string_of_int targets)))
+        default
   | CALL_N n -> Printf.sprintf "CALL_N %d" n
   | TAIL_CALL_N n -> Printf.sprintf "TAIL_CALL_N %d" n
   | UPDATE_REC -> "UPDATE_REC"
 
 let disassemble proto =
   let buf = Buffer.create 256 in
-  Buffer.add_string buf (Printf.sprintf "=== %s (arity=%d, locals=%d) ===\n"
-    proto.name proto.arity proto.num_locals);
+  Buffer.add_string buf
+    (Printf.sprintf "=== %s (arity=%d, locals=%d) ===\n" proto.name proto.arity
+       proto.num_locals);
   let prev_line = ref 0 in
-  Array.iteri (fun i op ->
-    let line = if i < Array.length proto.line_table then proto.line_table.(i) else 0 in
-    let line_str = if line > 0 && line <> !prev_line then
-      (prev_line := line; Printf.sprintf "%4d" line)
-    else "   |" in
-    Buffer.add_string buf (Printf.sprintf "%s %04d  %s\n" line_str i (pp_opcode op))
-  ) proto.code;
+  Array.iteri
+    (fun i op ->
+      let line =
+        if i < Array.length proto.line_table then proto.line_table.(i) else 0
+      in
+      let line_str =
+        if line > 0 && line <> !prev_line then (
+          prev_line := line;
+          Printf.sprintf "%4d" line)
+        else "   |"
+      in
+      Buffer.add_string buf
+        (Printf.sprintf "%s %04d  %s\n" line_str i (pp_opcode op)))
+    proto.code;
   Buffer.contents buf

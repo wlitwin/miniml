@@ -20,7 +20,7 @@ typedef int64_t mml_value;
 
 #define MML_IS_INT(v)    ((v) & 1)
 #define MML_INT_VAL(v)   ((int64_t)(v) >> 1)
-#define MML_TAG_INT(n)   (((int64_t)(n) << 1) | 1)
+#define MML_TAG_INT(n)   ((int64_t)(((uint64_t)(int64_t)(n) << 1) | 1))
 
 #define MML_UNIT         MML_TAG_INT(0)
 #define MML_TRUE         MML_TAG_INT(1)   /* 3 */

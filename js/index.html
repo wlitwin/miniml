@@ -967,6 +967,26 @@ let speak a = match a with
 
 let () = print (speak (Cat "Whiskers"))
 let () = print (speak (Dog "Rex"))
+
+-- Set pattern matching
+let describe_set s = match s with
+  | #{1; 2; 3} -> "one two three"
+  | #{1} -> "just one"
+  | _ -> $"something else: {show s}"
+
+let () = print (describe_set (Set.of_list [1; 2; 3]))
+let () = print (describe_set (Set.of_list [1]))
+let () = print (describe_set (Set.of_list [42; 99]))
+
+-- Map pattern matching
+let describe_config config = match config with
+  | #{"debug": true; "verbose": true} -> "full diagnostics"
+  | #{"debug": true} -> "debug mode"
+  | _ -> "production mode"
+
+let () = print (describe_config (Map.of_list [("debug", true); ("verbose", true)]))
+let () = print (describe_config (Map.of_list [("debug", true); ("verbose", false)]))
+let () = print (describe_config (Map.of_list [("quiet", true)]))
 `,
   higher: `-- Function composition
 let compose f g x = f (g x)

@@ -1,14 +1,8 @@
-type loc = {
-  line: int;
-  col: int;
-  offset: int;
-}
+type loc = { line : int; col : int; offset : int }
 
 let dummy_loc = { line = 0; col = 0; offset = 0 }
 
-type interp_part =
-  | IPLit of string
-  | IPExpr of string * string option
+type interp_part = IPLit of string | IPExpr of string * string option
 
 type token_kind =
   | INT of int
@@ -104,11 +98,7 @@ type token_kind =
   | COLONGT
   | EOF
 
-type token = {
-  kind: token_kind;
-  loc: loc;
-  end_offset: int;
-}
+type token = { kind : token_kind; loc : loc; end_offset : int }
 
 let pp_token_kind = function
   | INT n -> Printf.sprintf "INT(%d)" n

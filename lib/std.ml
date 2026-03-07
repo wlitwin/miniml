@@ -5,224 +5,283 @@
 open Bytecode
 
 let arg n args = List.nth args n
-
 let some v = VVariant (1, "Some", Some v)
 let none = VVariant (0, "None", None)
 
 (* ---- String module ---- *)
 
 let register_string state =
-  let state = Interp.register_fns state "String" [
-    ("length", 1, fun args ->
-      VInt (String.length (Interp.as_string (arg 0 args))));
-
-    ("sub", 3, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let start = Interp.as_int (arg 1 args) in
-      let len = Interp.as_int (arg 2 args) in
-      if start < 0 || len < 0 || start + len > String.length s then
-        raise (Vm.Runtime_error "String.sub: index out of bounds");
-      VString (String.sub s start len));
-
-    ("split", 2, fun args ->
-      let delim = Interp.as_string (arg 0 args) in
-      let input = Interp.as_string (arg 1 args) in
-      if String.length delim = 0 then
-        (* Split into individual characters *)
-        VList (List.init (String.length input) (fun i ->
-          VString (String.make 1 input.[i])))
-      else begin
-        let dlen = String.length delim in
-        let slen = String.length input in
-        let parts = ref [] in
-        let start = ref 0 in
-        let i = ref 0 in
-        while !i <= slen - dlen do
-          if String.sub input !i dlen = delim then begin
-            parts := VString (String.sub input !start (!i - !start)) :: !parts;
-            start := !i + dlen;
-            i := !i + dlen
-          end else
-            incr i
-        done;
-        parts := VString (String.sub input !start (slen - !start)) :: !parts;
-        VList (List.rev !parts)
-      end);
-
-    ("trim", 1, fun args ->
-      VString (String.trim (Interp.as_string (arg 0 args))));
-
-    ("starts_with", 2, fun args ->
-      let prefix = Interp.as_string (arg 0 args) in
-      let s = Interp.as_string (arg 1 args) in
-      let plen = String.length prefix in
-      VBool (String.length s >= plen && String.sub s 0 plen = prefix));
-
-    ("contains", 2, fun args ->
-      let sub = Interp.as_string (arg 0 args) in
-      let s = Interp.as_string (arg 1 args) in
-      let sublen = String.length sub in
-      let slen = String.length s in
-      if sublen = 0 then VBool true
-      else begin
-        let found = ref false in
-        let i = ref 0 in
-        while !i <= slen - sublen && not !found do
-          if String.sub s !i sublen = sub then found := true
-          else incr i
-        done;
-        VBool !found
-      end);
-
-    ("replace", 3, fun args ->
-      let old_s = Interp.as_string (arg 0 args) in
-      let new_s = Interp.as_string (arg 1 args) in
-      let input = Interp.as_string (arg 2 args) in
-      if String.length old_s = 0 then VString input
-      else begin
-        let olen = String.length old_s in
-        let buf = Buffer.create (String.length input) in
-        let i = ref 0 in
-        let slen = String.length input in
-        while !i < slen do
-          if !i <= slen - olen && String.sub input !i olen = old_s then begin
-            Buffer.add_string buf new_s;
-            i := !i + olen
-          end else begin
-            Buffer.add_char buf input.[!i];
-            incr i
-          end
-        done;
-        VString (Buffer.contents buf)
-      end);
-
-    ("to_int", 1, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      (match int_of_string_opt s with
-       | Some n -> some (VInt n)
-       | None -> none));
-
-    ("to_float", 1, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      (match float_of_string_opt s with
-       | Some f -> some (VFloat f)
-       | None -> none));
-
-    ("uppercase", 1, fun args ->
-      VString (String.uppercase_ascii (Interp.as_string (arg 0 args))));
-
-    ("lowercase", 1, fun args ->
-      VString (String.lowercase_ascii (Interp.as_string (arg 0 args))));
-
-    ("get", 2, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let i = Interp.as_int (arg 1 args) in
-      if i < 0 || i >= String.length s then
-        raise (Vm.Runtime_error (Printf.sprintf "String.get: index %d out of bounds (length %d)" i (String.length s)));
-      VByte (Char.code s.[i]));
-
-    ("to_bytes", 1, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      VList (List.init (String.length s) (fun i -> VByte (Char.code s.[i]))));
-
-    ("of_bytes", 1, fun args ->
-      let bytes = match arg 0 args with Bytecode.VList l -> l | _ -> raise (Vm.Runtime_error "expected list") in
-      let buf = Buffer.create (List.length bytes) in
-      List.iter (fun b -> Buffer.add_char buf (Char.chr (Interp.as_byte b))) bytes;
-      VString (Buffer.contents buf));
-
-    ("to_byte_array", 1, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      VArray (Array.init (String.length s) (fun i -> Bytecode.VByte (Char.code s.[i]))));
-
-    ("of_byte_array", 1, fun args ->
-      let arr = Interp.as_array (arg 0 args) in
-      let buf = Buffer.create (Array.length arr) in
-      Array.iter (fun b -> Buffer.add_char buf (Char.chr (Interp.as_byte b))) arr;
-      VString (Buffer.contents buf));
-
-    ("to_runes", 1, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let runes = ref [] in
-      let i = ref 0 in
-      let len = String.length s in
-      while !i < len do
-        let (cp, nbytes) = Utf8.decode_next s !i in
-        runes := VRune cp :: !runes;
-        i := !i + nbytes
-      done;
-      VList (List.rev !runes));
-
-    ("of_runes", 1, fun args ->
-      let runes = match arg 0 args with Bytecode.VList l -> l | _ -> raise (Vm.Runtime_error "expected list") in
-      let buf = Buffer.create (List.length runes) in
-      List.iter (fun r -> Utf8.encode_rune buf (Interp.as_rune r)) runes;
-      VString (Buffer.contents buf));
-
-    ("get_rune", 2, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let n = Interp.as_int (arg 1 args) in
-      let len = String.length s in
-      let i = ref 0 in
-      let count = ref 0 in
-      while !i < len && !count < n do
-        i := !i + Utf8.byte_length (Char.code s.[!i]);
-        incr count
-      done;
-      if !i >= len then
-        raise (Vm.Runtime_error (Printf.sprintf "String.get_rune: index %d out of bounds" n));
-      let (cp, _) = Utf8.decode_next s !i in
-      VRune cp);
-
-    ("of_byte", 1, fun args ->
-      let b = Interp.as_byte (arg 0 args) in
-      VString (String.make 1 (Char.chr b)));
-
-    ("rune_length", 1, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let len = String.length s in
-      let i = ref 0 in
-      let count = ref 0 in
-      while !i < len do
-        i := !i + Utf8.byte_length (Char.code s.[!i]);
-        incr count
-      done;
-      VInt !count);
-
-    ("make", 2, fun args ->
-      let n = Interp.as_int (arg 0 args) in
-      let b = Interp.as_byte (arg 1 args) in
-      if n < 0 then raise (Vm.Runtime_error "String.make: negative length");
-      VString (String.make n (Char.chr b)));
-
-    ("index_opt", 2, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let b = Interp.as_byte (arg 1 args) in
-      let c = Char.chr b in
-      (match String.index_opt s c with
-       | Some i -> some (VInt i)
-       | None -> none));
-
-    ("rindex_opt", 2, fun args ->
-      let s = Interp.as_string (arg 0 args) in
-      let b = Interp.as_byte (arg 1 args) in
-      let c = Char.chr b in
-      (match String.rindex_opt s c with
-       | Some i -> some (VInt i)
-       | None -> none));
-
-    ("concat", 2, fun args ->
-      let sep = Interp.as_string (arg 0 args) in
-      let lst = match arg 1 args with Bytecode.VList l -> l | _ -> raise (Vm.Runtime_error "expected list") in
-      let strs = List.map (fun v -> Interp.as_string v) lst in
-      VString (String.concat sep strs));
-
-    ("compare", 2, fun args ->
-      let a = Interp.as_string (arg 0 args) in
-      let b = Interp.as_string (arg 1 args) in
-      VInt (String.compare a b));
-  ] in
-  let state = Interp.eval_setup state {|
+  let state =
+    Interp.register_fns state "String"
+      [
+        ( "length",
+          1,
+          fun args -> VInt (String.length (Interp.as_string (arg 0 args))) );
+        ( "sub",
+          3,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let start = Interp.as_int (arg 1 args) in
+            let len = Interp.as_int (arg 2 args) in
+            if start < 0 || len < 0 || start + len > String.length s then
+              raise (Vm.Runtime_error "String.sub: index out of bounds");
+            VString (String.sub s start len) );
+        ( "split",
+          2,
+          fun args ->
+            let delim = Interp.as_string (arg 0 args) in
+            let input = Interp.as_string (arg 1 args) in
+            if String.length delim = 0 then
+              (* Split into individual characters *)
+              VList
+                (List.init (String.length input) (fun i ->
+                     VString (String.make 1 input.[i])))
+            else begin
+              let dlen = String.length delim in
+              let slen = String.length input in
+              let parts = ref [] in
+              let start = ref 0 in
+              let i = ref 0 in
+              while !i <= slen - dlen do
+                if String.sub input !i dlen = delim then begin
+                  parts :=
+                    VString (String.sub input !start (!i - !start)) :: !parts;
+                  start := !i + dlen;
+                  i := !i + dlen
+                end
+                else incr i
+              done;
+              parts :=
+                VString (String.sub input !start (slen - !start)) :: !parts;
+              VList (List.rev !parts)
+            end );
+        ( "trim",
+          1,
+          fun args -> VString (String.trim (Interp.as_string (arg 0 args))) );
+        ( "starts_with",
+          2,
+          fun args ->
+            let prefix = Interp.as_string (arg 0 args) in
+            let s = Interp.as_string (arg 1 args) in
+            let plen = String.length prefix in
+            VBool (String.length s >= plen && String.sub s 0 plen = prefix) );
+        ( "contains",
+          2,
+          fun args ->
+            let sub = Interp.as_string (arg 0 args) in
+            let s = Interp.as_string (arg 1 args) in
+            let sublen = String.length sub in
+            let slen = String.length s in
+            if sublen = 0 then VBool true
+            else begin
+              let found = ref false in
+              let i = ref 0 in
+              while !i <= slen - sublen && not !found do
+                if String.sub s !i sublen = sub then found := true else incr i
+              done;
+              VBool !found
+            end );
+        ( "replace",
+          3,
+          fun args ->
+            let old_s = Interp.as_string (arg 0 args) in
+            let new_s = Interp.as_string (arg 1 args) in
+            let input = Interp.as_string (arg 2 args) in
+            if String.length old_s = 0 then VString input
+            else begin
+              let olen = String.length old_s in
+              let buf = Buffer.create (String.length input) in
+              let i = ref 0 in
+              let slen = String.length input in
+              while !i < slen do
+                if !i <= slen - olen && String.sub input !i olen = old_s then begin
+                  Buffer.add_string buf new_s;
+                  i := !i + olen
+                end
+                else begin
+                  Buffer.add_char buf input.[!i];
+                  incr i
+                end
+              done;
+              VString (Buffer.contents buf)
+            end );
+        ( "to_int",
+          1,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            match int_of_string_opt s with
+            | Some n -> some (VInt n)
+            | None -> none );
+        ( "to_float",
+          1,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            match float_of_string_opt s with
+            | Some f -> some (VFloat f)
+            | None -> none );
+        ( "uppercase",
+          1,
+          fun args ->
+            VString (String.uppercase_ascii (Interp.as_string (arg 0 args))) );
+        ( "lowercase",
+          1,
+          fun args ->
+            VString (String.lowercase_ascii (Interp.as_string (arg 0 args))) );
+        ( "get",
+          2,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let i = Interp.as_int (arg 1 args) in
+            if i < 0 || i >= String.length s then
+              raise
+                (Vm.Runtime_error
+                   (Printf.sprintf
+                      "String.get: index %d out of bounds (length %d)" i
+                      (String.length s)));
+            VByte (Char.code s.[i]) );
+        ( "to_bytes",
+          1,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            VList
+              (List.init (String.length s) (fun i -> VByte (Char.code s.[i])))
+        );
+        ( "of_bytes",
+          1,
+          fun args ->
+            let bytes =
+              match arg 0 args with
+              | Bytecode.VList l -> l
+              | _ -> raise (Vm.Runtime_error "expected list")
+            in
+            let buf = Buffer.create (List.length bytes) in
+            List.iter
+              (fun b -> Buffer.add_char buf (Char.chr (Interp.as_byte b)))
+              bytes;
+            VString (Buffer.contents buf) );
+        ( "to_byte_array",
+          1,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            VArray
+              (Array.init (String.length s) (fun i ->
+                   Bytecode.VByte (Char.code s.[i]))) );
+        ( "of_byte_array",
+          1,
+          fun args ->
+            let arr = Interp.as_array (arg 0 args) in
+            let buf = Buffer.create (Array.length arr) in
+            Array.iter
+              (fun b -> Buffer.add_char buf (Char.chr (Interp.as_byte b)))
+              arr;
+            VString (Buffer.contents buf) );
+        ( "to_runes",
+          1,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let runes = ref [] in
+            let i = ref 0 in
+            let len = String.length s in
+            while !i < len do
+              let cp, nbytes = Utf8.decode_next s !i in
+              runes := VRune cp :: !runes;
+              i := !i + nbytes
+            done;
+            VList (List.rev !runes) );
+        ( "of_runes",
+          1,
+          fun args ->
+            let runes =
+              match arg 0 args with
+              | Bytecode.VList l -> l
+              | _ -> raise (Vm.Runtime_error "expected list")
+            in
+            let buf = Buffer.create (List.length runes) in
+            List.iter (fun r -> Utf8.encode_rune buf (Interp.as_rune r)) runes;
+            VString (Buffer.contents buf) );
+        ( "get_rune",
+          2,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let n = Interp.as_int (arg 1 args) in
+            let len = String.length s in
+            let i = ref 0 in
+            let count = ref 0 in
+            while !i < len && !count < n do
+              i := !i + Utf8.byte_length (Char.code s.[!i]);
+              incr count
+            done;
+            if !i >= len then
+              raise
+                (Vm.Runtime_error
+                   (Printf.sprintf "String.get_rune: index %d out of bounds" n));
+            let cp, _ = Utf8.decode_next s !i in
+            VRune cp );
+        ( "of_byte",
+          1,
+          fun args ->
+            let b = Interp.as_byte (arg 0 args) in
+            VString (String.make 1 (Char.chr b)) );
+        ( "rune_length",
+          1,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let len = String.length s in
+            let i = ref 0 in
+            let count = ref 0 in
+            while !i < len do
+              i := !i + Utf8.byte_length (Char.code s.[!i]);
+              incr count
+            done;
+            VInt !count );
+        ( "make",
+          2,
+          fun args ->
+            let n = Interp.as_int (arg 0 args) in
+            let b = Interp.as_byte (arg 1 args) in
+            if n < 0 then
+              raise (Vm.Runtime_error "String.make: negative length");
+            VString (String.make n (Char.chr b)) );
+        ( "index_opt",
+          2,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let b = Interp.as_byte (arg 1 args) in
+            let c = Char.chr b in
+            match String.index_opt s c with
+            | Some i -> some (VInt i)
+            | None -> none );
+        ( "rindex_opt",
+          2,
+          fun args ->
+            let s = Interp.as_string (arg 0 args) in
+            let b = Interp.as_byte (arg 1 args) in
+            let c = Char.chr b in
+            match String.rindex_opt s c with
+            | Some i -> some (VInt i)
+            | None -> none );
+        ( "concat",
+          2,
+          fun args ->
+            let sep = Interp.as_string (arg 0 args) in
+            let lst =
+              match arg 1 args with
+              | Bytecode.VList l -> l
+              | _ -> raise (Vm.Runtime_error "expected list")
+            in
+            let strs = List.map (fun v -> Interp.as_string v) lst in
+            VString (String.concat sep strs) );
+        ( "compare",
+          2,
+          fun args ->
+            let a = Interp.as_string (arg 0 args) in
+            let b = Interp.as_string (arg 1 args) in
+            VInt (String.compare a b) );
+      ]
+  in
+  let state =
+    Interp.eval_setup state
+      {|
     module String =
       pub extern length : string -> int
       pub extern sub : string -> int -> int -> string
@@ -251,84 +310,88 @@ let register_string state =
       pub extern concat : string -> string list -> string
       pub extern compare : string -> string -> int
     end
-  |} in
+  |}
+  in
   Interp.eval_setup state
-    "module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end"
+    "module String = pub let iter f s = let n = String.length s in let rec go \
+     i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end"
 
 (* ---- Byte module ---- *)
 
-let register_byte state =
-  Interp.eval_setup state Stdlib_sources.byte
+let register_byte state = Interp.eval_setup state Stdlib_sources.byte
 
 (* ---- Rune module ---- *)
 
-let register_rune state =
-  Interp.eval_setup state Stdlib_sources.rune
+let register_rune state = Interp.eval_setup state Stdlib_sources.rune
 
 (* ---- Map module ---- *)
 
-let register_map state =
-  Interp.eval_setup state Stdlib_sources.map
+let register_map state = Interp.eval_setup state Stdlib_sources.map
 
 (* ---- Set module ---- *)
 
-let register_set state =
-  Interp.eval_setup state Stdlib_sources.set
+let register_set state = Interp.eval_setup state Stdlib_sources.set
 
 (* ---- Enum module ---- *)
 
-let register_enum state =
-  Interp.eval_setup state Stdlib_sources.enum
+let register_enum state = Interp.eval_setup state Stdlib_sources.enum
 
 (* ---- Seq module ---- *)
 
-let register_seq state =
-  Interp.eval_setup state Stdlib_sources.seq
+let register_seq state = Interp.eval_setup state Stdlib_sources.seq
 
 (* ---- IO module ---- *)
 
 let register_io state =
-  let state = Interp.register_fns state "IO" [
-    ("read_file", 1, fun args ->
-      let path = Interp.as_string (arg 0 args) in
-      (try
-        let ic = open_in path in
-        let contents = In_channel.input_all ic in
-        close_in ic;
-        VString contents
-      with Sys_error msg ->
-        raise (Vm.Runtime_error ("IO.read_file: " ^ msg))));
-
-    ("write_file", 2, fun args ->
-      let path = Interp.as_string (arg 0 args) in
-      let contents = Interp.as_string (arg 1 args) in
-      (try
-        let oc = open_out path in
-        output_string oc contents;
-        close_out oc;
-        VUnit
-      with Sys_error msg ->
-        raise (Vm.Runtime_error ("IO.write_file: " ^ msg))));
-
-    ("append_file", 2, fun args ->
-      let path = Interp.as_string (arg 0 args) in
-      let contents = Interp.as_string (arg 1 args) in
-      (try
-        let oc = open_out_gen [Open_append; Open_creat] 0o644 path in
-        output_string oc contents;
-        close_out oc;
-        VUnit
-      with Sys_error msg ->
-        raise (Vm.Runtime_error ("IO.append_file: " ^ msg))));
-
-    ("read_line", 1, fun _args ->
-      (try VString (input_line stdin)
-       with End_of_file -> VString ""));
-
-    ("file_exists", 1, fun args ->
-      VBool (Sys.file_exists (Interp.as_string (arg 0 args))));
-  ] in
-  Interp.eval_setup state {|
+  let state =
+    Interp.register_fns state "IO"
+      [
+        ( "read_file",
+          1,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            try
+              let ic = open_in path in
+              let contents = In_channel.input_all ic in
+              close_in ic;
+              VString contents
+            with Sys_error msg ->
+              raise (Vm.Runtime_error ("IO.read_file: " ^ msg)) );
+        ( "write_file",
+          2,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            let contents = Interp.as_string (arg 1 args) in
+            try
+              let oc = open_out path in
+              output_string oc contents;
+              close_out oc;
+              VUnit
+            with Sys_error msg ->
+              raise (Vm.Runtime_error ("IO.write_file: " ^ msg)) );
+        ( "append_file",
+          2,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            let contents = Interp.as_string (arg 1 args) in
+            try
+              let oc = open_out_gen [ Open_append; Open_creat ] 0o644 path in
+              output_string oc contents;
+              close_out oc;
+              VUnit
+            with Sys_error msg ->
+              raise (Vm.Runtime_error ("IO.append_file: " ^ msg)) );
+        ( "read_line",
+          1,
+          fun _args ->
+            try VString (input_line stdin) with End_of_file -> VString "" );
+        ( "file_exists",
+          1,
+          fun args -> VBool (Sys.file_exists (Interp.as_string (arg 0 args))) );
+      ]
+  in
+  Interp.eval_setup state
+    {|
     module IO =
       pub extern read_file : string -> string / IO
       pub extern write_file : string -> string -> unit / IO
@@ -341,23 +404,28 @@ let register_io state =
 (* ---- Sys module ---- *)
 
 let register_sys state =
-  let state = Interp.register_fns state "Sys" [
-    ("args", 1, fun _args ->
-      VList (Array.to_list (Array.map (fun s -> VString s) !(state.Interp.argv))));
-
-    ("getenv", 1, fun args ->
-      let name = Interp.as_string (arg 0 args) in
-      (match Sys.getenv_opt name with
-       | Some v -> some (VString v)
-       | None -> none));
-
-    ("exit", 1, fun args ->
-      exit (Interp.as_int (arg 0 args)));
-
-    ("time", 1, fun _args ->
-      VFloat (Unix.gettimeofday ()));
-  ] in
-  Interp.eval_setup state {|
+  let state =
+    Interp.register_fns state "Sys"
+      [
+        ( "args",
+          1,
+          fun _args ->
+            VList
+              (Array.to_list
+                 (Array.map (fun s -> VString s) !(state.Interp.argv))) );
+        ( "getenv",
+          1,
+          fun args ->
+            let name = Interp.as_string (arg 0 args) in
+            match Sys.getenv_opt name with
+            | Some v -> some (VString v)
+            | None -> none );
+        ("exit", 1, fun args -> exit (Interp.as_int (arg 0 args)));
+        ("time", 1, fun _args -> VFloat (Unix.gettimeofday ()));
+      ]
+  in
+  Interp.eval_setup state
+    {|
     module Sys =
       pub extern args : unit -> string list / IO
       pub extern getenv : string -> string option / IO
@@ -368,60 +436,77 @@ let register_sys state =
 
 (* ---- Math module ---- *)
 
-let register_math state =
-  Interp.eval_setup state Stdlib_sources.math
+let register_math state = Interp.eval_setup state Stdlib_sources.math
 
 (* ---- List module ---- *)
 
-let register_list state =
-  Interp.eval_setup state Stdlib_sources.list
+let register_list state = Interp.eval_setup state Stdlib_sources.list
 
 (* ---- Array module ---- *)
 
 let register_array state =
-  let state = Interp.register_fns state "Array" [
-    ("make", 2, fun args ->
-      let n = Interp.as_int (arg 0 args) in
-      VArray (Array.make n (arg 1 args)));
-
-    ("get", 2, fun args ->
-      let arr = Interp.as_array (arg 0 args) in
-      let idx = Interp.as_int (arg 1 args) in
-      if idx < 0 || idx >= Array.length arr then
-        raise (Vm.Runtime_error (Printf.sprintf "Array.get: index %d out of bounds (length %d)" idx (Array.length arr)));
-      arr.(idx));
-
-    ("set", 3, fun args ->
-      let arr = Interp.as_array (arg 0 args) in
-      let idx = Interp.as_int (arg 1 args) in
-      let v = arg 2 args in
-      if idx < 0 || idx >= Array.length arr then
-        raise (Vm.Runtime_error (Printf.sprintf "Array.set: index %d out of bounds (length %d)" idx (Array.length arr)));
-      arr.(idx) <- v; VUnit);
-
-    ("length", 1, fun args ->
-      VInt (Array.length (Interp.as_array (arg 0 args))));
-
-    ("to_list", 1, fun args ->
-      VList (Array.to_list (Interp.as_array (arg 0 args))));
-
-    ("of_list", 1, fun args ->
-      match arg 0 args with
-      | VList l -> VArray (Array.of_list l)
-      | _ -> raise (Vm.Runtime_error "Array.of_list: expected list"));
-
-    ("copy", 1, fun args ->
-      VArray (Array.copy (Interp.as_array (arg 0 args))));
-
-    ("sub", 3, fun args ->
-      let arr = Interp.as_array (arg 0 args) in
-      let start = Interp.as_int (arg 1 args) in
-      let len = Interp.as_int (arg 2 args) in
-      if start < 0 || len < 0 || start + len > Array.length arr then
-        raise (Vm.Runtime_error "Array.sub: index out of bounds");
-      VArray (Array.sub arr start len));
-  ] in
-  Interp.eval_setup state {|
+  let state =
+    Interp.register_fns state "Array"
+      [
+        ( "make",
+          2,
+          fun args ->
+            let n = Interp.as_int (arg 0 args) in
+            VArray (Array.make n (arg 1 args)) );
+        ( "get",
+          2,
+          fun args ->
+            let arr = Interp.as_array (arg 0 args) in
+            let idx = Interp.as_int (arg 1 args) in
+            if idx < 0 || idx >= Array.length arr then
+              raise
+                (Vm.Runtime_error
+                   (Printf.sprintf
+                      "Array.get: index %d out of bounds (length %d)" idx
+                      (Array.length arr)));
+            arr.(idx) );
+        ( "set",
+          3,
+          fun args ->
+            let arr = Interp.as_array (arg 0 args) in
+            let idx = Interp.as_int (arg 1 args) in
+            let v = arg 2 args in
+            if idx < 0 || idx >= Array.length arr then
+              raise
+                (Vm.Runtime_error
+                   (Printf.sprintf
+                      "Array.set: index %d out of bounds (length %d)" idx
+                      (Array.length arr)));
+            arr.(idx) <- v;
+            VUnit );
+        ( "length",
+          1,
+          fun args -> VInt (Array.length (Interp.as_array (arg 0 args))) );
+        ( "to_list",
+          1,
+          fun args -> VList (Array.to_list (Interp.as_array (arg 0 args))) );
+        ( "of_list",
+          1,
+          fun args ->
+            match arg 0 args with
+            | VList l -> VArray (Array.of_list l)
+            | _ -> raise (Vm.Runtime_error "Array.of_list: expected list") );
+        ( "copy",
+          1,
+          fun args -> VArray (Array.copy (Interp.as_array (arg 0 args))) );
+        ( "sub",
+          3,
+          fun args ->
+            let arr = Interp.as_array (arg 0 args) in
+            let start = Interp.as_int (arg 1 args) in
+            let len = Interp.as_int (arg 2 args) in
+            if start < 0 || len < 0 || start + len > Array.length arr then
+              raise (Vm.Runtime_error "Array.sub: index out of bounds");
+            VArray (Array.sub arr start len) );
+      ]
+  in
+  Interp.eval_setup state
+    {|
     module Array =
       pub extern make : int -> 'a -> 'a array
       pub extern get : 'a array -> int -> 'a
@@ -439,24 +524,19 @@ let register_array_extra state =
 
 (* ---- Result module (defined in source) ---- *)
 
-
-let register_result state =
-  Interp.eval_setup state Stdlib_sources.result
+let register_result state = Interp.eval_setup state Stdlib_sources.result
 
 (* ---- Option module (defined in source) ---- *)
 
-let register_option state =
-  Interp.eval_setup state Stdlib_sources.option
+let register_option state = Interp.eval_setup state Stdlib_sources.option
 
 (* ---- Buffer module (defined in source) ---- *)
 
-let register_buffer state =
-  Interp.eval_setup state Stdlib_sources.buffer
+let register_buffer state = Interp.eval_setup state Stdlib_sources.buffer
 
 (* ---- Fmt module (defined in source) ---- *)
 
-let register_fmt state =
-  Interp.eval_setup state Stdlib_sources.fmt
+let register_fmt state = Interp.eval_setup state Stdlib_sources.fmt
 
 (* ---- Hashtbl module (defined in source) ---- *)
 
@@ -469,24 +549,31 @@ let register_hashtbl state =
 let register_eval state =
   let state_ref = state.Interp.state_ref in
   state_ref := Some state;
-  let state = Interp.register_fns state "Runtime" [
-    ("eval", 1, fun args ->
-      let source = Interp.as_string (arg 0 args) in
-      let _ = Interp.eval_source state_ref source in
-      VUnit);
-
-    ("eval_file", 1, fun args ->
-      let path = Interp.as_string (arg 0 args) in
-      (try
-        let ic = open_in path in
-        let source = In_channel.input_all ic in
-        close_in ic;
-        let _ = Interp.eval_source state_ref source in
-        VUnit
-      with Sys_error msg ->
-        raise (Vm.Runtime_error ("Runtime.eval_file: " ^ msg))));
-  ] in
-  Interp.eval_setup state {|
+  let state =
+    Interp.register_fns state "Runtime"
+      [
+        ( "eval",
+          1,
+          fun args ->
+            let source = Interp.as_string (arg 0 args) in
+            let _ = Interp.eval_source state_ref source in
+            VUnit );
+        ( "eval_file",
+          1,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            try
+              let ic = open_in path in
+              let source = In_channel.input_all ic in
+              close_in ic;
+              let _ = Interp.eval_source state_ref source in
+              VUnit
+            with Sys_error msg ->
+              raise (Vm.Runtime_error ("Runtime.eval_file: " ^ msg)) );
+      ]
+  in
+  Interp.eval_setup state
+    {|
     module Runtime =
       pub extern eval : string -> unit / IO
       pub extern eval_file : string -> unit / IO
@@ -495,45 +582,26 @@ let register_eval state =
 
 (* ---- Ref module (defined in source) ---- *)
 
-let register_ref state =
-  Interp.eval_setup state Stdlib_sources.ref
+let register_ref state = Interp.eval_setup state Stdlib_sources.ref
 
 (* ---- Dynarray module (defined in source) ---- *)
 
-let register_dynarray state =
-  Interp.eval_setup state Stdlib_sources.dynarray
+let register_dynarray state = Interp.eval_setup state Stdlib_sources.dynarray
 
 (* ---- Compat (int_of_string, float_of_string) ---- *)
 
-let register_compat state =
-  Interp.eval_setup state Stdlib_sources.compat
+let register_compat state = Interp.eval_setup state Stdlib_sources.compat
 
 (* ---- Register all ---- *)
 
 let register_all state =
   let state =
-    state
-    |> register_string
-    |> register_list
-    |> register_array
-    |> register_array_extra
-    |> register_io
-    |> register_sys
-    |> register_math
-    |> register_result
-    |> register_byte
-    |> register_rune
-    |> register_map
-    |> register_set
-    |> register_enum
-    |> register_seq
-    |> register_option
-    |> register_buffer
-    |> register_fmt
-    |> register_hashtbl
-    |> register_ref
-    |> register_dynarray
-    |> register_compat
+    state |> register_string |> register_list |> register_array
+    |> register_array_extra |> register_io |> register_sys |> register_math
+    |> register_result |> register_byte |> register_rune |> register_map
+    |> register_set |> register_enum |> register_seq |> register_option
+    |> register_buffer |> register_fmt |> register_hashtbl |> register_ref
+    |> register_dynarray |> register_compat
   in
   let state = register_eval state in
   state.Interp.state_ref := Some state;

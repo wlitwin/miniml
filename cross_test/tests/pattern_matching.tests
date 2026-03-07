@@ -851,3 +851,77 @@ match (1, true) with
 match (true, 1) with
 | (_, x) -> x
 --- expect: 1
+
+--- test: set pattern single element
+let has_one s = match s with
+  | #{1} -> true
+  | _ -> false
+in has_one #{1; 2; 3}
+--- expect: true
+
+--- test: set pattern single element miss
+let has_one s = match s with
+  | #{1} -> true
+  | _ -> false
+in has_one #{4; 5}
+--- expect: false
+
+--- test: set pattern multiple elements
+let describe s = match s with
+  | #{1; 2; 3} -> "all three"
+  | #{1} -> "just one"
+  | _ -> "other"
+in describe #{1; 2; 3; 4}
+--- expect: all three
+
+--- test: set pattern multiple elements partial miss
+let describe s = match s with
+  | #{1; 2; 3} -> "all three"
+  | #{1} -> "just one"
+  | _ -> "other"
+in describe #{1; 5}
+--- expect: just one
+
+--- test: set pattern no match
+let describe s = match s with
+  | #{1; 2; 3} -> "all three"
+  | #{1} -> "just one"
+  | _ -> "other"
+in describe #{5; 6}
+--- expect: other
+
+--- test: set pattern empty set
+let describe s = match s with
+  | #{1} -> "has one"
+  | _ -> "other"
+in describe (Set.empty ())
+--- expect: other
+
+--- test: set pattern string keys
+let check s = match s with
+  | #{"hello"; "world"} -> "greeting"
+  | _ -> "other"
+in check (Set.of_list ["hello"; "world"; "foo"])
+--- expect: greeting
+
+--- test: multi-key map pattern
+let describe m = match m with
+  | #{1: _; 2: _; 3: _} -> "has 1,2,3"
+  | #{1: v} -> v
+  | _ -> "other"
+in describe #{1: "one"; 5: "five"}
+--- expect: one
+
+--- test: multi-key map pattern all present
+let describe m = match m with
+  | #{1: a; 2: b} -> a ^ b
+  | _ -> "other"
+in describe #{1: "hello"; 2: " world"; 3: "!"}
+--- expect: hello world
+
+--- test: multi-key map pattern miss
+let describe m = match m with
+  | #{"x": _; "y": _} -> "has both"
+  | _ -> "missing"
+in describe #{"x": 1}
+--- expect: missing

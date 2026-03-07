@@ -12,23 +12,22 @@ let () =
   while !i < argc do
     match Sys.argv.(!i) with
     | "-o" ->
-      if !i + 1 >= argc then begin
-        Printf.eprintf "Error: -o requires an argument\n";
-        exit 1
-      end;
-      output_file := Sys.argv.(!i + 1);
-      i := !i + 2
+        if !i + 1 >= argc then begin
+          Printf.eprintf "Error: -o requires an argument\n";
+          exit 1
+        end;
+        output_file := Sys.argv.(!i + 1);
+        i := !i + 2
     | "--emit-ir" ->
-      emit_ir := true;
-      i := !i + 1
-    | "-h" | "--help" ->
-      usage ()
+        emit_ir := true;
+        i := !i + 1
+    | "-h" | "--help" -> usage ()
     | arg when String.length arg > 0 && arg.[0] = '-' ->
-      Printf.eprintf "Unknown flag: %s\n" arg;
-      exit 1
+        Printf.eprintf "Unknown flag: %s\n" arg;
+        exit 1
     | arg ->
-      source_file := arg;
-      i := !i + 1
+        source_file := arg;
+        i := !i + 1
   done;
   if !source_file = "" then begin
     Printf.eprintf "Error: no source file specified\n";
@@ -41,16 +40,15 @@ let () =
     if !emit_ir then
       Interpreter_native.Driver.emit_ir_to_stdout ~source_file:!source_file
     else
-      Interpreter_native.Driver.compile_to_native
-        ~source_file:!source_file
+      Interpreter_native.Driver.compile_to_native ~source_file:!source_file
         ~output:!output_file
   with
   | Interpreter.Interp.Error msg ->
-    Printf.eprintf "%s\n" msg;
-    exit 1
+      Printf.eprintf "%s\n" msg;
+      exit 1
   | Interpreter_native.Driver.Driver_error msg ->
-    Printf.eprintf "Driver error: %s\n" msg;
-    exit 1
+      Printf.eprintf "Driver error: %s\n" msg;
+      exit 1
   | Failure msg ->
-    Printf.eprintf "Error: %s\n" msg;
-    exit 1
+      Printf.eprintf "Error: %s\n" msg;
+      exit 1

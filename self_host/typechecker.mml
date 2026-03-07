@@ -2936,6 +2936,7 @@ module Typechecker =
       | Ast.PatRecord fields -> Ast.PatRecord (List.map (fn (f, p) -> (f, go p)) fields)
       | Ast.PatArray ps -> Ast.PatArray (List.map go ps)
       | Ast.PatMap kvs -> Ast.PatMap (List.map (fn (k, v) -> (go k, go v)) kvs)
+      | Ast.PatSet elems -> Ast.PatMap (List.map (fn e -> (go e, Ast.PatWild)) elems)
       | Ast.PatAnnot ((p, a)) -> Ast.PatAnnot (go p, a)
       | _ -> pat
      in
@@ -3314,6 +3315,10 @@ module Typechecker =
       let val_ty = Types.new_tvar level in
       try_unify ctx ty (Types.TVariant ("map", key_ty :: val_ty :: []));
       List.concat_map (fn (kpat, vpat) -> List.concat (check_pattern ctx level kpat key_ty) (check_pattern ctx level vpat val_ty)) entries
+    | Ast.PatSet elems -> 
+      let elem_ty = Types.new_tvar level in
+      try_unify ctx ty (Types.TVariant ("set", elem_ty :: []));
+      List.concat_map (fn pat -> check_pattern ctx level pat elem_ty) elems
     | Ast.PatPolyVariant ((tag, None)) -> 
       let tail = Types.new_pvvar level in
       let row = Types.PVRow (tag, None, tail) in
@@ -5359,6 +5364,7 @@ module Typechecker =
       | Ast.PatAs ((p, name)) -> name :: pat_bound_names p
       | Ast.PatOr ((p1, _)) -> pat_bound_names p1
       | Ast.PatMap pairs -> List.concat_map (fn (_, v) -> pat_bound_names v) pairs
+      | Ast.PatSet elems -> List.concat_map pat_bound_names elems
       | Ast.PatAnnot ((p, _)) -> pat_bound_names p
       | Ast.PatWild | Ast.PatInt _ | Ast.PatFloat _ | Ast.PatBool _ | Ast.PatString _ | Ast.PatUnit | Ast.PatNil | Ast.PatPin _ | Ast.PatConstruct ((_, None)) | Ast.PatPolyVariant ((_, None)) -> []
 

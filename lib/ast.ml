@@ -1,5 +1,4 @@
 type visibility = Public | Private | Opaque
-
 type pv_annot_kind = PVExact | PVLower | PVUpper
 
 type ty_annot =
@@ -7,7 +6,7 @@ type ty_annot =
   | TyVar of string
   | TyArrow of ty_annot * ty_annot * eff_annot option
     (* param, return, optional effect annotation — None = infer *)
-  | TyRecord of (string * ty_annot) list * bool  (* fields, is_open *)
+  | TyRecord of (string * ty_annot) list * bool (* fields, is_open *)
   | TyList of ty_annot
   | TyArray of ty_annot
   | TyTuple of ty_annot list
@@ -15,15 +14,15 @@ type ty_annot =
   | TyQualified of string list * string
   | TyPolyVariant of pv_annot_kind * (string * ty_annot option) list
   | TyWithEffect of ty_annot * eff_annot
-    (* type / effect — only valid in return type position of let declarations *)
+(* type / effect — only valid in return type position of let declarations *)
 
 and eff_annot =
-  | EffAnnotPure                          (* / pure *)
-  | EffAnnotRow of eff_item list          (* / IO, State int, 'e *)
+  | EffAnnotPure (* / pure *)
+  | EffAnnotRow of eff_item list (* / IO, State int, 'e *)
 
 and eff_item =
-  | EffLabel of string * ty_annot list    (* IO, State int *)
-  | EffVar of string                      (* 'e — effect row variable *)
+  | EffLabel of string * ty_annot list (* IO, State int *)
+  | EffVar of string (* 'e — effect row variable *)
 
 type pattern =
   | PatWild
@@ -42,6 +41,7 @@ type pattern =
   | PatOr of pattern * pattern
   | PatArray of pattern list
   | PatMap of (pattern * pattern) list
+  | PatSet of pattern list
   | PatPolyVariant of string * pattern option
   | PatPin of string
   | PatAnnot of pattern * ty_annot
@@ -49,15 +49,28 @@ type pattern =
 type match_kind = Partial | Total
 
 type binop =
-  | Add | Sub | Mul | Div | Mod
-  | Eq | Neq | Lt | Gt | Le | Ge
-  | And | Or
+  | Add
+  | Sub
+  | Mul
+  | Div
+  | Mod
+  | Eq
+  | Neq
+  | Lt
+  | Gt
+  | Le
+  | Ge
+  | And
+  | Or
   | Concat
-  | Land | Lor | Lxor | Lsl | Lsr
+  | Land
+  | Lor
+  | Lxor
+  | Lsl
+  | Lsr
   | Pipe
 
-type unop =
-  | Neg | Not | Lnot
+type unop = Neg | Not | Lnot
 
 type expr =
   | EInt of int
@@ -91,9 +104,15 @@ type expr =
   | EFieldAssign of expr * string * expr
   | ESeq of expr * expr
   | EAnnot of expr * ty_annot
-  | EWhile of { while_cond: expr; while_body: expr }
-  | EFor of { for_var: string; for_iter: expr; for_body: expr }
-  | EForFold of { loop_var: string; loop_iter: expr; accum_var: string; accum_init: expr; fold_body: expr }
+  | EWhile of { while_cond : expr; while_body : expr }
+  | EFor of { for_var : string; for_iter : expr; for_body : expr }
+  | EForFold of {
+      loop_var : string;
+      loop_iter : expr;
+      accum_var : string;
+      accum_init : expr;
+      fold_body : expr;
+    }
   | EWhileLet of pattern * expr * expr
   | EBreak of expr option
   | EContinueLoop
@@ -113,18 +132,14 @@ type expr =
 
 and handler_arm =
   | HReturn of string * expr
-  | HOp of { op_name: string; arg: string; k: string; body: expr }
+  | HOp of { op_name : string; arg : string; k : string; body : expr }
 
-and param = {
-  name: string;
-  annot: ty_annot option;
-  is_generated: bool;
-}
+and param = { name : string; annot : ty_annot option; is_generated : bool }
 
 type record_field_def = {
-  rfd_mutable: bool;
-  rfd_name: string;
-  rfd_type: ty_annot;
+  rfd_mutable : bool;
+  rfd_name : string;
+  rfd_type : ty_annot;
 }
 
 type type_def =
@@ -132,47 +147,60 @@ type type_def =
     (* (name, arg_type, return_type) -- return_type = Some for GADT constructors *)
   | TDRecord of record_field_def list
   | TDAlias of ty_annot
-  | TDNewtype of string * ty_annot    (* constructor_name, underlying_type *)
+  | TDNewtype of string * ty_annot (* constructor_name, underlying_type *)
 
 type constraint_ = string * string list
-  (* class_name, tyvar_names — e.g. ("Show", ["a"]) *)
+(* class_name, tyvar_names — e.g. ("Show", ["a"]) *)
 
 type type_def_binding = {
-  td_params: string list;
-  td_name: string;
-  td_def: type_def;
-  td_deriving: string list;
+  td_params : string list;
+  td_name : string;
+  td_def : type_def;
+  td_deriving : string list;
 }
 
 type letrec_binding = {
-  lr_name: string;
-  type_params: string list;
-  params: param list;
-  ret_annot: ty_annot option;
-  constraints: constraint_ list;
-  body: expr;
+  lr_name : string;
+  type_params : string list;
+  params : param list;
+  ret_annot : ty_annot option;
+  constraints : constraint_ list;
+  body : expr;
 }
 
 type decl =
-  | DLet of { name: string; params: param list; ret_annot: ty_annot option; constraints: constraint_ list; body: expr }
+  | DLet of {
+      name : string;
+      params : param list;
+      ret_annot : ty_annot option;
+      constraints : constraint_ list;
+      body : expr;
+    }
   | DLetMut of string * expr
   | DLetRec of letrec_binding
   | DLetRecAnd of letrec_binding list
   | DType of type_def_binding
   | DTypeAnd of type_def_binding list
   | DExpr of expr
-  | DClass of { class_name: string; tyvars: string list; fundeps: (string list * string list) list; methods: (string * ty_annot) list }
-  | DInstance of { inst_class: string; inst_types: ty_annot list; inst_constraints: constraint_ list; inst_methods: (string * param list * expr) list }
+  | DClass of {
+      class_name : string;
+      tyvars : string list;
+      fundeps : (string list * string list) list;
+      methods : (string * ty_annot) list;
+    }
+  | DInstance of {
+      inst_class : string;
+      inst_types : ty_annot list;
+      inst_constraints : constraint_ list;
+      inst_methods : (string * param list * expr) list;
+    }
   | DEffect of string * string list * (string * ty_annot) list
     (* effect_name, type_params, [(op_name, op_type)] *)
   | DExtern of string * ty_annot
   | DModule of string * module_decl list
   | DOpen of string * string list option
-    (* module_name, None = open all, Some = selective *)
+(* module_name, None = open all, Some = selective *)
 
-and module_decl = {
-  vis: visibility;
-  decl: decl;
-}
+and module_decl = { vis : visibility; decl : decl }
 
 type program = decl list

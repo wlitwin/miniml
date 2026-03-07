@@ -50,6 +50,7 @@ module Ast =
     | PatOr of pattern * pattern
     | PatArray of pattern list
     | PatMap of (pattern * pattern) list
+    | PatSet of pattern list
     | PatPolyVariant of string * pattern option
     | PatPin of string
     | PatAnnot of pattern * ty_annot

@@ -1364,6 +1364,7 @@ module Js_codegen =
       Ref.set all_conds (List.concat (Ref.get all_conds) c);
       Ref.set all_binds (List.concat (Ref.get all_binds) b)) entries;
       (Ref.get all_conds, Ref.get all_binds)
+    | Ast.PatSet _ -> failwith "PatSet should be desugared before JS codegen"
 
   and compile_js_match_tree ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) =
     let scrut_js = compile_non_tail ctx cm.scrutinee in

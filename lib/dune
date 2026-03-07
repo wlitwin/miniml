@@ -32,8 +32,11 @@
   ../stdlib/show.mml
   ../stdlib/compat.mml)
  (action
-  (with-stdout-to %{target}
-   (run ocaml ../tools/gen_stdlib_sources.ml
+  (with-stdout-to
+   %{target}
+   (run
+    ocaml
+    ../tools/gen_stdlib_sources.ml
     ../stdlib/classes.mml
     ../stdlib/option_type.mml
     ../stdlib/eq.mml
