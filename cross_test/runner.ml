@@ -134,12 +134,12 @@ let run_tests _state tests =
       match tc.expect with
       | Value expected ->
         let outputs = ref [] in
-        Interpreter.Interp.output_fn := (fun s -> outputs := s :: !outputs);
+        state.Interpreter.Interp.output_fn := (fun s -> outputs := s :: !outputs);
         (let result =
           try Interpreter.Interp.run_string_in_state state tc.source
-          with e -> Interpreter.Interp.output_fn := print_endline; raise e
+          with e -> state.Interpreter.Interp.output_fn := print_endline; raise e
         in
-        Interpreter.Interp.output_fn := print_endline;
+        state.Interpreter.Interp.output_fn := print_endline;
         let pp = Interpreter.Bytecode.pp_value result in
         let actual =
           let outs = List.rev !outputs in
@@ -185,21 +185,21 @@ let run_tests _state tests =
           end else
             fail tc.name "expected type error containing %S, got: %s" substr msg)
       | RuntimeError substr ->
-        Interpreter.Interp.output_fn := (fun _ -> ());
+        state.Interpreter.Interp.output_fn := (fun _ -> ());
         (try
           let _ = Interpreter.Interp.run_string_in_state state tc.source in
-          Interpreter.Interp.output_fn := print_endline;
+          state.Interpreter.Interp.output_fn := print_endline;
           fail tc.name "expected runtime error, but succeeded"
         with
         | Interpreter.Vm.Runtime_error msg ->
-          Interpreter.Interp.output_fn := print_endline;
+          state.Interpreter.Interp.output_fn := print_endline;
           if contains_substring msg substr then begin
             Printf.printf "  PASS: %s\n" tc.name;
             incr passed
           end else
             fail tc.name "expected runtime error containing %S, got: %s" substr msg
         | Interpreter.Interp.Error msg ->
-          Interpreter.Interp.output_fn := print_endline;
+          state.Interpreter.Interp.output_fn := print_endline;
           if String.starts_with ~prefix:"Runtime error" msg
              && contains_substring msg substr then begin
             Printf.printf "  PASS: %s\n" tc.name;
@@ -207,7 +207,7 @@ let run_tests _state tests =
           end else
             fail tc.name "expected runtime error containing %S, got: %s" substr msg)
     with exn ->
-      Interpreter.Interp.output_fn := print_endline;
+      state.Interpreter.Interp.output_fn := print_endline;
       fail tc.name "exception: %s" (Printexc.to_string exn)
   ) tests;
   Printf.printf "\n";

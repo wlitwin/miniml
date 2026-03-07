@@ -1244,3 +1244,46 @@ open M
 ;;
 Hidden 99
 --- expect-type-error: unknown constructor
+
+--- test: local let rec shadows module function
+module Foo =
+  pub let check x = x + 100
+  pub let bar () =
+    let rec check t =
+      if t > 0 do check (t - 1) else t
+    in
+    check 5
+end
+;;
+Foo.bar ()
+--- expect: 0
+
+--- test: local let shadows module function in match
+module Baz =
+  pub let go x = x * 10
+  pub let run () =
+    let rec go t =
+      match t with
+      | 0 -> 42
+      | n -> go (n - 1)
+    in
+    go 3
+end
+;;
+Baz.run ()
+--- expect: 42
+
+--- test: tail-recursive pattern variable shadows function param
+module M =
+  pub let xs _ = 999
+  pub let count_list () =
+    let rec go xs acc =
+      match xs with
+      | [] -> acc
+      | _ :: xs -> go xs (acc + 1)
+    in
+    go [10; 20; 30; 40] 0
+end
+;;
+M.count_list ()
+--- expect: 4

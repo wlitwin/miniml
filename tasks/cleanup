@@ -1,0 +1,161 @@
+# Code Quality Assessment: MiniML Compiler
+
+## Overall Impression
+
+This is a capable, feature-rich compiler supporting HM type inference, row-polymorphic
+records/effects/variants, GADTs, typeclasses with fundeps, algebraic effects, and three
+backends. The architecture is sound -- clean pipeline from lexing through parsing,
+typechecking, and code generation with good separation between surface and typed ASTs.
+The code works and passes a large test suite.
+
+That said, several recurring patterns prevent it from reaching "professional-grade" quality.
+Findings are organized by severity.
+
+---
+
+## 1. Systemic Code Duplication (Most Impactful Issue)
+
+### Typechecker: Type annotation resolution (~500 lines, 8 copies)
+
+> **Status: Mostly done.** Consolidated into `resolve_ty_annot_shared` and
+> `resolve_ty_annot_def` with `make_def_resolve_var` factory. 3 of the original 8 copies
+> (`resolve_field`, `resolve_alias`, `resolve_nt`) no longer exist. Two local resolvers
+> remain: `process_class_def`'s local `resolve` and `resolve_inst_tys`'s local `go`, which
+> have slightly different TGen/TVar strategies that could still be unified.
+
+### Typechecker: Typed AST tree walkers (~400 lines, 7+ copies)
+
+> **Status: Mostly done.** Generic `iter_texpr_children` and `map_texpr_children` helpers
+> exist and are used by `find_var_type_in`, `strip_tail_resume`, `classify_texpr`. 6 manual
+> walkers remain but 4 are intentionally selective (handler analysis functions that only
+> check specific control flow patterns), and 1 uses the generic helper as fallback. The
+> remaining manual walker in `infer_implicit_constraints` has complex enough logic to
+> justify explicit matching.
+
+### Native codegen: Save/restore context (~200 lines, ~15 copies)
+
+> **Status: Mostly done.** `with_fresh_ir` helper exists and is used at 16 call sites.
+> 3 manual sites remain: 2 are error-recovery rollbacks in module/stdlib compilation that
+> restore broader state (global_decls, string_globals, buffer positions, hashtable
+> snapshots) beyond what `with_fresh_ir` handles; 1 partial site only restores `ctx.ir`.
+
+### Parser: Type parameter + deriving clause parsing (~120 lines, 3x each)
+
+> **Status: Mostly done.** Shared `parse_type_params_decl` and `parse_deriving` helpers
+> exist and are reused across all three sites. The type definition body parsing
+> (record/variant/alias) is still duplicated between main and `and` clauses (~24 lines).
+
+### Types.ml: `generalize`/`generalize_with_map` and `instantiate`/`instantiate_with_mapping`
+
+Each pair is ~150 lines of near-identical code differing only in whether the ID map is
+returned.
+
+---
+
+## 2. Module Size and Decomposition
+
+Several files have grown past the point where they're maintainable as single units:
+
+| File | Lines | Concern |
+|------|-------|---------|
+| `typechecker.ml` | 6,109 | Mixes type inference, typeclass resolution, record evidence, fundep improvement, exhaustiveness, modules, deriving, and the xform pass |
+| `codegen.ml` | 5,393 | Entire native backend in one `and` group. Builtins dispatch, pattern matching, format/show, operator wrappers all inlined |
+| `js_codegen.ml` | 2,616 | Similar monolith concern for JS backend |
+| `parser.ml` | 2,380 | Acceptable for a recursive descent parser, but declaration parsing has significant internal duplication |
+| `types.ml` | 1,502 | Core types + unification + generalization + instantiation + pretty-printing + instance resolution + fundep logic |
+
+The typechecker especially would benefit from extracting: (a) a generic `texpr` fold/map
+module, (b) the typeclass constraint inference pass, (c) the xform/evidence pass, (d)
+module handling.
+
+---
+
+## 3. Correctness Concerns
+
+### `Obj.repr` usage in VM
+
+`vm.ml` uses `Obj.repr`/`Obj.set_field` for `UPDATE_REC` (recursive value backpatching).
+This bypasses the type system and depends on runtime representation invariants. It works
+but is fragile and deserves a comment explaining the invariant.
+
+### Polymorphic variant hash collisions
+
+`Hashtbl.hash name land 0x3FFFFFFF` is used for polyvariant tag dispatch in all three
+backends. No collision detection exists. Two different variant names with the same hash
+would silently misdispatch.
+
+---
+
+## 4. Design Issues
+
+### Association-list type environment
+
+`type_env` in `types.ml` uses `(string * ...) list` for `variants`, `constructors`,
+`records`, `classes`, `instances`, `modules`, `type_aliases`. Lookups are O(n). As the
+stdlib grows, this becomes a real performance issue for typechecking.
+`Map.Make(String)` would be appropriate here.
+
+### Global mutable state
+
+- `typechecker.ml` line 87: `current_loc = ref ...` -- location tracking through global state
+- `types.ml` line 94: `next_id` counter -- global type variable counter
+- `types.ml` line 390: `pp_synonyms` -- global pretty-printer state
+- `parser.ml` line 646: `fresh_param_counter` -- never resets
+
+These prevent reentrancy and make testing harder. Threading location through the context
+(`ctx`) would be the highest-value fix.
+
+### Pretty-printer name collisions
+
+`types.ml`: `id mod 26` for type variables and `id mod 22` for effect variables means
+programs with >26 type variables or >22 effect variables will display different variables
+with the same name. This produces confusing error messages.
+
+### No `.mli` interface files
+
+No module in the project has an `.mli` file. Every function is implicitly public. Adding
+`.mli` files for the core modules (`types.mli`, `typechecker.mli`, `bytecode.mli`) would
+enforce encapsulation and serve as documentation.
+
+---
+
+## 5. Smaller Code Hygiene Issues
+
+- **Parser**: Three separate "can this token start an expression" predicates
+  (`at_expr_start`, `at_atom_start`, `is_keyword_expr_start`) that must be kept in sync
+  manually
+
+> **Note:** These serve distinct purposes — `at_expr_start` is the broadest (general
+> parsing), `at_atom_start` is narrower (restricted contexts), `is_keyword_expr_start`
+> disambiguates within `at_atom_start`. This is intentional architecture, not duplication.
+
+---
+
+## 6. What's Done Well
+
+To be fair, several things are genuinely good:
+
+- **Pipeline architecture** is clean and conventional -- lexer -> parser -> typechecker ->
+  codegen with clear boundaries
+- **Typed AST separation** from surface AST is the right design
+- **Row-polymorphic unification** across three domains (records, effects, polyvariants) is
+  correctly implemented with proper occurs checks and path compression
+- **The optimizer** (`optimize.ml`) is well-structured -- clean action-based marking pass,
+  separate application pass, no duplication
+- **`ir_emit.ml`** is a well-designed thin abstraction over LLVM IR text with automatic SSA
+  numbering
+- **`driver.ml`** is clean and focused
+- **Test coverage** is substantial (8,900+ lines of tests, cross-backend parity testing)
+- **Error messages** are generally helpful with good location information
+- **Value restriction** is properly implemented
+- **The Pratt parser** for expressions is clean and extensible
+
+---
+
+## Prioritized Recommendations
+
+1. **Parameterize type annotation resolution** -- 2 local resolvers remain in class/instance processing
+2. **Unify `generalize`/`instantiate` pairs** in types.ml -- ~150 lines each
+3. **Replace assoc-list `type_env`** with `Map.Make(String)` for performance
+4. **Add `.mli` files** for `types`, `typechecker`, `bytecode`
+5. **Add polyvariant hash collision detection** -- silent misdispatch risk

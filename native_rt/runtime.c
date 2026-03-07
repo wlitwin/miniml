@@ -2001,6 +2001,82 @@ restart:
     }
 }
 
+/* ---- Structural hash ---- */
+
+static int64_t hash_mix(int64_t h, int64_t x) {
+    return (h ^ x) * 0x01000193LL;
+}
+
+static int64_t hash_mix_bytes(int64_t h, int64_t n) {
+    h = hash_mix(h, n & 0xff);
+    h = hash_mix(h, (n >> 8) & 0xff);
+    h = hash_mix(h, (n >> 16) & 0xff);
+    h = hash_mix(h, (n >> 24) & 0xff);
+    h = hash_mix(h, (n >> 32) & 0xff);
+    h = hash_mix(h, (n >> 40) & 0xff);
+    h = hash_mix(h, (n >> 48) & 0xff);
+    h = hash_mix(h, (n >> 56) & 0xff);
+    return h;
+}
+
+static int64_t hash_value(int64_t h, mml_value v) {
+restart:
+    if (MML_IS_INT(v)) {
+        return hash_mix_bytes(h, MML_INT_VAL(v));
+    }
+
+    int tag = MML_HDR_TAG(v);
+    mml_value *p = (mml_value *)(intptr_t)v;
+
+    switch (tag) {
+    case MML_HDR_STRING: {
+        int64_t len = MML_STR_LEN(v);
+        const char *data = MML_STR_DATA(v);
+        for (int64_t i = 0; i < len; i++)
+            h = hash_mix(h, (unsigned char)data[i]);
+        return h;
+    }
+    case MML_HDR_FLOAT: {
+        union { double d; int64_t i; } u;
+        u.d = *(double *)p;
+        return hash_mix_bytes(h, u.i);
+    }
+    case MML_HDR_CONS:
+        h = hash_value(h, p[0]);
+        v = p[1]; goto restart;
+    case MML_HDR_TUPLE:
+    case MML_HDR_RECORD: {
+        int64_t n = MML_HDR_SIZE(v);
+        h = hash_mix(h, tag == MML_HDR_RECORD ? 3 : 1);
+        for (int64_t i = 0; i < n; i++)
+            h = hash_value(h, p[i]);
+        return h;
+    }
+    case MML_HDR_VARIANT:
+    case MML_HDR_POLYVAR:
+        h = hash_mix_bytes(h, MML_INT_VAL(p[0]));
+        return hash_value(h, p[1]);
+    case MML_HDR_PAIR:
+        h = hash_value(h, p[0]);
+        return hash_value(h, p[1]);
+    case MML_HDR_ARRAY: {
+        int64_t len = MML_ARR_LEN(v);
+        mml_value *data = MML_ARR_DATA(v);
+        h = hash_mix(h, 4);
+        for (int64_t i = 0; i < len; i++)
+            h = hash_value(h, data[i]);
+        return h;
+    }
+    default:
+        return h;
+    }
+}
+
+mml_value mml_poly_hash(mml_value v) {
+    int64_t h = hash_value(0x811c9dc5LL, v);
+    return MML_TAG_INT(h);
+}
+
 /* ---- Closure application ---- */
 
 typedef mml_value (*fn0)(void *);

@@ -1,0 +1,251 @@
+# lib/ Code Quality Audit
+
+## Critical Issues
+
+### 1. Unsafe `Obj.set_field` in VM (vm.ml:1152-1183)
+The `UPDATE_REC` instruction mutates immutable OCaml list cons cells in-place using
+`Obj.repr`/`Obj.set_field`. This breaks OCaml's GC write barrier and relies on internal
+heap layout assumptions. A GC update or compiler flag change could silently corrupt memory.
+
+### 2. ~~`find_and_remove` correctness bug (vm.ml:969-977)~~ [FIXED]
+Rewrote `find_and_remove` as a pure function with an accumulator parameter. Returns
+`(entry, remaining_list)` with a single `vm.return_stack <- remaining` mutation at the
+call site, instead of mutating `vm.return_stack` at every recursion level.
+
+### 3. JSON deserializer accepts malformed input (deserialize.ml)
+- `true`/`false`/`null` parsed by fixed offset, not content — `"taco"` would parse as `true`
+- Unterminated strings silently accepted
+- Unknown characters silently skipped
+- Accessor functions (`json_string`, `json_int`, etc.) return silent defaults (`""`, `0`,
+  `false`) on type mismatch instead of errors — malformed bytecode becomes wrong-but-silent
+  behavior
+
+
+## Architectural Issues
+
+### 4. ~~Global mutable state throughout~~ [FIXED]
+All 6 sites of global mutable state eliminated:
+- `Types.pp_synonyms` ref → `~synonyms` parameter threaded through pp functions
+- `Interp.output_fn` / `Interp.script_argv` refs → fields in `repl_state`
+- `Interp.captured_setups` / `capture_mode` / `captured_typed_setups` / `js_capture_mode`
+  refs → `setup_protos` / `setup_typed` fields in `repl_state`
+- `js_codegen.ml` manual save/restore → 6 `with_*` helpers using `Fun.protect` for
+  exception safety
+- `Typechecker.current_loc` ref → `loc` field threaded through `ctx` record (~265 call sites)
+- `Interp.eval_state` / `eval_state_changed` refs → `state_ref` field in `repl_state`
+
+### 5. No `.mli` interface files
+None of the 17 `.ml` files have corresponding `.mli` files. This means there are no
+enforced API boundaries, no documentation of public vs. private functions, and no separate
+compilation benefits.
+
+### 6. ~~Monster functions~~ [FIXED]
+- vm.ml `run`: Extracted `dispatch_call` helper, eliminating 4x duplicated call dispatch
+  (CALL, TAIL_CALL, GET_LOCAL_CALL, GET_GLOBAL_CALL). Added section comments for 12 opcode
+  groups.
+- typechecker.ml `synth`: Extracted 5 large arms as `and` helpers (`synth_field`,
+  `synth_field_assign`, `synth_let_rec`, `synth_record_update`, `synth_let_rec_and`),
+  reducing `synth` from 525 to ~270 lines.
+- typechecker.ml `check_module_item`: Bundled 11 mutable ref accumulators into `module_acc`
+  record type, reducing signature from 15 to 5 parameters.
+- typechecker.ml `infer_implicit_constraints`: Extracted `find_class_method_for_var`,
+  `record_class_constraint`, and `promote_pending_constraints` as named locals. TEVar
+  branch reduced from 144 to ~15 lines.
+- js_codegen.ml: Already well-decomposed with 21 section comments; accepted as-is.
+
+
+## Significant Duplication
+
+### 7. ~~Type annotation resolution copied 5 times (typechecker.ml)~~ [FIXED]
+Reduced from 4 copies to 2: `resolve_ty_annot_shared` (expression context with freshening)
+and `resolve_ty_annot_def` (definition context with callbacks). `resolve_inst_tys` and the
+`process_class_def` inline resolver now delegate to `resolve_ty_annot_def ~check_synonyms:false`.
+Also fixed latent bug: class method resolver was missing `byte`/`rune` primitive types.
+
+### 8. ~~Frame-return logic triple-duplicated (vm.ml)~~ [FIXED]
+Extracted `complete_frame` helper returning `FrameLoop | FrameReturn of value`. Three
+duplicated blocks replaced with `match complete_frame result with ...`.
+
+### 9. ~~UTF-8 encode/decode duplicated 4+ times~~ [FIXED]
+Created `lib/utf8.ml` with `encode_rune`, `rune_to_string`, `byte_length`, `decode_next`.
+Replaced duplication in `std.ml`, `interp.ml`. Lexer kept as-is (has extra validation).
+
+### 10. ~~`collect_params` verbatim copy (compiler.ml)~~ [FIXED]
+Extracted to module-level helper before the mutual recursion block.
+
+### 11. ~~`compile_class_binop` / `compile_class_unop` near-identical~~ [FIXED]
+Extracted `resolve_and_emit_class_method` in compiler.ml and `resolve_class_dict_access` in
+js_codegen.ml. Binop/unop reduced to 3-4 lines each.
+
+### 12. ~~`load_bundle_parsed` / `prepare_bundle` (deserialize.ml)~~ [FIXED]
+Extracted `setup_bundle` helper. Both callers reduced to 2-3 lines.
+
+### 13. ~~`expr_has_perform` / `expr_has_unhandled_perform` (js_codegen.ml)~~ [FIXED]
+Unified into `expr_has_perform_with ~check_perform` with predicate parameter.
+Two public wrappers provide the original API.
+
+
+## Robustness Gaps
+
+### 14. `failwith` and `assert false` instead of proper errors
+- typechecker.ml:4390: `failwith "empty DTypeAnd"` — crashes with no source location
+- vm.ml, typechecker.ml: ~10 `assert false` arms that would produce `Assert_failure` with
+  no diagnostics if hit
+- vm.ml:1202: `with _ -> 0` silently swallows all exceptions in `lookup_line`
+- vm.ml:188-190: `values_compare` returns `0` (equal) for mismatched types instead of
+  raising
+
+### 15. ~~`handler_body_has_resume` incomplete coverage (typechecker.ml)~~ [FIXED]
+Unified `handler_body_has_resume` and `handler_body_has_perform` into a shared
+`handler_body_walk ~pred` that covers all 40 TEExpr variants (except TEFun — closures are
+opaque to handler classification). Both functions were missing TEArray, TEConstruct, TEIndex,
+TERecordUpdate, TEField, TEFieldAssign, TEWhile, etc. — resume in those positions caused
+incorrect THOpTry classification. `handler_body_has_resume` additionally missed TEApp,
+TEBinop, TEUnop, TECons, TETuple, TERecord, TEIf conditions, and TEMatch scrutinees/guards.
+
+### 16. No parse error recovery
+Any single parse error aborts the entire parse. No synchronization at declaration
+boundaries. Users get only one error per compilation attempt.
+
+### 17. ~~Effect row variable names silently discarded (typechecker.ml:436-439)~~ [FIXED]
+Named effect row variables (e.g., `'e`) now share across the same annotation scope via
+an `eff_tvars` hashtable, consistent with how type variables (`'a`) share via `tvars`.
+Writing `'e` in two places on the same signature now unifies them to the same effect
+row variable.
+
+### 18. `ESeq` doesn't enforce `unit` on discarded arm (typechecker.ml:2001-2004)
+`42; "hello"` is silently accepted — no warning for discarded non-unit values.
+
+
+## Performance Anti-patterns
+
+### 19. ~~O(n) linear scans where O(1) is possible~~ [FIXED]
+All 7 sites replaced with O(1) or O(n) alternatives:
+- compiler.ml `add_constant`: Hashtbl dedup index (O(n) → O(1))
+- compiler.ml `find_local`: Hashtbl lookup with `rebuild_local_index` for match arm restore (O(n) → O(1))
+- compiler.ml `add_upvalue`: Hashtbl dedup index (O(n) → O(1))
+- compiler.ml `find_global`/`find_or_add_global`: Hashtbl index shared across nested states (O(n) → O(1))
+- lexer.ml keyword lookup: Hashtbl instead of 37-element association list (O(n) → O(1))
+- typechecker.ml `find_missing`: sorted-list walk instead of `List.mem` loop (O(n²) → O(n))
+- vm.ml/bytecode.ml: `fiber_frame_depth` counter instead of `List.length` (O(n²) → O(1))
+
+
+## Code Smells
+
+### 20. ~~Dead code~~ [FIXED]
+Removed `emit_builtin_call2` (compiler.ml), `count_arrows` (compiler.ml, unused in mutual
+recursion group), and `WHILE` token (token.ml — declared but never produced by lexer or
+consumed by parser).
+
+### 21. ~~Magic strings/numbers scattered~~ [PARTIAL]
+- `0x3FFFFFFF` poly-variant tag mask → extracted as `Types.polyvar_tag_mask` and
+  `Types.polyvar_tag` helper. All 13 occurrences across compiler.ml, js_codegen.ml, and
+  native/codegen.ml replaced.
+- `"__dict"`, `"__k"`, `"__x"`, `"__p%d"`, `"__destruct"` — generated names are
+  self-documenting string literals, not worth extracting to constants.
+- `"Show"`, `"Eq"`, `"Ord"`, `"Num"` — fundamental class names unlikely to change,
+  self-documenting as-is.
+
+### 22. ~~Inconsistent AST design (ast.ml)~~ [FIXED]
+- `EMatch` bool → `match_kind` type (`Partial | Total`)
+- `EFor`/`EWhile` positional tuples → inline records (like `EForFold`)
+- `TEWhile` in typed AST also converted to inline record `{ tw_cond; tw_body }`
+- `TDRecord` tuple `(bool * string * ty_annot)` → `record_field_def` record type
+- `type_def_binding` fields standardized to `td_` prefix (`td_name`, `td_def`, `td_deriving`)
+- All changes mirrored in self-hosted compiler (ast.mml, parser.mml, typechecker.mml,
+  compiler.mml, js_codegen.mml)
+
+### 23. ~~`mono_scheme` duplicates `Types.mono` (typechecker.ml)~~ [FIXED]
+Replaced all 5 usages with `Types.mono` and deleted the local definition.
+
+### 24. TCO via buffer surgery (js_codegen.ml:996-1010)
+Extracts previously-emitted code from a buffer, wraps it in `while(true)`, and re-injects
+it. Fragile and will mis-indent under edge cases.
+
+### 25. ~~`ignore name` anti-pattern (typechecker.ml)~~ [FIXED]
+Replaced `ignore name` with `_` in the binding pattern at both sites.
+
+
+## Lexer/Parser Specific
+
+### 26. ~~String escape handling duplicated 3 times (lexer.ml)~~ [FIXED]
+Extracted `escape_char` helper mapping common escapes (`\n`, `\t`, `\\`, `"`) to
+replacement chars. `read_string` and `read_interp_string` both delegate to it.
+Interp version handles `{`/`}` first, then falls through. Rune escapes (codepoints) and
+nested interpolation (source preservation) left as-is — fundamentally different operations.
+
+### 27. ~~`fresh_param_counter` is never-reset global state (parser.ml)~~ [FIXED]
+Counter reset to 0 at the start of `parse_program` and `parse_expr_string`, making
+generated names (`__p1`, `__p2`) deterministic across invocations.
+
+### 28. ~~`parse_type_decl` duplicates its variant-parsing body for `and` clauses~~ [FIXED]
+Extracted `parse_variant_ctors` (23-line variant constructor loop) and `parse_type_rhs`
+(dispatches record/variant/alias). Both main type decl and `and` clause call
+`parse_type_rhs`, eliminating the duplication.
+
+### 29. `parse_let_decl` is 100 lines mixing 6 responsibilities (parser.ml)
+Handles destructuring let, mutable let, recursive let, recursive let with `and`, let-in
+detection, and top-level let. Each should be a separate function.
+
+### 30. ~~Error messages use internal token names (parser.ml)~~ [FIXED]
+Added `describe_token_kind` to token.ml producing user-friendly names: `AMPAMP` → `"'&&'"`,
+`LBRACE` → `"'{'"`, `INT _` → `"integer literal"`, `EOF` → `"end of input"`, etc.
+`expect` in parser.ml updated to use it. `pp_token_kind` retained for debugging.
+
+### 31. ~~`lookahead_in_after_balanced` is unbounded O(n) scan (parser.ml)~~ [FIXED]
+Added `max_scan = 100` token limit. If exceeded, returns `false` — falls through to other
+`for` forms which parse correctly or produce a sensible error. 100 tokens is generous for
+any real destructuring pattern.
+
+### 32. ~~`resolve_fun_params` desugaring logic implemented 3 times~~ [FIXED]
+Added `~is_generated` parameter to `resolve_fun_params`. Lambda site uses
+`~is_generated:false`, all other sites use `~is_generated:true`. `wrap_params_expr` and
+instance method parsing now delegate to the shared function instead of reimplementing.
+
+### 33. ~~`_constraints` silently discarded in `parse_instance_decl`~~ [FIXED]
+Now errors if method-level constraints are non-empty: "constraints on individual instance
+methods are not supported". Method-level constraints don't make semantic sense — constraints
+belong at the instance level.
+
+### 34. ~~`_is_open` silently discarded in type declarations~~ [FIXED]
+Now errors if `..` appears in a record type definition: "open record types (..) are not
+supported in type definitions". Row polymorphism (`..`) is an annotation-time structural
+concept, not valid in nominal type definitions.
+
+
+## Serialization Specific
+
+### 35. Float formatting logic duplicated (serialize.ml:126-129 and js_codegen.ml:445-447)
+Trailing-dot stripping from `%.17g` output appears in both files.
+
+### 36. Opcode number 71 skipped (serialize_bin.ml)
+Sequence goes 70, 72 with no comment about the gap. Should document the removed opcode.
+
+### 37. Binary deserializer has no bounds checking (deserialize_bin.ml:14-24)
+All reads do unchecked string indexing. Truncated input throws raw `Invalid_argument` with
+no context about what was being read.
+
+### 38. Capture kind validation accepts any non-zero as CaptureUpvalue (deserialize_bin.ml:59-60)
+Should validate `kind = 0 | 1` explicitly and error on anything else.
+
+
+## Summary Table
+
+| #  | Category                          | Count    | Severity    | Status      |
+|----|-----------------------------------|----------|-------------|-------------|
+| 4  | Global mutable state              | 6 sites  | High        | FIXED       |
+| 7-13 | Major code duplication          | 7        | High        | FIXED       |
+| 1  | Unsafe `Obj.set_field` in VM      | 1        | Critical    | Open        |
+| 2  | `find_and_remove` correctness bug | 1        | Critical    | FIXED       |
+| 3  | Silent-failure deserialization    | 4        | Critical    | Open        |
+| 5  | Missing interface files (.mli)    | 17 files | Medium-High | Open        |
+| 6  | Monster functions (>400 lines)    | 4        | Medium      | FIXED       |
+| 14 | failwith/assert false crash risks | ~15      | Medium      | Open        |
+| 15 | `handler_body_has_resume` gaps    | 1        | Medium      | FIXED       |
+| 16 | No parse error recovery           | 1        | Medium      | Open        |
+| 17 | Effect row vars silently discarded| 1        | Medium      | FIXED       |
+| 18 | `ESeq` no unit enforcement        | 1        | Medium      | Open        |
+| 19 | O(n) where O(1) is possible       | 7 sites  | Medium      | FIXED       |
+| 20-25 | Code smells                    | ~40      | Low         | Mostly FIXED |
+| 26-34 | Lexer/Parser specific          | 9        | Low-Medium  | 8/9 FIXED   |
+| 35-38 | Serialization specific         | 4        | Low-Medium  | Open        |

@@ -66,6 +66,17 @@ extern __show_unit : unit -> string
 extern __show_byte : byte -> string
 extern __show_rune : rune -> string
 
+(* Structural comparison — bypasses typeclass dispatch *)
+extern __structural_eq : 'a -> 'a -> bool
+extern __structural_neq : 'a -> 'a -> bool
+extern __structural_lt : 'a -> 'a -> bool
+extern __structural_gt : 'a -> 'a -> bool
+extern __structural_le : 'a -> 'a -> bool
+extern __structural_ge : 'a -> 'a -> bool
+
+(* Structural hash — bypasses typeclass dispatch *)
+extern __poly_hash : 'a -> int
+
 (* Index primitives *)
 extern __index_at_array : int -> 'a array -> 'a
 extern __index_at_string : int -> string -> byte

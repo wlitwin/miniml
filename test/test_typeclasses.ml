@@ -553,7 +553,7 @@ let () =
       end
       ()
     |} in
-    let state = match !(Interpreter.Interp.eval_state) with
+    let state = match !((get_stdlib_state ()).Interpreter.Interp.state_ref) with
       | Some s -> s | None -> failwith "no state" in
     let browse = Interpreter.Interp.browse_module state "TestMod" in
     assert (contains_substring browse "class Render");
@@ -595,10 +595,10 @@ let () =
     expect_stdlib_string {|show (1, true, "x")|} "(1, true, x)");
 
   test "show map" (fun () ->
-    expect_stdlib_string {|show #{"a": 1}|} {|[(a, 1)]|});
+    expect_stdlib_string {|show #{"a": 1}|} {|#{a: 1}|});
 
   test "show set" (fun () ->
-    expect_stdlib_string {|show (Set.of_list [1; 2; 3])|} "[(1, ()); (2, ()); (3, ())]");
+    expect_stdlib_string {|show (Set.of_list [1; 2; 3])|} "#{1; 2; 3}");
 
   test "show nested list" (fun () ->
     expect_stdlib_string {|show [[1; 2]; [3; 4]]|} "[[1; 2]; [3; 4]]");

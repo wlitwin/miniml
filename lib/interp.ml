@@ -16,8 +16,6 @@ let wrap_errors f =
   | Vm.Runtime_error msg ->
     raise (Error (Printf.sprintf "Runtime error: %s" msg))
 
-let output_fn = ref print_endline
-let script_argv : string array ref = ref Sys.argv
 
 (* ---- Built-in definitions ---- *)
 
@@ -61,7 +59,7 @@ let int2 = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TArrow (Types.TInt, T
 let float2 = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TFloat))
 let bool2 = Types.TArrow (Types.TBool, Types.EffEmpty, Types.TArrow (Types.TBool, Types.EffEmpty, Types.TBool))
 
-let builtins : builtin_def list = [
+let builtins output_fn : builtin_def list = [
   (* Int modulo (stays as builtin, not in Num class) *)
   { name = "mod"; ty = int2; quant = 0; arity = 2;
     impl = fun args ->
@@ -71,7 +69,7 @@ let builtins : builtin_def list = [
 
   (* Print *)
   { name = "print";
-    ty = Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TUnit);
+    ty = Types.TArrow (Types.TGen 0, Types.EffRow ("IO", [], Types.EffEmpty), Types.TUnit);
     quant = 1; arity = 1;
     impl = fun args ->
       !output_fn (Bytecode.pp_value (List.nth args 0));
@@ -166,22 +164,7 @@ let builtins : builtin_def list = [
     quant = 0; arity = 1;
     impl = fun args ->
       let cp = as_rune (List.nth args 0) in
-      let buf = Buffer.create 4 in
-      if cp < 0x80 then Buffer.add_char buf (Char.chr cp)
-      else if cp < 0x800 then begin
-        Buffer.add_char buf (Char.chr (0xC0 lor (cp lsr 6)));
-        Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-      end else if cp < 0x10000 then begin
-        Buffer.add_char buf (Char.chr (0xE0 lor (cp lsr 12)));
-        Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
-        Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-      end else begin
-        Buffer.add_char buf (Char.chr (0xF0 lor (cp lsr 18)));
-        Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 12) land 0x3F)));
-        Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
-        Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-      end;
-      VString (Buffer.contents buf) };
+      VString (Utf8.rune_to_string cp) };
 
   (* Math primitives — float operations need native support *)
   { name = "__math_pow";
@@ -273,15 +256,23 @@ let copy_fiber (f : Bytecode.fiber) : Bytecode.fiber =
     fiber_stack = new_stack;
     fiber_sp = f.fiber_sp;
     fiber_frames = new_frames;
+    fiber_frame_depth = f.fiber_frame_depth;
     fiber_extra_args = List.map (fun l -> List.map (fun v -> v) l) f.fiber_extra_args;
   }
 
 let copy_continuation = function
   | Bytecode.VContinuation cd ->
+    let new_fiber = copy_fiber cd.cd_fiber in
+    let new_body_fiber =
+      if cd.cd_body_fiber == cd.cd_fiber then new_fiber
+      else copy_fiber cd.cd_body_fiber
+    in
     Bytecode.VContinuation {
-      cd_fiber = copy_fiber cd.cd_fiber;
+      cd_fiber = new_fiber;
       cd_return_handler = cd.cd_return_handler;
       cd_op_handlers = cd.cd_op_handlers;
+      cd_body_fiber = new_body_fiber;
+      cd_intermediate_handlers = cd.cd_intermediate_handlers;
       cd_used = false;
     }
   | v -> raise (Vm.Runtime_error
@@ -302,6 +293,11 @@ type repl_state = {
   global_names: string Dynarray.t;
   mutable_globals: (string, unit) Hashtbl.t;
   globals: (int, Bytecode.value) Hashtbl.t;
+  output_fn: (string -> unit) ref;
+  argv: string array ref;
+  setup_protos: Bytecode.prototype list;
+  setup_typed: (Types.type_env * Typechecker.tprogram) list;
+  state_ref: repl_state option ref;
 }
 
 let builtin_table (state : repl_state) : Deserialize.builtin_table =
@@ -326,6 +322,8 @@ let builtin_table (state : repl_state) : Deserialize.builtin_table =
   tbl
 
 let setup_builtins () =
+  let output_fn = ref print_endline in
+  let argv = ref Sys.argv in
   let global_names = Dynarray.create () in
   let globals = Hashtbl.create 64 in
   let stdlib_pub_vars = ref [] in
@@ -341,7 +339,7 @@ let setup_builtins () =
     let scheme = { Types.quant = b.quant; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = b.ty } in
     stdlib_pub_vars := (b.name, scheme) :: !stdlib_pub_vars;
     [(b.name, scheme); (stdlib_name, scheme)]
-  ) builtins in
+  ) (builtins output_fn) in
   (* Register polymorphic copy_continuation builtin: 'a -> 'a *)
   let copy_idx = Dynarray.length global_names in
   Dynarray.add_last global_names "copy_continuation";
@@ -356,9 +354,30 @@ let setup_builtins () =
   Dynarray.add_last global_names "Stdlib.copy_continuation";
   Hashtbl.replace globals copy_sidx copy_ext;
   let copy_scheme = { Types.quant = 1; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = [];
-    body = Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TGen 0) } in
+    body = Types.TArrow (Types.TGen 0, Types.EffRow ("IO", [], Types.EffEmpty), Types.TGen 0) } in
   stdlib_pub_vars := ("copy_continuation", copy_scheme) :: !stdlib_pub_vars;
   let vars = ("copy_continuation", copy_scheme) :: ("Stdlib.copy_continuation", copy_scheme) :: vars in
+  (* No-op cache functions — used by the self-hosted compiler's extern declarations.
+     In the bytecode VM, caching is not needed (setup runs once per process). *)
+  let cache_fns = [
+    ("__cache_has", 1, (fun _args -> Bytecode.VBool false));
+    ("__cache_get", 1, (fun _args -> Bytecode.VUnit));
+    ("__cache_set", 2, (fun _args -> Bytecode.VUnit));
+  ] in
+  let vars = List.fold_left (fun vs (name, arity, impl) ->
+    let idx = Dynarray.length global_names in
+    Dynarray.add_last global_names name;
+    Hashtbl.replace globals idx
+      (Bytecode.VExternal { ext_name = name; ext_arity = arity; ext_fn = impl; ext_args = [] });
+    let ty = match arity with
+      | 1 -> Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TGen 1)
+      | _ -> Types.TArrow (Types.TGen 0, Types.EffEmpty,
+               Types.TArrow (Types.TGen 1, Types.EffEmpty, Types.TUnit))
+    in
+    let scheme = { Types.quant = 2; equant = 0; pvquant = 0; rquant = 0;
+                   constraints = []; record_evidences = []; body = ty } in
+    (name, scheme) :: vs
+  ) vars cache_fns in
   let ctx = Typechecker.{
     vars;
     mutable_vars = [];
@@ -370,8 +389,9 @@ let setup_builtins () =
     return_type = None;
     inside_handler = false;
     return_used = ref false;
+    loc = Token.{ line = 0; col = 0; offset = 0 };
   } in
-  (ctx, global_names, globals, !stdlib_pub_vars)
+  (ctx, global_names, globals, !stdlib_pub_vars, output_fn, argv)
 
 (* ---- Embedding API: register custom external functions ---- *)
 
@@ -408,7 +428,7 @@ let register_class state ~name ~tyvars ~fundeps ~methods =
   let type_env = { state.ctx.type_env with
     Types.classes = class_def :: state.ctx.type_env.classes;
   } in
-  let ctx = Typechecker.{ vars; mutable_vars = state.ctx.mutable_vars; type_env; loop_info = None; current_module = None; constraint_tvars = []; current_eff = Types.EffEmpty; return_type = None; inside_handler = false; return_used = ref false } in
+  let ctx = Typechecker.{ vars; mutable_vars = state.ctx.mutable_vars; type_env; loop_info = None; current_module = None; constraint_tvars = []; current_eff = Types.EffEmpty; return_type = None; inside_handler = false; return_used = ref false; loc = Token.{ line = 0; col = 0; offset = 0 } } in
   { state with ctx }
 
 let register_instance state ~class_name ~tys ~methods =
@@ -476,15 +496,6 @@ let register_module state mod_name (fns : (string * Types.ty * int * (Bytecode.v
 let make_ext name arity fn =
   Bytecode.VExternal { ext_name = name; ext_arity = arity; ext_fn = fn; ext_args = [] }
 
-let captured_setups : Bytecode.prototype list ref = ref []
-let capture_mode : bool ref = ref false
-
-let captured_typed_setups : (Types.type_env * Typechecker.tprogram) list ref = ref []
-let js_capture_mode : bool ref = ref false
-
-let start_js_capture () = js_capture_mode := true; captured_typed_setups := []
-let stop_js_capture () = js_capture_mode := false
-
 let eval_setup state source =
   let tokens = Lexer.tokenize source in
   let program = Parser.parse_program tokens in
@@ -492,15 +503,17 @@ let eval_setup state source =
     Typechecker.check_program_in_ctx state.ctx program in
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
   let typed_program = Typechecker.classify_handlers typed_program in
+  let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+  let typed_program = Texpr_opt.optimize_program typed_program in
   let compiled =
     Compiler.compile_program_with_globals
       ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
   let _ = Vm.execute_with_globals compiled state.globals in
-  if !capture_mode then
-    captured_setups := !captured_setups @ [compiled.main];
-  if !js_capture_mode then
-    captured_typed_setups := !captured_typed_setups @ [(ctx'.Typechecker.type_env, typed_program)];
-  { state with ctx = ctx' }
+  { state with
+    ctx = ctx';
+    setup_protos = state.setup_protos @ [compiled.main];
+    setup_typed = state.setup_typed @ [(ctx'.Typechecker.type_env, typed_program)];
+  }
 
 let setup_default_classes state stdlib_pub_vars =
   (* Register typeclass primitive extern implementations.
@@ -574,6 +587,15 @@ let setup_default_classes state stdlib_pub_vars =
   reg "__show_unit" 1 (fun _args -> Bytecode.VString "()");
   reg "__show_byte" 1 (fun args -> Bytecode.VString (Printf.sprintf "#%02x" (as_byte (List.nth args 0))));
   reg "__show_rune" 1 (fun args -> Bytecode.VString (Bytecode.pp_value (List.nth args 0)));
+  (* Structural comparison primitives — bypass typeclass dispatch *)
+  reg "__structural_eq" 2 (fun args -> Bytecode.VBool (Vm.values_equal (List.nth args 0) (List.nth args 1)));
+  reg "__structural_neq" 2 (fun args -> Bytecode.VBool (not (Vm.values_equal (List.nth args 0) (List.nth args 1))));
+  reg "__structural_lt" 2 (fun args -> Bytecode.VBool (Vm.values_compare (List.nth args 0) (List.nth args 1) < 0));
+  reg "__structural_gt" 2 (fun args -> Bytecode.VBool (Vm.values_compare (List.nth args 0) (List.nth args 1) > 0));
+  reg "__structural_le" 2 (fun args -> Bytecode.VBool (Vm.values_compare (List.nth args 0) (List.nth args 1) <= 0));
+  reg "__structural_ge" 2 (fun args -> Bytecode.VBool (Vm.values_compare (List.nth args 0) (List.nth args 1) >= 0));
+  (* Structural hash — bypass typeclass dispatch *)
+  reg "__poly_hash" 1 (fun args -> Bytecode.VInt (Vm.value_hash (List.nth args 0)));
   (* Index primitives *)
   reg "__index_at_array" 2 (fun args ->
     let idx = as_int (List.nth args 0) in
@@ -592,6 +614,8 @@ let setup_default_classes state stdlib_pub_vars =
   (* Load all class definitions, primitive instances, option type, etc. from stdlib *)
   let state = eval_setup state Stdlib_sources.classes in
   let state = eval_setup state Stdlib_sources.option_type in
+  let state = eval_setup state Stdlib_sources.eq in
+  let state = eval_setup state Stdlib_sources.ord in
   let state = eval_setup state Stdlib_sources.iter in
   let state = eval_setup state Stdlib_sources.map_class in
   let state = eval_setup state Stdlib_sources.show in
@@ -624,12 +648,8 @@ let setup_default_classes state stdlib_pub_vars =
 
 (* ---- Dynamic eval support ---- *)
 
-let eval_state : repl_state option ref = ref None
-(* Flag set when eval_source updates eval_state during VM execution *)
-let eval_state_changed = ref false
-
-let eval_source source =
-  match !eval_state with
+let eval_source state_ref source =
+  match !state_ref with
   | None -> raise (Error "eval: interpreter state not initialized")
   | Some state ->
     let tokens = Lexer.tokenize source in
@@ -638,12 +658,14 @@ let eval_source source =
       Typechecker.check_program_in_ctx state.ctx program in
     let typed_program = Typechecker.transform_constraints ctx' typed_program in
     let typed_program = Typechecker.classify_handlers typed_program in
+    let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+    let stdlib_programs = List.map snd state.setup_typed in
+    let typed_program = Texpr_opt.optimize_program ~stdlib_programs typed_program in
     let compiled =
       Compiler.compile_program_with_globals
         ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
     let result = Vm.execute_with_globals compiled state.globals in
-    eval_state := Some { state with ctx = ctx' };
-    eval_state_changed := true;
+    state_ref := Some { state with ctx = ctx' };
     result
 
 let run_string_in_state state source =
@@ -654,26 +676,32 @@ let run_string_in_state state source =
   in
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
   let typed_program = Typechecker.classify_handlers typed_program in
+  let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+  let stdlib_programs = List.map snd state.setup_typed in
+  let typed_program = Texpr_opt.optimize_program ~stdlib_programs typed_program in
   let compiled =
     Compiler.compile_program_with_globals
       ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program
   in
-  (* Update eval state so Runtime.eval can see all bindings *)
-  eval_state := Some { state with ctx = ctx' };
-  eval_state_changed := false;
+  (* Update state_ref so Runtime.eval can see all bindings *)
+  let pre_exec_state = { state with ctx = ctx' } in
+  state.state_ref := Some pre_exec_state;
   let result = Vm.execute_with_globals compiled state.globals in
-  (* If Runtime.eval/eval_file ran during execution, pick up their context *)
-  if !eval_state_changed then
-    (match !eval_state with
-     | Some es -> eval_state := Some { state with ctx = es.ctx }
-     | None -> ());
+  (* If Runtime.eval ran during execution, it updated state_ref with new ctx.
+     Propagate that back so the caller sees the merged state. *)
+  (match !(state.state_ref) with
+   | Some es when es.ctx != pre_exec_state.ctx ->
+     state.state_ref := Some { state with ctx = es.ctx }
+   | _ -> ());
   result
 
 let run_string source =
   wrap_errors (fun () ->
-    let (ctx, global_names, globals, stdlib_pub_vars) = setup_builtins () in
+    let (ctx, global_names, globals, stdlib_pub_vars, output_fn, argv) = setup_builtins () in
     let mutable_globals = Hashtbl.create 8 in
-    let state = { ctx; global_names; mutable_globals; globals } in
+    let state_ref = ref None in
+    let state = { ctx; global_names; mutable_globals; globals; output_fn; argv;
+                   setup_protos = []; setup_typed = []; state_ref } in
     let state = setup_default_classes state stdlib_pub_vars in
     run_string_in_state state source)
 
@@ -704,17 +732,12 @@ let run_file_show filename =
 (* ---- REPL with persistent state ---- *)
 
 let repl_state_init () =
-  let (ctx, global_names, globals, stdlib_pub_vars) = setup_builtins () in
+  let (ctx, global_names, globals, stdlib_pub_vars, output_fn, argv) = setup_builtins () in
   let mutable_globals = Hashtbl.create 8 in
-  let state = { ctx; global_names; mutable_globals; globals } in
+  let state_ref = ref None in
+  let state = { ctx; global_names; mutable_globals; globals; output_fn; argv;
+                 setup_protos = []; setup_typed = []; state_ref } in
   setup_default_classes state stdlib_pub_vars
-
-let start_capture () =
-  captured_setups := [];
-  capture_mode := true
-
-let stop_capture () =
-  capture_mode := false
 
 let emit_json_bundle state ?source () =
   let main_proto = match source with
@@ -734,6 +757,9 @@ let emit_json_bundle state ?source () =
         Typechecker.check_program_in_ctx state.ctx program in
       let typed_program = Typechecker.transform_constraints ctx' typed_program in
       let typed_program = Typechecker.classify_handlers typed_program in
+      let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+      let stdlib_programs = List.map snd state.setup_typed in
+      let typed_program = Texpr_opt.optimize_program ~stdlib_programs typed_program in
       let compiled =
         Compiler.compile_program_with_globals
           ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
@@ -743,7 +769,7 @@ let emit_json_bundle state ?source () =
   Serialize.serialize_bundle
     ~global_names:state.global_names
     ~native_globals_json
-    ~setup_protos:!captured_setups
+    ~setup_protos:state.setup_protos
     ~main_proto
 
 let emit_js state ?source () =
@@ -756,8 +782,22 @@ let emit_js state ?source () =
       Typechecker.check_program_in_ctx state.ctx program in
     let typed_program = Typechecker.transform_constraints ctx' typed_program in
     let typed_program = Typechecker.classify_handlers typed_program in
+    let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+    let stdlib_programs = List.map snd state.setup_typed in
+    let typed_program = Texpr_opt.optimize_program ~stdlib_programs typed_program in
     Js_codegen.compile_program_with_stdlib
-      ctx'.Typechecker.type_env !captured_typed_setups typed_program
+      ctx'.Typechecker.type_env state.setup_typed typed_program
+
+let typecheck_source state source =
+  let tokens = Lexer.tokenize source in
+  let program = Parser.parse_program tokens in
+  let (ctx', typed_program) =
+    Typechecker.check_program_in_ctx state.ctx program in
+  let typed_program = Typechecker.transform_constraints ctx' typed_program in
+  let typed_program = Typechecker.classify_handlers typed_program in
+  let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+  let stdlib_programs = List.map snd state.setup_typed in
+  Texpr_opt.optimize_program ~stdlib_programs typed_program
 
 let emit_binary_bundle state ?source () =
   let main_proto = match source with
@@ -777,6 +817,9 @@ let emit_binary_bundle state ?source () =
         Typechecker.check_program_in_ctx state.ctx program in
       let typed_program = Typechecker.transform_constraints ctx' typed_program in
       let typed_program = Typechecker.classify_handlers typed_program in
+      let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+      let stdlib_programs = List.map snd state.setup_typed in
+      let typed_program = Texpr_opt.optimize_program ~stdlib_programs typed_program in
       let compiled =
         Compiler.compile_program_with_globals
           ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program in
@@ -785,7 +828,7 @@ let emit_binary_bundle state ?source () =
   Serialize_bin.serialize_bundle
     ~global_names:state.global_names
     ~globals:state.globals
-    ~setup_protos:!captured_setups
+    ~setup_protos:state.setup_protos
     ~main_proto
 
 let eval_repl state source =
@@ -797,45 +840,65 @@ let eval_repl state source =
     in
     let typed_program = Typechecker.transform_constraints ctx' typed_program in
     let typed_program = Typechecker.classify_handlers typed_program in
+    let typed_program = Match_tree.lower_program ctx'.Typechecker.type_env typed_program in
+    let stdlib_programs = List.map snd state.setup_typed in
+    let typed_program = Texpr_opt.optimize_program ~stdlib_programs typed_program in
+    let synonyms = ctx'.Typechecker.type_env.Types.type_synonyms in
+    let lookup_scheme name =
+      match List.assoc_opt name ctx'.Typechecker.vars with
+      | Some s -> Types.pp_scheme_with synonyms s
+      | None -> Types.pp_ty_normalized_with synonyms (Types.TUnit) (* fallback *)
+    in
     let type_info = match List.rev typed_program with
-      | Typechecker.TDExpr te :: _ -> Some (None, Types.pp_ty te.ty)
-      | Typechecker.TDLet (name, te) :: _ -> Some (Some name, Types.pp_ty te.ty)
-      | Typechecker.TDLetMut (name, te) :: _ -> Some (Some name, Types.pp_ty te.ty)
-      | Typechecker.TDLetRec (name, te) :: _ -> Some (Some name, Types.pp_ty te.ty)
+      | Typechecker.TDExpr te :: _ -> Some (None, Types.pp_ty_normalized_with synonyms te.ty)
+      | Typechecker.TDLet (name, _) :: _ -> Some (Some name, lookup_scheme name)
+      | Typechecker.TDLetMut (name, _) :: _ -> Some (Some name, lookup_scheme name)
+      | Typechecker.TDLetRec (name, _) :: _ -> Some (Some name, lookup_scheme name)
       | _ -> None
     in
     let compiled =
       Compiler.compile_program_with_globals
         ctx'.Typechecker.type_env state.global_names state.mutable_globals typed_program
     in
-    eval_state_changed := false;
+    let pre_exec_state = { state with ctx = ctx' } in
+    state.state_ref := Some pre_exec_state;
     let result = Vm.execute_with_globals compiled state.globals in
-    (* If Runtime.eval/eval_file ran during execution, they updated eval_state
+    (* If Runtime.eval/eval_file ran during execution, they updated state_ref
        with new modules/bindings. Use that ctx instead of our local ctx'. *)
-    let final_ctx = if !eval_state_changed then
-      match !eval_state with
-      | Some es -> es.ctx
-      | None -> ctx'
-    else ctx' in
+    let final_ctx = match !(state.state_ref) with
+      | Some es when es.ctx != pre_exec_state.ctx -> es.ctx
+      | _ -> ctx'
+    in
     ({ state with ctx = final_ctx }, result, type_info))
 
 let typeof_source state source =
   wrap_errors (fun () ->
     let tokens = Lexer.tokenize source in
     let program = Parser.parse_program tokens in
-    let (_, typed_program) =
+    let (ctx', typed_program) =
       Typechecker.check_program_in_ctx state.ctx program
     in
+    let synonyms = ctx'.Typechecker.type_env.Types.type_synonyms in
+    let lookup_scheme name =
+      match List.assoc_opt name ctx'.Typechecker.vars with
+      | Some s -> Types.pp_scheme_with synonyms s
+      | None -> "?"
+    in
     match List.rev typed_program with
-    | Typechecker.TDExpr te :: _ -> Types.pp_ty te.ty
-    | Typechecker.TDLet (name, te) :: _ ->
-      name ^ " : " ^ Types.pp_ty te.ty
-    | Typechecker.TDLetMut (name, te) :: _ ->
-      name ^ " : " ^ Types.pp_ty te.ty ^ " (mutable)"
-    | Typechecker.TDLetRec (name, te) :: _ ->
-      name ^ " : " ^ Types.pp_ty te.ty
+    | Typechecker.TDExpr { expr = Typechecker.TEVar name; _ } :: _ ->
+      (* For bare variable references, show the scheme with constraints *)
+      (match List.assoc_opt name state.ctx.Typechecker.vars with
+       | Some s -> Types.pp_scheme_with synonyms s
+       | None -> Types.pp_ty_normalized_with synonyms (List.assoc name ctx'.Typechecker.vars).Types.body)
+    | Typechecker.TDExpr te :: _ -> Types.pp_ty_normalized_with synonyms te.ty
+    | Typechecker.TDLet (name, _) :: _ ->
+      name ^ " : " ^ lookup_scheme name
+    | Typechecker.TDLetMut (name, _) :: _ ->
+      name ^ " : " ^ lookup_scheme name ^ " (mutable)"
+    | Typechecker.TDLetRec (name, _) :: _ ->
+      name ^ " : " ^ lookup_scheme name
     | Typechecker.TDExtern (name, scheme) :: _ ->
-      "extern " ^ name ^ " : " ^ Types.pp_ty scheme.Types.body
+      "extern " ^ name ^ " : " ^ Types.pp_scheme_with synonyms scheme
     | _ -> "<no type>")
 
 let list_modules state =
@@ -957,17 +1020,15 @@ let browse_module state mod_name =
           ) cls.class_methods
         | None -> ()
       ) minfo.mod_pub_classes;
-      (* Temporarily add module synonyms for function signature printing *)
-      let saved_synonyms = !Types.pp_synonyms in
-      Types.pp_synonyms := !module_synonyms @ saved_synonyms;
+      (* Use module synonyms + global synonyms for function signature printing *)
+      let synonyms = !module_synonyms @ all_synonyms in
       (* Functions/values — skip duplicates *)
       List.iter (fun (name, scheme) ->
         if not (Hashtbl.mem seen_vars name) then begin
           Hashtbl.replace seen_vars name true;
-          Buffer.add_string buf (Printf.sprintf "  val %s : %s\n" name (Types.pp_ty scheme.Types.body))
+          Buffer.add_string buf (Printf.sprintf "  val %s : %s\n" name (Types.pp_scheme_with synonyms scheme))
         end
       ) (List.rev minfo.mod_pub_vars);
-      Types.pp_synonyms := saved_synonyms;
       (* Submodules *)
       List.iter (fun (subname, _) ->
         Buffer.add_string buf (Printf.sprintf "  module %s\n" subname)
@@ -997,15 +1058,7 @@ let list_classes state =
         let tys_str = String.concat " " (List.map Types.pp_ty inst.inst_tys) in
         let constraints_str = match inst.inst_constraints with
           | [] -> ""
-          | cs -> " where " ^ String.concat ", " (List.map (fun (c : Types.class_constraint) ->
-              c.cc_class ^ " " ^ String.concat " " (List.map (fun (ca : Types.class_arg) ->
-                match ca with
-                | CATGen i -> "'" ^ String.make 1 (Char.chr (Char.code 'a' + i))
-                | CATy ty -> Types.pp_ty ty
-                | CAWild -> "_"
-                | CAPhantom _ -> "_"
-              ) c.cc_args)
-            ) cs)
+          | cs -> " where " ^ String.concat ", " (List.map Types.pp_constraint cs)
         in
         Buffer.add_string buf (Printf.sprintf "  instance %s%s\n" tys_str constraints_str)
       ) cls_instances;
@@ -1022,8 +1075,9 @@ let list_externs state =
     | Some (Bytecode.VExternal _) ->
       (* Skip Stdlib. duplicates *)
       if not (String.length name > 7 && String.sub name 0 7 = "Stdlib.") then begin
+        let synonyms = state.ctx.Typechecker.type_env.Types.type_synonyms in
         let ty_str = match List.assoc_opt name state.ctx.Typechecker.vars with
-          | Some scheme -> Types.pp_ty scheme.Types.body
+          | Some scheme -> Types.pp_scheme_with synonyms scheme
           | None -> "?"
         in
         match String.index_opt name '.' with

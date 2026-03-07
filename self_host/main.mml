@@ -1,3 +1,10 @@
+-- Compiler setup cache — allows self-hosted compiler to skip expensive
+-- setup_modules/setup_classes on subsequent compilations in the browser.
+-- Declared at top level so they resolve to __cache_has (not Main.__cache_has).
+extern __cache_has : string -> bool
+extern __cache_get : string -> 'a
+extern __cache_set : string -> 'a -> unit
+
 module Main =
   open Token
   open Ast
@@ -109,6 +116,33 @@ module Main =
   let mut js_capture_mode = false
   let mut captured_typed_setups = ([] : (Types.type_env * Typechecker.tprogram) list)
 
+  -- ---- Helpers for extern registration ----
+
+  let rec arity_of_type ty =
+    match ty with
+    | TArrow (_, _, ret) -> 1 + arity_of_type ret
+    | _ -> 0
+
+  let find_global_index global_names name =
+    let len = Dynarray.length global_names in
+    let rec find i =
+      if i >= len do -1
+      else if (Dynarray.get global_names i) = name do i
+      else find (i + 1) in
+    find 0
+
+  let register_externs_from_program typed_program global_names =
+    List.iter (fn decl ->
+      match decl with
+      | Typechecker.TDExtern (name, scheme) ->
+        let idx = find_global_index global_names name in
+        if idx >= 0 do
+          let arity = arity_of_type scheme.body in
+          register_native_ext idx name arity
+        end
+      | _ -> ()
+    ) typed_program
+
   -- ---- Compile a setup source string ----
 
   let compile_setup (ctx : Typechecker.ctx) global_names mutable_globals source =
@@ -123,6 +157,7 @@ module Main =
                line_table = Array.of_list [] })
     else
       let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+      register_externs_from_program typed_program2 global_names;
       (ctx2, compiled.main)
 
   -- ---- Arrow type helpers ----
@@ -538,6 +573,7 @@ module Main =
           let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
           let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
           let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+          register_externs_from_program typed_program2 global_names;
           let ng_json = build_native_globals_json () in
           let json = Serialize.serialize_bundle global_names ng_json setup_protos compiled.main in
           print json;
@@ -567,11 +603,18 @@ module Main =
       js_capture_mode := true;
       captured_typed_setups := [];
 
-      -- Setup type environment (reuses existing setup, but compile_setup
-      -- captures typed ASTs instead of producing bytecode)
-      let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
-      let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
-      let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+      let (ctx, global_names, mutable_globals) =
+        if __cache_has "emit_js" do
+          let (c, gn, mg, cts) = __cache_get "emit_js" in
+          captured_typed_setups := cts;
+          (c, gn, mg)
+        else
+          let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+          let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+          __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+          (ctx, global_names, mutable_globals)
+      in
 
       let filename = match args with
         | _ :: file :: _ -> file
@@ -623,11 +666,27 @@ module Main =
           in
           let source = IO.read_file filename in
 
-          -- Setup type environment
-          let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
-          let (ctx, class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
-          let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
-          let setup_protos = List.concat class_protos module_protos in
+          -- Setup type environment (with caching)
+          let (ctx, global_names, mutable_globals, setup_protos, base_gn_len, base_native, base_mutable) =
+            if __cache_has "emit_json" do
+              __cache_get "emit_json"
+            else
+              let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
+              let (ctx, class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+              let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
+              let setup_protos = List.concat class_protos module_protos in
+              let base_gn_len = Dynarray.length global_names in
+              let base_native = native_global_entries in
+              let base_mutable = Hashtbl.to_list mutable_globals in
+              __cache_set "emit_json" (ctx, global_names, mutable_globals, setup_protos, base_gn_len, base_native, base_mutable);
+              (ctx, global_names, mutable_globals, setup_protos, base_gn_len, base_native, base_mutable)
+          in
+
+          -- Reset mutable state to post-setup snapshot
+          global_names.count := base_gn_len;
+          native_global_entries := base_native;
+          Hashtbl.clear mutable_globals;
+          list_iter (fn (k, v) -> Hashtbl.set mutable_globals k v) base_mutable;
 
           -- Compile user source
           let tokens = Lexer.tokenize source in
@@ -635,6 +694,7 @@ module Main =
           let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
           let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
           let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+          register_externs_from_program typed_program2 global_names;
 
           -- Serialize
           let ng_json = build_native_globals_json () in

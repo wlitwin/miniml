@@ -823,6 +823,30 @@ fold (+) 0 [1; 2; 3; 4]        -- 10
 List.map (fn x -> x + 1) xs    -- or equivalently with a lambda
 ```
 
+### Backtick infix
+
+Any two-argument function can be used as an infix operator by wrapping its name in backticks:
+
+```
+let add a b = a + b in
+3 `add` 4                       -- 7, same as: add 3 4
+
+let rec zip xs ys = match (xs, ys) with
+  | ([], _) | (_, []) -> []
+  | (x :: xs, y :: ys) -> (x, y) :: zip xs ys in
+[1; 2; 3] `zip` [4; 5; 6]      -- [(1, 4), (2, 5), (3, 6)]
+```
+
+Backtick infix is left-associative with precedence between comparison operators and arithmetic:
+
+```
+2 * 3 `add` 4 * 5              -- 26, parsed as: add (2 * 3) (4 * 5)
+1 `add` 2 > 0                  -- true, parsed as: (add 1 2) > 0
+10 `sub` 3 `sub` 1             -- 6, parsed as: sub (sub 10 3) 1
+```
+
+Backtick infix does not conflict with polymorphic variants — `` `Uppercase `` (no closing backtick) remains a polymorphic variant tag, while `` `lowercase` `` (with closing backtick) is an infix operator.
+
 ### Operator precedence (highest to lowest)
 
 | Precedence | Operators                    | Associativity |
@@ -830,6 +854,7 @@ List.map (fn x -> x + 1) xs    -- or equivalently with a lambda
 | 12-13      | `*`, `/`, `mod`, `land`, `lsl`, `lsr` | Left |
 | 10-11      | `+`, `-`, `^`, `lor`, `lxor` | Left          |
 | 9-8        | `::`                         | Right         |
+| 8-9        | `` `func` `` (backtick infix)| Left          |
 | 6-7        | `=`, `<>`, `<`, `>`, `<=`, `>=` | Left       |
 | 4-5        | `&&`                         | Right         |
 | 2-3        | `\|\|`                       | Right         |

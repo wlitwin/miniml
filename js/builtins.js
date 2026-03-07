@@ -177,11 +177,14 @@ reg("__fmt_pad_right", 2, (args) => {
 // Copy (continuation)
 reg("copy_continuation", 1, (args) => {
   const cont = vm.asContinuation(args[0]);
+  const newFiber = vm.copyFiber(cont.fiber);
   return {
     tag: "continuation",
-    fiber: vm.copyFiber(cont.fiber),
+    fiber: newFiber,
     returnHandler: cont.returnHandler,
     opHandlers: cont.opHandlers,
+    bodyFiber: cont.bodyFiber === cont.fiber ? newFiber : cont.bodyFiber,
+    intermediateHandlers: cont.intermediateHandlers || [],
     used: false,
   };
 });
@@ -206,6 +209,24 @@ reg("__index_at_string", 2, (args) => {
     vm.error(`string index out of bounds: ${idx} (length ${s.length})`);
   return vm.vbyte(s.charCodeAt(idx));
 });
+
+// Structural comparison builtins (bypass typeclass dispatch)
+reg("__structural_eq", 2, (args) =>
+  vm.vbool(vm.valuesEqual(args[0], args[1])));
+reg("__structural_neq", 2, (args) =>
+  vm.vbool(!vm.valuesEqual(args[0], args[1])));
+reg("__structural_lt", 2, (args) =>
+  vm.vbool(vm.valuesCompare(args[0], args[1]) < 0));
+reg("__structural_gt", 2, (args) =>
+  vm.vbool(vm.valuesCompare(args[0], args[1]) > 0));
+reg("__structural_le", 2, (args) =>
+  vm.vbool(vm.valuesCompare(args[0], args[1]) <= 0));
+reg("__structural_ge", 2, (args) =>
+  vm.vbool(vm.valuesCompare(args[0], args[1]) >= 0));
+
+// Structural hash builtin (bypass typeclass dispatch)
+reg("__poly_hash", 1, (args) =>
+  vm.vint(vm.valueHash(args[0])));
 
 reg("__num_add_int", 2, (args) =>
   vm.vint(vm.asInt(args[0]) + vm.asInt(args[1])));
@@ -719,5 +740,11 @@ function formatFloat(f) {
   if (Object.is(f, -0)) return "-0";
   return s;
 }
+
+// No-op cache functions — used by the self-hosted compiler's extern declarations.
+// In the bytecode VM, caching is not needed (the JS compiler path handles it).
+reg("__cache_has", 1, (_args) => vm.vbool(false));
+reg("__cache_get", 1, (_args) => vm.VUNIT);
+reg("__cache_set", 2, (_args) => vm.VUNIT);
 
 module.exports = { builtins, formatFloat };

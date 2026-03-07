@@ -68,122 +68,120 @@ let read_opcode r strs =
   | 3 -> Bytecode.GET_LOCAL (read_u32 r)
   | 4 -> Bytecode.SET_LOCAL (read_u32 r)
   | 5 -> Bytecode.GET_UPVALUE (read_u32 r)
-  | 6 -> Bytecode.SET_UPVALUE (read_u32 r)
-  | 7 -> Bytecode.MAKE_REF
-  | 8 -> Bytecode.DEREF
-  | 9 -> Bytecode.SET_REF
-  | 10 -> Bytecode.GET_GLOBAL (read_u32 r)
-  | 11 -> Bytecode.SET_GLOBAL (read_u32 r)
-  | 12 -> Bytecode.DEF_GLOBAL (read_u32 r)
-  | 13 -> Bytecode.ADD
-  | 14 -> Bytecode.SUB
-  | 15 -> Bytecode.MUL
-  | 16 -> Bytecode.DIV
-  | 17 -> Bytecode.MOD
-  | 18 -> Bytecode.NEG
-  | 19 -> Bytecode.FADD
-  | 20 -> Bytecode.FSUB
-  | 21 -> Bytecode.FMUL
-  | 22 -> Bytecode.FDIV
-  | 23 -> Bytecode.FNEG
-  | 24 -> Bytecode.EQ
-  | 25 -> Bytecode.NEQ
-  | 26 -> Bytecode.LT
-  | 27 -> Bytecode.GT
-  | 28 -> Bytecode.LE
-  | 29 -> Bytecode.GE
-  | 30 -> Bytecode.NOT
-  | 31 -> Bytecode.BAND
-  | 32 -> Bytecode.BOR
-  | 33 -> Bytecode.BXOR
-  | 34 -> Bytecode.BNOT
-  | 35 -> Bytecode.BSHL
-  | 36 -> Bytecode.BSHR
-  | 37 -> Bytecode.JUMP (read_u32 r)
-  | 38 -> Bytecode.JUMP_IF_FALSE (read_u32 r)
-  | 39 -> Bytecode.JUMP_IF_TRUE (read_u32 r)
-  | 40 ->
+  | 6 -> Bytecode.MAKE_REF
+  | 7 -> Bytecode.DEREF
+  | 8 -> Bytecode.SET_REF
+  | 9 -> Bytecode.GET_GLOBAL (read_u32 r)
+  | 10 -> Bytecode.DEF_GLOBAL (read_u32 r)
+  | 11 -> Bytecode.ADD
+  | 12 -> Bytecode.SUB
+  | 13 -> Bytecode.MUL
+  | 14 -> Bytecode.DIV
+  | 15 -> Bytecode.MOD
+  | 16 -> Bytecode.NEG
+  | 17 -> Bytecode.FADD
+  | 18 -> Bytecode.FSUB
+  | 19 -> Bytecode.FMUL
+  | 20 -> Bytecode.FDIV
+  | 21 -> Bytecode.FNEG
+  | 22 -> Bytecode.EQ
+  | 23 -> Bytecode.NEQ
+  | 24 -> Bytecode.LT
+  | 25 -> Bytecode.GT
+  | 26 -> Bytecode.LE
+  | 27 -> Bytecode.GE
+  | 28 -> Bytecode.NOT
+  | 29 -> Bytecode.BAND
+  | 30 -> Bytecode.BOR
+  | 31 -> Bytecode.BXOR
+  | 32 -> Bytecode.BNOT
+  | 33 -> Bytecode.BSHL
+  | 34 -> Bytecode.BSHR
+  | 35 -> Bytecode.JUMP (read_u32 r)
+  | 36 -> Bytecode.JUMP_IF_FALSE (read_u32 r)
+  | 37 -> Bytecode.JUMP_IF_TRUE (read_u32 r)
+  | 38 ->
     let proto_idx = read_u32 r in
     let caps = read_captures r in
     Bytecode.CLOSURE (proto_idx, caps)
-  | 41 ->
+  | 39 ->
     let proto_idx = read_u32 r in
     let caps = read_captures r in
     let self = read_u32 r in
     Bytecode.CLOSURE_REC (proto_idx, caps, self)
-  | 42 -> Bytecode.CALL (read_u32 r)
-  | 43 -> Bytecode.TAIL_CALL (read_u32 r)
-  | 44 -> Bytecode.RETURN
-  | 45 -> Bytecode.FUNC_RETURN
-  | 46 -> Bytecode.ENTER_FUNC
-  | 47 -> Bytecode.EXIT_FUNC
-  | 48 -> Bytecode.MAKE_TUPLE (read_u32 r)
-  | 49 -> Bytecode.TUPLE_GET (read_u32 r)
-  | 50 ->
+  | 40 -> Bytecode.CALL (read_u32 r)
+  | 41 -> Bytecode.TAIL_CALL (read_u32 r)
+  | 42 -> Bytecode.RETURN
+  | 43 -> Bytecode.FUNC_RETURN
+  | 44 -> Bytecode.ENTER_FUNC
+  | 45 -> Bytecode.EXIT_FUNC
+  | 46 -> Bytecode.MAKE_TUPLE (read_u32 r)
+  | 47 -> Bytecode.TUPLE_GET (read_u32 r)
+  | 48 ->
     let count = read_u32 r in
     let fields = List.init count (fun _ -> strs.(read_u32 r)) in
     Bytecode.MAKE_RECORD fields
-  | 51 -> Bytecode.FIELD strs.(read_u32 r)
-  | 52 -> Bytecode.SET_FIELD strs.(read_u32 r)
-  | 53 ->
+  | 49 -> Bytecode.FIELD strs.(read_u32 r)
+  | 50 -> Bytecode.SET_FIELD strs.(read_u32 r)
+  | 51 ->
     let tag_val = read_u32 r in
     let name = strs.(read_u32 r) in
     let has_payload = read_u8 r <> 0 in
     Bytecode.MAKE_VARIANT (tag_val, name, has_payload)
-  | 54 -> Bytecode.CONS
-  | 55 -> Bytecode.NIL
-  | 56 -> Bytecode.TAG_EQ (read_u32 r)
-  | 57 -> Bytecode.IS_NIL
-  | 58 -> Bytecode.IS_CONS
-  | 59 -> Bytecode.HEAD
-  | 60 -> Bytecode.TAIL
-  | 61 -> Bytecode.VARIANT_PAYLOAD
-  | 62 -> Bytecode.MATCH_FAIL strs.(read_u32 r)
-  | 63 -> Bytecode.PERFORM strs.(read_u32 r)
-  | 64 -> Bytecode.HANDLE (read_u32 r)
-  | 65 -> Bytecode.RESUME
-  | 66 -> Bytecode.ENTER_LOOP (read_u32 r)
-  | 67 -> Bytecode.EXIT_LOOP
-  | 68 -> Bytecode.LOOP_BREAK
-  | 69 -> Bytecode.LOOP_CONTINUE (read_u32 r)
-  | 70 -> Bytecode.FOLD_CONTINUE (read_u32 r)
-  | 72 -> Bytecode.MAKE_ARRAY (read_u32 r)
-  | 73 -> Bytecode.INDEX
-  | 74 -> Bytecode.HALT
-  | 75 ->
+  | 52 -> Bytecode.CONS
+  | 53 -> Bytecode.NIL
+  | 54 -> Bytecode.TAG_EQ (read_u32 r)
+  | 55 -> Bytecode.IS_NIL
+  | 56 -> Bytecode.IS_CONS
+  | 57 -> Bytecode.HEAD
+  | 58 -> Bytecode.TAIL
+  | 59 -> Bytecode.VARIANT_PAYLOAD
+  | 60 -> Bytecode.MATCH_FAIL strs.(read_u32 r)
+  | 61 -> Bytecode.PERFORM strs.(read_u32 r)
+  | 62 -> Bytecode.HANDLE (read_u32 r)
+  | 63 -> Bytecode.RESUME
+  | 64 -> Bytecode.ENTER_LOOP (read_u32 r)
+  | 65 -> Bytecode.EXIT_LOOP
+  | 66 -> Bytecode.LOOP_BREAK
+  | 67 -> Bytecode.LOOP_CONTINUE (read_u32 r)
+  | 68 -> Bytecode.FOLD_CONTINUE (read_u32 r)
+  | 69 -> Bytecode.MAKE_ARRAY (read_u32 r)
+  | 70 -> Bytecode.INDEX
+  | 71 -> Bytecode.HALT
+  | 72 ->
     let count = read_u32 r in
     let fields = List.init count (fun _ -> strs.(read_u32 r)) in
     Bytecode.RECORD_UPDATE fields
-  | 76 -> Bytecode.RECORD_UPDATE_DYN (read_u32 r)
-  | 77 ->
+  | 73 -> Bytecode.RECORD_UPDATE_DYN (read_u32 r)
+  | 74 ->
     let slot = read_u32 r in
     let arity = read_u32 r in
     Bytecode.GET_LOCAL_CALL (slot, arity)
-  | 78 ->
+  | 75 ->
     let slot = read_u32 r in
     let idx = read_u32 r in
     Bytecode.GET_LOCAL_TUPLE_GET (slot, idx)
-  | 79 ->
+  | 76 ->
     let slot = read_u32 r in
     let name = strs.(read_u32 r) in
     Bytecode.GET_LOCAL_FIELD (slot, name)
-  | 81 ->
-    let idx = read_u32 r in
-    let arity = read_u32 r in
-    Bytecode.GET_GLOBAL_CALL (idx, arity)
-  | 82 ->
-    let idx = read_u32 r in
-    let name = strs.(read_u32 r) in
-    Bytecode.GET_GLOBAL_FIELD (idx, name)
-  | 80 ->
+  | 77 ->
     let min_tag = read_u32 r in
     let table_size = read_u32 r in
     let targets = Array.init table_size (fun _ -> read_u32 r) in
     let default = read_u32 r in
     Bytecode.JUMP_TABLE (min_tag, targets, default)
-  | 83 -> Bytecode.CALL_N (read_u32 r)
-  | 84 -> Bytecode.TAIL_CALL_N (read_u32 r)
-  | 85 -> Bytecode.UPDATE_REC
+  | 78 ->
+    let idx = read_u32 r in
+    let arity = read_u32 r in
+    Bytecode.GET_GLOBAL_CALL (idx, arity)
+  | 79 ->
+    let idx = read_u32 r in
+    let name = strs.(read_u32 r) in
+    Bytecode.GET_GLOBAL_FIELD (idx, name)
+  | 80 -> Bytecode.CALL_N (read_u32 r)
+  | 81 -> Bytecode.TAIL_CALL_N (read_u32 r)
+  | 82 -> Bytecode.UPDATE_REC
   | n -> failwith (Printf.sprintf "unknown opcode tag: %d" n)
 
 let rec read_value r strs =
@@ -312,7 +310,7 @@ let prepare_bundle_binary data (builtins : Deserialize.builtin_table) =
   let strs = read_string_table r in
   (* Global names *)
   let num_names = read_u32 r in
-  let _global_names = Array.init num_names (fun _ -> strs.(read_u32 r)) in
+  let global_names = Array.init num_names (fun _ -> strs.(read_u32 r)) in
   let globals : (int, Bytecode.value) Hashtbl.t = Hashtbl.create num_names in
   (* Native globals *)
   resolve_native_globals r strs builtins globals;
@@ -324,4 +322,4 @@ let prepare_bundle_binary data (builtins : Deserialize.builtin_table) =
   done;
   (* Main proto *)
   let main_proto = read_prototype r strs in
-  Deserialize.{ prepared_globals = globals; prepared_main = main_proto }
+  Deserialize.{ prepared_globals = globals; prepared_main = main_proto; prepared_global_names = global_names }

@@ -146,10 +146,10 @@ let is_selfhost_type_error msg =
 
 let run_ocaml state source =
   let outputs = ref [] in
-  Interpreter.Interp.output_fn := (fun s -> outputs := s :: !outputs);
+  state.Interpreter.Interp.output_fn := (fun s -> outputs := s :: !outputs);
   try
     let result = Interpreter.Interp.run_string_in_state state source in
-    Interpreter.Interp.output_fn := print_endline;
+    state.Interpreter.Interp.output_fn := print_endline;
     let pp = Interpreter.Bytecode.pp_value result in
     let actual =
       let outs = List.rev !outputs in
@@ -160,18 +160,18 @@ let run_ocaml state source =
     Ok actual
   with
   | Interpreter.Typechecker.Type_error (msg, _) ->
-    Interpreter.Interp.output_fn := print_endline;
+    state.Interpreter.Interp.output_fn := print_endline;
     TypeErr msg
   | Interpreter.Interp.Error msg ->
-    Interpreter.Interp.output_fn := print_endline;
+    state.Interpreter.Interp.output_fn := print_endline;
     if String.starts_with ~prefix:"Type error" msg then TypeErr msg
     else if String.starts_with ~prefix:"Runtime error" msg then RuntimeErr msg
     else RuntimeErr msg
   | Interpreter.Vm.Runtime_error msg ->
-    Interpreter.Interp.output_fn := print_endline;
+    state.Interpreter.Interp.output_fn := print_endline;
     RuntimeErr msg
   | exn ->
-    Interpreter.Interp.output_fn := print_endline;
+    state.Interpreter.Interp.output_fn := print_endline;
     OtherErr (Printexc.to_string exn)
 
 (* --- Self-hosted compiler path ------------------------------------------- *)
@@ -181,7 +181,7 @@ type selfhost_compile_result =
   | CompileErr of string  (* compiler error message *)
 
 (* Batch-compile all test sources in one compiler invocation *)
-let batch_selfhost_compile prepared tests =
+let batch_selfhost_compile ~output_fn ~argv prepared tests =
   (* Write each test source to a temp file *)
   let tmpfiles = List.map (fun tc ->
     let f = Filename.temp_file "parity_test_" ".mml" in
@@ -196,11 +196,11 @@ let batch_selfhost_compile prepared tests =
   List.iter (fun f -> output_string oc (f ^ "\n")) tmpfiles;
   close_out oc;
   (* Run batch compilation *)
-  Interpreter.Interp.script_argv := [|"compiler.json"; "--batch"; manifest|];
+  argv := [|"compiler.json"; "--batch"; manifest|];
   let output_parts = ref [] in
   let total = List.length tests in
   let compiled_count = ref 0 in
-  Interpreter.Interp.output_fn := (fun s ->
+  output_fn := (fun s ->
     output_parts := s :: !output_parts;
     if s = "===BATCH-SEP===" then begin
       incr compiled_count;
@@ -214,7 +214,7 @@ let batch_selfhost_compile prepared tests =
       batch_err := Printexc.to_string exn;
       false
   in
-  Interpreter.Interp.output_fn := print_endline;
+  output_fn := print_endline;
   if total > 0 then Printf.printf "\r%s\r%!" (String.make 40 ' ');
   (* Clean up temp files *)
   List.iter (fun f -> (try Sys.remove f with _ -> ())) tmpfiles;
@@ -258,7 +258,7 @@ let batch_selfhost_compile prepared tests =
   end
 
 (* Run a precompiled test program *)
-let run_selfhost_compiled builtins compile_result =
+let run_selfhost_compiled ~output_fn builtins compile_result =
   match compile_result with
   | CompileErr msg ->
     if is_selfhost_type_error msg then TypeErr msg
@@ -266,9 +266,9 @@ let run_selfhost_compiled builtins compile_result =
   | Compiled test_json ->
     try
       let outputs = ref [] in
-      Interpreter.Interp.output_fn := (fun s -> outputs := s :: !outputs);
+      output_fn := (fun s -> outputs := s :: !outputs);
       let result = Interpreter.Deserialize.load_bundle test_json builtins in
-      Interpreter.Interp.output_fn := print_endline;
+      output_fn := print_endline;
       let pp = Interpreter.Bytecode.pp_value result in
       let actual =
         let outs = List.rev !outputs in
@@ -279,23 +279,23 @@ let run_selfhost_compiled builtins compile_result =
       Ok actual
     with
     | Interpreter.Vm.Runtime_error msg ->
-      Interpreter.Interp.output_fn := print_endline;
+      output_fn := print_endline;
       RuntimeErr msg
     | Interpreter.Interp.Error msg ->
-      Interpreter.Interp.output_fn := print_endline;
+      output_fn := print_endline;
       if is_selfhost_type_error msg then TypeErr msg
       else RuntimeErr msg
     | Failure msg ->
-      Interpreter.Interp.output_fn := print_endline;
+      output_fn := print_endline;
       if is_selfhost_type_error msg then TypeErr msg
       else RuntimeErr msg
     | exn ->
-      Interpreter.Interp.output_fn := print_endline;
+      output_fn := print_endline;
       OtherErr (Printexc.to_string exn)
 
 (* --- Test running -------------------------------------------------------- *)
 
-let run_tests _state builtins tests selfhost_compiled =
+let run_tests ~output_fn _state builtins tests selfhost_compiled =
   let passed = ref 0 in
   let failed = ref 0 in
   let failures = ref [] in
@@ -314,7 +314,7 @@ let run_tests _state builtins tests selfhost_compiled =
     Printf.printf "  [%d/%d] %s... %!" !current total tc.name;
     let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
     let ocaml_result = run_ocaml state tc.source in
-    let selfhost_result = run_selfhost_compiled builtins selfhost_compiled.(!current - 1) in
+    let selfhost_result = run_selfhost_compiled ~output_fn builtins selfhost_compiled.(!current - 1) in
     match tc.expect, ocaml_result, selfhost_result with
     (* Both succeed with matching output *)
     | Value expected, Ok ocaml_out, Ok selfhost_out ->
@@ -488,7 +488,10 @@ let () =
   ) files in
   let all_tests = List.concat_map snd file_tests in
   Printf.printf "Batch compiling %d tests with self-hosted compiler...\n%!" (List.length all_tests);
-  let all_compiled = batch_selfhost_compile prepared all_tests in
+  let all_compiled = batch_selfhost_compile
+    ~output_fn:init_state.Interpreter.Interp.output_fn
+    ~argv:init_state.Interpreter.Interp.argv
+    prepared all_tests in
   Printf.printf "Batch compilation complete (%d results).\n\n%!" (Array.length all_compiled);
   let total_passed = ref 0 in
   let total_failed = ref 0 in
@@ -504,7 +507,9 @@ let () =
       let n = List.length tests in
       let file_compiled = Array.sub all_compiled !batch_offset n in
       batch_offset := !batch_offset + n;
-      let (p, f, failures) = run_tests state builtins tests file_compiled in
+      let (p, f, failures) = run_tests
+        ~output_fn:init_state.Interpreter.Interp.output_fn
+        state builtins tests file_compiled in
       total_passed := !total_passed + p;
       total_failed := !total_failed + f;
       all_failures := !all_failures @ failures

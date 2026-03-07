@@ -32,6 +32,14 @@ module Array =
       else (f i (Array.get arr i); go (i + 1))
     in go 0
 
+  pub let exists f arr =
+    let n = Array.length arr in
+    let rec go i =
+      if i >= n do false
+      else if f (Array.get arr i) do true
+      else go (i + 1)
+    in go 0
+
   pub let forall f arr =
     let n = Array.length arr in
     let rec go i =

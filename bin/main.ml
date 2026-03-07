@@ -70,7 +70,7 @@ let repl () =
           Buffer.clear buf;
           let source = String.sub trimmed 0 (String.length trimmed - 2) in
           state := Interpreter.Interp.eval_repl_show !state source;
-          Interpreter.Interp.eval_state := Some !state
+          (!state).Interpreter.Interp.state_ref := Some !state
         end
       end
     end
@@ -83,9 +83,7 @@ let () =
   | () when argc = 1 -> repl ()
   | () when argc = 2 && Sys.argv.(1) = "--emit-json" ->
     (try
-      Interpreter.Interp.start_capture ();
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
-      Interpreter.Interp.stop_capture ();
       let json = Interpreter.Interp.emit_json_bundle state () in
       print_string json
     with
@@ -94,9 +92,7 @@ let () =
       exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--emit-json" ->
     (try
-      Interpreter.Interp.start_capture ();
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
-      Interpreter.Interp.stop_capture ();
       let buf = Buffer.create 4096 in
       for i = 2 to argc - 1 do
         let ic = open_in Sys.argv.(i) in
@@ -114,8 +110,8 @@ let () =
       exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--run-json" ->
     (try
-      Interpreter.Interp.script_argv := Array.sub Sys.argv 2 (argc - 2);
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
+      state.argv := Array.sub Sys.argv 2 (argc - 2);
       let builtins = Interpreter.Interp.builtin_table state in
       let ic = open_in Sys.argv.(2) in
       let json_str = In_channel.input_all ic in
@@ -137,9 +133,7 @@ let () =
       exit 1)
   | () when argc = 2 && Sys.argv.(1) = "--emit-binary" ->
     (try
-      Interpreter.Interp.start_capture ();
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
-      Interpreter.Interp.stop_capture ();
       let bin = Interpreter.Interp.emit_binary_bundle state () in
       set_binary_mode_out stdout true;
       print_string bin
@@ -149,9 +143,7 @@ let () =
       exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--emit-binary" ->
     (try
-      Interpreter.Interp.start_capture ();
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
-      Interpreter.Interp.stop_capture ();
       let buf = Buffer.create 4096 in
       for i = 2 to argc - 1 do
         let ic = open_in Sys.argv.(i) in
@@ -170,8 +162,8 @@ let () =
       exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--run-binary" ->
     (try
-      Interpreter.Interp.script_argv := Array.sub Sys.argv 2 (argc - 2);
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
+      state.argv := Array.sub Sys.argv 2 (argc - 2);
       let builtins = Interpreter.Interp.builtin_table state in
       let ic = open_in_bin Sys.argv.(2) in
       let data = In_channel.input_all ic in
@@ -208,11 +200,7 @@ let () =
       exit 1)
   | () when argc = 2 && Sys.argv.(1) = "--emit-js" ->
     (try
-      Interpreter.Interp.start_capture ();
-      Interpreter.Interp.start_js_capture ();
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
-      Interpreter.Interp.stop_capture ();
-      Interpreter.Interp.stop_js_capture ();
       let js = Interpreter.Interp.emit_js state () in
       print_string js
     with
@@ -224,11 +212,7 @@ let () =
       exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--emit-js" ->
     (try
-      Interpreter.Interp.start_capture ();
-      Interpreter.Interp.start_js_capture ();
       let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
-      Interpreter.Interp.stop_capture ();
-      Interpreter.Interp.stop_js_capture ();
       let buf = Buffer.create 4096 in
       for i = 2 to argc - 1 do
         let ic = open_in Sys.argv.(i) in
@@ -247,9 +231,28 @@ let () =
     | Interpreter.Js_codegen.Codegen_error msg ->
       Printf.eprintf "JS codegen error: %s\n" msg;
       exit 1)
+  | () when argc >= 3 && Sys.argv.(1) = "--analyze" ->
+    (try
+      let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
+      let buf = Buffer.create 4096 in
+      for i = 2 to argc - 1 do
+        let ic = open_in Sys.argv.(i) in
+        Buffer.add_string buf (In_channel.input_all ic);
+        Buffer.add_char buf '\n';
+        close_in ic
+      done;
+      let source = Buffer.contents buf in
+      let typed_program = Interpreter.Interp.wrap_errors (fun () ->
+        Interpreter.Interp.typecheck_source state source) in
+      let stats = Interpreter.Analyze.analyze_program typed_program in
+      Interpreter.Analyze.print_stats stats
+    with
+    | Interpreter.Interp.Error msg ->
+      Printf.eprintf "%s\n" msg;
+      exit 1)
   | () when argc >= 2 ->
-    Interpreter.Interp.script_argv := Array.sub Sys.argv 1 (argc - 1);
     let state = Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ()) in
+    state.argv := Array.sub Sys.argv 1 (argc - 1);
     (try
       let ic = open_in Sys.argv.(1) in
       let source = In_channel.input_all ic in

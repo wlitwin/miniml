@@ -46,6 +46,8 @@ type pattern =
   | PatPin of string
   | PatAnnot of pattern * ty_annot
 
+type match_kind = Partial | Total
+
 type binop =
   | Add | Sub | Mul | Div | Mod
   | Eq | Neq | Lt | Gt | Le | Ge
@@ -83,15 +85,15 @@ type expr =
   | EList of expr list
   | EArray of expr list
   | EConstruct of string * expr option
-  | EMatch of expr * (pattern * expr option * expr) list * bool
+  | EMatch of expr * (pattern * expr option * expr) list * match_kind
   | ELetMut of string * expr * expr
   | EAssign of string * expr
   | EFieldAssign of expr * string * expr
   | ESeq of expr * expr
   | EAnnot of expr * ty_annot
-  | EWhile of expr * expr
-  | EFor of string * expr * expr
-  | EForFold of string * expr * string * expr * expr
+  | EWhile of { while_cond: expr; while_body: expr }
+  | EFor of { for_var: string; for_iter: expr; for_body: expr }
+  | EForFold of { loop_var: string; loop_iter: expr; accum_var: string; accum_init: expr; fold_body: expr }
   | EWhileLet of pattern * expr * expr
   | EBreak of expr option
   | EContinueLoop
@@ -111,7 +113,7 @@ type expr =
 
 and handler_arm =
   | HReturn of string * expr
-  | HOp of string * string * string * expr
+  | HOp of { op_name: string; arg: string; k: string; body: expr }
 
 and param = {
   name: string;
@@ -119,29 +121,48 @@ and param = {
   is_generated: bool;
 }
 
+type record_field_def = {
+  rfd_mutable: bool;
+  rfd_name: string;
+  rfd_type: ty_annot;
+}
+
 type type_def =
   | TDVariant of (string * ty_annot option * ty_annot option) list
     (* (name, arg_type, return_type) -- return_type = Some for GADT constructors *)
-  | TDRecord of (bool * string * ty_annot) list
+  | TDRecord of record_field_def list
   | TDAlias of ty_annot
   | TDNewtype of string * ty_annot    (* constructor_name, underlying_type *)
 
 type constraint_ = string * string list
   (* class_name, tyvar_names — e.g. ("Show", ["a"]) *)
 
+type type_def_binding = {
+  td_params: string list;
+  td_name: string;
+  td_def: type_def;
+  td_deriving: string list;
+}
+
+type letrec_binding = {
+  lr_name: string;
+  type_params: string list;
+  params: param list;
+  ret_annot: ty_annot option;
+  constraints: constraint_ list;
+  body: expr;
+}
+
 type decl =
-  | DLet of string * param list * ty_annot option * constraint_ list * expr
+  | DLet of { name: string; params: param list; ret_annot: ty_annot option; constraints: constraint_ list; body: expr }
   | DLetMut of string * expr
-  | DLetRec of string * string list * param list * ty_annot option * constraint_ list * expr
-  | DLetRecAnd of (string * string list * param list * ty_annot option * constraint_ list * expr) list
-  | DType of string list * string * type_def * string list
-  | DTypeAnd of (string list * string * type_def * string list) list
-    (* type_params, name, def, deriving_classes *)
+  | DLetRec of letrec_binding
+  | DLetRecAnd of letrec_binding list
+  | DType of type_def_binding
+  | DTypeAnd of type_def_binding list
   | DExpr of expr
-  | DClass of string * string list * (string list * string list) list * (string * ty_annot) list
-    (* class_name, tyvar_names, fundeps as [(from_tyvars, to_tyvars)], [(method_name, method_type)] *)
-  | DInstance of string * ty_annot list * constraint_ list * (string * param list * expr) list
-    (* class_name, instance_types, constraints, [(method_name, params, body)] *)
+  | DClass of { class_name: string; tyvars: string list; fundeps: (string list * string list) list; methods: (string * ty_annot) list }
+  | DInstance of { inst_class: string; inst_types: ty_annot list; inst_constraints: constraint_ list; inst_methods: (string * param list * expr) list }
   | DEffect of string * string list * (string * ty_annot) list
     (* effect_name, type_params, [(op_name, op_type)] *)
   | DExtern of string * ty_annot

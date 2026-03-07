@@ -60,7 +60,6 @@ type token_kind =
   | OPEN
   | END
   | OPAQUE
-  | WHILE
   | AND
   | DERIVING
   | LPAREN
@@ -101,6 +100,7 @@ type token_kind =
   | LSL
   | LSR
   | POLYTAG of string
+  | BACKTICK_INFIX of string
   | COLONGT
   | EOF
 
@@ -160,7 +160,6 @@ let pp_token_kind = function
   | OPEN -> "OPEN"
   | END -> "END"
   | OPAQUE -> "OPAQUE"
-  | WHILE -> "WHILE"
   | AND -> "AND"
   | DERIVING -> "DERIVING"
   | LPAREN -> "LPAREN"
@@ -201,8 +200,103 @@ let pp_token_kind = function
   | LSL -> "LSL"
   | LSR -> "LSR"
   | POLYTAG s -> Printf.sprintf "POLYTAG(`%s)" s
+  | BACKTICK_INFIX s -> Printf.sprintf "BACKTICK_INFIX(`%s`)" s
   | COLONGT -> "COLONGT"
   | EOF -> "EOF"
+
+let describe_token_kind = function
+  | INT _ -> "integer literal"
+  | FLOAT _ -> "float literal"
+  | STRING _ -> "string literal"
+  | INTERP_STRING _ -> "interpolated string"
+  | BYTE _ -> "byte literal"
+  | RUNE _ -> "rune literal"
+  | TRUE -> "'true'"
+  | FALSE -> "'false'"
+  | IDENT s -> Printf.sprintf "'%s'" s
+  | UIDENT s -> Printf.sprintf "'%s'" s
+  | TYVAR s -> Printf.sprintf "''%s'" s
+  | LET -> "'let'"
+  | REC -> "'rec'"
+  | IN -> "'in'"
+  | IF -> "'if'"
+  | ELSE -> "'else'"
+  | FN -> "'fn'"
+  | MATCH -> "'match'"
+  | WITH -> "'with'"
+  | TYPE -> "'type'"
+  | NEWTYPE -> "'newtype'"
+  | OF -> "'of'"
+  | CLASS -> "'class'"
+  | INSTANCE -> "'instance'"
+  | EFFECT -> "'effect'"
+  | EXTERN -> "'extern'"
+  | PERFORM -> "'perform'"
+  | HANDLE -> "'handle'"
+  | TRY -> "'try'"
+  | PROVIDE -> "'provide'"
+  | CONTINUE -> "'continue'"
+  | RESUME -> "'resume'"
+  | RETURN -> "'return'"
+  | MUT -> "'mut'"
+  | FOR -> "'for'"
+  | DO -> "'do'"
+  | BREAK -> "'break'"
+  | WHEN -> "'when'"
+  | WHERE -> "'where'"
+  | PARTIAL -> "'@partial'"
+  | NOT -> "'not'"
+  | HASH -> "'#'"
+  | FATARROW -> "'=>'"
+  | MOD -> "'mod'"
+  | MODULE -> "'module'"
+  | PUB -> "'pub'"
+  | OPEN -> "'open'"
+  | END -> "'end'"
+  | OPAQUE -> "'opaque'"
+  | AND -> "'and'"
+  | DERIVING -> "'deriving'"
+  | LPAREN -> "'('"
+  | RPAREN -> "')'"
+  | LBRACE -> "'{'"
+  | RBRACE -> "'}'"
+  | LBRACKET -> "'['"
+  | RBRACKET -> "']'"
+  | ARROW -> "'->'"
+  | COMMA -> "','"
+  | SEMICOLON -> "';'"
+  | DOUBLE_SEMICOLON -> "';;'"
+  | COLON -> "':'"
+  | DOT -> "'.'"
+  | DOTDOT -> "'..'"
+  | PIPE -> "'|'"
+  | PIPEARROW -> "'|>'"
+  | UNDERSCORE -> "'_'"
+  | PLUS -> "'+'"
+  | MINUS -> "'-'"
+  | STAR -> "'*'"
+  | SLASH -> "'/'"
+  | CARET -> "'^'"
+  | COLONCOLON -> "'::'"
+  | COLONEQUAL -> "':='"
+  | EQ -> "'='"
+  | NEQ -> "'<>'"
+  | LT -> "'<'"
+  | GT -> "'>'"
+  | LE -> "'<='"
+  | GE -> "'>='"
+  | AMPAMP -> "'&&'"
+  | PIPEPIPE -> "'||'"
+  | LAND -> "'land'"
+  | LOR -> "'lor'"
+  | LXOR -> "'lxor'"
+  | LNOT -> "'lnot'"
+  | LSL -> "'lsl'"
+  | LSR -> "'lsr'"
+  | POLYTAG s -> Printf.sprintf "'`%s'" s
+  | BACKTICK_INFIX s -> Printf.sprintf "'`%s`'" s
+  | COLONGT -> "':>'"
+  | EOF -> "end of input"
 
 let pp_token t =
   Printf.sprintf "%s@%d:%d" (pp_token_kind t.kind) t.loc.line t.loc.col

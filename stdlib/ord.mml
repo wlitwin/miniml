@@ -1,0 +1,102 @@
+(* Compound Ord instances for built-in container types *)
+(* Lexicographic ordering *)
+
+instance Ord ('a list) where Ord 'a =
+  let (<) xs ys =
+    let rec go a b = match (a, b) with
+      | ([], []) -> false
+      | ([], _) -> true
+      | (_, []) -> false
+      | (x :: xr, y :: yr) -> if x < y do true else if y < x do false else go xr yr
+    in go xs ys
+  let (>) xs ys =
+    let rec go a b = match (a, b) with
+      | ([], []) -> false
+      | (_, []) -> true
+      | ([], _) -> false
+      | (x :: xr, y :: yr) -> if x > y do true else if y > x do false else go xr yr
+    in go xs ys
+  let (<=) xs ys =
+    let rec go a b = match (a, b) with
+      | ([], _) -> true
+      | (_, []) -> false
+      | (x :: xr, y :: yr) -> if x < y do true else if y < x do false else go xr yr
+    in go xs ys
+  let (>=) xs ys =
+    let rec go a b = match (a, b) with
+      | (_, []) -> true
+      | ([], _) -> false
+      | (x :: xr, y :: yr) -> if x > y do true else if y > x do false else go xr yr
+    in go xs ys
+end
+
+;;
+
+instance Ord ('a option) where Ord 'a =
+  let (<) a b = match (a, b) with
+    | (None, Some _) -> true
+    | (Some x, Some y) -> x < y
+    | _ -> false
+  let (>) a b = match (a, b) with
+    | (Some _, None) -> true
+    | (Some x, Some y) -> x > y
+    | _ -> false
+  let (<=) a b = match (a, b) with
+    | (None, _) -> true
+    | (Some x, Some y) -> x <= y
+    | _ -> false
+  let (>=) a b = match (a, b) with
+    | (_, None) -> true
+    | (Some x, Some y) -> x >= y
+    | _ -> false
+end
+
+;;
+
+instance Ord ('a * 'b) where Ord 'a, Ord 'b =
+  let (<) x y =
+    let (a1, b1) = x in
+    let (a2, b2) = y in
+    if a1 < a2 do true else if a2 < a1 do false else b1 < b2
+  let (>) x y =
+    let (a1, b1) = x in
+    let (a2, b2) = y in
+    if a1 > a2 do true else if a2 > a1 do false else b1 > b2
+  let (<=) x y =
+    let (a1, b1) = x in
+    let (a2, b2) = y in
+    if a1 < a2 do true else if a2 < a1 do false else b1 <= b2
+  let (>=) x y =
+    let (a1, b1) = x in
+    let (a2, b2) = y in
+    if a1 > a2 do true else if a2 > a1 do false else b1 >= b2
+end
+
+;;
+
+instance Ord ('a * 'b * 'c) where Ord 'a, Ord 'b, Ord 'c =
+  let (<) x y =
+    let (a1, b1, c1) = x in
+    let (a2, b2, c2) = y in
+    if a1 < a2 do true else if a2 < a1 do false
+    else if b1 < b2 do true else if b2 < b1 do false
+    else c1 < c2
+  let (>) x y =
+    let (a1, b1, c1) = x in
+    let (a2, b2, c2) = y in
+    if a1 > a2 do true else if a2 > a1 do false
+    else if b1 > b2 do true else if b2 > b1 do false
+    else c1 > c2
+  let (<=) x y =
+    let (a1, b1, c1) = x in
+    let (a2, b2, c2) = y in
+    if a1 < a2 do true else if a2 < a1 do false
+    else if b1 < b2 do true else if b2 < b1 do false
+    else c1 <= c2
+  let (>=) x y =
+    let (a1, b1, c1) = x in
+    let (a2, b2, c2) = y in
+    if a1 > a2 do true else if a2 > a1 do false
+    else if b1 > b2 do true else if b2 > b1 do false
+    else c1 >= c2
+end

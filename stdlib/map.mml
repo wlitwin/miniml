@@ -5,22 +5,22 @@ module Map =
 
   pub let rec has k (MMap m) = match m with
     | [] -> false
-    | (k2, _) :: rest -> if k = k2 do true else has k (MMap rest)
+    | (k2, _) :: rest -> if __structural_eq k k2 do true else has k (MMap rest)
 
   pub let rec get k (MMap m) = match m with
     | [] -> None
-    | (k2, v) :: rest -> if k = k2 do Some v else get k (MMap rest)
+    | (k2, v) :: rest -> if __structural_eq k k2 do Some v else get k (MMap rest)
 
   pub let set k v (MMap m) =
     let rec go acc lst = match lst with
       | [] -> MMap (List.rev ((k, v) :: acc))
-      | (k2, _) :: rest when k = k2 -> MMap (List.rev_append ((k, v) :: acc) rest)
+      | (k2, _) :: rest when __structural_eq k k2 -> MMap (List.rev_append ((k, v) :: acc) rest)
       | entry :: rest -> go (entry :: acc) rest
     in go [] m
 
   pub let rec remove k (MMap m) = match m with
     | [] -> MMap []
-    | (k2, _) :: rest when k = k2 -> MMap rest
+    | (k2, _) :: rest when __structural_eq k k2 -> MMap rest
     | entry :: rest -> match remove k (MMap rest) with MMap r -> MMap (entry :: r)
 
   pub let size (MMap m) = List.length m

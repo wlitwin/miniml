@@ -1,0 +1,63 @@
+module Match_tree_types =
+  pub type map_key =
+    | MKInt of int
+    | MKString of string
+    | MKBool of bool
+    | MKFloat of float
+    | MKPin of string
+
+
+  pub type access =
+    | ATupleField of int
+    | ARecordField of string * int
+    | AVariantPayload
+    | AConsHead
+    | AConsTail
+    | AArrayElem of int
+    | AMapValue of map_key
+
+
+  pub type occurrence = access list
+
+  pub type test =
+    | TConstructor of string * int
+    | TPolyVariant of string * int
+    | TBoolLit of bool
+    | TIntLit of int
+    | TFloatLit of float
+    | TStringLit of string
+    | TUnit
+    | TNil
+    | TCons
+    | TArrayLen of int
+    | TMapHasKey of map_key
+    | TPin of string
+
+
+  pub type binding = {
+    var_name: string;
+    bind_occ: occurrence;
+    bind_ty: Types.ty
+  }
+
+  pub type 'expr dtree =
+    | DSwitch of { occ: occurrence; occ_ty: Types.ty; cases: (test * binding list * 'expr dtree) list; default: 'expr dtree option }
+    | DGuard of { arm_idx: int; guard: 'expr; bindings: binding list; on_true: 'expr dtree; on_false: 'expr dtree }
+    | DLeaf of { arm_idx: int; bindings: binding list }
+    | DFail of Token.loc
+
+
+  pub type 'expr match_arm = {
+    arm_body: 'expr
+  }
+
+  pub type 'expr compiled_match = {
+    scrutinee: 'expr;
+    scrutinee_ty: Types.ty;
+    match_arms: 'expr match_arm array;
+    tree: 'expr dtree;
+    loc: Token.loc;
+    match_kind: Ast.match_kind
+  }
+
+end

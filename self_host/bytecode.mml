@@ -11,12 +11,10 @@ module Bytecode =
     | GET_LOCAL of int
     | SET_LOCAL of int
     | GET_UPVALUE of int
-    | SET_UPVALUE of int
     | MAKE_REF
     | DEREF
     | SET_REF
     | GET_GLOBAL of int
-    | SET_GLOBAL of int
     | DEF_GLOBAL of int
     | ADD
     | SUB
@@ -144,12 +142,21 @@ module Bytecode =
     fiber_stack: value array;
     mut fiber_sp: int;
     mut fiber_frames: call_frame list;
+    mut fiber_frame_depth: int;
     mut fiber_extra_args: value list list
+  }
+  and handler_entry = {
+    he_return: value;
+    he_ops: (string * value) list;
+    he_body_fiber: fiber;
+    he_parent_fiber: fiber
   }
   and continuation_data = {
     cd_fiber: fiber;
     cd_return_handler: value;
     cd_op_handlers: (string * value) list;
+    cd_body_fiber: fiber;
+    cd_intermediate_handlers: handler_entry list;
     mut cd_used: bool
   }
 
@@ -239,12 +246,10 @@ module Bytecode =
       | GET_LOCAL i -> $"GET_LOCAL {i}"
       | SET_LOCAL i -> $"SET_LOCAL {i}"
       | GET_UPVALUE i -> $"GET_UPVALUE {i}"
-      | SET_UPVALUE i -> $"SET_UPVALUE {i}"
       | MAKE_REF -> "MAKE_REF"
       | DEREF -> "DEREF"
       | SET_REF -> "SET_REF"
       | GET_GLOBAL i -> $"GET_GLOBAL {i}"
-      | SET_GLOBAL i -> $"SET_GLOBAL {i}"
       | DEF_GLOBAL i -> $"DEF_GLOBAL {i}"
       | ADD -> "ADD"
       | SUB -> "SUB"

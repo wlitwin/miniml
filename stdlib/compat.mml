@@ -13,6 +13,10 @@ let float_of_string s =
   | Some f -> f
   | None -> failwith $"float_of_string: invalid argument \"{s}\""
 
+let int_of_string_opt s = String.to_int s
+
+let float_of_string_opt s = String.to_float s
+
 let max (a : int) (b : int) : int = if a > b do a else b
 
 let min (a : int) (b : int) : int = if a < b do a else b

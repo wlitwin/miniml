@@ -31,12 +31,10 @@ let serialize_opcode = function
   | GET_LOCAL i -> Printf.sprintf "[\"GET_LOCAL\",%d]" i
   | SET_LOCAL i -> Printf.sprintf "[\"SET_LOCAL\",%d]" i
   | GET_UPVALUE i -> Printf.sprintf "[\"GET_UPVALUE\",%d]" i
-  | SET_UPVALUE i -> Printf.sprintf "[\"SET_UPVALUE\",%d]" i
   | MAKE_REF -> "[\"MAKE_REF\"]"
   | DEREF -> "[\"DEREF\"]"
   | SET_REF -> "[\"SET_REF\"]"
   | GET_GLOBAL i -> Printf.sprintf "[\"GET_GLOBAL\",%d]" i
-  | SET_GLOBAL i -> Printf.sprintf "[\"SET_GLOBAL\",%d]" i
   | DEF_GLOBAL i -> Printf.sprintf "[\"DEF_GLOBAL\",%d]" i
   | ADD -> "[\"ADD\"]"
   | SUB -> "[\"SUB\"]"

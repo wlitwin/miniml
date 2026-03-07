@@ -9,12 +9,10 @@ type opcode =
   | GET_LOCAL of int
   | SET_LOCAL of int
   | GET_UPVALUE of int
-  | SET_UPVALUE of int
   | MAKE_REF
   | DEREF
   | SET_REF
   | GET_GLOBAL of int
-  | SET_GLOBAL of int
   | DEF_GLOBAL of int
   | ADD
   | SUB
@@ -148,13 +146,23 @@ and fiber = {
   fiber_stack: value array;
   mutable fiber_sp: int;
   mutable fiber_frames: call_frame list;
+  mutable fiber_frame_depth: int;
   mutable fiber_extra_args: value list list;
+}
+
+and handler_entry = {
+  he_return: value;
+  he_ops: (string * value) list;
+  he_body_fiber: fiber;
+  he_parent_fiber: fiber;
 }
 
 and continuation_data = {
   cd_fiber: fiber;
   cd_return_handler: value;
   cd_op_handlers: (string * value) list;
+  cd_body_fiber: fiber;
+  cd_intermediate_handlers: handler_entry list;
   mutable cd_used: bool;
 }
 
@@ -239,12 +247,10 @@ let pp_opcode = function
   | GET_LOCAL i -> Printf.sprintf "GET_LOCAL %d" i
   | SET_LOCAL i -> Printf.sprintf "SET_LOCAL %d" i
   | GET_UPVALUE i -> Printf.sprintf "GET_UPVALUE %d" i
-  | SET_UPVALUE i -> Printf.sprintf "SET_UPVALUE %d" i
   | MAKE_REF -> "MAKE_REF"
   | DEREF -> "DEREF"
   | SET_REF -> "SET_REF"
   | GET_GLOBAL i -> Printf.sprintf "GET_GLOBAL %d" i
-  | SET_GLOBAL i -> Printf.sprintf "SET_GLOBAL %d" i
   | DEF_GLOBAL i -> Printf.sprintf "DEF_GLOBAL %d" i
   | ADD -> "ADD"
   | SUB -> "SUB"

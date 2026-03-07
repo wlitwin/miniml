@@ -90,6 +90,12 @@ type scheme = {
 
 let mono ty = { quant = 0; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty }
 
+(* 30-bit mask for polymorphic variant tag hashing *)
+let polyvar_tag_mask = 0x3FFFFFFF
+
+let polyvar_tag name =
+  Hashtbl.hash name land polyvar_tag_mask
+
 (* Global counter for fresh type variable ids *)
 let next_id = ref 0
 
@@ -255,7 +261,7 @@ let empty_type_env = {
   records = [];
   classes = [];
   instances = [];
-  effects = [];
+  effects = [{ effect_name = "IO"; effect_params = []; effect_ops = [] }];
   mutable_fields = [];
   modules = [];
   type_aliases = [];
@@ -387,11 +393,7 @@ let rec occurs_check_rrow id level row =
 
 (* ---- Pretty printing ---- *)
 
-let pp_synonyms : (string * int * ty) list ref = ref []
-let pp_ty_arg_ref : (ty -> string) ref = ref (fun _ -> "?")
-
-let try_match_synonym ty =
-  let synonyms = !pp_synonyms in
+let try_match_synonym synonyms ty =
   if synonyms = [] then None
   else
     List.find_map (fun (name, num_params, pattern) ->
@@ -424,26 +426,15 @@ let try_match_synonym ty =
         None
     ) synonyms
 
-let rec pp_eff eff =
-  match eff_repr eff with
-  | EffEmpty -> ""
-  | EffVar { contents = EffUnbound (id, _) } ->
-    "'" ^ String.make 1 (Char.chr (Char.code 'e' + id mod 22))
-  | EffRow (label, params, tail) ->
-    let param_str = match params with
-      | [] -> ""
-      | ps -> " " ^ String.concat " " (List.map !pp_ty_arg_ref ps)
-    in
-    let tail_str = match eff_repr tail with
-      | EffEmpty -> ""
-      | EffVar { contents = EffUnbound _ } -> ", " ^ pp_eff tail
-      | EffRow _ -> ", " ^ pp_eff tail
-      | _ -> ""
-    in
-    label ^ param_str ^ tail_str
-  | EffGen id ->
-    "'" ^ String.make 1 (Char.chr (Char.code 'e' + id mod 22))
-  | EffVar { contents = EffLink _ } -> assert false
+let pp_tvar_name id =
+  let c = Char.chr (Char.code 'a' + id mod 26) in
+  if id < 26 then "'" ^ String.make 1 c
+  else "'" ^ String.make 1 c ^ string_of_int (id / 26)
+
+let pp_effvar_name id =
+  let c = Char.chr (Char.code 'e' + id mod 22) in
+  if id < 22 then "'" ^ String.make 1 c
+  else "'" ^ String.make 1 c ^ string_of_int (id / 22)
 
 let eff_is_trivial eff =
   match eff_repr eff with
@@ -452,39 +443,58 @@ let eff_is_trivial eff =
   | EffGen _ -> true
   | _ -> false
 
-let rec pp_ty ty =
+let rec pp_eff_impl synonyms eff =
+  match eff_repr eff with
+  | EffEmpty -> ""
+  | EffVar { contents = EffUnbound (id, _) } -> pp_effvar_name id
+  | EffRow (label, params, tail) ->
+    let param_str = match params with
+      | [] -> ""
+      | ps -> " " ^ String.concat " " (List.map (pp_ty_arg_impl synonyms) ps)
+    in
+    let tail_str = match eff_repr tail with
+      | EffEmpty -> ""
+      | EffVar { contents = EffUnbound _ } -> ", " ^ pp_eff_impl synonyms tail
+      | EffRow _ -> ", " ^ pp_eff_impl synonyms tail
+      | _ -> ""
+    in
+    label ^ param_str ^ tail_str
+  | EffGen id -> pp_effvar_name id
+  | EffVar { contents = EffLink _ } -> assert false
+
+and pp_ty_impl synonyms ty =
   let ty = repr ty in
-  match try_match_synonym ty with
+  match try_match_synonym synonyms ty with
   | Some (name, args) ->
     (* For arrow types, if the argument also matches a synonym, prefer decomposing
        the arrow to avoid false matches (e.g., 'a seq -> unit shown as ('a -> unit) seq) *)
     (match ty with
-     | (TArrow (a, _, _) | TCont (a, _, _)) when try_match_synonym (repr a) <> None ->
-       pp_ty_raw ty
-     | _ -> pp_type_con name args)
-  | None -> pp_ty_raw ty
+     | (TArrow (a, _, _) | TCont (a, _, _)) when try_match_synonym synonyms (repr a) <> None ->
+       pp_ty_raw_impl synonyms ty
+     | _ -> pp_type_con_impl synonyms name args)
+  | None -> pp_ty_raw_impl synonyms ty
 
-and pp_type_con name = function
+and pp_type_con_impl synonyms name = function
   | [] -> name
   | [arg] ->
     (match repr arg with
-     | TArrow _ | TCont _ | TTuple _ -> "(" ^ pp_ty arg ^ ")"
-     | _ -> pp_ty arg) ^ " " ^ name
+     | TArrow _ | TCont _ | TTuple _ -> "(" ^ pp_ty_impl synonyms arg ^ ")"
+     | _ -> pp_ty_impl synonyms arg) ^ " " ^ name
   | args ->
-    "(" ^ String.concat ", " (List.map pp_ty args) ^ ") " ^ name
+    "(" ^ String.concat ", " (List.map (pp_ty_impl synonyms) args) ^ ") " ^ name
 
 (* Check if a type needs parens when used as an arrow argument or type con arg.
    Types that collapse to a synonym don't need parens even if their raw form is an arrow. *)
-and needs_parens ty =
+and needs_parens_impl synonyms ty =
   let ty = repr ty in
-  match try_match_synonym ty with
+  match try_match_synonym synonyms ty with
   | Some _ -> false
   | None -> match ty with TArrow _ | TCont _ | TTuple _ -> true | _ -> false
 
-and pp_ty_arg ty =
-  if needs_parens ty then "(" ^ pp_ty ty ^ ")" else pp_ty ty
+and pp_ty_arg_impl synonyms ty =
+  if needs_parens_impl synonyms ty then "(" ^ pp_ty_impl synonyms ty ^ ")" else pp_ty_impl synonyms ty
 
-and pp_ty_raw ty =
+and pp_ty_raw_impl synonyms ty =
   match ty with
   | TInt -> "int"
   | TFloat -> "float"
@@ -495,36 +505,36 @@ and pp_ty_raw ty =
   | TUnit -> "unit"
   | TArrow (a, eff, r) ->
     let a_str = match repr a with
-      | TArrow _ when try_match_synonym (repr a) = None ->
-        "(" ^ pp_ty a ^ ")"
-      | _ -> pp_ty a
+      | TArrow _ when try_match_synonym synonyms (repr a) = None ->
+        "(" ^ pp_ty_impl synonyms a ^ ")"
+      | _ -> pp_ty_impl synonyms a
     in
     if eff_is_trivial eff then
-      a_str ^ " -> " ^ pp_ty r
+      a_str ^ " -> " ^ pp_ty_impl synonyms r
     else
-      a_str ^ " -> " ^ pp_ty r ^ " / " ^ pp_eff eff
+      a_str ^ " -> " ^ pp_ty_impl synonyms r ^ " / " ^ pp_eff_impl synonyms eff
   | TCont (a, eff, r) ->
     let inner =
       let a_str = match repr a with
-        | TArrow _ | TCont _ when try_match_synonym (repr a) = None ->
-          "(" ^ pp_ty a ^ ")"
-        | _ -> pp_ty a
+        | TArrow _ | TCont _ when try_match_synonym synonyms (repr a) = None ->
+          "(" ^ pp_ty_impl synonyms a ^ ")"
+        | _ -> pp_ty_impl synonyms a
       in
       if eff_is_trivial eff then
-        a_str ^ " -> " ^ pp_ty r
+        a_str ^ " -> " ^ pp_ty_impl synonyms r
       else
-        a_str ^ " -> " ^ pp_ty r ^ " / " ^ pp_eff eff
+        a_str ^ " -> " ^ pp_ty_impl synonyms r ^ " / " ^ pp_eff_impl synonyms eff
     in
     "continuation(" ^ inner ^ ")"
   | TTuple ts ->
     String.concat " * " (List.map (fun t ->
       match repr t with
-      | (TArrow _ | TCont _) when try_match_synonym (repr t) = None ->
-        "(" ^ pp_ty t ^ ")"
-      | _ -> pp_ty t
+      | (TArrow _ | TCont _) when try_match_synonym synonyms (repr t) = None ->
+        "(" ^ pp_ty_impl synonyms t ^ ")"
+      | _ -> pp_ty_impl synonyms t
     ) ts)
-  | TList t -> pp_ty_arg t ^ " list"
-  | TArray t -> pp_ty_arg t ^ " array"
+  | TList t -> pp_ty_arg_impl synonyms t ^ " list"
+  | TArray t -> pp_ty_arg_impl synonyms t ^ " array"
   | TRecord row ->
     let rec collect r = match rrow_repr r with
       | RRow (name, ty, tail) -> (name, ty) :: collect tail
@@ -536,16 +546,16 @@ and pp_ty_raw ty =
       | _ -> false
     in
     let fields_str = String.concat "; " (List.map (fun (n, t) ->
-      n ^ ": " ^ pp_ty t
+      n ^ ": " ^ pp_ty_impl synonyms t
     ) (collect row)) in
     if is_open row then
       "{ " ^ fields_str ^ (if fields_str = "" then ".." else "; ..") ^ " }"
     else
       "{ " ^ fields_str ^ " }"
   | TVariant (name, []) -> name
-  | TVariant (name, [arg]) -> pp_ty_arg arg ^ " " ^ name
+  | TVariant (name, [arg]) -> pp_ty_arg_impl synonyms arg ^ " " ^ name
   | TVariant (name, args) ->
-    "(" ^ String.concat ", " (List.map pp_ty args) ^ ") " ^ name
+    "(" ^ String.concat ", " (List.map (pp_ty_impl synonyms) args) ^ ") " ^ name
   | TPolyVariant row ->
     let rec collect_tags r =
       match pv_repr r with
@@ -566,23 +576,42 @@ and pp_ty_raw ty =
     let tag_strs = List.map (fun (tag, ty_opt) ->
       match ty_opt with
       | None -> "`" ^ tag
-      | Some t -> "`" ^ tag ^ " of " ^ pp_ty t
+      | Some t -> "`" ^ tag ^ " of " ^ pp_ty_impl synonyms t
     ) tags in
     let marker = if is_open then "> " else "" in
     "[" ^ marker ^ String.concat " | " tag_strs ^ "]"
-  | TVar { contents = Unbound (id, _) } ->
-    "'" ^ String.make 1 (Char.chr (Char.code 'a' + id mod 26))
+  | TVar { contents = Unbound (id, _) } -> pp_tvar_name id
   | TVar { contents = Link _ } -> assert false
-  | TGen id ->
-    "'" ^ String.make 1 (Char.chr (Char.code 'a' + id mod 26))
+  | TGen id -> pp_tvar_name id
 
-let () = pp_ty_arg_ref := pp_ty_arg
+(* Public API: synonym-aware variants and defaults without synonyms *)
+let pp_ty_with synonyms ty = pp_ty_impl synonyms ty
+let pp_ty ty = pp_ty_impl [] ty
+let pp_ty_arg ty = pp_ty_arg_impl [] ty
+let pp_ty_raw ty = pp_ty_raw_impl [] ty
+let pp_eff eff = pp_eff_impl [] eff
 
 (* ---- Unification ---- *)
 
 let unify_error t1 t2 =
   raise (Unify_error (Printf.sprintf "cannot unify %s with %s"
     (pp_ty t1) (pp_ty t2)))
+
+(* Collect all labels from an effect row, returning (labels, final_tail) *)
+let rec collect_eff_row eff =
+  match eff_repr eff with
+  | EffRow (l, p, tail) -> let (rest, ft) = collect_eff_row tail in ((l, p) :: rest, ft)
+  | other -> ([], other)
+
+let rec collect_pv_row row =
+  match pv_repr row with
+  | PVRow (t, ty, tail) -> let (rest, ft) = collect_pv_row tail in ((t, ty) :: rest, ft)
+  | other -> ([], other)
+
+let rec collect_rrow row =
+  match rrow_repr row with
+  | RRow (f, ty, tail) -> let (rest, ft) = collect_rrow tail in ((f, ty) :: rest, ft)
+  | other -> ([], other)
 
 (* Effect row unification (Remy-style) *)
 let rec unify_eff e1 e2 =
@@ -599,9 +628,18 @@ let rec unify_eff e1 e2 =
     when String.equal label1 label2 && List.length params1 = List.length params2 ->
     List.iter2 unify params1 params2;
     unify_eff tail1 tail2
-  | EffRow (label1, params1, tail1), _ ->
-    let tail2 = rewrite_row label1 params1 e2 in
-    unify_eff tail1 tail2
+  | EffRow (_label1, _params1, _tail1), _ ->
+    (* Check for shared tail variable to prevent infinite loop *)
+    let (_, ft1) = collect_eff_row e1 in
+    let (_, ft2) = collect_eff_row e2 in
+    let shared = match ft1, ft2 with
+      | EffVar r1, EffVar r2 -> r1 == r2 | _ -> false in
+    if shared then unify_eff_shared_tail e1 e2
+    else
+      let (label1, params1, tail1) = match e1 with
+        | EffRow (l, p, t) -> (l, p, t) | _ -> assert false in
+      let tail2 = rewrite_row label1 params1 e2 in
+      unify_eff tail1 tail2
   | _, EffRow _ ->
     unify_eff e2 e1
   | EffGen i, EffGen j when i = j -> ()
@@ -629,6 +667,47 @@ and rewrite_row label params_to_unify eff =
   | _ ->
     raise (Unify_error (Printf.sprintf "cannot rewrite effect row for %s" label))
 
+(* Handle shared-tail case: both effect rows end at the same unbound variable.
+   Collect labels from both, unify matching params, merge unique labels into shared tail. *)
+and unify_eff_shared_tail e1 e2 =
+  let (labels1, final) = collect_eff_row e1 in
+  let (labels2, _) = collect_eff_row e2 in
+  let level = match eff_repr final with
+    | EffVar { contents = EffUnbound (_, l) } -> l | _ -> assert false in
+  let fresh = new_effvar level in
+  (* Find matching labels between sides and unify their params *)
+  let remaining2 = ref labels2 in
+  let only1 = ref [] in
+  List.iter (fun (l1, p1) ->
+    let rec find_and_remove = function
+      | [] -> None, []
+      | (l2, p2) :: rest when String.equal l1 l2 ->
+        Some p2, rest
+      | x :: rest ->
+        let found, remaining = find_and_remove rest in
+        found, x :: remaining
+    in
+    let found, rest = find_and_remove !remaining2 in
+    remaining2 := rest;
+    match found with
+    | Some p2 ->
+      if List.length p1 = List.length p2 then
+        List.iter2 unify p1 p2
+      else
+        raise (Unify_error (Printf.sprintf "cannot unify effects %s and %s"
+          (pp_eff e1) (pp_eff e2)))
+    | None -> only1 := (l1, p1) :: !only1
+  ) labels1;
+  (* Build merged tail: unique labels from both sides + fresh variable *)
+  let new_tail = List.fold_right (fun (l, p) acc -> EffRow (l, p, acc))
+    (List.rev !only1 @ !remaining2) fresh in
+  (* Link the shared variable *)
+  (match eff_repr final with
+   | EffVar ({ contents = EffUnbound (id, _) } as r) ->
+     occurs_check_eff id level new_tail;
+     r := EffLink new_tail
+   | _ -> assert false)
+
 (* Subeffect: source's effects must be present in target.
    Unlike unify_eff, EffEmpty is a sub of anything (pure is always ok). *)
 and subeffect source target =
@@ -639,9 +718,17 @@ and subeffect source target =
   | EffEmpty -> ()
   | EffVar ({ contents = EffUnbound _ }) ->
     unify_eff source target
-  | EffRow (label, params, tail) ->
-    let target_tail = rewrite_row label params target in
-    subeffect (eff_repr tail) target_tail
+  | EffRow (_label, _params, _tail) ->
+    let (_, ft_source) = collect_eff_row source in
+    let (_, ft_target) = collect_eff_row target in
+    let shared = match ft_source, ft_target with
+      | EffVar r1, EffVar r2 -> r1 == r2 | _ -> false in
+    if shared then unify_eff_shared_tail source target
+    else
+      let (label, params, tail) = match source with
+        | EffRow (l, p, t) -> (l, p, t) | _ -> assert false in
+      let target_tail = rewrite_row label params target in
+      subeffect (eff_repr tail) target_tail
   | EffGen _ -> ()
   | _ -> unify_eff source target
 
@@ -659,10 +746,18 @@ and unify_pv_row r1 r2 =
   | PVRow (tag1, ty1, tail1), PVRow (tag2, ty2, tail2) when String.equal tag1 tag2 ->
     unify_pv_payload ty1 ty2;
     unify_pv_row tail1 tail2
-  | PVRow (tag1, ty1, tail1), _ ->
-    let (ty2, tail2) = rewrite_pv_row tag1 ty1 r2 in
-    unify_pv_payload ty1 ty2;
-    unify_pv_row tail1 tail2
+  | PVRow (_tag1, _ty1, _tail1), _ ->
+    let (_, ft1) = collect_pv_row r1 in
+    let (_, ft2) = collect_pv_row r2 in
+    let shared = match ft1, ft2 with
+      | PVVar rv1, PVVar rv2 -> rv1 == rv2 | _ -> false in
+    if shared then unify_pv_shared_tail r1 r2
+    else
+      let (tag1, ty1, tail1) = match r1 with
+        | PVRow (t, ty, tl) -> (t, ty, tl) | _ -> assert false in
+      let (ty2, tail2) = rewrite_pv_row tag1 ty1 r2 in
+      unify_pv_payload ty1 ty2;
+      unify_pv_row tail1 tail2
   | _, PVRow _ ->
     unify_pv_row r2 r1
   | PVGen i, PVGen j when i = j -> ()
@@ -693,6 +788,34 @@ and rewrite_pv_row tag default_payload row =
   | _ ->
     raise (Unify_error (Printf.sprintf "cannot rewrite polymorphic variant row for `%s" tag))
 
+and unify_pv_shared_tail r1 r2 =
+  let (labels1, final) = collect_pv_row r1 in
+  let (labels2, _) = collect_pv_row r2 in
+  let level = match pv_repr final with
+    | PVVar { contents = PVUnbound (_, l) } -> l | _ -> assert false in
+  let fresh = new_pvvar level in
+  let remaining2 = ref labels2 in
+  let only1 = ref [] in
+  List.iter (fun (t1, ty1) ->
+    let rec find_and_remove = function
+      | [] -> None, []
+      | (t2, ty2) :: rest when String.equal t1 t2 -> Some ty2, rest
+      | x :: rest -> let f, r = find_and_remove rest in f, x :: r
+    in
+    let found, rest = find_and_remove !remaining2 in
+    remaining2 := rest;
+    match found with
+    | Some ty2 -> unify_pv_payload ty1 ty2
+    | None -> only1 := (t1, ty1) :: !only1
+  ) labels1;
+  let new_tail = List.fold_right (fun (t, ty) acc -> PVRow (t, ty, acc))
+    (List.rev !only1 @ !remaining2) fresh in
+  (match pv_repr final with
+   | PVVar ({ contents = PVUnbound (id, _) } as r) ->
+     occurs_check_pv id level new_tail;
+     r := PVLink new_tail
+   | _ -> assert false)
+
 (* Record row unification (Remy-style) *)
 and unify_record_row r1 r2 =
   let r1 = rrow_repr r1 in
@@ -708,10 +831,18 @@ and unify_record_row r1 r2 =
   | RRow (f1, ty1, tail1), RRow (f2, ty2, tail2) when String.equal f1 f2 ->
     unify ty1 ty2;
     unify_record_row tail1 tail2
-  | RRow (f1, ty1, tail1), _ ->
-    let (ty2, tail2) = rewrite_record_row f1 r2 in
-    unify ty1 ty2;
-    unify_record_row tail1 tail2
+  | RRow (_f1, _ty1, _tail1), _ ->
+    let (_, ft1) = collect_rrow r1 in
+    let (_, ft2) = collect_rrow r2 in
+    let shared = match ft1, ft2 with
+      | RVar rv1, RVar rv2 -> rv1 == rv2 | _ -> false in
+    if shared then unify_rrow_shared_tail r1 r2
+    else
+      let (f1, ty1, tail1) = match r1 with
+        | RRow (f, t, tl) -> (f, t, tl) | _ -> assert false in
+      let (ty2, tail2) = rewrite_record_row f1 r2 in
+      unify ty1 ty2;
+      unify_record_row tail1 tail2
   | _, RRow _ -> unify_record_row r2 r1
   | RGen i, RGen j when i = j -> ()
   | _ -> raise (Unify_error "cannot unify record types")
@@ -735,6 +866,34 @@ and rewrite_record_row field row =
     (field_ty, RWild)
   | REmpty -> raise (Unify_error (Printf.sprintf "record has no field %s" field))
   | _ -> raise (Unify_error (Printf.sprintf "cannot rewrite record row for %s" field))
+
+and unify_rrow_shared_tail r1 r2 =
+  let (labels1, final) = collect_rrow r1 in
+  let (labels2, _) = collect_rrow r2 in
+  let level = match rrow_repr final with
+    | RVar { contents = RUnbound (_, l) } -> l | _ -> assert false in
+  let fresh = new_rvar level in
+  let remaining2 = ref labels2 in
+  let only1 = ref [] in
+  List.iter (fun (f1, ty1) ->
+    let rec find_and_remove = function
+      | [] -> None, []
+      | (f2, ty2) :: rest when String.equal f1 f2 -> Some ty2, rest
+      | x :: rest -> let f, r = find_and_remove rest in f, x :: r
+    in
+    let found, rest = find_and_remove !remaining2 in
+    remaining2 := rest;
+    match found with
+    | Some ty2 -> unify ty1 ty2
+    | None -> only1 := (f1, ty1) :: !only1
+  ) labels1;
+  let new_tail = List.fold_right (fun (f, ty) acc -> RRow (f, ty, acc))
+    (List.rev !only1 @ !remaining2) fresh in
+  (match rrow_repr final with
+   | RVar ({ contents = RUnbound (id, _) } as r) ->
+     occurs_check_rrow id level new_tail;
+     r := RLink new_tail
+   | _ -> assert false)
 
 and unify t1 t2 =
   let t1 = repr t1 in
@@ -770,88 +929,6 @@ and unify t1 t2 =
   | _ -> unify_error t1 t2
 
 (* ---- Generalization and instantiation ---- *)
-
-(* Generalize: replace unbound type variables at levels > `level` with TGen,
-   and unbound effect variables with EffGen *)
-let generalize level ty =
-  let (id_map : (int, int) Hashtbl.t) = Hashtbl.create 8 in
-  let counter = ref 0 in
-  let (eff_id_map : (int, int) Hashtbl.t) = Hashtbl.create 4 in
-  let ecounter = ref 0 in
-  let (pv_id_map : (int, int) Hashtbl.t) = Hashtbl.create 4 in
-  let pvcounter = ref 0 in
-  let (r_id_map : (int, int) Hashtbl.t) = Hashtbl.create 4 in
-  let rcounter = ref 0 in
-  let rec go ty =
-    match repr ty with
-    | TVar { contents = Unbound (id, level') } when level' > level ->
-      (match Hashtbl.find_opt id_map id with
-       | Some gen_id -> TGen gen_id
-       | None ->
-         let gen_id = !counter in
-         counter := gen_id + 1;
-         Hashtbl.replace id_map id gen_id;
-         TGen gen_id)
-    | TVar { contents = Unbound _ } as t -> t
-    | TVar { contents = Link _ } -> assert false
-    | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
-    | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
-    | TTuple ts -> TTuple (List.map go ts)
-    | TList t -> TList (go t)
-    | TArray t -> TArray (go t)
-    | TRecord row -> TRecord (go_rrow row)
-    | TVariant (name, args) -> TVariant (name, List.map go args)
-    | TPolyVariant row -> TPolyVariant (go_pv row)
-    | (TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _) as t -> t
-  and go_eff eff =
-    match eff_repr eff with
-    | EffVar { contents = EffUnbound (id, level') } when level' > level ->
-      (match Hashtbl.find_opt eff_id_map id with
-       | Some gen_id -> EffGen gen_id
-       | None ->
-         let gen_id = !ecounter in
-         ecounter := gen_id + 1;
-         Hashtbl.replace eff_id_map id gen_id;
-         EffGen gen_id)
-    | EffVar { contents = EffUnbound _ } as e -> e
-    | EffVar { contents = EffLink _ } -> assert false
-    | EffRow (label, params, tail) -> EffRow (label, List.map go params, go_eff tail)
-    | EffEmpty -> EffEmpty
-    | EffGen _ as e -> e
-  and go_pv row =
-    match pv_repr row with
-    | PVVar { contents = PVUnbound (id, level') } when level' > level ->
-      (match Hashtbl.find_opt pv_id_map id with
-       | Some gen_id -> PVGen gen_id
-       | None ->
-         let gen_id = !pvcounter in
-         pvcounter := gen_id + 1;
-         Hashtbl.replace pv_id_map id gen_id;
-         PVGen gen_id)
-    | PVVar { contents = PVUnbound _ } as r -> r
-    | PVVar { contents = PVLink _ } -> assert false
-    | PVRow (tag, ty_opt, tail) -> PVRow (tag, Option.map go ty_opt, go_pv tail)
-    | PVEmpty -> PVEmpty
-    | PVGen _ as r -> r
-  and go_rrow row =
-    match rrow_repr row with
-    | RVar { contents = RUnbound (id, level') } when level' > level ->
-      (match Hashtbl.find_opt r_id_map id with
-       | Some gen_id -> RGen gen_id
-       | None ->
-         let gen_id = !rcounter in
-         rcounter := gen_id + 1;
-         Hashtbl.replace r_id_map id gen_id;
-         RGen gen_id)
-    | RVar { contents = RUnbound _ } as r -> r
-    | RVar { contents = RLink _ } -> assert false
-    | RRow (name, ty, tail) -> RRow (name, go ty, go_rrow tail)
-    | REmpty -> REmpty
-    | RGen _ as r -> r
-    | RWild -> RWild
-  in
-  let body = go ty in
-  { quant = !counter; equant = !ecounter; pvquant = !pvcounter; rquant = !rcounter; constraints = []; record_evidences = []; body }
 
 (* Generalize and return the tvar_id -> TGen index mapping *)
 let generalize_with_map level ty =
@@ -930,6 +1007,98 @@ let generalize_with_map level ty =
   let body = go ty in
   ({ quant = !counter; equant = !ecounter; pvquant = !pvcounter; rquant = !rcounter; constraints = []; record_evidences = []; body }, id_map)
 
+(* Generalize: replace unbound type variables at levels > `level` with TGen,
+   and unbound effect variables with EffGen *)
+let generalize level ty = fst (generalize_with_map level ty)
+
+(* ---- Scheme pretty-printing ---- *)
+
+let pp_class_arg_impl synonyms = function
+  | CATGen id -> pp_tvar_name id
+  | CATy ty -> pp_ty_impl synonyms ty
+  | CAWild -> "_"
+  | CAPhantom (_, ty) -> pp_ty_impl synonyms ty
+
+let pp_class_arg x = pp_class_arg_impl [] x
+
+let pp_constraint_impl synonyms (c : class_constraint) =
+  c.cc_class ^ " " ^ String.concat " " (List.map (pp_class_arg_impl synonyms) c.cc_args)
+
+let pp_constraint c = pp_constraint_impl [] c
+
+let pp_scheme_impl synonyms (s : scheme) =
+  (* Renumber TGens in left-to-right body order for consistent display *)
+  let remap = Hashtbl.create 4 in
+  let counter = ref 0 in
+  let rec collect ty =
+    match ty with
+    | TGen i ->
+      if not (Hashtbl.mem remap i) then begin
+        Hashtbl.replace remap i !counter; incr counter end
+    | TArrow (a, _, r) | TCont (a, _, r) -> collect a; collect r
+    | TTuple ts -> List.iter collect ts
+    | TList t | TArray t -> collect t
+    | TVariant (_, ts) -> List.iter collect ts
+    | TRecord row -> collect_rrow row
+    | TPolyVariant row -> collect_pvrow row
+    | _ -> ()
+  and collect_rrow row =
+    match row with
+    | RRow (_, ty, tail) -> collect ty; collect_rrow tail
+    | _ -> ()
+  and collect_pvrow row =
+    match row with
+    | PVRow (_, ty_opt, tail) -> Option.iter collect ty_opt; collect_pvrow tail
+    | _ -> ()
+  in
+  collect s.body;
+  let rename_tgen i = match Hashtbl.find_opt remap i with
+    | Some j -> j | None -> i in
+  let rec rewrite ty =
+    match ty with
+    | TGen i -> TGen (rename_tgen i)
+    | TArrow (a, e, r) -> TArrow (rewrite a, e, rewrite r)
+    | TCont (a, e, r) -> TCont (rewrite a, e, rewrite r)
+    | TTuple ts -> TTuple (List.map rewrite ts)
+    | TList t -> TList (rewrite t)
+    | TArray t -> TArray (rewrite t)
+    | TVariant (n, ts) -> TVariant (n, List.map rewrite ts)
+    | TRecord row -> TRecord (rewrite_rrow row)
+    | TPolyVariant row -> TPolyVariant (rewrite_pvrow row)
+    | t -> t
+  and rewrite_rrow row =
+    match row with
+    | RRow (n, ty, tail) -> RRow (n, rewrite ty, rewrite_rrow tail)
+    | r -> r
+  and rewrite_pvrow row =
+    match row with
+    | PVRow (tag, ty_opt, tail) -> PVRow (tag, Option.map rewrite ty_opt, rewrite_pvrow tail)
+    | r -> r
+  in
+  let rename_arg = function
+    | CATGen i -> CATGen (rename_tgen i)
+    | a -> a
+  in
+  let body_str = pp_ty_impl synonyms (rewrite s.body) in
+  match s.constraints with
+  | [] -> body_str
+  | cs ->
+    let cs = List.map (fun (c : class_constraint) ->
+      { c with cc_args = List.map rename_arg c.cc_args }
+    ) cs in
+    let cs_str = String.concat ", " (List.map (pp_constraint_impl synonyms) cs) in
+    body_str ^ " where " ^ cs_str
+
+let pp_scheme_with synonyms s = pp_scheme_impl synonyms s
+let pp_scheme s = pp_scheme_impl [] s
+
+let pp_ty_normalized_impl synonyms ty =
+  let s = generalize (-1) ty in
+  pp_ty_impl synonyms s.body
+
+let pp_ty_normalized_with synonyms ty = pp_ty_normalized_impl synonyms ty
+let pp_ty_normalized ty = pp_ty_normalized_impl [] ty
+
 (* Instantiate and return TGen index -> fresh tvar mapping *)
 let instantiate_with_mapping level (s : scheme) =
   if s.quant = 0 && s.equant = 0 && s.pvquant = 0 && s.rquant = 0 then (s.body, [])
@@ -940,43 +1109,6 @@ let instantiate_with_mapping level (s : scheme) =
     let rvars = Array.init s.rquant (fun _ -> new_rvar level) in
     let shared_eff = lazy (new_effvar level) in
     let mapping = List.init s.quant (fun i -> (i, vars.(i))) in
-    let rec go = function
-      | TGen id when id < s.quant -> vars.(id)
-      | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
-      | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
-      | TTuple ts -> TTuple (List.map go ts)
-      | TList t -> TList (go t)
-      | TArray t -> TArray (go t)
-      | TRecord row -> TRecord (go_rrow row)
-      | TVariant (name, args) -> TVariant (name, List.map go args)
-      | TPolyVariant row -> TPolyVariant (go_pv row)
-      | t -> t
-    and go_eff = function
-      | EffGen id when id < s.equant -> evars.(id)
-      | EffRow (label, params, tail) -> EffRow (label, List.map go params, go_eff tail)
-      | EffEmpty -> Lazy.force shared_eff
-      | e -> e
-    and go_pv = function
-      | PVGen id when id < s.pvquant -> pvvars.(id)
-      | PVRow (tag, ty_opt, tail) -> PVRow (tag, Option.map go ty_opt, go_pv tail)
-      | r -> r
-    and go_rrow = function
-      | RGen id when id < s.rquant -> rvars.(id)
-      | RRow (name, ty, tail) -> RRow (name, go ty, go_rrow tail)
-      | r -> r
-    in
-    (go s.body, mapping)
-  end
-
-(* Instantiate: replace TGen with fresh type variables *)
-let instantiate level (s : scheme) =
-  if s.quant = 0 && s.equant = 0 && s.pvquant = 0 && s.rquant = 0 then s.body
-  else begin
-    let vars = Array.init s.quant (fun _ -> new_tvar level) in
-    let evars = Array.init s.equant (fun _ -> new_effvar level) in
-    let pvvars = Array.init s.pvquant (fun _ -> new_pvvar level) in
-    let rvars = Array.init s.rquant (fun _ -> new_rvar level) in
-    let shared_eff = lazy (new_effvar level) in
     let rec go = function
       | TGen id when id < s.quant -> vars.(id)
       | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
@@ -1003,8 +1135,11 @@ let instantiate level (s : scheme) =
       | RRow (name, ty, tail) -> RRow (name, go ty, go_rrow tail)
       | r -> r
     in
-    go s.body
+    (go s.body, mapping)
   end
+
+(* Instantiate: replace TGen with fresh type variables *)
+let instantiate level (s : scheme) = fst (instantiate_with_mapping level s)
 
 (* ---- Deep repr (for GADT snapshot/restore) ---- *)
 

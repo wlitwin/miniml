@@ -1058,3 +1058,54 @@ let a = match x with | Some n -> n | None -> 42 in
 let b = match x with | Some s -> s | None -> "hi" in
 (a, b)
 --- expect: (42, hi)
+
+=== Backtick Infix Tests ===
+
+--- test: backtick infix basic
+let add a b = a + b in
+3 `add` 4
+--- expect: 7
+
+--- test: backtick infix left associative
+let sub a b = a - b in
+10 `sub` 3 `sub` 1
+--- expect: 6
+
+--- test: backtick infix precedence below arithmetic
+let add a b = a + b in
+2 * 3 `add` 4 * 5
+--- expect: 26
+
+--- test: backtick infix precedence above comparison
+let add a b = a + b in
+1 `add` 2 > 0
+--- expect: true
+
+--- test: backtick infix with strings
+let greet first last = first ^ " " ^ last in
+"hello" `greet` "world"
+--- expect: hello world
+
+--- test: backtick infix chained different functions
+let add a b = a + b in
+let mul a b = a * b in
+2 `add` 3 `mul` 4
+--- expect: 20
+
+--- test: backtick infix with pipe
+let add a b = a + b in
+(3 `add` 4) |> (fn x -> x * 2)
+--- expect: 14
+
+--- test: backtick infix with polymorphic variant unchanged
+let f x y = (x, y) in
+`A `f` `B
+--- expect: (`A, `B)
+
+--- test: backtick infix with list functions
+let rec zip xs ys = match (xs, ys) with
+  | ([], _) | (_, []) -> []
+  | (x :: xs, y :: ys) -> (x, y) :: zip xs ys
+in
+[1; 2; 3] `zip` [4; 5; 6]
+--- expect: [(1, 4); (2, 5); (3, 6)]

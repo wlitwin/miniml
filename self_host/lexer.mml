@@ -107,7 +107,10 @@ module Lexer =
 
   pub let is_ident_char c = (is_alpha c) || ((is_digit c) || ((c = #5f) || (c = #27)))
 
-  pub let keywords = ("let", Token.LET) :: ("rec", Token.REC) :: ("in", Token.IN) :: ("if", Token.IF) :: ("else", Token.ELSE) :: ("fn", Token.FN) :: ("match", Token.MATCH) :: ("with", Token.WITH) :: ("type", Token.TYPE) :: ("newtype", Token.NEWTYPE) :: ("of", Token.OF) :: ("not", Token.NOT) :: ("mod", Token.MOD) :: ("true", Token.TRUE) :: ("false", Token.FALSE) :: ("class", Token.CLASS) :: ("instance", Token.INSTANCE) :: ("effect", Token.EFFECT) :: ("extern", Token.EXTERN) :: ("perform", Token.PERFORM) :: ("handle", Token.HANDLE) :: ("try", Token.TRY) :: ("provide", Token.PROVIDE) :: ("resume", Token.RESUME) :: ("return", Token.RETURN) :: ("continue", Token.CONTINUE) :: ("mut", Token.MUT) :: ("for", Token.FOR) :: ("do", Token.DO) :: ("break", Token.BREAK) :: ("when", Token.WHEN) :: ("where", Token.WHERE) :: ("module", Token.MODULE) :: ("pub", Token.PUB) :: ("open", Token.OPEN) :: ("end", Token.END) :: ("opaque", Token.OPAQUE) :: ("and", Token.AND) :: ("deriving", Token.DERIVING) :: ("land", Token.LAND) :: ("lor", Token.LOR) :: ("lxor", Token.LXOR) :: ("lnot", Token.LNOT) :: ("lsl", Token.LSL) :: ("lsr", Token.LSR) :: []
+  pub let keywords =
+    let tbl = Hashtbl.create 64 in
+    List.iter (fn (k, v) -> Hashtbl.set tbl k v) (("let", Token.LET) :: ("rec", Token.REC) :: ("in", Token.IN) :: ("if", Token.IF) :: ("else", Token.ELSE) :: ("fn", Token.FN) :: ("match", Token.MATCH) :: ("with", Token.WITH) :: ("type", Token.TYPE) :: ("newtype", Token.NEWTYPE) :: ("of", Token.OF) :: ("not", Token.NOT) :: ("mod", Token.MOD) :: ("true", Token.TRUE) :: ("false", Token.FALSE) :: ("class", Token.CLASS) :: ("instance", Token.INSTANCE) :: ("effect", Token.EFFECT) :: ("extern", Token.EXTERN) :: ("perform", Token.PERFORM) :: ("handle", Token.HANDLE) :: ("try", Token.TRY) :: ("provide", Token.PROVIDE) :: ("resume", Token.RESUME) :: ("return", Token.RETURN) :: ("continue", Token.CONTINUE) :: ("mut", Token.MUT) :: ("for", Token.FOR) :: ("do", Token.DO) :: ("break", Token.BREAK) :: ("when", Token.WHEN) :: ("where", Token.WHERE) :: ("module", Token.MODULE) :: ("pub", Token.PUB) :: ("open", Token.OPEN) :: ("end", Token.END) :: ("opaque", Token.OPAQUE) :: ("and", Token.AND) :: ("deriving", Token.DERIVING) :: ("land", Token.LAND) :: ("lor", Token.LOR) :: ("lxor", Token.LXOR) :: ("lnot", Token.LNOT) :: ("lsl", Token.LSL) :: ("lsr", Token.LSR) :: []);
+    tbl
 
   pub let read_number l =
     let loc = current_loc l in
@@ -119,14 +122,22 @@ module Lexer =
       for (not (at_end l)) && (is_hex_digit (peek l)) do
         Buffer.add_byte buf (advance l)
       end;
-      let n = int_of_string (Buffer.contents buf) in
+      let n =
+        match int_of_string_opt (Buffer.contents buf) with
+        | Some n -> n
+        | None -> perform lex_error ("integer literal overflow", loc)
+       in
       make_token l (INT n) loc
     else if (c = #30) && ((not (at_end l)) && (((peek l) = #62) || ((peek l) = #42))) do
       Buffer.add_byte buf (advance l);
       for (not (at_end l)) && (((peek l) = #30) || ((peek l) = #31)) do
         Buffer.add_byte buf (advance l)
       end;
-      let n = int_of_string (Buffer.contents buf) in
+      let n =
+        match int_of_string_opt (Buffer.contents buf) with
+        | Some n -> n
+        | None -> perform lex_error ("integer literal overflow", loc)
+       in
       make_token l (INT n) loc
     else do
       for (not (at_end l)) && (is_digit (peek l)) do
@@ -137,13 +148,30 @@ module Lexer =
         for (not (at_end l)) && (is_digit (peek l)) do
           Buffer.add_byte buf (advance l)
         end;
-        let f = float_of_string (Buffer.contents buf) in
+        let f =
+          match float_of_string_opt (Buffer.contents buf) with
+          | Some f -> f
+          | None -> perform lex_error ("float literal overflow", loc)
+         in
         make_token l (FLOAT f) loc
       else do
-        let n = int_of_string (Buffer.contents buf) in
+        let n =
+          match int_of_string_opt (Buffer.contents buf) with
+          | Some n -> n
+          | None -> perform lex_error ("integer literal overflow", loc)
+         in
         make_token l (INT n) loc
       end
     end
+
+  pub let escape_char =
+    fn
+      | _c when _c = #6e -> Some #0a
+      | _c when _c = #74 -> Some #09
+      | _c when _c = #5c -> Some #5c
+      | _c when _c = #22 -> Some #22
+      | _ -> None
+
 
   pub let read_string l =
     let loc = current_loc l in
@@ -157,12 +185,9 @@ module Lexer =
             error l "unterminated string"
           end;
           let c = advance l in
-          match c with
-          | _c when _c = #6e -> Buffer.add_byte buf #0a
-          | _c when _c = #74 -> Buffer.add_byte buf #09
-          | _c when _c = #5c -> Buffer.add_byte buf #5c
-          | _c when _c = #22 -> Buffer.add_byte buf #22
-          | _ -> error l ($"unknown escape: \\{c:c}")
+          match escape_char c with
+          | Some ch -> Buffer.add_byte buf ch
+          | None -> error l ($"unknown escape: \\{c:c}")
 
         end
       else
@@ -247,13 +272,15 @@ module Lexer =
           end;
           let c = advance l in
           match c with
-          | _c when _c = #6e -> Buffer.add_byte buf #0a
-          | _c when _c = #74 -> Buffer.add_byte buf #09
-          | _c when _c = #5c -> Buffer.add_byte buf #5c
-          | _c when _c = #22 -> Buffer.add_byte buf #22
           | _c when _c = #7b -> Buffer.add_byte buf #7b
           | _c when _c = #7d -> Buffer.add_byte buf #7d
-          | _ -> error l ($"unknown escape: \\{c:c}")
+          | _ -> 
+            do
+              match escape_char c with
+              | Some ch -> Buffer.add_byte buf ch
+              | None -> error l ($"unknown escape: \\{c:c}")
+
+            end
 
         end
       else if (peek l) = #7b do
@@ -350,7 +377,7 @@ module Lexer =
     end;
     let s = Buffer.contents buf in
     let kind =
-      match List.assoc_opt s keywords with
+      match Hashtbl.get keywords s with
       | Some kw -> kw
       | None -> 
         if s = "_" do
@@ -588,8 +615,18 @@ module Lexer =
             Buffer.add_byte buf (advance l)
           end;
           make_token l (POLYTAG (Buffer.contents buf)) loc
+        else if (not (at_end l)) && ((((peek l) >= #61) && ((peek l) <= #7a)) || ((peek l) = #5f)) do
+          let buf = Buffer.create 16 in
+          for (not (at_end l)) && (is_ident_char (peek l)) do
+            Buffer.add_byte buf (advance l)
+          end;
+          if (not (at_end l)) && ((peek l) = #60) do
+            (advance l; ())
+          else
+            error l "expected closing backtick for infix operator";
+          make_token l (BACKTICK_INFIX (Buffer.contents buf)) loc
         else
-          error l "expected uppercase identifier after backtick"
+          error l "expected identifier after backtick"
       | _ -> error l ($"unexpected character: {c:C}")
 
     end

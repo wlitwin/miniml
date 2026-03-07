@@ -1373,3 +1373,698 @@ with
 | not_found -> "missing"
 | timeout -> "timed out"
 --- expect: timed out
+
+--- test: different effect handlers in list
+effect A = get_a : unit -> int end
+effect B = get_b : unit -> int end
+let mw_a action = provide action () with | get_a () -> 1 in
+let mw_b action = provide action () with | get_b () -> 2 in
+List.length [mw_a; mw_b]
+--- expect: 2
+
+--- test: three different effect handlers in list
+effect X = get_x : unit -> int end
+effect Y = get_y : unit -> int end
+effect Z = get_z : unit -> int end
+let f1 action = provide action () with | get_x () -> 1 in
+let f2 action = provide action () with | get_y () -> 2 in
+let f3 action = provide action () with | get_z () -> 3 in
+List.length [f1; f2; f3]
+--- expect: 3
+
+--- test: compose middleware with different effects
+effect Logger = mw_log : string -> unit end
+effect Auth = mw_user : unit -> string end
+let with_logger action = provide action () with | mw_log msg -> () in
+let with_auth action = provide action () with | mw_user () -> "alice" in
+let compose mw1 mw2 action = mw1 (fn () -> mw2 action) in
+let stack = compose with_logger with_auth in
+stack (fn () ->
+  perform mw_log "hi";
+  perform mw_user ()
+)
+--- expect: alice
+
+--- test: shared tail row unification with same labels
+effect S = get_s : unit -> int end
+let h1 action = provide action () with | get_s () -> 10 in
+let h2 action = provide action () with | get_s () -> 20 in
+let handlers = [h1; h2] in
+let first = List.hd handlers in
+first (fn () -> perform get_s ())
+--- expect: 10
+
+--- test: nested handle outer catches first
+effect Outer = do_outer : unit -> string end
+effect Inner = do_inner : unit -> string end
+handle
+  handle
+    let a = perform do_outer () in
+    let b = perform do_inner () in
+    a ^ b
+  with
+  | return x -> x
+  | do_inner () k -> resume k "inner"
+with
+| return x -> x
+| do_outer () k -> resume k "outer"
+--- expect: outerinner
+
+--- test: nested provide outer catches first
+effect P = get_p : unit -> string end
+effect Q = get_q : unit -> string end
+provide
+  provide
+    let a = perform get_p () in
+    let b = perform get_q () in
+    a ^ b
+  with | get_q () -> "q"
+with | get_p () -> "p"
+--- expect: pq
+
+--- test: three nested handlers outer catches first
+effect HX = do_hx : unit -> int end
+effect HY = do_hy : unit -> int end
+effect HZ = do_hz : unit -> int end
+handle
+  handle
+    handle
+      let a = perform do_hx () in
+      let b = perform do_hy () in
+      let c = perform do_hz () in
+      a + b + c
+    with | return x -> x | do_hz () k -> resume k 3
+  with | return x -> x | do_hy () k -> resume k 2
+with | return x -> x | do_hx () k -> resume k 1
+--- expect: 6
+
+--- test: nested provide with function wrappers outer first
+effect Log2 = mw_log2 : string -> unit end
+effect Auth2 = mw_auth2 : unit -> string end
+let with_log action =
+  provide action () with | mw_log2 msg -> () in
+let with_auth action =
+  provide action () with | mw_auth2 () -> "alice" in
+with_log (fn () ->
+  with_auth (fn () ->
+    perform mw_log2 "hi";
+    perform mw_auth2 ()
+  ))
+--- expect: alice
+
+--- test: alternating outer and inner effects
+effect EA = eff_a : unit -> int end
+effect EB = eff_b : unit -> int end
+handle
+  handle
+    let a1 = perform eff_a () in
+    let b1 = perform eff_b () in
+    let a2 = perform eff_a () in
+    let b2 = perform eff_b () in
+    a1 + b1 + a2 + b2
+  with | return x -> x | eff_b () k -> resume k 10
+with | return x -> x | eff_a () k -> resume k 1
+--- expect: 22
+--- test: handle 2 effects perform order AB
+effect Eff2_A = op_2_a : unit -> int end
+effect Eff2_B = op_2_b : unit -> int end
+handle
+  handle
+    let a = perform op_2_a () in
+    let b = perform op_2_b () in
+    a + b
+  with | return x -> x | op_2_b () k -> resume k 2
+with | return x -> x | op_2_a () k -> resume k 1
+--- expect: 3
+
+--- test: provide 2 effects perform order AB
+effect Eff2_A = op_2_a : unit -> int end
+effect Eff2_B = op_2_b : unit -> int end
+let r =
+  provide
+    provide
+      let a = perform op_2_a () in
+      let b = perform op_2_b () in
+      a + b
+    with | op_2_b () -> 2
+  with | op_2_a () -> 1
+in r
+--- expect: 3
+
+--- test: handle 2 effects perform order BA
+effect Eff2_A = op_2_a : unit -> int end
+effect Eff2_B = op_2_b : unit -> int end
+handle
+  handle
+    let a = perform op_2_b () in
+    let b = perform op_2_a () in
+    a + b
+  with | return x -> x | op_2_b () k -> resume k 2
+with | return x -> x | op_2_a () k -> resume k 1
+--- expect: 3
+
+--- test: provide 2 effects perform order BA
+effect Eff2_A = op_2_a : unit -> int end
+effect Eff2_B = op_2_b : unit -> int end
+let r =
+  provide
+    provide
+      let a = perform op_2_b () in
+      let b = perform op_2_a () in
+      a + b
+    with | op_2_b () -> 2
+  with | op_2_a () -> 1
+in r
+--- expect: 3
+
+--- test: handle 2 effects double perform order AB
+effect Eff2_A = op_2_a : unit -> int end
+effect Eff2_B = op_2_b : unit -> int end
+handle
+  handle
+    let a = perform op_2_a () in
+    let b = perform op_2_b () in
+    let c = perform op_2_a () in
+    let d = perform op_2_b () in
+    a + b + c + d
+  with | return x -> x | op_2_b () k -> resume k 2
+with | return x -> x | op_2_a () k -> resume k 1
+--- expect: 6
+
+--- test: handle 2 effects double perform order BA
+effect Eff2_A = op_2_a : unit -> int end
+effect Eff2_B = op_2_b : unit -> int end
+handle
+  handle
+    let a = perform op_2_b () in
+    let b = perform op_2_a () in
+    let c = perform op_2_b () in
+    let d = perform op_2_a () in
+    a + b + c + d
+  with | return x -> x | op_2_b () k -> resume k 2
+with | return x -> x | op_2_a () k -> resume k 1
+--- expect: 6
+
+--- test: handle 3 effects perform order ABC
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_a () in
+      let b = perform op_3_b () in
+      let c = perform op_3_c () in
+      a + b + c
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 6
+
+--- test: provide 3 effects perform order ABC
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        let a = perform op_3_a () in
+        let b = perform op_3_b () in
+        let c = perform op_3_c () in
+        a + b + c
+      with | op_3_c () -> 3
+    with | op_3_b () -> 2
+  with | op_3_a () -> 1
+in r
+--- expect: 6
+
+--- test: handle 3 effects perform order ACB
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_a () in
+      let b = perform op_3_c () in
+      let c = perform op_3_b () in
+      a + b + c
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 6
+
+--- test: provide 3 effects perform order ACB
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        let a = perform op_3_a () in
+        let b = perform op_3_c () in
+        let c = perform op_3_b () in
+        a + b + c
+      with | op_3_c () -> 3
+    with | op_3_b () -> 2
+  with | op_3_a () -> 1
+in r
+--- expect: 6
+
+--- test: handle 3 effects perform order BAC
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_b () in
+      let b = perform op_3_a () in
+      let c = perform op_3_c () in
+      a + b + c
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 6
+
+--- test: provide 3 effects perform order BAC
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        let a = perform op_3_b () in
+        let b = perform op_3_a () in
+        let c = perform op_3_c () in
+        a + b + c
+      with | op_3_c () -> 3
+    with | op_3_b () -> 2
+  with | op_3_a () -> 1
+in r
+--- expect: 6
+
+--- test: handle 3 effects perform order BCA
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_b () in
+      let b = perform op_3_c () in
+      let c = perform op_3_a () in
+      a + b + c
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 6
+
+--- test: provide 3 effects perform order BCA
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        let a = perform op_3_b () in
+        let b = perform op_3_c () in
+        let c = perform op_3_a () in
+        a + b + c
+      with | op_3_c () -> 3
+    with | op_3_b () -> 2
+  with | op_3_a () -> 1
+in r
+--- expect: 6
+
+--- test: handle 3 effects perform order CAB
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_c () in
+      let b = perform op_3_a () in
+      let c = perform op_3_b () in
+      a + b + c
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 6
+
+--- test: provide 3 effects perform order CAB
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        let a = perform op_3_c () in
+        let b = perform op_3_a () in
+        let c = perform op_3_b () in
+        a + b + c
+      with | op_3_c () -> 3
+    with | op_3_b () -> 2
+  with | op_3_a () -> 1
+in r
+--- expect: 6
+
+--- test: handle 3 effects perform order CBA
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_c () in
+      let b = perform op_3_b () in
+      let c = perform op_3_a () in
+      a + b + c
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 6
+
+--- test: provide 3 effects perform order CBA
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        let a = perform op_3_c () in
+        let b = perform op_3_b () in
+        let c = perform op_3_a () in
+        a + b + c
+      with | op_3_c () -> 3
+    with | op_3_b () -> 2
+  with | op_3_a () -> 1
+in r
+--- expect: 6
+
+--- test: handle 3 effects double perform order ABC
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_a () in
+      let b = perform op_3_b () in
+      let c = perform op_3_c () in
+      let d = perform op_3_a () in
+      let e = perform op_3_b () in
+      let f = perform op_3_c () in
+      a + b + c + d + e + f
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 12
+
+--- test: handle 3 effects double perform order CBA
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_c () in
+      let b = perform op_3_b () in
+      let c = perform op_3_a () in
+      let d = perform op_3_c () in
+      let e = perform op_3_b () in
+      let f = perform op_3_a () in
+      a + b + c + d + e + f
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 12
+
+--- test: handle 3 effects double perform order ACB
+effect Eff3_A = op_3_a : unit -> int end
+effect Eff3_B = op_3_b : unit -> int end
+effect Eff3_C = op_3_c : unit -> int end
+handle
+  handle
+    handle
+      let a = perform op_3_a () in
+      let b = perform op_3_c () in
+      let c = perform op_3_b () in
+      let d = perform op_3_a () in
+      let e = perform op_3_c () in
+      let f = perform op_3_b () in
+      a + b + c + d + e + f
+    with | return x -> x | op_3_c () k -> resume k 3
+  with | return x -> x | op_3_b () k -> resume k 2
+with | return x -> x | op_3_a () k -> resume k 1
+--- expect: 12
+
+--- test: handle 3 effects interleaved ABCBAC
+effect Eff3i_A = op_3i_a : unit -> int end
+effect Eff3i_B = op_3i_b : unit -> int end
+effect Eff3i_C = op_3i_c : unit -> int end
+handle
+  handle
+    handle
+      let a1 = perform op_3i_a () in
+      let b1 = perform op_3i_b () in
+      let c1 = perform op_3i_c () in
+      let b2 = perform op_3i_b () in
+      let a2 = perform op_3i_a () in
+      let c2 = perform op_3i_c () in
+      a1 + b1 + c1 + b2 + a2 + c2
+    with | return x -> x | op_3i_c () k -> resume k 100
+  with | return x -> x | op_3i_b () k -> resume k 10
+with | return x -> x | op_3i_a () k -> resume k 1
+--- expect: 222
+
+--- test: handle 3 effects accumulate across resumes
+effect Eff3acc_A = op_3acc_a : unit -> string end
+effect Eff3acc_B = op_3acc_b : unit -> string end
+effect Eff3acc_C = op_3acc_c : unit -> string end
+handle
+  handle
+    handle
+      let a = perform op_3acc_a () in
+      let b = perform op_3acc_b () in
+      let c = perform op_3acc_c () in
+      a ^ b ^ c
+    with | return x -> x | op_3acc_c () k -> resume k "C"
+  with | return x -> x | op_3acc_b () k -> resume k "B"
+with | return x -> x | op_3acc_a () k -> resume k "A"
+--- expect: ABC
+
+--- test: handle 4 effects perform order ABCD
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+handle
+  handle
+    handle
+      handle
+        let a = perform op_4_a () in
+        let b = perform op_4_b () in
+        let c = perform op_4_c () in
+        let d = perform op_4_d () in
+        a + b + c + d
+      with | return x -> x | op_4_d () k -> resume k 4
+    with | return x -> x | op_4_c () k -> resume k 3
+  with | return x -> x | op_4_b () k -> resume k 2
+with | return x -> x | op_4_a () k -> resume k 1
+--- expect: 10
+
+--- test: provide 4 effects perform order ABCD
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        provide
+          let a = perform op_4_a () in
+          let b = perform op_4_b () in
+          let c = perform op_4_c () in
+          let d = perform op_4_d () in
+          a + b + c + d
+        with | op_4_d () -> 4
+      with | op_4_c () -> 3
+    with | op_4_b () -> 2
+  with | op_4_a () -> 1
+in r
+--- expect: 10
+
+--- test: handle 4 effects perform order DCBA
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+handle
+  handle
+    handle
+      handle
+        let a = perform op_4_d () in
+        let b = perform op_4_c () in
+        let c = perform op_4_b () in
+        let d = perform op_4_a () in
+        a + b + c + d
+      with | return x -> x | op_4_d () k -> resume k 4
+    with | return x -> x | op_4_c () k -> resume k 3
+  with | return x -> x | op_4_b () k -> resume k 2
+with | return x -> x | op_4_a () k -> resume k 1
+--- expect: 10
+
+--- test: provide 4 effects perform order DCBA
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        provide
+          let a = perform op_4_d () in
+          let b = perform op_4_c () in
+          let c = perform op_4_b () in
+          let d = perform op_4_a () in
+          a + b + c + d
+        with | op_4_d () -> 4
+      with | op_4_c () -> 3
+    with | op_4_b () -> 2
+  with | op_4_a () -> 1
+in r
+--- expect: 10
+
+--- test: handle 4 effects perform order ADBC
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+handle
+  handle
+    handle
+      handle
+        let a = perform op_4_a () in
+        let b = perform op_4_d () in
+        let c = perform op_4_b () in
+        let d = perform op_4_c () in
+        a + b + c + d
+      with | return x -> x | op_4_d () k -> resume k 4
+    with | return x -> x | op_4_c () k -> resume k 3
+  with | return x -> x | op_4_b () k -> resume k 2
+with | return x -> x | op_4_a () k -> resume k 1
+--- expect: 10
+
+--- test: provide 4 effects perform order ADBC
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        provide
+          let a = perform op_4_a () in
+          let b = perform op_4_d () in
+          let c = perform op_4_b () in
+          let d = perform op_4_c () in
+          a + b + c + d
+        with | op_4_d () -> 4
+      with | op_4_c () -> 3
+    with | op_4_b () -> 2
+  with | op_4_a () -> 1
+in r
+--- expect: 10
+
+--- test: handle 4 effects perform order BDAC
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+handle
+  handle
+    handle
+      handle
+        let a = perform op_4_b () in
+        let b = perform op_4_d () in
+        let c = perform op_4_a () in
+        let d = perform op_4_c () in
+        a + b + c + d
+      with | return x -> x | op_4_d () k -> resume k 4
+    with | return x -> x | op_4_c () k -> resume k 3
+  with | return x -> x | op_4_b () k -> resume k 2
+with | return x -> x | op_4_a () k -> resume k 1
+--- expect: 10
+
+--- test: provide 4 effects perform order BDAC
+effect Eff4_A = op_4_a : unit -> int end
+effect Eff4_B = op_4_b : unit -> int end
+effect Eff4_C = op_4_c : unit -> int end
+effect Eff4_D = op_4_d : unit -> int end
+let r =
+  provide
+    provide
+      provide
+        provide
+          let a = perform op_4_b () in
+          let b = perform op_4_d () in
+          let c = perform op_4_a () in
+          let d = perform op_4_c () in
+          a + b + c + d
+        with | op_4_d () -> 4
+      with | op_4_c () -> 3
+    with | op_4_b () -> 2
+  with | op_4_a () -> 1
+in r
+--- expect: 10
+
+--- test: effect row variable sharing in annotation
+effect Log =
+  log : string -> unit
+end
+let apply_and_log (f : int -> int / Log, 'e) (x : int) : int / Log, 'e =
+  let r = f x in
+  perform log (show r);
+  r
+in
+let mut logged = "" in
+handle
+  apply_and_log (fn x -> perform log "calling"; x * 2) 21
+with
+| return x -> logged ^ " => " ^ show x
+| log msg k -> logged := logged ^ msg ^ " "; resume k ()
+--- expect: calling 42  => 42
+
+--- test: effect row variable sharing constrains effects
+effect Tick =
+  tick : unit -> unit
+end
+effect Tock =
+  tock : unit -> unit
+end
+let both (f : unit -> unit / Tick, Tock, 'e) (g : unit -> unit / Tick, Tock, 'e) : unit / Tick, Tock, 'e =
+  f (); g ()
+in
+let mut count = 0 in
+handle
+  handle
+    both (fn () -> perform tick ()) (fn () -> perform tock ());
+    count
+  with
+  | return x -> x
+  | tock () k -> count := count + 10; resume k ()
+with
+| return x -> x
+| tick () k -> count := count + 1; resume k ()
+--- expect: 11

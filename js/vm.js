@@ -30,10 +30,11 @@ const vvariant = (tagN, name, payload) => ({ tag: "variant", tagN, name, payload
 const vclosure = (proto, upvalues) => ({ tag: "closure", proto, upvalues });
 const vpartial = (closure, args) => ({ tag: "partial", closure, args });
 const vexternal = (name, arity, fn, args) => ({ tag: "external", name, arity, fn, args: args || [] });
-const vcontinuation = (fiber, returnHandler, opHandlers) =>
-  ({ tag: "continuation", fiber, returnHandler, opHandlers, used: false });
+const vcontinuation = (fiber, returnHandler, opHandlers, bodyFiber, intermediateHandlers) =>
+  ({ tag: "continuation", fiber, returnHandler, opHandlers,
+     bodyFiber: bodyFiber || fiber, intermediateHandlers: intermediateHandlers || [],
+     used: false });
 const vref = (v) => ({ tag: "ref", v: [v] }); // use array for mutability
-const vmap = (pairs) => ({ tag: "map", v: pairs }); // pairs: [[k, v], ...]
 const varray = (elems) => ({ tag: "array", v: elems });
 const vproto = (p) => ({ tag: "proto", v: p });
 
@@ -56,7 +57,6 @@ function asVariant(v) { if (v.tag === "variant") return v; error(`expected varia
 function asContinuation(v) { if (v.tag === "continuation") return v; error(`expected continuation, got ${ppValue(v)}`); }
 function asByte(v) { if (v.tag === "byte") return v.v; error(`expected byte, got ${ppValue(v)}`); }
 function asRune(v) { if (v.tag === "rune") return v.v; error(`expected rune, got ${ppValue(v)}`); }
-function asMap(v) { if (v.tag === "map") return v.v; error(`expected map, got ${ppValue(v)}`); }
 function asArray(v) { if (v.tag === "array") return v.v; error(`expected array, got ${ppValue(v)}`); }
 
 // --- Structural equality (matches vm.ml values_equal) ---
@@ -100,6 +100,107 @@ function valuesEqual(a, b) {
     default:
       return false;
   }
+}
+
+// --- Structural comparison (matches vm.ml values_compare) ---
+function valuesCompare(a, b) {
+  if (a === b) return 0;
+  if (a.tag !== b.tag) return 0;
+  switch (a.tag) {
+    case "int": case "byte": case "rune":
+      return a.v < b.v ? -1 : a.v > b.v ? 1 : 0;
+    case "float":
+      return a.v < b.v ? -1 : a.v > b.v ? 1 : 0;
+    case "string":
+      return a.v < b.v ? -1 : a.v > b.v ? 1 : 0;
+    case "bool":
+      return (a.v === b.v) ? 0 : (a.v ? 1 : -1);
+    case "unit":
+      return 0;
+    case "tuple":
+      for (let i = 0; i < Math.min(a.v.length, b.v.length); i++) {
+        const c = valuesCompare(a.v[i], b.v[i]);
+        if (c !== 0) return c;
+      }
+      return a.v.length - b.v.length;
+    case "list": {
+      let ca = a, cb = b;
+      while ("hd" in ca && "hd" in cb) {
+        const c = valuesCompare(ca.hd, cb.hd);
+        if (c !== 0) return c;
+        ca = ca.tl; cb = cb.tl;
+      }
+      if (!("hd" in ca) && !("hd" in cb)) return 0;
+      return ("hd" in ca) ? 1 : -1;
+    }
+    case "variant":
+      if (a.tagN !== b.tagN) return a.tagN < b.tagN ? -1 : 1;
+      if (a.payload === null && b.payload === null) return 0;
+      if (a.payload === null) return -1;
+      if (b.payload === null) return 1;
+      return valuesCompare(a.payload, b.payload);
+    default:
+      return 0;
+  }
+}
+
+// --- Structural hash (matches vm.ml value_hash) ---
+function valueHash(v) {
+  const FNV_OFFSET = 0x811c9dc5;
+  const FNV_PRIME = 0x01000193;
+  function mix(h, x) { return Math.imul(h ^ x, FNV_PRIME) | 0; }
+  function mixInt(h, n) {
+    h = mix(h, n & 0xff);
+    h = mix(h, (n >>> 8) & 0xff);
+    h = mix(h, (n >>> 16) & 0xff);
+    h = mix(h, (n >>> 24) & 0xff);
+    return h;
+  }
+  function hash(h, v) {
+    switch (v.tag) {
+      case "int": return mixInt(h, v.v);
+      case "float": {
+        // Hash the float bits via DataView
+        const buf = new ArrayBuffer(8);
+        new Float64Array(buf)[0] = v.v;
+        const dv = new DataView(buf);
+        h = mixInt(h, dv.getInt32(0, true));
+        return mixInt(h, dv.getInt32(4, true));
+      }
+      case "bool": return mix(h, v.v ? 1 : 0);
+      case "string":
+        for (let i = 0; i < v.v.length; i++) h = mix(h, v.v.charCodeAt(i));
+        return h;
+      case "byte": return mixInt(h, v.v);
+      case "rune": return mixInt(h, v.v);
+      case "unit": return mix(h, 0);
+      case "tuple":
+        h = mix(h, 1);
+        for (let i = 0; i < v.v.length; i++) h = hash(h, v.v[i]);
+        return h;
+      case "list": {
+        h = mix(h, 2);
+        let c = v;
+        while ("hd" in c) { h = hash(h, c.hd); c = c.tl; }
+        return h;
+      }
+      case "variant":
+        h = mixInt(h, v.tagN);
+        if (v.payload !== null) h = hash(h, v.payload);
+        return h;
+      case "record":
+        h = mix(h, 3);
+        for (let i = 0; i < v.v.length; i++) h = hash(h, v.v[i][1]);
+        return h;
+      case "array":
+        h = mix(h, 4);
+        for (let i = 0; i < v.v.length; i++) h = hash(h, v.v[i]);
+        return h;
+      default:
+        return h;
+    }
+  }
+  return hash(FNV_OFFSET, v);
 }
 
 // --- Pretty-print (matches bytecode.ml pp_value) ---
@@ -147,11 +248,6 @@ function ppValue(v) {
     case "proto": return `<proto:${v.v.name}>`;
     case "continuation": return "<continuation>";
     case "ref": return `ref(${ppValue(v.v[0])})`;
-    case "map": {
-      const isSet = v.v.every(([_, val]) => val.tag === "unit");
-      if (isSet) return "#{" + v.v.map(([k]) => ppValue(k)).join("; ") + "}";
-      return "#{" + v.v.map(([k, val]) => ppValue(k) + ": " + ppValue(val)).join("; ") + "}";
-    }
     case "array": return "#[" + v.v.map(ppValue).join("; ") + "]";
     default: return "<unknown>";
   }
@@ -350,26 +446,23 @@ function run(vm) {
       case 5: // GET_UPVALUE
         fiber.stack[fiber.sp++] = f.closure.upvalues[op[1]];
         break;
-      case 6: // SET_UPVALUE
-        f.closure.upvalues[op[1]] = fiber.stack[--fiber.sp];
-        break;
-      case 7: // MAKE_REF
+      case 6: // MAKE_REF
         fiber.stack[fiber.sp - 1] = vref(fiber.stack[fiber.sp - 1]);
         break;
-      case 8: { // DEREF
+      case 7: { // DEREF
         const r = fiber.stack[fiber.sp - 1];
         if (r.tag !== "ref") error("DEREF on non-ref value");
         fiber.stack[fiber.sp - 1] = r.v[0];
         break;
       }
-      case 9: { // SET_REF
+      case 8: { // SET_REF
         const r = fiber.stack[--fiber.sp];
         const v = fiber.stack[--fiber.sp];
         if (r.tag !== "ref") error("SET_REF on non-ref value");
         r.v[0] = v;
         break;
       }
-      case 10: { // GET_GLOBAL
+      case 9: { // GET_GLOBAL
         const idx = op[1];
         const v = vm.globals.get(idx);
         if (v === undefined) {
@@ -379,78 +472,75 @@ function run(vm) {
         fiber.stack[fiber.sp++] = v;
         break;
       }
-      case 11: // SET_GLOBAL
+      case 10: // DEF_GLOBAL
         vm.globals.set(op[1], fiber.stack[--fiber.sp]);
         break;
-      case 12: // DEF_GLOBAL
-        vm.globals.set(op[1], fiber.stack[--fiber.sp]);
-        break;
-      case 13: { // ADD
+      case 11: { // ADD
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) + asInt(b));
         break;
       }
-      case 14: { // SUB
+      case 12: { // SUB
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) - asInt(b));
         break;
       }
-      case 15: { // MUL
+      case 13: { // MUL
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) * asInt(b));
         break;
       }
-      case 16: { // DIV
+      case 14: { // DIV
         const b = fiber.stack[--fiber.sp];
         const bv = asInt(b);
         if (bv === 0) error("division by zero");
         fiber.stack[fiber.sp - 1] = vint(Math.trunc(asInt(fiber.stack[fiber.sp - 1]) / bv));
         break;
       }
-      case 17: { // MOD
+      case 15: { // MOD
         const b = fiber.stack[--fiber.sp];
         const bv = asInt(b);
         if (bv === 0) error("modulo by zero");
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) % bv);
         break;
       }
-      case 18: // NEG
+      case 16: // NEG
         fiber.stack[fiber.sp - 1] = vint(-asInt(fiber.stack[fiber.sp - 1]));
         break;
-      case 19: { // FADD
+      case 17: { // FADD
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vfloat(asFloat(fiber.stack[fiber.sp - 1]) + asFloat(b));
         break;
       }
-      case 20: { // FSUB
+      case 18: { // FSUB
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vfloat(asFloat(fiber.stack[fiber.sp - 1]) - asFloat(b));
         break;
       }
-      case 21: { // FMUL
+      case 19: { // FMUL
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vfloat(asFloat(fiber.stack[fiber.sp - 1]) * asFloat(b));
         break;
       }
-      case 22: { // FDIV
+      case 20: { // FDIV
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vfloat(asFloat(fiber.stack[fiber.sp - 1]) / asFloat(b));
         break;
       }
-      case 23: // FNEG
+      case 21: // FNEG
         fiber.stack[fiber.sp - 1] = vfloat(-asFloat(fiber.stack[fiber.sp - 1]));
         break;
-      case 24: { // EQ
+      case 22: { // EQ
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vbool(valuesEqual(fiber.stack[fiber.sp - 1], b));
         break;
       }
-      case 25: { // NEQ
+      case 23: { // NEQ
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vbool(!valuesEqual(fiber.stack[fiber.sp - 1], b));
         break;
       }
-      case 26: { // LT
+      case 24: { // LT
         const b = fiber.stack[--fiber.sp];
         const a = fiber.stack[fiber.sp - 1];
         let result;
@@ -462,7 +552,7 @@ function run(vm) {
         fiber.stack[fiber.sp - 1] = vbool(result);
         break;
       }
-      case 27: { // GT
+      case 25: { // GT
         const b = fiber.stack[--fiber.sp];
         const a = fiber.stack[fiber.sp - 1];
         let result;
@@ -474,7 +564,7 @@ function run(vm) {
         fiber.stack[fiber.sp - 1] = vbool(result);
         break;
       }
-      case 28: { // LE
+      case 26: { // LE
         const b = fiber.stack[--fiber.sp];
         const a = fiber.stack[fiber.sp - 1];
         let result;
@@ -486,7 +576,7 @@ function run(vm) {
         fiber.stack[fiber.sp - 1] = vbool(result);
         break;
       }
-      case 29: { // GE
+      case 27: { // GE
         const b = fiber.stack[--fiber.sp];
         const a = fiber.stack[fiber.sp - 1];
         let result;
@@ -498,51 +588,51 @@ function run(vm) {
         fiber.stack[fiber.sp - 1] = vbool(result);
         break;
       }
-      case 30: // NOT
+      case 28: // NOT
         fiber.stack[fiber.sp - 1] = vbool(!asBool(fiber.stack[fiber.sp - 1]));
         break;
-      case 31: { // BAND
+      case 29: { // BAND
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) & asInt(b));
         break;
       }
-      case 32: { // BOR
+      case 30: { // BOR
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) | asInt(b));
         break;
       }
-      case 33: { // BXOR
+      case 31: { // BXOR
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) ^ asInt(b));
         break;
       }
-      case 34: // BNOT
+      case 32: // BNOT
         fiber.stack[fiber.sp - 1] = vint(~asInt(fiber.stack[fiber.sp - 1]));
         break;
-      case 35: { // BSHL
+      case 33: { // BSHL
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) << asInt(b));
         break;
       }
-      case 36: { // BSHR
+      case 34: { // BSHR
         const b = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp - 1] = vint(asInt(fiber.stack[fiber.sp - 1]) >>> asInt(b));
         break;
       }
-      case 37: // JUMP
+      case 35: // JUMP
         f.ip = op[1];
         break;
-      case 38: { // JUMP_IF_FALSE
+      case 36: { // JUMP_IF_FALSE
         const v = fiber.stack[--fiber.sp];
         if (!asBool(v)) f.ip = op[1];
         break;
       }
-      case 39: { // JUMP_IF_TRUE
+      case 37: { // JUMP_IF_TRUE
         const v = fiber.stack[--fiber.sp];
         if (asBool(v)) f.ip = op[1];
         break;
       }
-      case 40: { // CLOSURE
+      case 38: { // CLOSURE
         const protoIdx = op[1];
         const captures = op[2];
         const fnProto = getProto(f.closure.proto, protoIdx);
@@ -550,7 +640,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = vclosure(fnProto, upvalues);
         break;
       }
-      case 41: { // CLOSURE_REC
+      case 39: { // CLOSURE_REC
         const protoIdx = op[1];
         const captures = op[2];
         const selfIdx = op[3];
@@ -561,7 +651,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = cls;
         break;
       }
-      case 42: { // CALL
+      case 40: { // CALL
         const arg = fiber.stack[--fiber.sp];
         const fnVal = fiber.stack[--fiber.sp];
         if (fnVal.tag === "closure") {
@@ -600,7 +690,7 @@ function run(vm) {
         }
         break;
       }
-      case 43: { // TAIL_CALL
+      case 41: { // TAIL_CALL
         const arg = fiber.stack[--fiber.sp];
         const fnVal = fiber.stack[--fiber.sp];
         let tailResult = null;
@@ -666,7 +756,7 @@ function run(vm) {
         }
         break;
       }
-      case 44: { // RETURN
+      case 42: { // RETURN
         let result = fiber.stack[--fiber.sp];
         fiber.sp = fiber.frames[fiber.frames.length - 1].baseSp;
         fiber.frames.pop();
@@ -690,7 +780,7 @@ function run(vm) {
         }
         break;
       }
-      case 83: { // CALL_N
+      case 80: { // CALL_N
         const n = op[1];
         const args = new Array(n);
         for (let i = n - 1; i >= 0; i--) args[i] = fiber.stack[--fiber.sp];
@@ -698,7 +788,7 @@ function run(vm) {
         callWithArgs(vm, fiber, fnVal83, args);
         break;
       }
-      case 84: { // TAIL_CALL_N
+      case 81: { // TAIL_CALL_N
         const n = op[1];
         const args = new Array(n);
         for (let i = n - 1; i >= 0; i--) args[i] = fiber.stack[--fiber.sp];
@@ -775,21 +865,21 @@ function run(vm) {
         }
         break;
       }
-      case 48: { // MAKE_TUPLE
+      case 46: { // MAKE_TUPLE
         const n = op[1];
         const values = new Array(n);
         for (let i = n - 1; i >= 0; i--) values[i] = fiber.stack[--fiber.sp];
         fiber.stack[fiber.sp++] = vtuple(values);
         break;
       }
-      case 49: { // TUPLE_GET
+      case 47: { // TUPLE_GET
         const idx = op[1];
         const tup = asTuple(fiber.stack[fiber.sp - 1]);
         if (idx >= tup.length) error("tuple index out of bounds");
         fiber.stack[fiber.sp - 1] = tup[idx];
         break;
       }
-      case 50: { // MAKE_RECORD
+      case 48: { // MAKE_RECORD
         const fieldNames = op[1];
         const n = fieldNames.length;
         const values = new Array(n);
@@ -798,7 +888,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = vrecord(fields);
         break;
       }
-      case 51: { // FIELD
+      case 49: { // FIELD
         const name = op[1];
         const rec = asRecord(fiber.stack[fiber.sp - 1]);
         const entry = rec.find(([n]) => n === name);
@@ -806,7 +896,7 @@ function run(vm) {
         fiber.stack[fiber.sp - 1] = entry[1];
         break;
       }
-      case 52: { // SET_FIELD
+      case 50: { // SET_FIELD
         const name = op[1];
         const newVal = fiber.stack[--fiber.sp];
         const rec = asRecord(fiber.stack[--fiber.sp]);
@@ -817,7 +907,7 @@ function run(vm) {
         if (!found) error(`record has no field: ${name}`);
         break;
       }
-      case 75: { // RECORD_UPDATE
+      case 72: { // RECORD_UPDATE
         const fieldNames = op[1];
         const n = fieldNames.length;
         const newVals = new Array(n);
@@ -833,7 +923,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = vrecord(copy);
         break;
       }
-      case 76: { // RECORD_UPDATE_DYN
+      case 73: { // RECORD_UPDATE_DYN
         const n = op[1];
         const pairs = new Array(n);
         for (let i = n - 1; i >= 0; i--) {
@@ -851,7 +941,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = vrecord(copy);
         break;
       }
-      case 53: { // MAKE_VARIANT
+      case 51: { // MAKE_VARIANT
         const [, tagN, name, hasPayload] = op;
         if (hasPayload) {
           fiber.stack[fiber.sp - 1] = vvariant(tagN, name, fiber.stack[fiber.sp - 1]);
@@ -860,67 +950,79 @@ function run(vm) {
         }
         break;
       }
-      case 54: { // CONS
+      case 52: { // CONS
         const tl = fiber.stack[--fiber.sp];
         const hd = fiber.stack[--fiber.sp];
         asList(tl); // validate
         fiber.stack[fiber.sp++] = { tag: "list", hd, tl };
         break;
       }
-      case 55: // NIL
+      case 53: // NIL
         fiber.stack[fiber.sp++] = VNIL;
         break;
-      case 56: { // TAG_EQ
+      case 54: { // TAG_EQ
         const tagN = op[1];
         fiber.stack[fiber.sp - 1] = vbool(asVariant(fiber.stack[fiber.sp - 1]).tagN === tagN);
         break;
       }
-      case 57: { // IS_NIL
+      case 55: { // IS_NIL
         const v = asList(fiber.stack[fiber.sp - 1]);
         fiber.stack[fiber.sp - 1] = vbool(!("hd" in v));
         break;
       }
-      case 58: { // IS_CONS
+      case 56: { // IS_CONS
         const v = asList(fiber.stack[fiber.sp - 1]);
         fiber.stack[fiber.sp - 1] = vbool("hd" in v);
         break;
       }
-      case 59: { // HEAD
+      case 57: { // HEAD
         const v = asList(fiber.stack[fiber.sp - 1]);
         if (!("hd" in v)) error("head of empty list");
         fiber.stack[fiber.sp - 1] = v.hd;
         break;
       }
-      case 60: { // TAIL
+      case 58: { // TAIL
         const v = asList(fiber.stack[fiber.sp - 1]);
         if (!("hd" in v)) error("tail of empty list");
         fiber.stack[fiber.sp - 1] = v.tl;
         break;
       }
-      case 61: { // VARIANT_PAYLOAD
+      case 59: { // VARIANT_PAYLOAD
         const v = asVariant(fiber.stack[fiber.sp - 1]);
         if (v.payload === null) error("variant has no payload");
         fiber.stack[fiber.sp - 1] = v.payload;
         break;
       }
-      case 62: // MATCH_FAIL
+      case 60: // MATCH_FAIL
         error(`non-exhaustive match at ${op[1]}`);
         break;
-      case 63: { // PERFORM
+      case 61: { // PERFORM
         const opNameStr = op[1];
         const arg = fiber.stack[--fiber.sp];
-        const he = findHandler(vm, opNameStr);
+        // Find matching handler and its index
+        let matchIdx = -1;
+        let he = null;
+        for (let i = vm.handlerStack.length - 1; i >= 0; i--) {
+          const h = vm.handlerStack[i];
+          for (const [name] of h.ops) {
+            if (name === opNameStr) { matchIdx = i; he = h; break; }
+          }
+          if (he) break;
+        }
         if (!he) error(`unhandled effect operation: ${opNameStr}`);
         const handlerFn = he.ops.find(([name]) => name === opNameStr)[1];
-        const cont = vcontinuation(fiber, he.returnHandler, he.ops);
+        // Collect intermediate handlers (pushed after matched = more inner)
+        const intermediates = vm.handlerStack.slice(matchIdx + 1);
+        const cont = vcontinuation(fiber, he.returnHandler, he.ops, he.bodyFiber, intermediates);
         const pair = vtuple([arg, cont]);
-        removeHandler(vm, he);
+        // Remove matched handler and all intermediates
+        vm.handlerStack = vm.handlerStack.slice(0, matchIdx);
         fiber = he.parentFiber;
         vm.currentFiber = fiber;
         internalCall(fiber, asClosure(handlerFn), pair);
         break;
       }
-      case 64: { // HANDLE
+      case 62: { // HANDLE
         const nOps = op[1];
         const ops = [];
         for (let i = 0; i < nOps; i++) {
@@ -943,25 +1045,27 @@ function run(vm) {
         internalCall(fiber, asClosure(bodyThunk), VUNIT);
         break;
       }
-      case 65: { // RESUME
+      case 63: { // RESUME
         const v = fiber.stack[--fiber.sp];
         const cont = asContinuation(fiber.stack[--fiber.sp]);
         if (cont.used) error("continuation already resumed");
         cont.used = true;
         const bodyFiber = cont.fiber;
         bodyFiber.stack[bodyFiber.sp++] = v;
+        // Reinstall caught handler with original body fiber
         const he = {
           returnHandler: cont.returnHandler,
           ops: cont.opHandlers,
-          bodyFiber,
+          bodyFiber: cont.bodyFiber,
           parentFiber: fiber,
         };
-        vm.handlerStack.push(he);
+        // Reinstall caught handler then intermediates (innermost last = pushed last)
+        vm.handlerStack.push(he, ...cont.intermediateHandlers);
         fiber = bodyFiber;
         vm.currentFiber = fiber;
         break;
       }
-      case 66: { // ENTER_LOOP
+      case 64: { // ENTER_LOOP
         const breakTarget = op[1];
         vm.controlStack.push({
           breakIp: breakTarget,
@@ -971,12 +1075,12 @@ function run(vm) {
         });
         break;
       }
-      case 67: { // EXIT_LOOP
+      case 65: { // EXIT_LOOP
         if (vm.controlStack.length === 0) error("EXIT_LOOP: no control entry");
         vm.controlStack.pop();
         break;
       }
-      case 68: { // LOOP_BREAK
+      case 66: { // LOOP_BREAK
         const breakValue = fiber.stack[--fiber.sp];
         if (vm.controlStack.length === 0) error("LOOP_BREAK: no control entry");
         const ce = vm.controlStack.pop();
@@ -989,7 +1093,7 @@ function run(vm) {
         fiber.frames[fiber.frames.length - 1].ip = ce.breakIp;
         break;
       }
-      case 69: { // LOOP_CONTINUE
+      case 67: { // LOOP_CONTINUE
         const target = op[1];
         if (vm.controlStack.length === 0) error("LOOP_CONTINUE: no control entry");
         const ce = vm.controlStack[vm.controlStack.length - 1];
@@ -997,7 +1101,7 @@ function run(vm) {
         f.ip = target;
         break;
       }
-      case 70: { // FOLD_CONTINUE
+      case 68: { // FOLD_CONTINUE
         const continueValue = fiber.stack[--fiber.sp];
         // Restore sp to frame base (cleans up locals + temps)
         fiber.sp = fiber.frames[fiber.frames.length - 1].baseSp;
@@ -1007,19 +1111,19 @@ function run(vm) {
         fiber.stack[fiber.sp++] = continueValue;
         break;
       }
-      case 46: { // ENTER_FUNC
+      case 44: { // ENTER_FUNC
         vm.returnStack.push({
           fiber: fiber,
           frameDepth: fiber.frames.length,
         });
         break;
       }
-      case 47: { // EXIT_FUNC
+      case 45: { // EXIT_FUNC
         if (vm.returnStack.length === 0) error("EXIT_FUNC: no return entry");
         vm.returnStack.pop();
         break;
       }
-      case 45: { // FUNC_RETURN
+      case 43: { // FUNC_RETURN
         const result = fiber.stack[--fiber.sp];
         // Find and remove the return entry for this fiber
         let reIdx = -1;
@@ -1057,18 +1161,7 @@ function run(vm) {
         }
         break;
       }
-      case 71: { // MAKE_MAP
-        const n = op[1];
-        const pairs = [];
-        for (let i = 0; i < n; i++) {
-          const v = fiber.stack[--fiber.sp];
-          const k = fiber.stack[--fiber.sp];
-          pairs.unshift([k, v]);
-        }
-        fiber.stack[fiber.sp++] = vmap(pairs);
-        break;
-      }
-      case 72: { // MAKE_ARRAY
+      case 69: { // MAKE_ARRAY
         const n = op[1];
         const elems = [];
         for (let i = 0; i < n; i++) {
@@ -1077,7 +1170,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = varray(elems);
         break;
       }
-      case 73: { // INDEX
+      case 70: { // INDEX
         const idx = asInt(fiber.stack[--fiber.sp]);
         const base = fiber.stack[--fiber.sp];
         if (base.tag === "string") {
@@ -1097,7 +1190,7 @@ function run(vm) {
         }
         break;
       }
-      case 77: { // GET_LOCAL_CALL
+      case 74: { // GET_LOCAL_CALL
         const fnVal = fiber.stack[--fiber.sp];
         const arg = fiber.stack[f.baseSp + op[1]];
         if (fnVal.tag === "closure") {
@@ -1136,14 +1229,14 @@ function run(vm) {
         }
         break;
       }
-      case 78: { // GET_LOCAL_TUPLE_GET
+      case 75: { // GET_LOCAL_TUPLE_GET
         const tup = asTuple(fiber.stack[f.baseSp + op[1]]);
         const idx = op[2];
         if (idx >= tup.length) error("tuple index out of bounds");
         fiber.stack[fiber.sp++] = tup[idx];
         break;
       }
-      case 79: { // GET_LOCAL_FIELD
+      case 76: { // GET_LOCAL_FIELD
         const rec = asRecord(fiber.stack[f.baseSp + op[1]]);
         const name = op[2];
         const entry = rec.find(([n]) => n === name);
@@ -1151,7 +1244,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = entry[1];
         break;
       }
-      case 80: { // JUMP_TABLE
+      case 77: { // JUMP_TABLE
         const minTag = op[1];
         const targets = op[2];
         const defaultTarget = op[3];
@@ -1164,7 +1257,7 @@ function run(vm) {
         }
         break;
       }
-      case 81: { // GET_GLOBAL_CALL
+      case 78: { // GET_GLOBAL_CALL
         const fnVal = fiber.stack[--fiber.sp];
         const gidx = op[1];
         const arg = vm.globals.get(gidx);
@@ -1208,7 +1301,7 @@ function run(vm) {
         }
         break;
       }
-      case 82: { // GET_GLOBAL_FIELD
+      case 79: { // GET_GLOBAL_FIELD
         const gidx = op[1];
         const name = op[2];
         const val = vm.globals.get(gidx);
@@ -1222,7 +1315,7 @@ function run(vm) {
         fiber.stack[fiber.sp++] = entry[1];
         break;
       }
-      case 85: { // UPDATE_REC
+      case 82: { // UPDATE_REC
         const placeholder = fiber.stack[--fiber.sp];
         const computed = fiber.stack[--fiber.sp];
         if (placeholder.tag === "list" && computed.tag === "list") {
@@ -1243,7 +1336,7 @@ function run(vm) {
         }
         break;
       }
-      case 74: // HALT
+      case 71: // HALT
         return fiber.sp > 0 ? fiber.stack[fiber.sp - 1] : VUNIT;
       default:
         error(`unknown opcode: ${op[0]}`);
@@ -1322,11 +1415,11 @@ module.exports = {
   VUNIT, VTRUE, VFALSE, VNIL,
   vint, vfloat, vbool, vstring, vbyte, vrune,
   vtuple, vlist, vrecord, vvariant, vclosure, vexternal,
-  vcontinuation, vref, vmap, varray, vproto,
+  vcontinuation, vref, varray, vproto,
   asInt, asFloat, asBool, asString, asClosure, asTuple,
   asRecord, asList, asVariant, asContinuation, asByte, asRune,
-  asMap, asArray, listToArray,
-  valuesEqual, ppValue, runeToUtf8,
+  asArray, listToArray,
+  valuesEqual, valuesCompare, valueHash, ppValue, runeToUtf8,
   makeFiber, copyFiber,
   run, executeProto, createVM, callClosure,
   resetProfile, dumpProfile,

@@ -14,6 +14,9 @@ let collect_jump_targets code =
     | Bytecode.JUMP t | Bytecode.JUMP_IF_FALSE t | Bytecode.JUMP_IF_TRUE t
     | Bytecode.ENTER_LOOP t | Bytecode.LOOP_CONTINUE t ->
       Hashtbl.replace targets t ()
+    | Bytecode.JUMP_TABLE (_, table, default) ->
+      Array.iter (fun t -> Hashtbl.replace targets t ()) table;
+      Hashtbl.replace targets default ()
     | _ -> ()
   ) code;
   targets

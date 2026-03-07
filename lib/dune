@@ -8,6 +8,8 @@
   ../tools/gen_stdlib_sources.ml
   ../stdlib/classes.mml
   ../stdlib/option_type.mml
+  ../stdlib/eq.mml
+  ../stdlib/ord.mml
   ../stdlib/map_class.mml
   ../stdlib/byte.mml
   ../stdlib/rune.mml
@@ -34,6 +36,8 @@
    (run ocaml ../tools/gen_stdlib_sources.ml
     ../stdlib/classes.mml
     ../stdlib/option_type.mml
+    ../stdlib/eq.mml
+    ../stdlib/ord.mml
     ../stdlib/map_class.mml
     ../stdlib/byte.mml
     ../stdlib/rune.mml

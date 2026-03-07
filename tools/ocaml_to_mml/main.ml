@@ -298,9 +298,9 @@ and emit_pattern e (pat : pattern) =
     emit e "{";
     List.iteri (fun i (lid, p) ->
       if i > 0 then emit e "; ";
-      let fname = Longident.last lid.txt in
+      let fname = escape_keyword (Longident.last lid.txt) in
       (match p.ppat_desc with
-       | Ppat_var v when String.equal v.txt fname ->
+       | Ppat_var v when String.equal (escape_keyword v.txt) fname ->
          emit e fname  (* punning *)
        | _ ->
          emit e fname;
@@ -532,10 +532,10 @@ and emit_expr e (expr : expression) =
     ) base;
     List.iteri (fun i (lid, ex) ->
       if i > 0 then emit e "; ";
-      let fname = Longident.last lid.txt in
+      let fname = escape_keyword (Longident.last lid.txt) in
       (* Check for punning: {x = x} → {x} *)
       (match ex.pexp_desc with
-       | Pexp_ident { txt = Longident.Lident n; _ } when String.equal n fname ->
+       | Pexp_ident { txt = Longident.Lident n; _ } when String.equal (escape_keyword n) fname ->
          emit e fname
        | _ ->
          emit e fname;
@@ -554,12 +554,12 @@ and emit_expr e (expr : expression) =
     emit_expr e ex;
     if needs_parens then emit e ")";
     emit e ".";
-    emit e (Longident.last lid.txt)
+    emit e (escape_keyword (Longident.last lid.txt))
 
   | Pexp_setfield (ex, lid, v) ->
     emit_expr e ex;
     emit e ".";
-    emit e (Longident.last lid.txt);
+    emit e (escape_keyword (Longident.last lid.txt));
     emit e " := ";
     emit_expr e v
 
@@ -969,6 +969,13 @@ and emit_apply e fn args =
   (* Fun.id x → x *)
   | Pexp_ident { txt = Longident.Ldot (Lident "Fun", "id"); _ }, [(_, arg)] ->
     emit_expr e arg
+  (* Fun.protect ~finally:cleanup f → let _r = f () in cleanup (); _r *)
+  | Pexp_ident { txt = Longident.Ldot (Lident "Fun", "protect"); _ }, [(_, cleanup); (_, f)] ->
+    emit e "(let _protect_result = (";
+    emit_expr e f;
+    emit e ") () in (";
+    emit_expr e cleanup;
+    emit e ") (); _protect_result)"
   (* Dynarray.create () → Dynarray.empty () *)
   | Pexp_ident { txt = Longident.Ldot (Lident "Dynarray", "create"); _ },
     [(_, { pexp_desc = Pexp_construct ({ txt = Lident "()"; _ }, None); _ })] ->
@@ -1360,8 +1367,15 @@ and emit_type_decl e is_top ?(is_and=false) (td : type_declaration) =
             emit_type e t;
             if needs_parens then emit e ")"
           ) ts
-        | Pcstr_record _ ->
-          emit e " of (* TODO: inline record *)");
+        | Pcstr_record lds ->
+          emit e " of { ";
+          List.iteri (fun i (ld : label_declaration) ->
+            if i > 0 then emit e "; ";
+            emit e (escape_keyword ld.pld_name.txt);
+            emit e ": ";
+            emit_type e ld.pld_type
+          ) lds;
+          emit e " }");
        (* GADT return type *)
        (match cd.pcd_res with
         | Some ret ->
@@ -1391,7 +1405,7 @@ and emit_type_decl e is_top ?(is_and=false) (td : type_declaration) =
      List.iteri (fun i (ld : label_declaration) ->
        if i > 0 then begin emit e ";"; newline e end;
        if ld.pld_mutable = Mutable then emit e "mut ";
-       emit e ld.pld_name.txt;
+       emit e (escape_keyword ld.pld_name.txt);
        emit e ": ";
        emit_type e ld.pld_type
      ) labels;

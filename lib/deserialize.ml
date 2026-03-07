@@ -189,12 +189,10 @@ let deserialize_opcode json =
      | "GET_LOCAL", [JInt i] -> GET_LOCAL i
      | "SET_LOCAL", [JInt i] -> SET_LOCAL i
      | "GET_UPVALUE", [JInt i] -> GET_UPVALUE i
-     | "SET_UPVALUE", [JInt i] -> SET_UPVALUE i
      | "MAKE_REF", [] -> MAKE_REF
      | "DEREF", [] -> DEREF
      | "SET_REF", [] -> SET_REF
      | "GET_GLOBAL", [JInt i] -> GET_GLOBAL i
-     | "SET_GLOBAL", [JInt i] -> SET_GLOBAL i
      | "DEF_GLOBAL", [JInt i] -> DEF_GLOBAL i
      | "ADD", [] -> ADD
      | "SUB", [] -> SUB
@@ -320,20 +318,18 @@ type builtin_table = (string, builtin_entry) Hashtbl.t
 
 (* --- Bundle loading --- *)
 
-let run_prototype globals proto =
+let run_prototype ?(global_names=[||]) globals proto =
   let program = Bytecode.{
     main = proto;
-    global_names = [||];
+    global_names;
   } in
   Vm.execute_with_globals program globals
 
-let load_bundle_parsed root (builtins : builtin_table) =
-  (* Extract global_names *)
+let setup_bundle root (builtins : builtin_table) =
   let global_names = Array.of_list
     (List.map json_string (json_list (json_field "global_names" root))) in
   let num_globals = Array.length global_names in
   let globals : (int, Bytecode.value) Hashtbl.t = Hashtbl.create num_globals in
-  (* Process native_globals *)
   let native_globals = json_field "native_globals" root in
   (match native_globals with
    | JObject fields ->
@@ -353,7 +349,6 @@ let load_bundle_parsed root (builtins : builtin_table) =
               ext_args = [];
             })
           | None ->
-            (* Not found — register a stub that errors *)
             Hashtbl.replace globals idx (Bytecode.VExternal {
               ext_name = name;
               ext_arity = arity;
@@ -389,17 +384,19 @@ let load_bundle_parsed root (builtins : builtin_table) =
        | _ -> ()
      ) fields
    | _ -> ());
-  (* Run setup prototypes *)
   let setup_protos = json_list (json_field "setup" root) in
   List.iter (fun proto_json ->
     let proto = deserialize_prototype proto_json in
-    let _ = run_prototype globals proto in
+    let _ = run_prototype ~global_names globals proto in
     ()
   ) setup_protos;
-  (* Run main prototype *)
   let main_json = json_field "main" root in
   let main_proto = deserialize_prototype main_json in
-  run_prototype globals main_proto
+  (globals, main_proto, global_names)
+
+let load_bundle_parsed root builtins =
+  let (globals, main_proto, global_names) = setup_bundle root builtins in
+  run_prototype ~global_names globals main_proto
 
 let load_bundle json_str builtins =
   let root = parse_json json_str in
@@ -410,79 +407,14 @@ let load_bundle json_str builtins =
 type prepared_bundle = {
   prepared_globals : (int, Bytecode.value) Hashtbl.t;
   prepared_main : Bytecode.prototype;
+  prepared_global_names : string array;
 }
 
-let prepare_bundle root (builtins : builtin_table) =
-  (* Same as load_bundle_parsed but stops after setup, before running main *)
-  let global_names = Array.of_list
-    (List.map json_string (json_list (json_field "global_names" root))) in
-  let num_globals = Array.length global_names in
-  let globals : (int, Bytecode.value) Hashtbl.t = Hashtbl.create num_globals in
-  let native_globals = json_field "native_globals" root in
-  (match native_globals with
-   | JObject fields ->
-     List.iter (fun (idx_str, entry) ->
-       let idx = int_of_string idx_str in
-       let ty = json_string (json_field "type" entry) in
-       match ty with
-       | "external" ->
-         let name = json_string (json_field "name" entry) in
-         let arity = json_int (json_field "arity" entry) in
-         (match Hashtbl.find_opt builtins name with
-          | Some b ->
-            Hashtbl.replace globals idx (Bytecode.VExternal {
-              ext_name = name;
-              ext_arity = arity;
-              ext_fn = b.impl;
-              ext_args = [];
-            })
-          | None ->
-            Hashtbl.replace globals idx (Bytecode.VExternal {
-              ext_name = name;
-              ext_arity = arity;
-              ext_fn = (fun _ -> raise (Vm.Runtime_error
-                (Printf.sprintf "unregistered builtin: %s" name)));
-              ext_args = [];
-            }))
-       | "dict" ->
-         let fields_json = json_field "fields" entry in
-         let field_list = match fields_json with
-           | JObject fl -> fl
-           | _ -> []
-         in
-         let methods = List.map (fun (field_name, field_entry) ->
-           let name = json_string (json_field "name" field_entry) in
-           let arity = json_int (json_field "arity" field_entry) in
-           let impl = match Hashtbl.find_opt builtins name with
-             | Some b -> b.impl
-             | None -> (fun _ -> raise (Vm.Runtime_error
-                 (Printf.sprintf "unregistered builtin: %s" name)))
-           in
-           (field_name, Bytecode.VExternal {
-             ext_name = name;
-             ext_arity = arity;
-             ext_fn = impl;
-             ext_args = [];
-           })
-         ) field_list in
-         let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) methods in
-         let field_names = List.map fst sorted in
-         let values = Array.of_list (List.map snd sorted) in
-         Hashtbl.replace globals idx (Bytecode.make_record field_names values)
-       | _ -> ()
-     ) fields
-   | _ -> ());
-  let setup_protos = json_list (json_field "setup" root) in
-  List.iter (fun proto_json ->
-    let proto = deserialize_prototype proto_json in
-    let _ = run_prototype globals proto in
-    ()
-  ) setup_protos;
-  let main_json = json_field "main" root in
-  let main_proto = deserialize_prototype main_json in
-  { prepared_globals = globals; prepared_main = main_proto }
+let prepare_bundle root builtins =
+  let (globals, main_proto, global_names) = setup_bundle root builtins in
+  { prepared_globals = globals; prepared_main = main_proto; prepared_global_names = global_names }
 
 let run_prepared (pb : prepared_bundle) =
   (* Clone the globals so the prepared state is not mutated *)
   let globals = Hashtbl.copy pb.prepared_globals in
-  run_prototype globals pb.prepared_main
+  run_prototype ~global_names:pb.prepared_global_names globals pb.prepared_main

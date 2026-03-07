@@ -147,19 +147,7 @@ let register_string state =
       let i = ref 0 in
       let len = String.length s in
       while !i < len do
-        let b = Char.code s.[!i] in
-        let (cp, nbytes) =
-          if b < 0x80 then (b, 1)
-          else if b land 0xE0 = 0xC0 then
-            ((b land 0x1F) lsl 6 lor (Char.code s.[!i+1] land 0x3F), 2)
-          else if b land 0xF0 = 0xE0 then
-            ((b land 0x0F) lsl 12 lor (Char.code s.[!i+1] land 0x3F) lsl 6
-             lor (Char.code s.[!i+2] land 0x3F), 3)
-          else
-            ((b land 0x07) lsl 18 lor (Char.code s.[!i+1] land 0x3F) lsl 12
-             lor (Char.code s.[!i+2] land 0x3F) lsl 6
-             lor (Char.code s.[!i+3] land 0x3F), 4)
-        in
+        let (cp, nbytes) = Utf8.decode_next s !i in
         runes := VRune cp :: !runes;
         i := !i + nbytes
       done;
@@ -168,23 +156,7 @@ let register_string state =
     ("of_runes", 1, fun args ->
       let runes = match arg 0 args with Bytecode.VList l -> l | _ -> raise (Vm.Runtime_error "expected list") in
       let buf = Buffer.create (List.length runes) in
-      List.iter (fun r ->
-        let cp = Interp.as_rune r in
-        if cp < 0x80 then Buffer.add_char buf (Char.chr cp)
-        else if cp < 0x800 then begin
-          Buffer.add_char buf (Char.chr (0xC0 lor (cp lsr 6)));
-          Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-        end else if cp < 0x10000 then begin
-          Buffer.add_char buf (Char.chr (0xE0 lor (cp lsr 12)));
-          Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
-          Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-        end else begin
-          Buffer.add_char buf (Char.chr (0xF0 lor (cp lsr 18)));
-          Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 12) land 0x3F)));
-          Buffer.add_char buf (Char.chr (0x80 lor ((cp lsr 6) land 0x3F)));
-          Buffer.add_char buf (Char.chr (0x80 lor (cp land 0x3F)))
-        end
-      ) runes;
+      List.iter (fun r -> Utf8.encode_rune buf (Interp.as_rune r)) runes;
       VString (Buffer.contents buf));
 
     ("get_rune", 2, fun args ->
@@ -194,31 +166,12 @@ let register_string state =
       let i = ref 0 in
       let count = ref 0 in
       while !i < len && !count < n do
-        let b = Char.code s.[!i] in
-        let nbytes =
-          if b < 0x80 then 1
-          else if b land 0xE0 = 0xC0 then 2
-          else if b land 0xF0 = 0xE0 then 3
-          else 4
-        in
-        i := !i + nbytes;
+        i := !i + Utf8.byte_length (Char.code s.[!i]);
         incr count
       done;
       if !i >= len then
         raise (Vm.Runtime_error (Printf.sprintf "String.get_rune: index %d out of bounds" n));
-      let b = Char.code s.[!i] in
-      let cp =
-        if b < 0x80 then b
-        else if b land 0xE0 = 0xC0 then
-          (b land 0x1F) lsl 6 lor (Char.code s.[!i+1] land 0x3F)
-        else if b land 0xF0 = 0xE0 then
-          (b land 0x0F) lsl 12 lor (Char.code s.[!i+1] land 0x3F) lsl 6
-          lor (Char.code s.[!i+2] land 0x3F)
-        else
-          (b land 0x07) lsl 18 lor (Char.code s.[!i+1] land 0x3F) lsl 12
-          lor (Char.code s.[!i+2] land 0x3F) lsl 6
-          lor (Char.code s.[!i+3] land 0x3F)
-      in
+      let (cp, _) = Utf8.decode_next s !i in
       VRune cp);
 
     ("of_byte", 1, fun args ->
@@ -231,14 +184,7 @@ let register_string state =
       let i = ref 0 in
       let count = ref 0 in
       while !i < len do
-        let b = Char.code s.[!i] in
-        let nbytes =
-          if b < 0x80 then 1
-          else if b land 0xE0 = 0xC0 then 2
-          else if b land 0xF0 = 0xE0 then 3
-          else 4
-        in
-        i := !i + nbytes;
+        i := !i + Utf8.byte_length (Char.code s.[!i]);
         incr count
       done;
       VInt !count);
@@ -384,11 +330,11 @@ let register_io state =
   ] in
   Interp.eval_setup state {|
     module IO =
-      pub extern read_file : string -> string
-      pub extern write_file : string -> string -> unit
-      pub extern append_file : string -> string -> unit
-      pub extern read_line : unit -> string
-      pub extern file_exists : string -> bool
+      pub extern read_file : string -> string / IO
+      pub extern write_file : string -> string -> unit / IO
+      pub extern append_file : string -> string -> unit / IO
+      pub extern read_line : unit -> string / IO
+      pub extern file_exists : string -> bool / IO
     end
   |}
 
@@ -397,7 +343,7 @@ let register_io state =
 let register_sys state =
   let state = Interp.register_fns state "Sys" [
     ("args", 1, fun _args ->
-      VList (Array.to_list (Array.map (fun s -> VString s) !Interp.script_argv)));
+      VList (Array.to_list (Array.map (fun s -> VString s) !(state.Interp.argv))));
 
     ("getenv", 1, fun args ->
       let name = Interp.as_string (arg 0 args) in
@@ -413,10 +359,10 @@ let register_sys state =
   ] in
   Interp.eval_setup state {|
     module Sys =
-      pub extern args : unit -> string list
-      pub extern getenv : string -> string option
-      pub extern exit : int -> unit
-      pub extern time : unit -> float
+      pub extern args : unit -> string list / IO
+      pub extern getenv : string -> string option / IO
+      pub extern exit : int -> unit / IO
+      pub extern time : unit -> float / IO
     end
   |}
 
@@ -521,11 +467,12 @@ let register_hashtbl state =
 (* ---- Eval module ---- *)
 
 let register_eval state =
-  Interp.eval_state := Some state;
+  let state_ref = state.Interp.state_ref in
+  state_ref := Some state;
   let state = Interp.register_fns state "Runtime" [
     ("eval", 1, fun args ->
       let source = Interp.as_string (arg 0 args) in
-      let _ = Interp.eval_source source in
+      let _ = Interp.eval_source state_ref source in
       VUnit);
 
     ("eval_file", 1, fun args ->
@@ -534,15 +481,15 @@ let register_eval state =
         let ic = open_in path in
         let source = In_channel.input_all ic in
         close_in ic;
-        let _ = Interp.eval_source source in
+        let _ = Interp.eval_source state_ref source in
         VUnit
       with Sys_error msg ->
         raise (Vm.Runtime_error ("Runtime.eval_file: " ^ msg))));
   ] in
   Interp.eval_setup state {|
     module Runtime =
-      pub extern eval : string -> unit
-      pub extern eval_file : string -> unit
+      pub extern eval : string -> unit / IO
+      pub extern eval_file : string -> unit / IO
     end
   |}
 
@@ -589,6 +536,5 @@ let register_all state =
     |> register_compat
   in
   let state = register_eval state in
-  Interp.eval_state := Some state;
-  Types.pp_synonyms := state.Interp.ctx.Typechecker.type_env.Types.type_synonyms;
+  state.Interp.state_ref := Some state;
   state

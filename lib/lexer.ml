@@ -88,53 +88,56 @@ let is_alpha c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 let is_ident_start c = is_alpha c || c = '_'
 let is_ident_char c = is_alpha c || is_digit c || c = '_' || c = '\''
 
-let keywords = [
-  "let", Token.LET;
-  "rec", Token.REC;
-  "in", Token.IN;
-  "if", Token.IF;
-  "else", Token.ELSE;
-  "fn", Token.FN;
-  "match", Token.MATCH;
-  "with", Token.WITH;
-  "type", Token.TYPE;
-  "newtype", Token.NEWTYPE;
-  "of", Token.OF;
-  "not", Token.NOT;
-  "mod", Token.MOD;
-  "true", Token.TRUE;
-  "false", Token.FALSE;
-  "class", Token.CLASS;
-  "instance", Token.INSTANCE;
-  "effect", Token.EFFECT;
-  "extern", Token.EXTERN;
-  "perform", Token.PERFORM;
-  "handle", Token.HANDLE;
-  "try", Token.TRY;
-  "provide", Token.PROVIDE;
-  "resume", Token.RESUME;
-  "return", Token.RETURN;
-  "continue", Token.CONTINUE;
-  "mut", Token.MUT;
-  "for", Token.FOR;
-  "do", Token.DO;
-  "break", Token.BREAK;
-  "when", Token.WHEN;
-  "where", Token.WHERE;
-  "module", Token.MODULE;
-  "pub", Token.PUB;
-  "open", Token.OPEN;
-  "end", Token.END;
-  "opaque", Token.OPAQUE;
-  "and", Token.AND;
-  "deriving", Token.DERIVING;
-  "land", Token.LAND;
-  "lor", Token.LOR;
-  "lxor", Token.LXOR;
-  "lnot", Token.LNOT;
-  "lsl", Token.LSL;
-  "lsr", Token.LSR;
-]
+let keywords =
+  let tbl = Hashtbl.create 64 in
+  List.iter (fun (k, v) -> Hashtbl.replace tbl k v) [
+    "let", Token.LET;
+    "rec", Token.REC;
+    "in", Token.IN;
+    "if", Token.IF;
+    "else", Token.ELSE;
+    "fn", Token.FN;
+    "match", Token.MATCH;
+    "with", Token.WITH;
+    "type", Token.TYPE;
+    "newtype", Token.NEWTYPE;
+    "of", Token.OF;
+    "not", Token.NOT;
+    "mod", Token.MOD;
+    "true", Token.TRUE;
+    "false", Token.FALSE;
+    "class", Token.CLASS;
+    "instance", Token.INSTANCE;
+    "effect", Token.EFFECT;
+    "extern", Token.EXTERN;
+    "perform", Token.PERFORM;
+    "handle", Token.HANDLE;
+    "try", Token.TRY;
+    "provide", Token.PROVIDE;
+    "resume", Token.RESUME;
+    "return", Token.RETURN;
+    "continue", Token.CONTINUE;
+    "mut", Token.MUT;
+    "for", Token.FOR;
+    "do", Token.DO;
+    "break", Token.BREAK;
+    "when", Token.WHEN;
+    "where", Token.WHERE;
+    "module", Token.MODULE;
+    "pub", Token.PUB;
+    "open", Token.OPEN;
+    "end", Token.END;
+    "opaque", Token.OPAQUE;
+    "and", Token.AND;
+    "deriving", Token.DERIVING;
+    "land", Token.LAND;
+    "lor", Token.LOR;
+    "lxor", Token.LXOR;
+    "lnot", Token.LNOT;
+    "lsl", Token.LSL;
+    "lsr", Token.LSR;
+  ];
+  tbl
 
 let read_number l =
   let loc = current_loc l in
@@ -146,14 +149,18 @@ let read_number l =
     while not (at_end l) && is_hex_digit (peek l) do
       Buffer.add_char buf (advance l)
     done;
-    let n = int_of_string (Buffer.contents buf) in
+    let n = match int_of_string_opt (Buffer.contents buf) with
+      | Some n -> n
+      | None -> raise (Lex_error ("integer literal overflow", loc)) in
     make_token l (INT n) loc
   end else if c = '0' && not (at_end l) && (peek l = 'b' || peek l = 'B') then begin
     Buffer.add_char buf (advance l);
     while not (at_end l) && (peek l = '0' || peek l = '1') do
       Buffer.add_char buf (advance l)
     done;
-    let n = int_of_string (Buffer.contents buf) in
+    let n = match int_of_string_opt (Buffer.contents buf) with
+      | Some n -> n
+      | None -> raise (Lex_error ("integer literal overflow", loc)) in
     make_token l (INT n) loc
   end else begin
     while not (at_end l) && is_digit (peek l) do
@@ -164,13 +171,24 @@ let read_number l =
       while not (at_end l) && is_digit (peek l) do
         Buffer.add_char buf (advance l)
       done;
-      let f = float_of_string (Buffer.contents buf) in
+      let f = match float_of_string_opt (Buffer.contents buf) with
+        | Some f -> f
+        | None -> raise (Lex_error ("float literal overflow", loc)) in
       make_token l (FLOAT f) loc
     end else begin
-      let n = int_of_string (Buffer.contents buf) in
+      let n = match int_of_string_opt (Buffer.contents buf) with
+        | Some n -> n
+        | None -> raise (Lex_error ("integer literal overflow", loc)) in
       make_token l (INT n) loc
     end
   end
+
+let escape_char = function
+  | 'n' -> Some '\n'
+  | 't' -> Some '\t'
+  | '\\' -> Some '\\'
+  | '"' -> Some '"'
+  | _ -> None
 
 let read_string l =
   let loc = current_loc l in
@@ -181,12 +199,9 @@ let read_string l =
       ignore (advance l);
       if at_end l then error l "unterminated string";
       let c = advance l in
-      match c with
-      | 'n' -> Buffer.add_char buf '\n'
-      | 't' -> Buffer.add_char buf '\t'
-      | '\\' -> Buffer.add_char buf '\\'
-      | '"' -> Buffer.add_char buf '"'
-      | _ -> error l (Printf.sprintf "unknown escape: \\%c" c)
+      (match escape_char c with
+       | Some ch -> Buffer.add_char buf ch
+       | None -> error l (Printf.sprintf "unknown escape: \\%c" c))
     end else
       Buffer.add_char buf (advance l)
   done;
@@ -257,14 +272,13 @@ let read_interp_string l =
       ignore (advance l);
       if at_end l then error l "unterminated interpolated string";
       let c = advance l in
-      match c with
-      | 'n' -> Buffer.add_char buf '\n'
-      | 't' -> Buffer.add_char buf '\t'
-      | '\\' -> Buffer.add_char buf '\\'
-      | '"' -> Buffer.add_char buf '"'
-      | '{' -> Buffer.add_char buf '{'
-      | '}' -> Buffer.add_char buf '}'
-      | _ -> error l (Printf.sprintf "unknown escape: \\%c" c)
+      (match c with
+       | '{' -> Buffer.add_char buf '{'
+       | '}' -> Buffer.add_char buf '}'
+       | _ ->
+         match escape_char c with
+         | Some ch -> Buffer.add_char buf ch
+         | None -> error l (Printf.sprintf "unknown escape: \\%c" c))
     end else if peek l = '{' then begin
       flush_lit ();
       ignore (advance l); (* consume '{' *)
@@ -325,7 +339,7 @@ let read_ident_or_keyword l =
     Buffer.add_char buf (advance l)
   done;
   let s = Buffer.contents buf in
-  let kind = match List.assoc_opt s keywords with
+  let kind = match Hashtbl.find_opt keywords s with
     | Some kw -> kw
     | None ->
       if s = "_" then Token.UNDERSCORE
@@ -514,8 +528,18 @@ let rec next_token l =
           Buffer.add_char buf (advance l)
         done;
         make_token l (POLYTAG (Buffer.contents buf)) loc
+      end else if not (at_end l) && (peek l >= 'a' && peek l <= 'z' || peek l = '_') then begin
+        let buf = Buffer.create 16 in
+        while not (at_end l) && is_ident_char (peek l) do
+          Buffer.add_char buf (advance l)
+        done;
+        if not (at_end l) && peek l = '`' then
+          ignore (advance l)
+        else
+          error l "expected closing backtick for infix operator";
+        make_token l (BACKTICK_INFIX (Buffer.contents buf)) loc
       end else
-        error l "expected uppercase identifier after backtick"
+        error l "expected identifier after backtick"
     | _ -> error l (Printf.sprintf "unexpected character: %C" c)
 
 let tokenize source =

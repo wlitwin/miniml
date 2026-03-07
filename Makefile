@@ -2,7 +2,7 @@
 # Usage: make help
 
 .PHONY: all build clean test repl help \
-        test-unit test-cross test-js test-parity test-translate test-all \
+        test-unit test-cross test-js test-emit-js test-parity test-translate test-all \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
         bundle self-host-compile \
@@ -71,6 +71,9 @@ test-ocaml: build  ## Run cross-VM tests on OCaml VM: make test-ocaml [FILTER="n
 test-js: build  ## Run cross-VM tests on JS VM: make test-js [FILTER="name"]
 	node cross_test/run_js.js cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
+test-emit-js: build  ## Run cross-VM tests via --emit-js + node: make test-emit-js [FILTER="name"]
+	node cross_test/run_emit_js.js cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
+
 test-parity: self-host-compile-js ## Run compiler parity tests: make test-parity [FILTER="name"]
 	dune exec compiler_test/parity_runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
@@ -84,6 +87,10 @@ test-all: test-unit test-cross test-js-suite test-translate  ## Run ALL tests (u
 	@echo ""
 	@echo "All tests passed."
 
+test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tests on all backends (ocaml, js, emit-js, native)
+	@echo ""
+	@echo "All backends passed."
+
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests
 test-file: build  ## Run a specific .tests file on both VMs: make test-file FILE=path/to/file.tests
@@ -96,7 +103,7 @@ test-file: build  ## Run a specific .tests file on both VMs: make test-file FILE
 
 # ── Translation (OCaml → MiniML) ──────────────────────────
 
-TRANSLATE_FILES = ast token bytecode types lexer typechecker optimize compiler parser serialize js_codegen
+TRANSLATE_FILES = ast token bytecode types match_tree_types lexer typechecker optimize compiler parser serialize js_codegen
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
@@ -140,7 +147,8 @@ translate-stats: build  ## Show translation stats (lines, TODOs per file)
 # ── Self-hosted compiler ───────────────────────────────────
 
 SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
-                  self_host/types.mml self_host/lexer.mml self_host/parser.mml \
+                  self_host/types.mml self_host/match_tree_types.mml \
+                  self_host/lexer.mml self_host/parser.mml \
                   self_host/typechecker.mml self_host/optimize.mml self_host/compiler.mml \
                   self_host/serialize.mml self_host/js_codegen.mml self_host/main.mml
 

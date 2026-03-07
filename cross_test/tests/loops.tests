@@ -504,3 +504,191 @@ for [a; b] in xss with sum = 0 do
   sum + a + b
 end
 --- expect: 21
+
+=== Fold Break Value Preservation ===
+
+--- test: fold break first match wins
+for x in [4; 7; 2; 9; 1; 8] with result = -1 do
+  if x > 5 do break x
+  else result
+end
+--- expect: 7
+
+--- test: fold break partial sum
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if acc + x > 8 do break acc
+  else acc + x
+end
+--- expect: 6
+
+--- test: fold break at last element
+for x in [1; 2; 3] with acc = 0 do
+  if x = 3 do break 42 else acc + x
+end
+--- expect: 42
+
+--- test: fold break at first element
+for x in [10; 20; 30] with acc = 0 do
+  if x = 10 do break 99 else acc + x
+end
+--- expect: 99
+
+--- test: unit for break early exit side effects
+let mut count = 0 in
+for x in [1; 2; 3; 4; 5] do
+  count := count + 1;
+  if x = 3 do break else ()
+end;
+count
+--- expect: 3
+
+--- test: nested fold break inner
+for x in [1; 2; 3] with outer = 0 do
+  let inner = for y in [10; 20; 30; 40] with acc = 0 do
+    if y = 30 do break acc else acc + y
+  end in
+  outer + inner
+end
+--- expect: 90
+
+--- test: nested fold break outer
+for x in [1; 2; 3; 4; 5] with outer = 0 do
+  let inner = for y in [10; 20; 30] with acc = 0 do acc + y end in
+  if x = 3 do break outer else outer + inner
+end
+--- expect: 120
+
+=== Let Variable Shadowing ===
+
+--- test: local let shadowing
+let x = 1 in
+let x = x + 10 in
+x
+--- expect: 11
+
+--- test: nested let shadowing
+let x = 1 in
+let y = let x = 10 in x + 1 in
+x + y
+--- expect: 12
+
+--- test: let shadowing in match arms
+let x = 42 in
+let result = match [1; 2; 3] with
+  | x :: _ -> x
+  | [] -> 0
+in
+result + x
+--- expect: 43
+
+--- test: let shadowing in fold accumulator
+let acc = 100 in
+let result = for x in [1; 2; 3] with acc = 0 do
+  acc + x
+end in
+result + acc
+--- expect: 106
+
+--- test: let shadowing in for loop variable
+let x = 100 in
+let mut sum = 0 in
+for x in [1; 2; 3] do
+  sum := sum + x
+end;
+sum + x
+--- expect: 106
+
+--- test: let shadowing in function params
+let x = 10 in
+let f x = x * 2 in
+f 3 + x
+--- expect: 16
+
+--- test: deep nested shadowing
+let x = 1 in
+let x = let x = let x = x + 1 in x * 2 in x + 3 in
+x
+--- expect: 7
+
+--- test: shadowing across let bindings
+let a = 5 in
+let b = a + 1 in
+let a = b + 1 in
+a + b
+--- expect: 13
+
+--- test: global let shadowing
+let x = 10;;
+let y = x + 5;;
+let x = 100;;
+x + y
+--- expect: 115
+
+--- test: global function shadowing
+let f x = x + 1;;
+let a = f 10;;
+let f x = x * 2;;
+a + f 10
+--- expect: 31
+
+--- test: shadowing in nested for loops
+let x = 100 in
+let result = for x in [1; 2; 3] with acc = 0 do
+  let inner = for x in [10; 20] with acc = 0 do
+    acc + x
+  end in
+  acc + inner
+end in
+result + x
+--- expect: 190
+
+--- test: fold break stops side effects
+let mut count = 0 in
+let result = for x in [1; 2; 3; 4; 5] with acc = 0 do
+  count := count + 1;
+  if x = 3 do break acc else acc + x
+end in
+result + count
+--- expect: 6
+
+--- test: for-in break stops side effects
+let mut count = 0 in
+for x in [1; 2; 3; 4; 5] do
+  count := count + 1;
+  if x = 3 do break else ()
+end;
+count
+--- expect: 3
+
+--- test: fold continue skips rest of body
+let mut count = 0 in
+let result = for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x mod 2 = 0 do continue end;
+  count := count + 1;
+  acc + x
+end in
+result + count
+--- expect: 12
+
+--- test: return inside fold stops iteration
+let f () =
+  let mut count = 0 in
+  for x in [1; 2; 3; 4; 5] do
+    count := count + 1;
+    if x = 3 do return count else ()
+  end;
+  count
+in f ()
+--- expect: 3
+
+--- test: return inside fold multi-param function
+let find_index target xs =
+  let mut i = 0 in
+  for x in xs do
+    if x = target do return i else ();
+    i := i + 1
+  end;
+  -1
+in
+find_index 30 [10; 20; 30; 40; 50]
+--- expect: 2

@@ -45,10 +45,8 @@ let find_context_asm () =
 (* ---- Frontend pipeline (shared with bytecode compiler) ---- *)
 
 let run_frontend source =
-  Interp.start_js_capture ();
   let state = Std.register_all (Interp.repl_state_init ()) in
-  Interp.stop_js_capture ();
-  let stdlib_programs = !Interp.captured_typed_setups in
+  let stdlib_programs = state.Interp.setup_typed in
   Interp.wrap_errors (fun () ->
     let tokens = Lexer.tokenize source in
     let program = Parser.parse_program tokens in
@@ -62,8 +60,16 @@ let run_frontend source =
 
 let compile_ir (source : string) : string =
   let (stdlib_programs, typed_program, type_env) = run_frontend source in
+  let typed_programs_for_externs = List.map snd stdlib_programs in
   let typed_program = Typechecker.classify_handlers typed_program in
-  let stdlib_programs = List.map (fun (te, p) -> (te, Typechecker.classify_handlers p)) stdlib_programs in
+  let typed_program = Match_tree.lower_program type_env typed_program in
+  let typed_program = Texpr_opt.optimize_program ~stdlib_programs:typed_programs_for_externs typed_program in
+  let stdlib_programs = List.map (fun (te, p) ->
+    let p = Typechecker.classify_handlers p in
+    let p = Match_tree.lower_program te p in
+    let p = Texpr_opt.optimize_program p in
+    (te, p)
+  ) stdlib_programs in
   Codegen.compile_program_with_stdlib type_env stdlib_programs typed_program
 
 let compile_to_native ~source_file ~output =

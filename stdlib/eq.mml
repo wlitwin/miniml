@@ -1,0 +1,76 @@
+(* Compound Eq instances for built-in container types *)
+
+instance Eq ('a list) where Eq 'a =
+  let (=) xs ys =
+    let rec go a b = match (a, b) with
+      | ([], []) -> true
+      | (x :: xr, y :: yr) -> if x = y do go xr yr else false
+      | _ -> false
+    in go xs ys
+  let (<>) xs ys =
+    let rec go a b = match (a, b) with
+      | ([], []) -> false
+      | (x :: xr, y :: yr) -> if x <> y do true else go xr yr
+      | _ -> true
+    in go xs ys
+end
+
+;;
+
+instance Eq ('a option) where Eq 'a =
+  let (=) a b = match (a, b) with
+    | (None, None) -> true
+    | (Some x, Some y) -> x = y
+    | _ -> false
+  let (<>) a b = match (a, b) with
+    | (None, None) -> false
+    | (Some x, Some y) -> x <> y
+    | _ -> true
+end
+
+;;
+
+instance Eq ('a array) where Eq 'a =
+  let (=) xs ys =
+    if array_length xs <> array_length ys do false
+    else
+      let rec go i =
+        if i >= array_length xs do true
+        else if array_get xs i = array_get ys i do go (i + 1)
+        else false
+      in go 0
+  let (<>) xs ys =
+    if array_length xs <> array_length ys do true
+    else
+      let rec go i =
+        if i >= array_length xs do false
+        else if array_get xs i <> array_get ys i do true
+        else go (i + 1)
+      in go 0
+end
+
+;;
+
+instance Eq ('a * 'b) where Eq 'a, Eq 'b =
+  let (=) x y =
+    let (a1, b1) = x in
+    let (a2, b2) = y in
+    a1 = a2 && b1 = b2
+  let (<>) x y =
+    let (a1, b1) = x in
+    let (a2, b2) = y in
+    a1 <> a2 || b1 <> b2
+end
+
+;;
+
+instance Eq ('a * 'b * 'c) where Eq 'a, Eq 'b, Eq 'c =
+  let (=) x y =
+    let (a1, b1, c1) = x in
+    let (a2, b2, c2) = y in
+    a1 = a2 && b1 = b2 && c1 = c2
+  let (<>) x y =
+    let (a1, b1, c1) = x in
+    let (a2, b2, c2) = y in
+    a1 <> a2 || b1 <> b2 || c1 <> c2
+end

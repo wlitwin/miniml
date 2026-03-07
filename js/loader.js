@@ -25,8 +25,8 @@ function deserializeValue(j) {
 }
 
 const OPCODE_NAMES = [
-  "CONST", "POP", "DUP", "GET_LOCAL", "SET_LOCAL", "GET_UPVALUE", "SET_UPVALUE",
-  "MAKE_REF", "DEREF", "SET_REF", "GET_GLOBAL", "SET_GLOBAL", "DEF_GLOBAL",
+  "CONST", "POP", "DUP", "GET_LOCAL", "SET_LOCAL", "GET_UPVALUE",
+  "MAKE_REF", "DEREF", "SET_REF", "GET_GLOBAL", "DEF_GLOBAL",
   "ADD", "SUB", "MUL", "DIV", "MOD", "NEG",
   "FADD", "FSUB", "FMUL", "FDIV", "FNEG",
   "EQ", "NEQ", "LT", "GT", "LE", "GE", "NOT",
@@ -40,7 +40,7 @@ const OPCODE_NAMES = [
   "VARIANT_PAYLOAD", "MATCH_FAIL",
   "PERFORM", "HANDLE", "RESUME",
   "ENTER_LOOP", "EXIT_LOOP", "LOOP_BREAK", "LOOP_CONTINUE", "FOLD_CONTINUE",
-  "MAKE_MAP", "MAKE_ARRAY", "INDEX", "HALT",
+  "MAKE_ARRAY", "INDEX", "HALT",
   "RECORD_UPDATE", "RECORD_UPDATE_DYN",
   "GET_LOCAL_CALL", "GET_LOCAL_TUPLE_GET", "GET_LOCAL_FIELD", "JUMP_TABLE",
   "GET_GLOBAL_CALL", "GET_GLOBAL_FIELD",
@@ -143,27 +143,24 @@ const U32_OPCODES = new Set([
   3,  // GET_LOCAL
   4,  // SET_LOCAL
   5,  // GET_UPVALUE
-  6,  // SET_UPVALUE
-  10, // GET_GLOBAL
-  11, // SET_GLOBAL
-  12, // DEF_GLOBAL
-  37, // JUMP
-  38, // JUMP_IF_FALSE
-  39, // JUMP_IF_TRUE
-  42, // CALL
-  43, // TAIL_CALL
-  48, // MAKE_TUPLE
-  49, // TUPLE_GET
-  56, // TAG_EQ
-  64, // HANDLE
-  66, // ENTER_LOOP
-  69, // LOOP_CONTINUE
-  70, // FOLD_CONTINUE
-  71, // MAKE_MAP
-  72, // MAKE_ARRAY
-  76, // RECORD_UPDATE_DYN
-  83, // CALL_N
-  84, // TAIL_CALL_N
+  9,  // GET_GLOBAL
+  10, // DEF_GLOBAL
+  35, // JUMP
+  36, // JUMP_IF_FALSE
+  37, // JUMP_IF_TRUE
+  40, // CALL
+  41, // TAIL_CALL
+  46, // MAKE_TUPLE
+  47, // TUPLE_GET
+  54, // TAG_EQ
+  62, // HANDLE
+  64, // ENTER_LOOP
+  67, // LOOP_CONTINUE
+  68, // FOLD_CONTINUE
+  69, // MAKE_ARRAY
+  73, // RECORD_UPDATE_DYN
+  80, // CALL_N
+  81, // TAIL_CALL_N
 ]);
 
 function loadBundleBinary(arrayBuffer) {
@@ -268,85 +265,85 @@ function loadBundleBinary(arrayBuffer) {
 
     switch (tag) {
       // No-operand opcodes
-      case 1: case 2: case 7: case 8: case 9:
-      case 13: case 14: case 15: case 16: case 17: case 18:
-      case 19: case 20: case 21: case 22: case 23:
-      case 24: case 25: case 26: case 27: case 28: case 29: case 30:
-      case 31: case 32: case 33: case 34: case 35: case 36:
-      case 44: case 45: case 46: case 47:
-      case 54: case 55: case 57: case 58: case 59: case 60:
-      case 61: case 65: case 67: case 68: case 73: case 74:
+      case 1: case 2: case 6: case 7: case 8:
+      case 11: case 12: case 13: case 14: case 15: case 16:
+      case 17: case 18: case 19: case 20: case 21:
+      case 22: case 23: case 24: case 25: case 26: case 27: case 28:
+      case 29: case 30: case 31: case 32: case 33: case 34:
+      case 42: case 43: case 44: case 45:
+      case 52: case 53: case 55: case 56: case 57: case 58:
+      case 59: case 63: case 65: case 66: case 70: case 71:
         return [tag];
 
-      case 40: { // CLOSURE
+      case 38: { // CLOSURE
         const protoIdx = readU32();
         const caps = readCaptures();
-        return [40, protoIdx, caps];
+        return [38, protoIdx, caps];
       }
-      case 41: { // CLOSURE_REC
+      case 39: { // CLOSURE_REC
         const protoIdx = readU32();
         const caps = readCaptures();
         const self = readU32();
-        return [41, protoIdx, caps, self];
+        return [39, protoIdx, caps, self];
       }
-      case 50: { // MAKE_RECORD
+      case 48: { // MAKE_RECORD
         const count = readU32();
         const fieldNames = new Array(count);
         for (let i = 0; i < count; i++) fieldNames[i] = strs[readU32()];
-        return [50, fieldNames];
+        return [48, fieldNames];
       }
-      case 51: // FIELD
-        return [51, strs[readU32()]];
-      case 52: // SET_FIELD
-        return [52, strs[readU32()]];
-      case 53: { // MAKE_VARIANT
+      case 49: // FIELD
+        return [49, strs[readU32()]];
+      case 50: // SET_FIELD
+        return [50, strs[readU32()]];
+      case 51: { // MAKE_VARIANT
         const tagN = readU32();
         const vname = strs[readU32()];
         const hasPayload = readU8() !== 0;
-        return [53, tagN, vname, hasPayload];
+        return [51, tagN, vname, hasPayload];
       }
-      case 62: // MATCH_FAIL
-        return [62, strs[readU32()]];
-      case 63: // PERFORM
-        return [63, strs[readU32()]];
-      case 75: { // RECORD_UPDATE
+      case 60: // MATCH_FAIL
+        return [60, strs[readU32()]];
+      case 61: // PERFORM
+        return [61, strs[readU32()]];
+      case 72: { // RECORD_UPDATE
         const count = readU32();
         const fieldNames = new Array(count);
         for (let i = 0; i < count; i++) fieldNames[i] = strs[readU32()];
-        return [75, fieldNames];
+        return [72, fieldNames];
       }
-      case 77: { // GET_LOCAL_CALL
+      case 74: { // GET_LOCAL_CALL
         const slot = readU32();
         const arity = readU32();
-        return [77, slot, arity];
+        return [74, slot, arity];
       }
-      case 78: { // GET_LOCAL_TUPLE_GET
+      case 75: { // GET_LOCAL_TUPLE_GET
         const slot = readU32();
         const idx = readU32();
-        return [78, slot, idx];
+        return [75, slot, idx];
       }
-      case 79: { // GET_LOCAL_FIELD
+      case 76: { // GET_LOCAL_FIELD
         const slot = readU32();
         const name = strs[readU32()];
-        return [79, slot, name];
+        return [76, slot, name];
       }
-      case 80: { // JUMP_TABLE
+      case 77: { // JUMP_TABLE
         const minTag = readU32();
         const tableSize = readU32();
         const targets = new Array(tableSize);
         for (let i = 0; i < tableSize; i++) targets[i] = readU32();
         const defaultTarget = readU32();
-        return [80, minTag, targets, defaultTarget];
+        return [77, minTag, targets, defaultTarget];
       }
-      case 81: { // GET_GLOBAL_CALL
+      case 78: { // GET_GLOBAL_CALL
         const idx = readU32();
         const arity = readU32();
-        return [81, idx, arity];
+        return [78, idx, arity];
       }
-      case 82: { // GET_GLOBAL_FIELD
+      case 79: { // GET_GLOBAL_FIELD
         const idx = readU32();
         const name = strs[readU32()];
-        return [82, idx, name];
+        return [79, idx, name];
       }
       default:
         throw new Error(`unknown opcode tag: ${tag}`);

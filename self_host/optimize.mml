@@ -11,6 +11,9 @@ module Optimize =
       do
         match op with
         | Bytecode.JUMP t | Bytecode.JUMP_IF_FALSE t | Bytecode.JUMP_IF_TRUE t | Bytecode.ENTER_LOOP t | Bytecode.LOOP_CONTINUE t -> Hashtbl.set targets t ()
+        | Bytecode.JUMP_TABLE ((_, table, default)) -> 
+          Array.iter (fn t -> Hashtbl.set targets t ()) table;
+          Hashtbl.set targets default ()
         | _ -> ()
 
       end) code;

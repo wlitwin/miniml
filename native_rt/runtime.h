@@ -225,6 +225,8 @@ mml_value mml_show_array(mml_value show_elem_fn, mml_value array);
 
 /* Structural equality */
 mml_value mml_structural_eq(mml_value a, mml_value b);
+/* Structural hash */
+mml_value mml_poly_hash(mml_value v);
 mml_value mml_list_eq(mml_value a, mml_value b);
 mml_value mml_tuple_eq(mml_value a, mml_value b, mml_value n);
 mml_value mml_record_eq(mml_value a, mml_value b);

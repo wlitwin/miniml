@@ -296,7 +296,6 @@ let () =
       {| IO.write_file "/tmp/_miniml_mod_test.ml"
            "module TestMod = pub let add x y = x + y end" |} in
     let state = get_stdlib_state () in
-    Interpreter.Interp.eval_state := Some state;
     let (state2, _, _) = Interpreter.Interp.eval_repl state
       {| Runtime.eval_file "/tmp/_miniml_mod_test.ml" |} in
     let (_, result, _) = Interpreter.Interp.eval_repl state2
@@ -305,7 +304,6 @@ let () =
 
   test "Runtime.eval module available in REPL" (fun () ->
     let state = get_stdlib_state () in
-    Interpreter.Interp.eval_state := Some state;
     let (state2, _, _) = Interpreter.Interp.eval_repl state
       {| Runtime.eval "module DynMod = pub let double x = x * 2 end" |} in
     let (_, result, _) = Interpreter.Interp.eval_repl state2

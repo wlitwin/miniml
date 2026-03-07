@@ -75,6 +75,7 @@ type codegen_ctx = {
   mutable fold_break_depth: int;  (* >0 when inside fold callback, persists across function boundaries *)
   mutable or_pattern_allocas: (string * string) list;  (* shared allocas for or-pattern bindings: (name, alloca_ptr) *)
   mutable current_dict_name: string option;  (* dict currently being compiled, for self-reference *)
+  mutable result_ptr: string;  (* alloca register for top-level expression result *)
 }
 
 let create_ctx type_env =
@@ -118,6 +119,7 @@ let create_ctx type_env =
     fold_break_depth = 0;
     or_pattern_allocas = [];
     current_dict_name = None;
+    result_ptr = "";
   }
 
 let push_scope ctx =
@@ -354,7 +356,7 @@ let rec is_captured_in_closures name (body : Typechecker.texpr) =
       scan init;
       if n <> name then scan body
     | TEAssign (_, e) -> scan e
-    | TEWhile (c, b) -> scan c; scan b
+    | TEWhile { tw_cond; tw_body } -> scan tw_cond; scan tw_body
     | TEContinueLoop -> ()
     | TETuple es -> List.iter scan es
     | TERecord fields -> List.iter (fun (_, e) -> scan e) fields
@@ -370,6 +372,9 @@ let rec is_captured_in_closures name (body : Typechecker.texpr) =
       List.iter (fun (_, guard, body) ->
         Option.iter scan guard; scan body
       ) arms
+    | TEMatchTree cm ->
+      scan cm.Match_tree_types.scrutinee;
+      Array.iter (fun arm -> scan arm.Match_tree_types.arm_body) cm.match_arms
     | TEPerform (_op, arg_e) -> scan arg_e
     | TEResume (k_e, v_e) -> scan k_e; scan v_e
     | TEHandle (body_e, arms) ->
@@ -380,7 +385,7 @@ let rec is_captured_in_closures name (body : Typechecker.texpr) =
         | Typechecker.THReturn (n, e) ->
           if n <> name && mentions_var name e then found := true
           else scan e
-        | Typechecker.THOp (_, arg, k, e) ->
+        | Typechecker.THOp { arg; k; body = e; _ } ->
           if arg <> name && k <> name && mentions_var name e then found := true
           else scan e
         | Typechecker.THOpProvide (_, arg, e) ->
@@ -408,7 +413,7 @@ and mentions_var name (e : Typechecker.texpr) =
   | TELetMut (n, init, body) -> mentions_var name init || (n <> name && mentions_var name body)
   | TEAssign (n, e) -> n = name || mentions_var name e
   | TEFun (p, body, _) -> p <> name && mentions_var name body
-  | TEWhile (c, b) -> mentions_var name c || mentions_var name b
+  | TEWhile { tw_cond; tw_body } -> mentions_var name tw_cond || mentions_var name tw_body
   | TEContinueLoop -> false
   | TETuple es -> List.exists (mentions_var name) es
   | TERecord fields -> List.exists (fun (_, e) -> mentions_var name e) fields
@@ -425,13 +430,17 @@ and mentions_var name (e : Typechecker.texpr) =
     List.exists (fun (_, e) -> mentions_var name e) bindings || mentions_var name body
   | TEForLoop e | TEFoldContinue e -> mentions_var name e
   | TEIndex (e1, e2) -> mentions_var name e1 || mentions_var name e2
+  | TEMatchTree cm ->
+    mentions_var name cm.Match_tree_types.scrutinee ||
+    Array.exists (fun arm -> mentions_var name arm.Match_tree_types.arm_body) cm.match_arms ||
+    mentions_var_in_dtree name cm.tree
   | TEPerform (_op, arg_e) -> mentions_var name arg_e
   | TEResume (k_e, v_e) -> mentions_var name k_e || mentions_var name v_e
   | TEHandle (body_e, arms) ->
     mentions_var name body_e ||
     List.exists (fun arm -> match arm with
       | Typechecker.THReturn (n, e) -> n <> name && mentions_var name e
-      | Typechecker.THOp (_, arg, k, e) ->
+      | Typechecker.THOp { arg; k; body = e; _ } ->
         arg <> name && k <> name && mentions_var name e
       | Typechecker.THOpProvide (_, arg, e) ->
         arg <> name && mentions_var name e
@@ -439,6 +448,51 @@ and mentions_var name (e : Typechecker.texpr) =
         arg <> name && mentions_var name e
     ) arms
   | _ -> false
+
+and mentions_var_in_mk name mk = match mk with
+  | Match_tree_types.MKPin n -> n = name
+  | _ -> false
+
+and mentions_var_in_test name test = match test with
+  | Match_tree_types.TPin n -> n = name
+  | Match_tree_types.TMapHasKey mk -> mentions_var_in_mk name mk
+  | _ -> false
+
+and mentions_var_in_occ name occ = List.exists (function
+  | Match_tree_types.AMapValue mk -> mentions_var_in_mk name mk
+  | _ -> false) occ
+
+and mentions_var_in_dtree name = function
+  | Match_tree_types.DSwitch { cases; default; _ } ->
+    List.exists (fun (test, binds, sub) ->
+      mentions_var_in_test name test ||
+      List.exists (fun (b : Match_tree_types.binding) -> mentions_var_in_occ name b.bind_occ) binds ||
+      mentions_var_in_dtree name sub) cases ||
+    (match default with Some d -> mentions_var_in_dtree name d | None -> false)
+  | Match_tree_types.DGuard { guard; bindings; on_true; on_false; _ } ->
+    mentions_var name guard ||
+    List.exists (fun (b : Match_tree_types.binding) -> mentions_var_in_occ name b.bind_occ) bindings ||
+    mentions_var_in_dtree name on_true || mentions_var_in_dtree name on_false
+  | Match_tree_types.DLeaf { bindings; _ } ->
+    List.exists (fun (b : Match_tree_types.binding) -> mentions_var_in_occ name b.bind_occ) bindings
+  | Match_tree_types.DFail _ -> false
+
+(* Save/restore ctx state around a fresh IR emitter for nested function emission *)
+let with_fresh_ir ctx f =
+  let saved_ir = ctx.ir in
+  let saved_label = ctx.current_label in
+  let saved_scopes = ctx.scopes in
+  let saved_loop_stack = ctx.loop_stack in
+  let fn_ir = Ir_emit.create () in
+  ctx.ir <- fn_ir;
+  let result = f fn_ir in
+  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
+  Buffer.add_char ctx.fn_buf '\n';
+  ctx.ir <- saved_ir;
+  ctx.current_label <- saved_label;
+  ctx.scopes <- saved_scopes;
+  ctx.loop_stack <- saved_loop_stack;
+  result
 
 (* ---- Expression codegen ---- *)
 
@@ -557,8 +611,8 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
   | TEIf (cond, then_e, else_e) ->
     emit_if ctx cond then_e else_e
 
-  | TEWhile (cond, body) ->
-    emit_while ctx cond body
+  | TEWhile { tw_cond; tw_body } ->
+    emit_while ctx tw_cond tw_body
 
   | TEBreak value_expr ->
     let v = emit_expr ctx value_expr in
@@ -725,6 +779,9 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
     add_extern ctx "mml_perform_op" "i64" ["i64"; "i64"];
     Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_perform_op"
       ~args:[("i64", op_str); ("i64", arg_val)]
+
+  | TEMatchTree cm ->
+    emit_match_tree ctx cm
 
   | TEHandle (body_expr, arms) ->
     emit_handle ctx body_expr arms
@@ -894,7 +951,7 @@ and emit_rec_placeholder ctx te =
         match payload_opt with
         | Some _ ->
           let tag = if String.length name > 0 && name.[0] = '`' then
-            Hashtbl.hash (String.sub name 1 (String.length name - 1)) land 0x3FFFFFFF
+            Types.polyvar_tag (String.sub name 1 (String.length name - 1))
           else tag_for_constructor ctx name
           in
           let hdr_tag = if String.length name > 0 && name.[0] = '`'
@@ -1689,7 +1746,7 @@ and emit_construct ctx name arg =
     | None -> tag_int 0  (* unit *)
   end else begin
     let tag = if String.length name > 0 && name.[0] = '`' then
-      Hashtbl.hash (String.sub name 1 (String.length name - 1)) land 0x3FFFFFFF
+      Types.polyvar_tag (String.sub name 1 (String.length name - 1))
     else
       tag_for_constructor ctx name
     in
@@ -1782,6 +1839,245 @@ and emit_match_panic ctx loc =
   Ir_emit.emit_call_void ctx.ir ~name:"mml_panic" ~args:[("i64", ptr)];
   Ir_emit.emit_unreachable ctx.ir
 
+(* ---- Decision tree match compilation ---- *)
+
+and emit_match_tree ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) =
+  let scrut_val = emit_expr ctx cm.scrutinee in
+  let scrut_ptr = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
+  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:scrut_val ~ptr:scrut_ptr;
+  let match_done = fresh_label ctx "match_done" in
+  let result_ptr = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
+  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:result_ptr;
+  emit_dtree ctx cm scrut_ptr result_ptr match_done cm.tree;
+  Ir_emit.emit_label ctx.ir match_done;
+  ctx.current_label <- match_done;
+  Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:result_ptr
+
+and emit_dtree ctx cm scrut_ptr result_ptr match_done tree =
+  match tree with
+  | Match_tree_types.DLeaf { arm_idx; bindings } ->
+    push_scope ctx;
+    emit_tree_bindings ctx scrut_ptr bindings;
+    let arm = cm.Match_tree_types.match_arms.(arm_idx) in
+    let body_val = emit_expr ctx arm.arm_body in
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:body_val ~ptr:result_ptr;
+    Ir_emit.emit_br ctx.ir ~label:match_done;
+    pop_scope ctx
+
+  | Match_tree_types.DFail loc ->
+    emit_match_panic ctx loc;
+    (* emit_match_panic emits unreachable, no br needed *)
+
+  | Match_tree_types.DGuard { guard; bindings; on_true; on_false; _ } ->
+    push_scope ctx;
+    emit_tree_bindings ctx scrut_ptr bindings;
+    let guard_val = emit_expr ctx guard in
+    let is_false = Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64"
+      ~lhs:guard_val ~rhs:false_value in
+    let guard_ok = fresh_label ctx "guard_ok" in
+    let guard_fail = fresh_label ctx "guard_fail" in
+    Ir_emit.emit_condbr ctx.ir ~cond:is_false ~if_true:guard_fail ~if_false:guard_ok;
+    (* Guard succeeded: follow on_true *)
+    Ir_emit.emit_label ctx.ir guard_ok;
+    ctx.current_label <- guard_ok;
+    emit_dtree ctx cm scrut_ptr result_ptr match_done on_true;
+    pop_scope ctx;
+    (* Guard failed: follow on_false *)
+    Ir_emit.emit_label ctx.ir guard_fail;
+    ctx.current_label <- guard_fail;
+    emit_dtree ctx cm scrut_ptr result_ptr match_done on_false
+
+  | Match_tree_types.DSwitch { occ; cases; default; _ } ->
+    let val_reg = emit_tree_occurrence ctx scrut_ptr occ in
+    emit_dtree_switch ctx cm scrut_ptr result_ptr match_done val_reg cases default
+
+and emit_dtree_switch ctx cm scrut_ptr result_ptr match_done val_reg cases default =
+  match cases with
+  | [] ->
+    (match default with
+     | Some def -> emit_dtree ctx cm scrut_ptr result_ptr match_done def
+     | None -> emit_match_panic ctx cm.Match_tree_types.loc)
+  | (test, _binds, sub_tree) :: rest_cases ->
+    let cond = emit_tree_test ctx val_reg test in
+    let then_label = fresh_label ctx "case_then" in
+    let else_label = fresh_label ctx "case_else" in
+    Ir_emit.emit_condbr ctx.ir ~cond ~if_true:then_label ~if_false:else_label;
+    (* Then: this case matched *)
+    Ir_emit.emit_label ctx.ir then_label;
+    ctx.current_label <- then_label;
+    emit_dtree ctx cm scrut_ptr result_ptr match_done sub_tree;
+    (* Else: try next case *)
+    Ir_emit.emit_label ctx.ir else_label;
+    ctx.current_label <- else_label;
+    emit_dtree_switch ctx cm scrut_ptr result_ptr match_done val_reg rest_cases default
+
+and emit_tree_occurrence ctx scrut_ptr (occ : Match_tree_types.occurrence) =
+  let val_reg = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:scrut_ptr in
+  List.fold_left (fun v step ->
+    match step with
+    | Match_tree_types.ATupleField i ->
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+      let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:elem_ptr
+    | Match_tree_types.ARecordField (_name, idx) ->
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+      let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:idx in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:elem_ptr
+    | Match_tree_types.AVariantPayload ->
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+      let payload_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:1 in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:payload_ptr
+    | Match_tree_types.AConsHead ->
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+      let hd_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:hd_ptr
+    | Match_tree_types.AConsTail ->
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+      let tl_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:1 in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:tl_ptr
+    | Match_tree_types.AArrayElem i ->
+      (* Array layout: ptr[0] = length, ptr[1+] = elements *)
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+      let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:(i + 1) in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:elem_ptr
+    | Match_tree_types.AMapValue mk ->
+      (* Call Map.get key map, then extract payload from Some *)
+      let map_get = emit_var ctx "Map.get" Types.TUnit in
+      let key_val = emit_map_key_val ctx mk in
+      let partial = emit_closure_apply ctx map_get [key_val] in
+      let result = emit_closure_apply ctx partial [v] in
+      (* result is Some(value), extract payload *)
+      let res_ptr = Ir_emit.emit_inttoptr ctx.ir ~value:result in
+      let payload_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:res_ptr ~index:1 in
+      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:payload_ptr
+  ) val_reg occ
+
+and emit_map_key_val ctx mk =
+  match mk with
+  | Match_tree_types.MKInt n -> tag_int n
+  | Match_tree_types.MKString s ->
+    emit_expr ctx { expr = Typechecker.TEString s; ty = Types.TString; loc = Token.dummy_loc }
+  | Match_tree_types.MKBool b -> if b then true_value else false_value
+  | Match_tree_types.MKFloat f ->
+    emit_expr ctx { expr = Typechecker.TEFloat f; ty = Types.TFloat; loc = Token.dummy_loc }
+  | Match_tree_types.MKPin name ->
+    emit_var ctx name Types.TUnit
+
+and ctor_has_payload ctx name =
+  let short = match String.rindex_opt name '.' with
+    | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+    | None -> name
+  in
+  match List.assoc_opt short ctx.type_env.Types.constructors with
+  | Some info -> info.Types.ctor_arg_ty <> None
+  | None -> true  (* conservative: assume payload *)
+
+and emit_tree_test ctx val_reg (test : Match_tree_types.test) =
+  match test with
+  | Match_tree_types.TConstructor (name, tag) ->
+    if ctor_has_payload ctx name then begin
+      (* Payload constructor: value is a heap pointer [tag, payload] *)
+      (* First check it's a pointer (not a tagged int from a no-payload ctor) *)
+      let low_bit = Ir_emit.emit_binop ctx.ir ~op:"and" ~ty:"i64" ~lhs:val_reg ~rhs:"1" in
+      let is_tagged = Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:low_bit ~rhs:"0" in
+      let check_tag = fresh_label ctx "ctor_check_tag" in
+      let ctor_false = fresh_label ctx "ctor_false" in
+      let ctor_result = fresh_label ctx "ctor_result" in
+      Ir_emit.emit_condbr ctx.ir ~cond:is_tagged ~if_true:ctor_false ~if_false:check_tag;
+      Ir_emit.emit_label ctx.ir check_tag;
+      ctx.current_label <- check_tag;
+      let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:val_reg in
+      let tag_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
+      let actual_tag = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:tag_ptr in
+      let tag_eq = Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:actual_tag ~rhs:(tag_int tag) in
+      Ir_emit.emit_br ctx.ir ~label:ctor_result;
+      Ir_emit.emit_label ctx.ir ctor_false;
+      ctx.current_label <- ctor_false;
+      Ir_emit.emit_br ctx.ir ~label:ctor_result;
+      Ir_emit.emit_label ctx.ir ctor_result;
+      ctx.current_label <- ctor_result;
+      Ir_emit.emit_phi ctx.ir ~ty:"i1"
+        ~incoming:[(tag_eq, check_tag); ("false", ctor_false)]
+    end else
+      (* No-payload constructor: bare tagged int *)
+      Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:val_reg ~rhs:(tag_int tag)
+  | Match_tree_types.TPolyVariant (_, hash) ->
+    (* Polyvariant: nullary = tagged int, with payload = heap [tag, payload] *)
+    let low_bit = Ir_emit.emit_binop ctx.ir ~op:"and" ~ty:"i64" ~lhs:val_reg ~rhs:"1" in
+    let is_tagged = Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:low_bit ~rhs:"0" in
+    let check_int = fresh_label ctx "pv_check_int" in
+    let check_ptr = fresh_label ctx "pv_check_ptr" in
+    let pv_result = fresh_label ctx "pv_result" in
+    Ir_emit.emit_condbr ctx.ir ~cond:is_tagged ~if_true:check_int ~if_false:check_ptr;
+    (* Tagged int path: nullary poly variant, compare directly *)
+    Ir_emit.emit_label ctx.ir check_int;
+    ctx.current_label <- check_int;
+    let int_eq = Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:val_reg ~rhs:(tag_int hash) in
+    Ir_emit.emit_br ctx.ir ~label:pv_result;
+    (* Pointer path: heap object with tag at offset 0 *)
+    Ir_emit.emit_label ctx.ir check_ptr;
+    ctx.current_label <- check_ptr;
+    let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:val_reg in
+    let tag_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
+    let actual_tag = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:tag_ptr in
+    let ptr_eq = Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:actual_tag ~rhs:(tag_int hash) in
+    Ir_emit.emit_br ctx.ir ~label:pv_result;
+    Ir_emit.emit_label ctx.ir pv_result;
+    ctx.current_label <- pv_result;
+    Ir_emit.emit_phi ctx.ir ~ty:"i1"
+      ~incoming:[(int_eq, check_int); (ptr_eq, check_ptr)]
+  | Match_tree_types.TBoolLit b ->
+    let expected = if b then true_value else false_value in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:val_reg ~rhs:expected
+  | Match_tree_types.TIntLit n ->
+    Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:val_reg ~rhs:(tag_int n)
+  | Match_tree_types.TFloatLit f ->
+    let da = emit_unbox_float ctx val_reg in
+    let fval = emit_expr ctx { expr = Typechecker.TEFloat f; ty = Types.TFloat; loc = Token.dummy_loc } in
+    let db = emit_unbox_float ctx fval in
+    Ir_emit.emit_fcmp ctx.ir ~cmp:"oeq" ~lhs:da ~rhs:db
+  | Match_tree_types.TStringLit s ->
+    let sval = emit_expr ctx { expr = Typechecker.TEString s; ty = Types.TString; loc = Token.dummy_loc } in
+    add_extern ctx "mml_string_eq" "i64" ["i64"; "i64"];
+    let eq = Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_string_eq"
+      ~args:[("i64", val_reg); ("i64", sval)] in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:eq ~rhs:false_value
+  | Match_tree_types.TUnit ->
+    Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:val_reg ~rhs:unit_value
+  | Match_tree_types.TNil ->
+    (* Nil is a tagged int (low bit 1). Check low bit. *)
+    let low_bit = Ir_emit.emit_binop ctx.ir ~op:"and" ~ty:"i64" ~lhs:val_reg ~rhs:"1" in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:low_bit ~rhs:"0"
+  | Match_tree_types.TCons ->
+    (* Cons is a pointer (low bit 0 and not nil) *)
+    let low_bit = Ir_emit.emit_binop ctx.ir ~op:"and" ~ty:"i64" ~lhs:val_reg ~rhs:"1" in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:low_bit ~rhs:"0"
+  | Match_tree_types.TArrayLen n ->
+    add_extern ctx "mml_array_length" "i64" ["i64"];
+    let arr_len = Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_array_length"
+      ~args:[("i64", val_reg)] in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"eq" ~ty:"i64" ~lhs:arr_len ~rhs:(tag_int n)
+  | Match_tree_types.TMapHasKey mk ->
+    let map_has = emit_var ctx "Map.has" Types.TUnit in
+    let key_val = emit_map_key_val ctx mk in
+    let partial = emit_closure_apply ctx map_has [key_val] in
+    let result = emit_closure_apply ctx partial [val_reg] in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:result ~rhs:false_value
+  | Match_tree_types.TPin name ->
+    let pinned_val = emit_var ctx name Types.TUnit in
+    add_extern ctx "mml_structural_eq" "i64" ["i64"; "i64"];
+    let eq = Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_structural_eq"
+      ~args:[("i64", val_reg); ("i64", pinned_val)] in
+    Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:eq ~rhs:false_value
+
+and emit_tree_bindings ctx scrut_ptr (bindings : Match_tree_types.binding list) =
+  List.iter (fun (b : Match_tree_types.binding) ->
+    let val_reg = emit_tree_occurrence ctx scrut_ptr b.bind_occ in
+    let ptr = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:val_reg ~ptr;
+    bind_var ctx b.var_name (Local ptr)
+  ) bindings
+
 (* ---- Pattern compilation ---- *)
 
 and collect_pattern_names pat =
@@ -1856,7 +2152,7 @@ and emit_pattern ctx val_reg pattern fail_label scrutinee_ty =
      | None -> ())
   | Ast.PatConstruct (name, sub_pat) ->
     let tag = if String.length name > 0 && name.[0] = '`' then
-      Hashtbl.hash (String.sub name 1 (String.length name - 1)) land 0x3FFFFFFF
+      Types.polyvar_tag (String.sub name 1 (String.length name - 1))
     else
       tag_for_constructor ctx name
     in
@@ -2055,7 +2351,9 @@ and emit_pattern ctx val_reg pattern fail_label scrutinee_ty =
       emit_pattern ctx extracted val_pat fail_label val_ty
     ) entries
   | Ast.PatPolyVariant (name, sub_pat) ->
-    let tag = Hashtbl.hash name land 0x3FFFFFFF in
+    (* Note: 30-bit hash has theoretical collision risk for different tag names.
+       Collision detection is not implemented; extremely unlikely in practice. *)
+    let tag = Types.polyvar_tag name in
     let expected_tag = tag_int tag in
     (match sub_pat with
      | None ->
@@ -2451,12 +2749,6 @@ and emit_named_call ctx name f_expr args =
     add_extern ctx "mml_list_sort" "i64" ["i64"; "i64"];
     Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_list_sort"
       ~args:[("i64", fn_val); ("i64", list_val)]
-  | "List.assoc_opt" ->
-    let key_val = emit_expr ctx (List.nth args 0) in
-    let list_val = emit_expr ctx (List.nth args 1) in
-    add_extern ctx "mml_list_assoc_opt" "i64" ["i64"; "i64"];
-    Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_list_assoc_opt"
-      ~args:[("i64", key_val); ("i64", list_val)]
   | "List.fold_right" ->
     let fn_val = emit_expr ctx (List.nth args 0) in
     let list_val = emit_expr ctx (List.nth args 1) in
@@ -2845,47 +3137,32 @@ and emit_named_call ctx name f_expr args =
 
 (** Generate a wrapper function that takes (ptr %env, args...) and calls a non-env function *)
 and emit_func_wrapper ctx wrapper_name real_name arity =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
-
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-
-  if arity <= 8 then begin
-    (* Fast path: individual parameters *)
-    let params = ("ptr", "%env") ::
-      List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i)) in
-    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-    Ir_emit.emit_label fn_ir "entry";
-    let call_args = List.init arity (fun i ->
-      ("i64", Printf.sprintf "%%a%d" i)
-    ) in
-    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:real_name ~args:call_args in
-    Ir_emit.emit_ret fn_ir "i64" result
-  end else begin
-    (* High arity: array-based convention (env, args_ptr) *)
-    let params = [("ptr", "%env"); ("ptr", "%args")] in
-    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-    Ir_emit.emit_label fn_ir "entry";
-    let call_args = List.init arity (fun i ->
-      let ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%args" ~index:i in
-      let v = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr in
-      ("i64", v)
-    ) in
-    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:real_name ~args:call_args in
-    Ir_emit.emit_ret fn_ir "i64" result
-  end;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+  with_fresh_ir ctx (fun fn_ir ->
+    if arity <= 8 then begin
+      (* Fast path: individual parameters *)
+      let params = ("ptr", "%env") ::
+        List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i)) in
+      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      Ir_emit.emit_label fn_ir "entry";
+      let call_args = List.init arity (fun i ->
+        ("i64", Printf.sprintf "%%a%d" i)
+      ) in
+      let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:real_name ~args:call_args in
+      Ir_emit.emit_ret fn_ir "i64" result
+    end else begin
+      (* High arity: array-based convention (env, args_ptr) *)
+      let params = [("ptr", "%env"); ("ptr", "%args")] in
+      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      Ir_emit.emit_label fn_ir "entry";
+      let call_args = List.init arity (fun i ->
+        let ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%args" ~index:i in
+        let v = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr in
+        ("i64", v)
+      ) in
+      let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:real_name ~args:call_args in
+      Ir_emit.emit_ret fn_ir "i64" result
+    end;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Wrap a known non-env function as a closure value *)
 and emit_func_as_closure ctx llvm_name arity =
@@ -2940,169 +3217,122 @@ and emit_capture_value ctx _name info =
 
 (** Emit a function that takes (ptr %env, params...) and loads captures from env *)
 and emit_closure_function ctx fn_name params body free_with_info =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+  with_fresh_ir ctx (fun fn_ir ->
+    let outer_scopes = ctx.scopes in
+    let arity = List.length params in
+    let high_arity = arity > 8 in
+    (* Deduplicate parameter names (e.g. two _ params in fold callback) *)
+    let seen = Hashtbl.create 8 in
+    let unique_params = List.map (fun p ->
+      let base = sanitize_name p in
+      if Hashtbl.mem seen base then begin
+        let n = Hashtbl.find seen base in
+        Hashtbl.replace seen base (n + 1);
+        (p, Printf.sprintf "param_%s_%d" base n)
+      end else begin
+        Hashtbl.replace seen base 1;
+        (p, Printf.sprintf "param_%s" base)
+      end
+    ) params in
+    let all_params =
+      if high_arity then
+        [("ptr", "%env"); ("ptr", "%args")]
+      else
+        ("ptr", "%env") ::
+        List.map (fun (_, llvm_p) -> ("i64", Printf.sprintf "%%%s" llvm_p)) unique_params
+    in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params:all_params;
+    Ir_emit.emit_label fn_ir "entry";
+    ctx.current_label <- "entry";
+    ctx.loop_stack <- [];
 
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
+    (* Copy Func/FuncLocal/Global/MutGlobal from outer scope *)
+    let fn_scope = Hashtbl.create 16 in
+    List.iter (fun scope ->
+      Hashtbl.iter (fun name info ->
+        match info with
+        | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
+          if not (Hashtbl.mem fn_scope name) then
+            Hashtbl.replace fn_scope name info
+        | Local _ | MutLocal _ | MutRefCell _ -> ()
+      ) scope
+    ) outer_scopes;
+    ctx.scopes <- [fn_scope];
 
-  let arity = List.length params in
-  let high_arity = arity > 8 in
-  (* Deduplicate parameter names (e.g. two _ params in fold callback) *)
-  let seen = Hashtbl.create 8 in
-  let unique_params = List.map (fun p ->
-    let base = sanitize_name p in
-    if Hashtbl.mem seen base then begin
-      let n = Hashtbl.find seen base in
-      Hashtbl.replace seen base (n + 1);
-      (p, Printf.sprintf "param_%s_%d" base n)
-    end else begin
-      Hashtbl.replace seen base 1;
-      (p, Printf.sprintf "param_%s" base)
-    end
-  ) params in
-  let all_params =
-    if high_arity then
-      [("ptr", "%env"); ("ptr", "%args")]
-    else
-      ("ptr", "%env") ::
-      List.map (fun (_, llvm_p) -> ("i64", Printf.sprintf "%%%s" llvm_p)) unique_params
-  in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params:all_params;
-  Ir_emit.emit_label fn_ir "entry";
-  ctx.current_label <- "entry";
-  ctx.loop_stack <- [];
+    (* Load captures from env struct at offsets 3+ *)
+    List.iteri (fun i (name, info) ->
+      let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:(3 + i) in
+      let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
+      (match info with
+       | MutLocal _ | MutRefCell _ | MutGlobal _ ->
+         (* Mutable capture: cap_val is the heap ref cell pointer.
+            Store in alloca and bind as MutRefCell *)
+         let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
+         bind_var ctx name (MutRefCell alloca_ptr)
+       | _ ->
+         let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
+         bind_var ctx name (Local ptr))
+    ) free_with_info;
 
-  (* Copy Func/FuncLocal/Global/MutGlobal from outer scope *)
-  let fn_scope = Hashtbl.create 16 in
-  List.iter (fun scope ->
-    Hashtbl.iter (fun name info ->
-      match info with
-      | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
-        if not (Hashtbl.mem fn_scope name) then
-          Hashtbl.replace fn_scope name info
-      | Local _ | MutLocal _ | MutRefCell _ -> ()
-    ) scope
-  ) saved_scopes;
-  ctx.scopes <- [fn_scope];
+    (* Bind parameters *)
+    if high_arity then begin
+      (* High arity: unpack params from %args array *)
+      List.iteri (fun i (p, _) ->
+        let arg_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%args" ~index:i in
+        let arg_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:arg_ptr in
+        let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+        Ir_emit.emit_store fn_ir ~ty:"i64" ~value:arg_val ~ptr;
+        bind_var ctx p (Local ptr)
+      ) unique_params
+    end else
+      List.iter (fun (p, llvm_p) ->
+        let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+        Ir_emit.emit_store fn_ir ~ty:"i64"
+          ~value:(Printf.sprintf "%%%s" llvm_p) ~ptr;
+        bind_var ctx p (Local ptr)
+      ) unique_params;
 
-  (* Load captures from env struct at offsets 3+ *)
-  List.iteri (fun i (name, info) ->
-    let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:(3 + i) in
-    let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
-    (match info with
-     | MutLocal _ | MutRefCell _ | MutGlobal _ ->
-       (* Mutable capture: cap_val is the heap ref cell pointer.
-          Store in alloca and bind as MutRefCell *)
-       let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
-       bind_var ctx name (MutRefCell alloca_ptr)
-     | _ ->
-       let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
-       bind_var ctx name (Local ptr))
-  ) free_with_info;
-
-  (* Bind parameters *)
-  if high_arity then begin
-    (* High arity: unpack params from %args array *)
-    List.iteri (fun i (p, _) ->
-      let arg_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%args" ~index:i in
-      let arg_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:arg_ptr in
-      let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-      Ir_emit.emit_store fn_ir ~ty:"i64" ~value:arg_val ~ptr;
-      bind_var ctx p (Local ptr)
-    ) unique_params
-  end else
-    List.iter (fun (p, llvm_p) ->
-      let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-      Ir_emit.emit_store fn_ir ~ty:"i64"
-        ~value:(Printf.sprintf "%%%s" llvm_p) ~ptr;
-      bind_var ctx p (Local ptr)
-    ) unique_params;
-
-  let body_result = emit_expr ctx body in
-  Ir_emit.emit_ret fn_ir "i64" body_result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+    let body_result = emit_expr ctx body in
+    Ir_emit.emit_ret fn_ir "i64" body_result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Generate a unary runtime wrapper function (env, arg) -> call rt_fn(arg) *)
 and emit_rt_unary_wrapper ctx wrapper_name rt_fn_name =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-  let params = [("ptr", "%env"); ("i64", "%a0")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  add_extern ctx rt_fn_name "i64" ["i64"];
-  let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name
-    ~args:[("i64", "%a0")] in
-  Ir_emit.emit_ret fn_ir "i64" result;
-  Ir_emit.emit_define_end fn_ir;
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+  with_fresh_ir ctx (fun fn_ir ->
+    let params = [("ptr", "%env"); ("i64", "%a0")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    add_extern ctx rt_fn_name "i64" ["i64"];
+    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name
+      ~args:[("i64", "%a0")] in
+    Ir_emit.emit_ret fn_ir "i64" result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Generate a binary runtime wrapper function (env, a0, a1) -> call rt_fn(a0, a1) *)
 and emit_rt_binary_wrapper ctx wrapper_name rt_fn_name =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-  let params = [("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  add_extern ctx rt_fn_name "i64" ["i64"; "i64"];
-  let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name
-    ~args:[("i64", "%a0"); ("i64", "%a1")] in
-  Ir_emit.emit_ret fn_ir "i64" result;
-  Ir_emit.emit_define_end fn_ir;
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+  with_fresh_ir ctx (fun fn_ir ->
+    let params = [("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    add_extern ctx rt_fn_name "i64" ["i64"; "i64"];
+    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name
+      ~args:[("i64", "%a0"); ("i64", "%a1")] in
+    Ir_emit.emit_ret fn_ir "i64" result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Generate a ternary runtime wrapper function (env, a0, a1, a2) -> call rt_fn(a0, a1, a2) *)
 and emit_rt_ternary_wrapper ctx wrapper_name rt_fn_name =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-  let params = [("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1"); ("i64", "%a2")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  add_extern ctx rt_fn_name "i64" ["i64"; "i64"; "i64"];
-  let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name
-    ~args:[("i64", "%a0"); ("i64", "%a1"); ("i64", "%a2")] in
-  Ir_emit.emit_ret fn_ir "i64" result;
-  Ir_emit.emit_define_end fn_ir;
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+  with_fresh_ir ctx (fun fn_ir ->
+    let params = [("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1"); ("i64", "%a2")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    add_extern ctx rt_fn_name "i64" ["i64"; "i64"; "i64"];
+    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name
+      ~args:[("i64", "%a0"); ("i64", "%a1"); ("i64", "%a2")] in
+    Ir_emit.emit_ret fn_ir "i64" result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Generate a show closure for the given type *)
 and emit_show_closure ctx ty =
@@ -3220,7 +3450,7 @@ and emit_show_closure ctx ty =
     (* Collect tags from the poly variant row *)
     let rec collect_tags acc = function
       | Types.PVRow (name, payload_ty, rest) ->
-        let tag = Hashtbl.hash name land 0x3FFFFFFF in
+        let tag = Types.polyvar_tag name in
         collect_tags ((tag, name, payload_ty) :: acc) rest
       | Types.PVVar { contents = Types.PVLink r } -> collect_tags acc r
       | _ -> List.rev acc
@@ -3286,33 +3516,22 @@ and emit_show_closure ctx ty =
 
 (** Generate a closure wrapper for compound show: loads N captures from env and calls rt_fn *)
 and emit_show_compound_wrapper ctx wrapper_name rt_fn_name n_captures =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-  let params = [("ptr", "%env"); ("i64", "%a0")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  (* Load captures from closure env (slots 3, 4, ...) *)
-  let cap_vals = List.init n_captures (fun i ->
-    let cap_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:(3 + i) in
-    Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:cap_ptr
-  ) in
-  (* Call runtime function: rt_fn(cap0, cap1, ..., a0) *)
-  let all_tys = List.init (n_captures + 1) (fun _ -> "i64") in
-  add_extern ctx rt_fn_name "i64" all_tys;
-  let args = List.map (fun v -> ("i64", v)) cap_vals @ [("i64", "%a0")] in
-  let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name ~args in
-  Ir_emit.emit_ret fn_ir "i64" result;
-  Ir_emit.emit_define_end fn_ir;
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+  with_fresh_ir ctx (fun fn_ir ->
+    let params = [("ptr", "%env"); ("i64", "%a0")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    (* Load captures from closure env (slots 3, 4, ...) *)
+    let cap_vals = List.init n_captures (fun i ->
+      let cap_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:(3 + i) in
+      Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:cap_ptr
+    ) in
+    (* Call runtime function: rt_fn(cap0, cap1, ..., a0) *)
+    let all_tys = List.init (n_captures + 1) (fun _ -> "i64") in
+    add_extern ctx rt_fn_name "i64" all_tys;
+    let args = List.map (fun v -> ("i64", v)) cap_vals @ [("i64", "%a0")] in
+    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:rt_fn_name ~args in
+    Ir_emit.emit_ret fn_ir "i64" result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Generate a fold closure — dispatches to array or list fold based on type *)
 and emit_fold_closure ctx ty =
@@ -3397,162 +3616,147 @@ and emit_operator_closure ctx op_name expr_ty =
 
 (** Generate an operator wrapper function *)
 and emit_operator_wrapper ctx wrapper_name op_name is_float =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+  with_fresh_ir ctx (fun fn_ir ->
+    let arity = match op_name with "not" | "neg" | "lnot" -> 1 | _ -> 2 in
+    let params = ("ptr", "%env") ::
+      List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i)) in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
 
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-
-  let arity = match op_name with "not" | "neg" | "lnot" -> 1 | _ -> 2 in
-  let params = ("ptr", "%env") ::
-    List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i)) in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-
-  let result =
-    if arity = 1 then begin
-      match op_name with
-      | "not" -> Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:"%a0" ~rhs:"2"
-      | "neg" when is_float ->
-        let d = Ir_emit.emit_call fn_ir ~ret_ty:"double" ~name:"mml_unbox_float"
-          ~args:[("i64", "%a0")] in
-        let neg_d = Ir_emit.emit_float_binop fn_ir ~op:"fsub"
-          ~lhs:"0.0" ~rhs:d in
-        add_extern ctx "mml_box_float" "i64" ["double"];
-        Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_box_float"
-          ~args:[("double", neg_d)]
-      | "neg" ->
-        let untagged = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let negated = Ir_emit.emit_binop fn_ir ~op:"sub" ~ty:"i64" ~lhs:"0" ~rhs:untagged in
-        let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:negated ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
-      | "lnot" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:ua ~rhs:"-1" in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | _ -> failwith (Printf.sprintf "native codegen: unknown unary operator %s" op_name)
-    end else if is_float then begin
-      let da = emit_unbox_float ctx "%a0" in
-      let db = emit_unbox_float ctx "%a1" in
-      let fop, is_cmp = match op_name with
-        | "+" -> "fadd", false | "-" -> "fsub", false
-        | "*" -> "fmul", false | "/" -> "fdiv", false
-        | "<" -> "olt", true | ">" -> "ogt", true
-        | "<=" -> "ole", true | ">=" -> "oge", true
-        | "=" -> "oeq", true | "<>" -> "one", true
-        | _ -> failwith (Printf.sprintf "native codegen: unknown float operator %s" op_name)
-      in
-      if is_cmp then begin
-        let cmp = Ir_emit.emit_fcmp fn_ir ~cmp:fop ~lhs:da ~rhs:db in
-        Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
+    let result =
+      if arity = 1 then begin
+        match op_name with
+        | "not" -> Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:"%a0" ~rhs:"2"
+        | "neg" when is_float ->
+          let d = Ir_emit.emit_call fn_ir ~ret_ty:"double" ~name:"mml_unbox_float"
+            ~args:[("i64", "%a0")] in
+          let neg_d = Ir_emit.emit_float_binop fn_ir ~op:"fsub"
+            ~lhs:"0.0" ~rhs:d in
+          add_extern ctx "mml_box_float" "i64" ["double"];
+          Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_box_float"
+            ~args:[("double", neg_d)]
+        | "neg" ->
+          let untagged = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let negated = Ir_emit.emit_binop fn_ir ~op:"sub" ~ty:"i64" ~lhs:"0" ~rhs:untagged in
+          let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:negated ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
+        | "lnot" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:ua ~rhs:"-1" in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | _ -> failwith (Printf.sprintf "native codegen: unknown unary operator %s" op_name)
+      end else if is_float then begin
+        let da = emit_unbox_float ctx "%a0" in
+        let db = emit_unbox_float ctx "%a1" in
+        let fop, is_cmp = match op_name with
+          | "+" -> "fadd", false | "-" -> "fsub", false
+          | "*" -> "fmul", false | "/" -> "fdiv", false
+          | "<" -> "olt", true | ">" -> "ogt", true
+          | "<=" -> "ole", true | ">=" -> "oge", true
+          | "=" -> "oeq", true | "<>" -> "one", true
+          | _ -> failwith (Printf.sprintf "native codegen: unknown float operator %s" op_name)
+        in
+        if is_cmp then begin
+          let cmp = Ir_emit.emit_fcmp fn_ir ~cmp:fop ~lhs:da ~rhs:db in
+          Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
+        end else begin
+          let r = Ir_emit.emit_float_binop fn_ir ~op:fop ~lhs:da ~rhs:db in
+          emit_box_float ctx r
+        end
       end else begin
-        let r = Ir_emit.emit_float_binop fn_ir ~op:fop ~lhs:da ~rhs:db in
-        emit_box_float ctx r
+        (* Integer operators - use tagged arithmetic *)
+        match op_name with
+        | "+" ->
+          let sum = Ir_emit.emit_binop fn_ir ~op:"add" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
+          Ir_emit.emit_binop fn_ir ~op:"sub" ~ty:"i64" ~lhs:sum ~rhs:"1"
+        | "-" ->
+          let diff = Ir_emit.emit_binop fn_ir ~op:"sub" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
+          Ir_emit.emit_binop fn_ir ~op:"add" ~ty:"i64" ~lhs:diff ~rhs:"1"
+        | "*" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          let prod = Ir_emit.emit_binop fn_ir ~op:"mul" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:prod ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
+        | "/" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          emit_divmod_zero_check_ir ctx fn_ir ub;
+          let quot = Ir_emit.emit_binop fn_ir ~op:"sdiv" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:quot ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
+        | "mod" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          emit_divmod_zero_check_ir ctx fn_ir ub;
+          let rem = Ir_emit.emit_binop fn_ir ~op:"srem" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:rem ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
+        | "<" ->
+          let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"slt" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
+          Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
+        | ">" ->
+          let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"sgt" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
+          Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
+        | "<=" ->
+          let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"sle" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
+          Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
+        | ">=" ->
+          let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"sge" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
+          Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
+        | "=" ->
+          (* Use structural equality for typeclass operators *)
+          add_extern ctx "mml_structural_eq" "i64" ["i64"; "i64"];
+          Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_structural_eq"
+            ~args:[("i64", "%a0"); ("i64", "%a1")]
+        | "<>" ->
+          add_extern ctx "mml_structural_eq" "i64" ["i64"; "i64"];
+          let eq = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_structural_eq"
+            ~args:[("i64", "%a0"); ("i64", "%a1")] in
+          let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"eq" ~ty:"i64" ~lhs:eq ~rhs:true_value in
+          Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:false_value ~if_false:true_value
+        | "land" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"and" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | "lor" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | "lxor" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | "lsl" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | "lsr" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"lshr" ~ty:"i64" ~lhs:ua ~rhs:ub in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | "lnot" ->
+          let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
+          let r = Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:ua ~rhs:"-1" in
+          let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
+          Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
+        | _ ->
+          failwith (Printf.sprintf "native codegen: unknown int operator %s" op_name)
       end
-    end else begin
-      (* Integer operators - use tagged arithmetic *)
-      match op_name with
-      | "+" ->
-        let sum = Ir_emit.emit_binop fn_ir ~op:"add" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
-        Ir_emit.emit_binop fn_ir ~op:"sub" ~ty:"i64" ~lhs:sum ~rhs:"1"
-      | "-" ->
-        let diff = Ir_emit.emit_binop fn_ir ~op:"sub" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
-        Ir_emit.emit_binop fn_ir ~op:"add" ~ty:"i64" ~lhs:diff ~rhs:"1"
-      | "*" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        let prod = Ir_emit.emit_binop fn_ir ~op:"mul" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:prod ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
-      | "/" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        emit_divmod_zero_check_ir ctx fn_ir ub;
-        let quot = Ir_emit.emit_binop fn_ir ~op:"sdiv" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:quot ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
-      | "mod" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        emit_divmod_zero_check_ir ctx fn_ir ub;
-        let rem = Ir_emit.emit_binop fn_ir ~op:"srem" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let shifted = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:rem ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
-      | "<" ->
-        let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"slt" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
-        Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
-      | ">" ->
-        let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"sgt" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
-        Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
-      | "<=" ->
-        let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"sle" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
-        Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
-      | ">=" ->
-        let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"sge" ~ty:"i64" ~lhs:"%a0" ~rhs:"%a1" in
-        Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value ~if_false:false_value
-      | "=" ->
-        (* Use structural equality for typeclass operators *)
-        add_extern ctx "mml_structural_eq" "i64" ["i64"; "i64"];
-        Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_structural_eq"
-          ~args:[("i64", "%a0"); ("i64", "%a1")]
-      | "<>" ->
-        add_extern ctx "mml_structural_eq" "i64" ["i64"; "i64"];
-        let eq = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_structural_eq"
-          ~args:[("i64", "%a0"); ("i64", "%a1")] in
-        let cmp = Ir_emit.emit_icmp fn_ir ~cmp:"eq" ~ty:"i64" ~lhs:eq ~rhs:true_value in
-        Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:false_value ~if_false:true_value
-      | "land" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"and" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | "lor" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | "lxor" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | "lsl" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | "lsr" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let ub = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a1" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"lshr" ~ty:"i64" ~lhs:ua ~rhs:ub in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | "lnot" ->
-        let ua = Ir_emit.emit_binop fn_ir ~op:"ashr" ~ty:"i64" ~lhs:"%a0" ~rhs:"1" in
-        let r = Ir_emit.emit_binop fn_ir ~op:"xor" ~ty:"i64" ~lhs:ua ~rhs:"-1" in
-        let s = Ir_emit.emit_binop fn_ir ~op:"shl" ~ty:"i64" ~lhs:r ~rhs:"1" in
-        Ir_emit.emit_binop fn_ir ~op:"or" ~ty:"i64" ~lhs:s ~rhs:"1"
-      | _ ->
-        failwith (Printf.sprintf "native codegen: unknown int operator %s" op_name)
-    end
-  in
-  Ir_emit.emit_ret fn_ir "i64" result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+    in
+    Ir_emit.emit_ret fn_ir "i64" result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Try to emit a builtin name as a closure value *)
 and emit_builtin_as_value ctx name expr_ty =
@@ -3598,13 +3802,19 @@ and emit_builtin_as_value ctx name expr_ty =
     add_extern ctx "mml_int_of_float" "i64" ["i64"];
     Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
   | "__show_value" ->
-    let wrapper_key = "mml_op_show_value" in
-    if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
-      Hashtbl.replace ctx.generated_wrappers wrapper_key ();
-      emit_rt_unary_wrapper ctx wrapper_key "mml_show_value"
-    end;
-    add_extern ctx "mml_show_value" "i64" ["i64"];
-    Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
+    (* When the type is a concrete arrow type, use emit_show_closure for
+       type-specific show (especially for TPolyVariant/TRecord which need
+       compile-time name info). Otherwise fall back to generic mml_show_value. *)
+    (match Types.repr expr_ty with
+     | Types.TArrow _ -> Some (emit_show_closure ctx expr_ty)
+     | _ ->
+       let wrapper_key = "mml_op_show_value" in
+       if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+         Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+         emit_rt_unary_wrapper ctx wrapper_key "mml_show_value"
+       end;
+       add_extern ctx "mml_show_value" "i64" ["i64"];
+       Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[]))
   | "show" ->
     (* Bare 'show' as a value — create a show closure based on the function type *)
     Some (emit_show_closure ctx expr_ty)
@@ -3637,34 +3847,33 @@ and emit_builtin_as_value ctx name expr_ty =
     Some (emit_operator_closure ctx "show" expr_ty)
   | "__index_at_array" | "__index_at_string" ->
     Some (emit_operator_closure ctx "at" expr_ty)
+  | "__poly_hash" ->
+    let wrapper_key = "mml_op_poly_hash" in
+    if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+      Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+      emit_rt_unary_wrapper ctx wrapper_key "mml_poly_hash"
+    end;
+    add_extern ctx "mml_poly_hash" "i64" ["i64"];
+    Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
+  | "__structural_eq" -> Some (emit_operator_closure ctx "=" expr_ty)
+  | "__structural_neq" -> Some (emit_operator_closure ctx "<>" expr_ty)
+  | "__structural_lt" -> Some (emit_operator_closure ctx "<" expr_ty)
+  | "__structural_gt" -> Some (emit_operator_closure ctx ">" expr_ty)
+  | "__structural_le" -> Some (emit_operator_closure ctx "<=" expr_ty)
+  | "__structural_ge" -> Some (emit_operator_closure ctx ">=" expr_ty)
   | _ -> None
 
 (** Generate a string concat wrapper function *)
 and emit_concat_wrapper ctx wrapper_name =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
-
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name
-    ~params:[("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1")];
-  Ir_emit.emit_label fn_ir "entry";
-  add_extern ctx "mml_string_concat" "i64" ["i64"; "i64"];
-  let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_string_concat"
-    ~args:[("i64", "%a0"); ("i64", "%a1")] in
-  Ir_emit.emit_ret fn_ir "i64" result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+  with_fresh_ir ctx (fun fn_ir ->
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name
+      ~params:[("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1")];
+    Ir_emit.emit_label fn_ir "entry";
+    add_extern ctx "mml_string_concat" "i64" ["i64"; "i64"];
+    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_string_concat"
+      ~args:[("i64", "%a0"); ("i64", "%a1")] in
+    Ir_emit.emit_ret fn_ir "i64" result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Generate a print closure using the appropriate print function for the type *)
 and emit_print_closure ctx expr_ty =
@@ -3683,30 +3892,15 @@ and emit_print_closure ctx expr_ty =
   in
   if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
     Hashtbl.replace ctx.generated_wrappers wrapper_key ();
-    let saved_ir = ctx.ir in
-    let saved_label = ctx.current_label in
-    let saved_scopes = ctx.scopes in
-    let saved_loop_stack = ctx.loop_stack in
-
-    let fn_ir = Ir_emit.create () in
-    ctx.ir <- fn_ir;
-
-    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_key
-      ~params:[("ptr", "%env"); ("i64", "%a0")];
-    Ir_emit.emit_label fn_ir "entry";
-    add_extern ctx print_fn "i64" ["i64"];
-    let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:print_fn
-      ~args:[("i64", "%a0")] in
-    Ir_emit.emit_ret fn_ir "i64" result;
-    Ir_emit.emit_define_end fn_ir;
-
-    Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-    Buffer.add_char ctx.fn_buf '\n';
-
-    ctx.ir <- saved_ir;
-    ctx.current_label <- saved_label;
-    ctx.scopes <- saved_scopes;
-    ctx.loop_stack <- saved_loop_stack
+    with_fresh_ir ctx (fun fn_ir ->
+      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_key
+        ~params:[("ptr", "%env"); ("i64", "%a0")];
+      Ir_emit.emit_label fn_ir "entry";
+      add_extern ctx print_fn "i64" ["i64"];
+      let result = Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:print_fn
+        ~args:[("i64", "%a0")] in
+      Ir_emit.emit_ret fn_ir "i64" result;
+      Ir_emit.emit_define_end fn_ir)
   end;
   ctx.has_print_output <- true;
   emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[]
@@ -3751,7 +3945,7 @@ and is_builtin_name = function
   | "List.filter" | "List.find" | "List.find_map"
   | "List.exists" | "List.forall" | "List.iter" | "List.mapi"
   | "List.concat" | "List.flatten" | "List.sort"
-  | "List.assoc_opt" | "List.fold_right" | "List.init"
+  | "List.fold_right" | "List.init"
   | "List.map2" | "List.iter2"
   | "array_get" | "array_set" | "array_length"
   | "Array.length" | "Array.get" | "Array.set" | "Array.make"
@@ -3769,7 +3963,22 @@ and is_builtin_name = function
   | "copy_continuation" | "Stdlib.copy_continuation"
   | "print" | "Stdlib.print"
   | "__show_value" | "show"
-  | "size" | "get" | "set" | "has" | "remove" | "keys" | "values" | "of_list" -> true
+  | "size" | "get" | "set" | "has" | "remove" | "keys" | "values" | "of_list"
+  (* Typeclass primitive operators — generated lazily by emit_builtin_as_value *)
+  | "__num_add_int" | "__num_add_float" | "__num_sub_int" | "__num_sub_float"
+  | "__num_mul_int" | "__num_mul_float" | "__num_div_int" | "__num_div_float"
+  | "__num_neg_int" | "__num_neg_float"
+  | "__eq_int" | "__eq_float" | "__eq_string" | "__eq_bool" | "__eq_byte" | "__eq_rune"
+  | "__neq_int" | "__neq_float" | "__neq_string" | "__neq_bool" | "__neq_byte" | "__neq_rune"
+  | "__lt_int" | "__lt_float" | "__lt_string" | "__lt_byte" | "__lt_rune"
+  | "__gt_int" | "__gt_float" | "__gt_string" | "__gt_byte" | "__gt_rune"
+  | "__le_int" | "__le_float" | "__le_string" | "__le_byte" | "__le_rune"
+  | "__ge_int" | "__ge_float" | "__ge_string" | "__ge_byte" | "__ge_rune"
+  | "__band_int" | "__bor_int" | "__bxor_int" | "__bshl_int" | "__bshr_int" | "__bnot_int"
+  | "__structural_eq" | "__structural_neq"
+  | "__structural_lt" | "__structural_gt" | "__structural_le" | "__structural_ge"
+  | "__poly_hash"
+  | "__index_at_array" | "__index_at_string" -> true
   | _ -> false
 
 and is_dict_or_inst name =
@@ -3848,7 +4057,7 @@ and free_vars_of_fun ?(ctx=None) params body =
       Hashtbl.replace param_set p ();
       scan_expr body;
       if not was_param then Hashtbl.remove param_set p
-    | TEWhile (c, b) -> scan_expr c; scan_expr b
+    | TEWhile { tw_cond; tw_body } -> scan_expr tw_cond; scan_expr tw_body
     | TEBreak e -> scan_expr e
     | TEContinueLoop -> ()
     | TEReturn e -> scan_expr e
@@ -3874,6 +4083,56 @@ and free_vars_of_fun ?(ctx=None) params body =
         Option.iter scan_expr guard;
         scan_expr body
       ) arms
+    | TEMatchTree cm ->
+      scan_expr cm.Match_tree_types.scrutinee;
+      let scan_var_name name =
+        if not (Hashtbl.mem param_set name) && not (Hashtbl.mem bound name)
+           && not (is_known_global name) && not (is_builtin_name name) then
+          if not (List.mem name !free) then free := name :: !free
+      in
+      let scan_map_key mk = match mk with
+        | Match_tree_types.MKPin name -> scan_var_name name
+        | _ -> ()
+      in
+      let scan_test test = match test with
+        | Match_tree_types.TMapHasKey mk -> scan_map_key mk
+        | Match_tree_types.TPin name -> scan_var_name name
+        | _ -> ()
+      in
+      let scan_occ occ = List.iter (function
+        | Match_tree_types.AMapValue mk -> scan_map_key mk
+        | _ -> ()
+      ) occ in
+      (* First pass: collect all bound variable names from tree bindings *)
+      let rec collect_bindings = function
+        | Match_tree_types.DSwitch { cases; default; _ } ->
+          List.iter (fun (_, _, sub) -> collect_bindings sub) cases;
+          Option.iter collect_bindings default
+        | Match_tree_types.DGuard { bindings; on_true; on_false; _ } ->
+          List.iter (fun (b : Match_tree_types.binding) ->
+            Hashtbl.replace bound b.var_name ()) bindings;
+          collect_bindings on_true; collect_bindings on_false
+        | Match_tree_types.DLeaf { bindings; _ } ->
+          List.iter (fun (b : Match_tree_types.binding) ->
+            Hashtbl.replace bound b.var_name ()) bindings
+        | Match_tree_types.DFail _ -> ()
+      in
+      collect_bindings cm.tree;
+      (* Now scan arm bodies (bound variables are already registered) *)
+      Array.iter (fun arm -> scan_expr arm.Match_tree_types.arm_body) cm.match_arms;
+      (* Scan tree for free variable references in tests/guards/occurrences *)
+      let rec scan_tree = function
+        | Match_tree_types.DSwitch { cases; default; _ } ->
+          List.iter (fun (test, _, sub) -> scan_test test; scan_tree sub) cases;
+          Option.iter scan_tree default
+        | Match_tree_types.DGuard { guard; bindings; on_true; on_false; _ } ->
+          List.iter (fun (b : Match_tree_types.binding) -> scan_occ b.bind_occ) bindings;
+          scan_expr guard; scan_tree on_true; scan_tree on_false
+        | Match_tree_types.DLeaf { bindings; _ } ->
+          List.iter (fun (b : Match_tree_types.binding) -> scan_occ b.bind_occ) bindings
+        | Match_tree_types.DFail _ -> ()
+      in
+      scan_tree cm.tree
     | TEPerform (_op, arg_e) -> scan_expr arg_e
     | TEResume (k_e, v_e) -> scan_expr k_e; scan_expr v_e
     | TEHandle (body_e, arms) ->
@@ -3881,7 +4140,7 @@ and free_vars_of_fun ?(ctx=None) params body =
       List.iter (fun arm -> match arm with
         | Typechecker.THReturn (name, e) ->
           Hashtbl.replace bound name (); scan_expr e; Hashtbl.remove bound name
-        | Typechecker.THOp (_, arg, k, e) ->
+        | Typechecker.THOp { arg; k; body = e; _ } ->
           Hashtbl.replace bound arg (); Hashtbl.replace bound k ();
           scan_expr e;
           Hashtbl.remove bound arg; Hashtbl.remove bound k
@@ -3910,78 +4169,56 @@ and free_vars_of_fun ?(ctx=None) params body =
   scan_expr body;
   List.rev !free
 
-and emit_function ctx llvm_name (fn_expr : Typechecker.texpr) =
-  let (params, body) = flatten_fun fn_expr in
-  emit_named_function ctx llvm_name params body
-
 and emit_named_function ctx llvm_name params body =
-  (* Save main emitter state *)
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+  with_fresh_ir ctx (fun fn_ir ->
+    let outer_scopes = ctx.scopes in
+    (* Deduplicate parameter names (e.g. two _ params in fold callback) *)
+    let seen = Hashtbl.create 8 in
+    let unique_params = List.map (fun p ->
+      let base = sanitize_name p in
+      if Hashtbl.mem seen base then begin
+        let n = Hashtbl.find seen base in
+        Hashtbl.replace seen base (n + 1);
+        (p, Printf.sprintf "param_%s_%d" base n)
+      end else begin
+        Hashtbl.replace seen base 1;
+        (p, Printf.sprintf "param_%s" base)
+      end
+    ) params in
 
-  (* Create fresh emitter for function body *)
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
+    (* Emit function header *)
+    let param_pairs = List.map (fun (_, llvm_p) ->
+      ("i64", Printf.sprintf "%%%s" llvm_p)
+    ) unique_params in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:llvm_name ~params:param_pairs;
+    Ir_emit.emit_label fn_ir "entry";
 
-  (* Deduplicate parameter names (e.g. two _ params in fold callback) *)
-  let seen = Hashtbl.create 8 in
-  let unique_params = List.map (fun p ->
-    let base = sanitize_name p in
-    if Hashtbl.mem seen base then begin
-      let n = Hashtbl.find seen base in
-      Hashtbl.replace seen base (n + 1);
-      (p, Printf.sprintf "param_%s_%d" base n)
-    end else begin
-      Hashtbl.replace seen base 1;
-      (p, Printf.sprintf "param_%s" base)
-    end
-  ) params in
+    (* Set up scopes: copy Func/Global bindings from outer scope *)
+    ctx.current_label <- "entry";
+    ctx.loop_stack <- [];
+    let fn_scope = Hashtbl.create 16 in
+    List.iter (fun scope ->
+      Hashtbl.iter (fun name info ->
+        match info with
+        | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
+          if not (Hashtbl.mem fn_scope name) then
+            Hashtbl.replace fn_scope name info
+        | Local _ | MutLocal _ | MutRefCell _ -> ()
+      ) scope
+    ) outer_scopes;
+    ctx.scopes <- [fn_scope];
 
-  (* Emit function header *)
-  let param_pairs = List.map (fun (_, llvm_p) ->
-    ("i64", Printf.sprintf "%%%s" llvm_p)
-  ) unique_params in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:llvm_name ~params:param_pairs;
-  Ir_emit.emit_label fn_ir "entry";
+    (* Bind parameters: alloca + store *)
+    List.iter (fun (p, llvm_p) ->
+      let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+      Ir_emit.emit_store fn_ir ~ty:"i64" ~value:(Printf.sprintf "%%%s" llvm_p) ~ptr;
+      bind_var ctx p (Local ptr)
+    ) unique_params;
 
-  (* Set up scopes: copy Func/Global bindings from outer scope *)
-  ctx.current_label <- "entry";
-  ctx.loop_stack <- [];
-  let fn_scope = Hashtbl.create 16 in
-  List.iter (fun scope ->
-    Hashtbl.iter (fun name info ->
-      match info with
-      | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
-        if not (Hashtbl.mem fn_scope name) then
-          Hashtbl.replace fn_scope name info
-      | Local _ | MutLocal _ | MutRefCell _ -> ()
-    ) scope
-  ) saved_scopes;
-  ctx.scopes <- [fn_scope];
-
-  (* Bind parameters: alloca + store *)
-  List.iter (fun (p, llvm_p) ->
-    let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-    Ir_emit.emit_store fn_ir ~ty:"i64" ~value:(Printf.sprintf "%%%s" llvm_p) ~ptr;
-    bind_var ctx p (Local ptr)
-  ) unique_params;
-
-  (* Compile body *)
-  let body_result = emit_expr ctx body in
-  Ir_emit.emit_ret fn_ir "i64" body_result;
-  Ir_emit.emit_define_end fn_ir;
-
-  (* Append function text to fn_buf *)
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  (* Restore main emitter state *)
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+    (* Compile body *)
+    let body_result = emit_expr ctx body in
+    Ir_emit.emit_ret fn_ir "i64" body_result;
+    Ir_emit.emit_define_end fn_ir)
 
 (** Emit a named function that loads captured variables from the env pointer.
     [self_name] is the name the function uses for recursive self-reference.
@@ -3989,111 +4226,97 @@ and emit_named_function ctx llvm_name params body =
     [capture_modes] specifies how each capture is bound: `Immutable, `Mutable, or `RefCell.
     The function binds [self_name] to the env pointer (which IS the closure). *)
 and emit_named_function_with_captures ctx llvm_name params body self_name captures capture_modes =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+  with_fresh_ir ctx (fun fn_ir ->
+    let outer_scopes = ctx.scopes in
+    (* Deduplicate parameter names *)
+    let seen = Hashtbl.create 8 in
+    let unique_params = List.map (fun p ->
+      let base = sanitize_name p in
+      if Hashtbl.mem seen base then begin
+        let n = Hashtbl.find seen base in
+        Hashtbl.replace seen base (n + 1);
+        (p, Printf.sprintf "param_%s_%d" base n)
+      end else begin
+        Hashtbl.replace seen base 1;
+        (p, Printf.sprintf "param_%s" base)
+      end
+    ) params in
 
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
+    let arity = List.length params in
+    let high_arity = arity > 8 in
+    let param_pairs =
+      if high_arity then
+        [("ptr", "%env"); ("ptr", "%args")]
+      else
+        ("ptr", "%env") :: List.map (fun (_, llvm_p) ->
+          ("i64", Printf.sprintf "%%%s" llvm_p)
+        ) unique_params
+    in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:llvm_name ~params:param_pairs;
+    Ir_emit.emit_label fn_ir "entry";
 
-  (* Deduplicate parameter names *)
-  let seen = Hashtbl.create 8 in
-  let unique_params = List.map (fun p ->
-    let base = sanitize_name p in
-    if Hashtbl.mem seen base then begin
-      let n = Hashtbl.find seen base in
-      Hashtbl.replace seen base (n + 1);
-      (p, Printf.sprintf "param_%s_%d" base n)
-    end else begin
-      Hashtbl.replace seen base 1;
-      (p, Printf.sprintf "param_%s" base)
-    end
-  ) params in
+    ctx.current_label <- "entry";
+    ctx.loop_stack <- [];
+    let fn_scope = Hashtbl.create 16 in
+    List.iter (fun scope ->
+      Hashtbl.iter (fun name info ->
+        match info with
+        | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
+          if not (Hashtbl.mem fn_scope name) then
+            Hashtbl.replace fn_scope name info
+        | Local _ | MutLocal _ | MutRefCell _ -> ()
+      ) scope
+    ) outer_scopes;
+    ctx.scopes <- [fn_scope];
 
-  let arity = List.length params in
-  let high_arity = arity > 8 in
-  let param_pairs =
-    if high_arity then
-      [("ptr", "%env"); ("ptr", "%args")]
-    else
-      ("ptr", "%env") :: List.map (fun (_, llvm_p) ->
-        ("i64", Printf.sprintf "%%%s" llvm_p)
+    (* Bind self-reference: %env IS the closure, convert to i64 *)
+    let self_i64 = Ir_emit.emit_ptrtoint fn_ir ~value:"%env" in
+    let self_alloca = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+    Ir_emit.emit_store fn_ir ~ty:"i64" ~value:self_i64 ~ptr:self_alloca;
+    bind_var ctx self_name (Local self_alloca);
+
+    (* Load captured variables from env slots [3, 4, ...] *)
+    List.iteri (fun i cap_name ->
+      let cap_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:(3 + i) in
+      let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:cap_ptr in
+      let mode = List.nth capture_modes i in
+      match mode with
+      | `Mutable ->
+        (* Mutable capture: value is a pointer (as i64), bind as MutLocal *)
+        let mut_ptr = Ir_emit.emit_inttoptr fn_ir ~value:cap_val in
+        bind_var ctx cap_name (MutLocal mut_ptr)
+      | `RefCell ->
+        (* RefCell capture: value is a heap pointer, store in alloca *)
+        let alloca = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+        Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca;
+        bind_var ctx cap_name (MutRefCell alloca)
+      | `Immutable ->
+        let alloca = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+        Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca;
+        bind_var ctx cap_name (Local alloca)
+    ) captures;
+
+    (* Bind parameters *)
+    if high_arity then begin
+      (* High arity: unpack params from %args array *)
+      List.iteri (fun i (p, _) ->
+        let arg_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%args" ~index:i in
+        let arg_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:arg_ptr in
+        let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+        Ir_emit.emit_store fn_ir ~ty:"i64" ~value:arg_val ~ptr;
+        bind_var ctx p (Local ptr)
       ) unique_params
-  in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:llvm_name ~params:param_pairs;
-  Ir_emit.emit_label fn_ir "entry";
+    end else
+      List.iter (fun (p, llvm_p) ->
+        let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+        Ir_emit.emit_store fn_ir ~ty:"i64" ~value:(Printf.sprintf "%%%s" llvm_p) ~ptr;
+        bind_var ctx p (Local ptr)
+      ) unique_params;
 
-  ctx.current_label <- "entry";
-  ctx.loop_stack <- [];
-  let fn_scope = Hashtbl.create 16 in
-  List.iter (fun scope ->
-    Hashtbl.iter (fun name info ->
-      match info with
-      | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
-        if not (Hashtbl.mem fn_scope name) then
-          Hashtbl.replace fn_scope name info
-      | Local _ | MutLocal _ | MutRefCell _ -> ()
-    ) scope
-  ) saved_scopes;
-  ctx.scopes <- [fn_scope];
-
-  (* Bind self-reference: %env IS the closure, convert to i64 *)
-  let self_i64 = Ir_emit.emit_ptrtoint fn_ir ~value:"%env" in
-  let self_alloca = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-  Ir_emit.emit_store fn_ir ~ty:"i64" ~value:self_i64 ~ptr:self_alloca;
-  bind_var ctx self_name (Local self_alloca);
-
-  (* Load captured variables from env slots [3, 4, ...] *)
-  List.iteri (fun i cap_name ->
-    let cap_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:(3 + i) in
-    let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:cap_ptr in
-    let mode = List.nth capture_modes i in
-    match mode with
-    | `Mutable ->
-      (* Mutable capture: value is a pointer (as i64), bind as MutLocal *)
-      let mut_ptr = Ir_emit.emit_inttoptr fn_ir ~value:cap_val in
-      bind_var ctx cap_name (MutLocal mut_ptr)
-    | `RefCell ->
-      (* RefCell capture: value is a heap pointer, store in alloca *)
-      let alloca = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-      Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca;
-      bind_var ctx cap_name (MutRefCell alloca)
-    | `Immutable ->
-      let alloca = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-      Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca;
-      bind_var ctx cap_name (Local alloca)
-  ) captures;
-
-  (* Bind parameters *)
-  if high_arity then begin
-    (* High arity: unpack params from %args array *)
-    List.iteri (fun i (p, _) ->
-      let arg_ptr = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%args" ~index:i in
-      let arg_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:arg_ptr in
-      let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-      Ir_emit.emit_store fn_ir ~ty:"i64" ~value:arg_val ~ptr;
-      bind_var ctx p (Local ptr)
-    ) unique_params
-  end else
-    List.iter (fun (p, llvm_p) ->
-      let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-      Ir_emit.emit_store fn_ir ~ty:"i64" ~value:(Printf.sprintf "%%%s" llvm_p) ~ptr;
-      bind_var ctx p (Local ptr)
-    ) unique_params;
-
-  (* Compile body *)
-  let body_result = emit_expr ctx body in
-  Ir_emit.emit_ret fn_ir "i64" body_result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack
+    (* Compile body *)
+    let body_result = emit_expr ctx body in
+    Ir_emit.emit_ret fn_ir "i64" body_result;
+    Ir_emit.emit_define_end fn_ir)
 
 (* ---- Handler arm compilation ---- *)
 
@@ -4142,70 +4365,52 @@ and emit_handler_env ctx free_with_info =
 and emit_handler_arm_fn ctx arg_name body free_with_info =
   let fn_name = Printf.sprintf "mml_handler_arm_%d" ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
+  with_fresh_ir ctx (fun fn_ir ->
+    let outer_scopes = ctx.scopes in
+    let params = [("ptr", "%env"); ("i64", "%arg"); ("i64", "%k")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    ctx.current_label <- "entry";
+    ctx.loop_stack <- [];
 
-  (* Save emitter state *)
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+    (* Copy Func/FuncLocal/Global/MutGlobal from outer scope *)
+    let fn_scope = Hashtbl.create 16 in
+    List.iter (fun scope ->
+      Hashtbl.iter (fun name info ->
+        match info with
+        | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
+          if not (Hashtbl.mem fn_scope name) then
+            Hashtbl.replace fn_scope name info
+        | Local _ | MutLocal _ | MutRefCell _ -> ()
+      ) scope
+    ) outer_scopes;
+    ctx.scopes <- [fn_scope];
 
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
+    (* Load captures from env at offsets 0, 1, 2, ... *)
+    List.iteri (fun i (name, info) ->
+      let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:i in
+      let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
+      (match info with
+       | MutLocal _ | MutRefCell _ | MutGlobal _ ->
+         (* Mutable capture: cap_val is the heap ref cell pointer *)
+         let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
+         bind_var ctx name (MutRefCell alloca_ptr)
+       | _ ->
+         let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
+         bind_var ctx name (Local ptr))
+    ) free_with_info;
 
-  let params = [("ptr", "%env"); ("i64", "%arg"); ("i64", "%k")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  ctx.current_label <- "entry";
-  ctx.loop_stack <- [];
+    (* Bind the arg parameter *)
+    let arg_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+    Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%arg" ~ptr:arg_ptr;
+    bind_var ctx arg_name (Local arg_ptr);
 
-  (* Copy Func/FuncLocal/Global/MutGlobal from outer scope *)
-  let fn_scope = Hashtbl.create 16 in
-  List.iter (fun scope ->
-    Hashtbl.iter (fun name info ->
-      match info with
-      | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
-        if not (Hashtbl.mem fn_scope name) then
-          Hashtbl.replace fn_scope name info
-      | Local _ | MutLocal _ | MutRefCell _ -> ()
-    ) scope
-  ) saved_scopes;
-  ctx.scopes <- [fn_scope];
-
-  (* Load captures from env at offsets 0, 1, 2, ... *)
-  List.iteri (fun i (name, info) ->
-    let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:i in
-    let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
-    (match info with
-     | MutLocal _ | MutRefCell _ | MutGlobal _ ->
-       (* Mutable capture: cap_val is the heap ref cell pointer *)
-       let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
-       bind_var ctx name (MutRefCell alloca_ptr)
-     | _ ->
-       let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
-       bind_var ctx name (Local ptr))
-  ) free_with_info;
-
-  (* Bind the arg parameter *)
-  let arg_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-  Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%arg" ~ptr:arg_ptr;
-  bind_var ctx arg_name (Local arg_ptr);
-
-  (* Compile body *)
-  let body_result = emit_expr ctx body in
-  Ir_emit.emit_ret fn_ir "i64" body_result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  (* Restore state *)
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack;
-
+    (* Compile body *)
+    let body_result = emit_expr ctx body in
+    Ir_emit.emit_ret fn_ir "i64" body_result;
+    Ir_emit.emit_define_end fn_ir);
   fn_name
 
 (** Emit a full handler arm function: (ptr %env, i64 %arg, i64 %k) -> i64.
@@ -4214,69 +4419,53 @@ and emit_handler_arm_fn ctx arg_name body free_with_info =
 and emit_full_handler_arm_fn ctx arg_name k_name body free_with_info =
   let fn_name = Printf.sprintf "mml_handler_arm_%d" ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
+  with_fresh_ir ctx (fun fn_ir ->
+    let outer_scopes = ctx.scopes in
+    let params = [("ptr", "%env"); ("i64", "%arg"); ("i64", "%k")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    ctx.current_label <- "entry";
+    ctx.loop_stack <- [];
 
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+    let fn_scope = Hashtbl.create 16 in
+    List.iter (fun scope ->
+      Hashtbl.iter (fun name info ->
+        match info with
+        | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
+          if not (Hashtbl.mem fn_scope name) then
+            Hashtbl.replace fn_scope name info
+        | Local _ | MutLocal _ | MutRefCell _ -> ()
+      ) scope
+    ) outer_scopes;
+    ctx.scopes <- [fn_scope];
 
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
+    List.iteri (fun i (name, info) ->
+      let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:i in
+      let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
+      (match info with
+       | MutLocal _ | MutRefCell _ | MutGlobal _ ->
+         let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
+         bind_var ctx name (MutRefCell alloca_ptr)
+       | _ ->
+         let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
+         bind_var ctx name (Local ptr))
+    ) free_with_info;
 
-  let params = [("ptr", "%env"); ("i64", "%arg"); ("i64", "%k")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  ctx.current_label <- "entry";
-  ctx.loop_stack <- [];
+    (* Bind the arg parameter *)
+    let arg_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+    Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%arg" ~ptr:arg_ptr;
+    bind_var ctx arg_name (Local arg_ptr);
 
-  let fn_scope = Hashtbl.create 16 in
-  List.iter (fun scope ->
-    Hashtbl.iter (fun name info ->
-      match info with
-      | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
-        if not (Hashtbl.mem fn_scope name) then
-          Hashtbl.replace fn_scope name info
-      | Local _ | MutLocal _ | MutRefCell _ -> ()
-    ) scope
-  ) saved_scopes;
-  ctx.scopes <- [fn_scope];
+    (* Bind the continuation from the %k parameter *)
+    let k_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+    Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%k" ~ptr:k_ptr;
+    bind_var ctx k_name (Local k_ptr);
 
-  List.iteri (fun i (name, info) ->
-    let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:i in
-    let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
-    (match info with
-     | MutLocal _ | MutRefCell _ | MutGlobal _ ->
-       let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
-       bind_var ctx name (MutRefCell alloca_ptr)
-     | _ ->
-       let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
-       bind_var ctx name (Local ptr))
-  ) free_with_info;
-
-  (* Bind the arg parameter *)
-  let arg_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-  Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%arg" ~ptr:arg_ptr;
-  bind_var ctx arg_name (Local arg_ptr);
-
-  (* Bind the continuation from the %k parameter *)
-  let k_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-  Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%k" ~ptr:k_ptr;
-  bind_var ctx k_name (Local k_ptr);
-
-  let body_result = emit_expr ctx body in
-  Ir_emit.emit_ret fn_ir "i64" body_result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack;
-
+    let body_result = emit_expr ctx body in
+    Ir_emit.emit_ret fn_ir "i64" body_result;
+    Ir_emit.emit_define_end fn_ir);
   fn_name
 
 (** Emit a handler body thunk: (ptr %env) -> i64.
@@ -4285,59 +4474,43 @@ and emit_full_handler_arm_fn ctx arg_name k_name body free_with_info =
 and emit_handler_body_thunk ctx body free_with_info =
   let fn_name = Printf.sprintf "mml_handler_body_%d" ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
+  with_fresh_ir ctx (fun fn_ir ->
+    let outer_scopes = ctx.scopes in
+    let params = [("ptr", "%env")] in
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params;
+    Ir_emit.emit_label fn_ir "entry";
+    ctx.current_label <- "entry";
+    ctx.loop_stack <- [];
 
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let saved_loop_stack = ctx.loop_stack in
+    let fn_scope = Hashtbl.create 16 in
+    List.iter (fun scope ->
+      Hashtbl.iter (fun name info ->
+        match info with
+        | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
+          if not (Hashtbl.mem fn_scope name) then
+            Hashtbl.replace fn_scope name info
+        | Local _ | MutLocal _ | MutRefCell _ -> ()
+      ) scope
+    ) outer_scopes;
+    ctx.scopes <- [fn_scope];
 
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
+    List.iteri (fun i (name, info) ->
+      let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:i in
+      let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
+      (match info with
+       | MutLocal _ | MutRefCell _ | MutGlobal _ ->
+         let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
+         bind_var ctx name (MutRefCell alloca_ptr)
+       | _ ->
+         let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
+         Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
+         bind_var ctx name (Local ptr))
+    ) free_with_info;
 
-  let params = [("ptr", "%env")] in
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:fn_name ~params;
-  Ir_emit.emit_label fn_ir "entry";
-  ctx.current_label <- "entry";
-  ctx.loop_stack <- [];
-
-  let fn_scope = Hashtbl.create 16 in
-  List.iter (fun scope ->
-    Hashtbl.iter (fun name info ->
-      match info with
-      | Func _ | FuncLocal _ | Global _ | MutGlobal _ ->
-        if not (Hashtbl.mem fn_scope name) then
-          Hashtbl.replace fn_scope name info
-      | Local _ | MutLocal _ | MutRefCell _ -> ()
-    ) scope
-  ) saved_scopes;
-  ctx.scopes <- [fn_scope];
-
-  List.iteri (fun i (name, info) ->
-    let env_slot = Ir_emit.emit_gep fn_ir ~ty:"i64" ~ptr:"%env" ~index:i in
-    let cap_val = Ir_emit.emit_load fn_ir ~ty:"i64" ~ptr:env_slot in
-    (match info with
-     | MutLocal _ | MutRefCell _ | MutGlobal _ ->
-       let alloca_ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr:alloca_ptr;
-       bind_var ctx name (MutRefCell alloca_ptr)
-     | _ ->
-       let ptr = Ir_emit.emit_alloca fn_ir ~ty:"i64" in
-       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:cap_val ~ptr;
-       bind_var ctx name (Local ptr))
-  ) free_with_info;
-
-  let body_result = emit_expr ctx body in
-  Ir_emit.emit_ret fn_ir "i64" body_result;
-  Ir_emit.emit_define_end fn_ir;
-
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes;
-  ctx.loop_stack <- saved_loop_stack;
-
+    let body_result = emit_expr ctx body in
+    Ir_emit.emit_ret fn_ir "i64" body_result;
+    Ir_emit.emit_define_end fn_ir);
   fn_name
 
 (** Emit a TEHandle expression.
@@ -4354,7 +4527,7 @@ and emit_handle ctx body_expr arms =
       provide_ops := (op, arg, e) :: !provide_ops
     | Typechecker.THOpTry (op, arg, e) ->
       try_ops := (op, arg, e) :: !try_ops
-    | Typechecker.THOp (op, arg, k, e) ->
+    | Typechecker.THOp { op_name = op; arg; k; body = e } ->
       full_ops := (op, arg, k, e) :: !full_ops
   ) arms;
   let provide_ops = List.rev !provide_ops in
@@ -4517,7 +4690,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
     let v = emit_expr ctx expr in
     ctx.result_type <- infer_result_type expr;
     (* Store as last result for return *)
-    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:"%result_ptr";
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:ctx.result_ptr;
     ()
   | TDLet (name, expr) ->
     (* Track dict name for self-referencing instances (e.g. recursive tree Iter fold) *)
@@ -4527,7 +4700,9 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
      | TEFun _ ->
        let (params, body) = flatten_fun expr in
        if params <> [] then begin
-         let llvm_name = Printf.sprintf "mml_f_%s" (sanitize_name name) in
+         let fn_id = ctx.fn_counter in
+         ctx.fn_counter <- ctx.fn_counter + 1;
+         let llvm_name = Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id in
          let free = free_vars_of_fun ~ctx:(Some ctx) params body in
          if free <> [] then
            failwith (Printf.sprintf
@@ -4536,7 +4711,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
          bind_var ctx name (Func (llvm_name, List.length params));
          emit_named_function ctx llvm_name params body;
          ctx.result_type <- Types.TUnit;
-         Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:"%result_ptr"
+         Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr
        end else begin
          (* Zero-param lambda: treat as regular value *)
          emit_global_let ctx name expr
@@ -4550,7 +4725,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
     Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:(Printf.sprintf "@%s" gname);
     bind_var ctx name (MutGlobal gname);
     ctx.result_type <- Types.TUnit;
-    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:"%result_ptr"
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr
   | TDLetRec (name, expr) ->
     let (params, body) = flatten_fun expr in
     if params = [] then begin
@@ -4562,9 +4737,11 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
       let computed_val = emit_expr ctx expr in
       emit_backpatch ctx placeholder_val computed_val nbytes;
       ctx.result_type <- Types.TUnit;
-      Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:"%result_ptr"
+      Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr
     end else begin
-      let llvm_name = Printf.sprintf "mml_f_%s" (sanitize_name name) in
+      let fn_id = ctx.fn_counter in
+      ctx.fn_counter <- ctx.fn_counter + 1;
+      let llvm_name = Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id in
       bind_var ctx name (Func (llvm_name, List.length params));
       let free = free_vars_of_fun ~ctx:(Some ctx) (name :: params) body in
       if free <> [] then
@@ -4573,7 +4750,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
           name (String.concat ", " free));
       emit_named_function ctx llvm_name params body;
       ctx.result_type <- Types.TUnit;
-      Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:"%result_ptr"
+      Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr
     end
   | TDLetRecAnd bindings ->
     let all_names = List.map fst bindings in
@@ -4589,7 +4766,9 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
       match info with
       | `Func (name, expr) ->
         let (params, _) = flatten_fun expr in
-        let llvm_name = Printf.sprintf "mml_f_%s" (sanitize_name name) in
+        let fn_id = ctx.fn_counter in
+        ctx.fn_counter <- ctx.fn_counter + 1;
+        let llvm_name = Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id in
         bind_var ctx name (Func (llvm_name, List.length params))
       | `Value (name, expr) ->
         let (placeholder_val, nbytes) = emit_rec_placeholder ctx expr in
@@ -4620,12 +4799,12 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
       emit_backpatch ctx placeholder_val computed_val nbytes
     ) value_infos;
     ctx.result_type <- Types.TUnit;
-    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:"%result_ptr"
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr
   | TDExpr expr ->
     let v = emit_expr ctx expr in
     ctx.result_type <- infer_result_type expr;
-    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:"%result_ptr"
-  | TDModule (_name, inner_decls) ->
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:ctx.result_ptr
+  | TDModule (_name, inner_decls, _) ->
     (* Per-declaration rollback: if one inner decl fails, others still work *)
     let main_ir = ctx.ir in
     List.iter (fun d ->
@@ -4689,44 +4868,7 @@ and emit_global_let ctx name expr =
   Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:(Printf.sprintf "@%s" gname);
   bind_var ctx name (Global gname);
   ctx.result_type <- Types.TUnit;
-  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:"%result_ptr"
-
-and texpr_kind_name = function
-  | Typechecker.TEInt _ -> "TEInt"
-  | TEByte _ -> "TEByte"
-  | TERune _ -> "TERune"
-  | TEFloat _ -> "TEFloat"
-  | TEBool _ -> "TEBool"
-  | TEString _ -> "TEString"
-  | TEUnit -> "TEUnit"
-  | TEVar _ -> "TEVar"
-  | TELet _ -> "TELet"
-  | TELetRec _ -> "TELetRec"
-  | TEFun _ -> "TEFun"
-  | TEApp _ -> "TEApp"
-  | TEIf _ -> "TEIf"
-  | TEBinop _ -> "TEBinop"
-  | TEUnop _ -> "TEUnop"
-  | TETuple _ -> "TETuple"
-  | TERecord _ -> "TERecord"
-  | TEField _ -> "TEField"
-  | TEMatch _ -> "TEMatch"
-  | TESeq _ -> "TESeq"
-  | TEPerform _ -> "TEPerform"
-  | TEHandle _ -> "TEHandle"
-  | TEResume _ -> "TEResume"
-  | TEWhile _ -> "TEWhile"
-  | TELetMut _ -> "TELetMut"
-  | TEAssign _ -> "TEAssign"
-  | TEBreak _ -> "TEBreak"
-  | TEContinueLoop -> "TEContinueLoop"
-  | TEReturn _ -> "TEReturn"
-  | TELetRecAnd _ -> "TELetRecAnd"
-  | TEForLoop _ -> "TEForLoop"
-  | TEFoldContinue _ -> "TEFoldContinue"
-  | TEIndex _ -> "TEIndex"
-  | TERecordUpdateIdx _ -> "TERecordUpdateIdx"
-  | _ -> "other"
+  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr
 
 (* ---- Result type tag ---- *)
 
@@ -4743,27 +4885,6 @@ let result_type_tag ty =
   | Types.TRune -> 7
   | _ -> 4 (* default to unit for unsupported types *)
 
-(* ---- String replacement helper ---- *)
-
-let replace_all s old_str new_str =
-  let old_len = String.length old_str in
-  let buf = Buffer.create (String.length s) in
-  let i = ref 0 in
-  while !i <= String.length s - old_len do
-    if String.sub s !i old_len = old_str then begin
-      Buffer.add_string buf new_str;
-      i := !i + old_len
-    end else begin
-      Buffer.add_char buf s.[!i];
-      i := !i + 1
-    end
-  done;
-  while !i < String.length s do
-    Buffer.add_char buf s.[!i];
-    i := !i + 1
-  done;
-  Buffer.contents buf
-
 (* ---- Compound result formatting ---- *)
 
 let needs_format_result ty =
@@ -4776,25 +4897,16 @@ let needs_format_result ty =
     without a trailing newline. Generated in LLVM IR by codegen because the
     runtime doesn't know the type structure. *)
 let rec emit_format_result ctx ty =
-  let saved_ir = ctx.ir in
-  let saved_label = ctx.current_label in
-  let saved_scopes = ctx.scopes in
-  let fn_ir = Ir_emit.create () in
-  ctx.ir <- fn_ir;
-  ctx.scopes <- [Hashtbl.create 8];
-  Ir_emit.emit_define_start fn_ir ~ret_ty:"void" ~name:"mml_format_result"
-    ~params:[("i64", "%param_val")];
-  Ir_emit.emit_label fn_ir "entry";
-  ctx.current_label <- "entry";
-  (* Emit formatting code based on type *)
-  emit_format_value ctx "%param_val" ty;
-  Ir_emit.emit_ret_void fn_ir;
-  Ir_emit.emit_define_end fn_ir;
-  Buffer.add_string ctx.fn_buf (Ir_emit.contents fn_ir);
-  Buffer.add_char ctx.fn_buf '\n';
-  ctx.ir <- saved_ir;
-  ctx.current_label <- saved_label;
-  ctx.scopes <- saved_scopes
+  with_fresh_ir ctx (fun fn_ir ->
+    ctx.scopes <- [Hashtbl.create 8];
+    Ir_emit.emit_define_start fn_ir ~ret_ty:"void" ~name:"mml_format_result"
+      ~params:[("i64", "%param_val")];
+    Ir_emit.emit_label fn_ir "entry";
+    ctx.current_label <- "entry";
+    (* Emit formatting code based on type *)
+    emit_format_value ctx "%param_val" ty;
+    Ir_emit.emit_ret_void fn_ir;
+    Ir_emit.emit_define_end fn_ir)
 
 and emit_format_value ctx val_reg ty =
   match Types.repr ty with
@@ -4955,7 +5067,7 @@ and emit_format_value ctx val_reg ty =
     (* Collect all tags from the poly variant row *)
     let rec collect_tags acc = function
       | Types.PVRow (name, payload_ty, rest) ->
-        let tag = Hashtbl.hash name land 0x3FFFFFFF in
+        let tag = Types.polyvar_tag name in
         collect_tags ((tag, name, payload_ty) :: acc) rest
       | Types.PVVar { contents = Types.PVLink r } -> collect_tags acc r
       | _ -> List.rev acc
@@ -5148,45 +5260,10 @@ and tag_int_value n = (n lsl 1) lor 1
 
 (* ---- Top-level entry point ---- *)
 
-let compile_program (program : Typechecker.tprogram) (type_env : Types.type_env) : string =
-  let ctx = create_ctx type_env in
-
-  (* Compile all declarations to the main IR emitter *)
-  (* We'll build main function body first, then assemble the output *)
-  Ir_emit.emit_define_start ctx.ir ~ret_ty:"i64" ~name:"mml_main" ~params:[];
-  Ir_emit.emit_label ctx.ir "entry";
-  ctx.current_label <- "entry";
-
-  (* Alloca for result *)
-  let result_ptr = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
-  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:result_ptr;
-
-  (* Compile declarations *)
-  List.iter (fun decl ->
-    try emit_decl ctx decl
-    with Failure msg ->
-      (* Re-raise with context for debugging *)
-      failwith msg
-  ) program;
-
-  (* Load and return result *)
-  let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:result_ptr in
-  Ir_emit.emit_ret ctx.ir "i64" result;
-  Ir_emit.emit_define_end ctx.ir;
-
-  (* Always generate format_result function (needed by runtime linkage) *)
-  emit_format_result ctx ctx.result_type;
-
-  let main_body = Ir_emit.contents ctx.ir in
-
-  (* Assemble final output *)
+(* Assemble final LLVM IR output from compiled context *)
+let assemble_output ctx main_body =
   let out = Buffer.create 8192 in
-
-  (* Target triple *)
   Printf.bprintf out "target triple = \"%s\"\n\n" (detect_target_triple ());
-
-  (* Extern declarations *)
-  (* Always declare these *)
   let base_externs = [
     ("mml_print_int", "i64", ["i64"]);
     ("mml_print_bool", "i64", ["i64"]);
@@ -5212,46 +5289,27 @@ let compile_program (program : Typechecker.tprogram) (type_env : Types.type_env)
     end
   ) all_externs;
   Buffer.add_char out '\n';
-
-  (* String globals *)
   List.iter (fun decl ->
     Buffer.add_string out decl;
     Buffer.add_char out '\n'
   ) (List.rev ctx.string_globals);
   if ctx.string_globals <> [] then Buffer.add_char out '\n';
-
-  (* Float globals *)
   List.iter (fun decl ->
     Buffer.add_string out decl;
     Buffer.add_char out '\n'
   ) (List.rev ctx.float_globals);
   if ctx.float_globals <> [] then Buffer.add_char out '\n';
-
-  (* Global variable defs *)
   List.iter (fun decl ->
     Buffer.add_string out decl;
     Buffer.add_char out '\n'
   ) (List.rev ctx.global_decls);
-
-  (* Result type global *)
   let tag = result_type_tag ctx.result_type in
   Printf.bprintf out "@mml_result_type = global i32 %d\n" tag;
   Buffer.add_char out '\n';
-
-  (* Function definitions *)
   if Buffer.length ctx.fn_buf > 0 then begin
     Buffer.add_buffer out ctx.fn_buf;
   end;
-
-  (* Main function — need to fix result_ptr references *)
-  (* The first alloca in main will be %0. Replace %result_ptr with %0 *)
-  let main_text = main_body in
-  (* The alloca produced %0 as the register. The hardcoded "%result_ptr" refs
-     need to become the actual register. Since result_ptr is the first alloca,
-     it will be %0 *)
-  let fixed_main = replace_all main_text "%result_ptr" result_ptr in
-  Buffer.add_string out fixed_main;
-
+  Buffer.add_string out main_body;
   Buffer.contents out
 
 let compile_program_with_stdlib (type_env : Types.type_env)
@@ -5263,8 +5321,8 @@ let compile_program_with_stdlib (type_env : Types.type_env)
   Ir_emit.emit_label ctx.ir "entry";
   ctx.current_label <- "entry";
 
-  let result_ptr = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
-  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:result_ptr;
+  ctx.result_ptr <- Ir_emit.emit_alloca ctx.ir ~ty:"i64";
+  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr;
 
   (* Compile stdlib declarations with rollback-on-failure *)
   let main_ir = ctx.ir in
@@ -5322,72 +5380,11 @@ let compile_program_with_stdlib (type_env : Types.type_env)
   ) user_program;
 
   (* Load and return result *)
-  let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:result_ptr in
+  let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
   Ir_emit.emit_ret ctx.ir "i64" result;
   Ir_emit.emit_define_end ctx.ir;
 
   emit_format_result ctx ctx.result_type;
 
   let main_body = Ir_emit.contents ctx.ir in
-
-  (* Assemble final output *)
-  let out = Buffer.create 8192 in
-
-  Printf.bprintf out "target triple = \"%s\"\n\n" (detect_target_triple ());
-
-  let base_externs = [
-    ("mml_print_int", "i64", ["i64"]);
-    ("mml_print_bool", "i64", ["i64"]);
-    ("mml_print_string", "i64", ["i64"]);
-    ("mml_print_float", "i64", ["i64"]);
-    ("mml_print_unit", "i64", ["i64"]);
-    ("mml_print_value", "i64", ["i64"]);
-    ("mml_box_float", "i64", ["double"]);
-    ("mml_unbox_float", "double", ["i64"]);
-    ("mml_alloc", "ptr", ["i64"; "i64"]);
-  ] in
-  let all_externs = base_externs @ ctx.extern_decls in
-  let seen = Hashtbl.create 16 in
-  List.iter (fun (name, ret_ty, param_tys) ->
-    if not (Hashtbl.mem seen name) then begin
-      Hashtbl.replace seen name ();
-      let pt_str = match param_tys with
-        | [] -> ""
-        | _ -> String.concat ", " param_tys
-      in
-      let attrs = if name = "mml_panic" || name = "mml_panic_mml" then " noreturn" else "" in
-      Printf.bprintf out "declare %s @%s(%s)%s\n" ret_ty name pt_str attrs
-    end
-  ) all_externs;
-  Buffer.add_char out '\n';
-
-  List.iter (fun decl ->
-    Buffer.add_string out decl;
-    Buffer.add_char out '\n'
-  ) (List.rev ctx.string_globals);
-  if ctx.string_globals <> [] then Buffer.add_char out '\n';
-
-  List.iter (fun decl ->
-    Buffer.add_string out decl;
-    Buffer.add_char out '\n'
-  ) (List.rev ctx.float_globals);
-  if ctx.float_globals <> [] then Buffer.add_char out '\n';
-
-  List.iter (fun decl ->
-    Buffer.add_string out decl;
-    Buffer.add_char out '\n'
-  ) (List.rev ctx.global_decls);
-
-  let tag = result_type_tag ctx.result_type in
-  Printf.bprintf out "@mml_result_type = global i32 %d\n" tag;
-  Buffer.add_char out '\n';
-
-  if Buffer.length ctx.fn_buf > 0 then begin
-    Buffer.add_buffer out ctx.fn_buf;
-  end;
-
-  let main_text = main_body in
-  let fixed_main = replace_all main_text "%result_ptr" result_ptr in
-  Buffer.add_string out fixed_main;
-
-  Buffer.contents out
+  assemble_output ctx main_body

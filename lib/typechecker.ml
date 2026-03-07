@@ -31,7 +31,7 @@ and texpr_kind =
   | TECons of texpr * texpr
   | TENil
   | TEConstruct of string * texpr option
-  | TEMatch of texpr * (Ast.pattern * texpr option * texpr) list * bool
+  | TEMatch of texpr * (Ast.pattern * texpr option * texpr) list * Ast.match_kind
   | TELetMut of string * texpr * texpr
   | TEAssign of string * texpr
   | TEFieldAssign of texpr * string * texpr
@@ -39,7 +39,7 @@ and texpr_kind =
   | TEPerform of string * texpr
   | TEHandle of texpr * thandle_arm list
   | TEResume of texpr * texpr
-  | TEWhile of texpr * texpr
+  | TEWhile of { tw_cond: texpr; tw_body: texpr }
   | TEBreak of texpr
   | TEContinueLoop
   | TEFoldContinue of texpr
@@ -47,10 +47,11 @@ and texpr_kind =
   | TELetRecAnd of (string * texpr) list * texpr
   | TEArray of texpr list
   | TEReturn of texpr
+  | TEMatchTree of texpr Match_tree_types.compiled_match
 
 and thandle_arm =
   | THReturn of string * texpr
-  | THOp of string * string * string * texpr
+  | THOp of { op_name: string; arg: string; k: string; body: texpr }
   | THOpProvide of string * string * texpr  (* tail-resumptive: op, arg, value_expr *)
   | THOpTry of string * string * texpr      (* non-resuming: op, arg, fallback_expr *)
 
@@ -64,7 +65,7 @@ type tdecl =
   | TDClass of string
   | TDEffect of string
   | TDExtern of string * Types.scheme
-  | TDModule of string * tdecl list
+  | TDModule of string * tdecl list * (string * Types.scheme) list  (* name, decls, all member schemes *)
   | TDOpen of (string * string) list
 
 type tprogram = tdecl list
@@ -82,11 +83,11 @@ type ctx = {
   return_type: Types.ty option;
   inside_handler: bool;
   return_used: bool ref;
+  loc: Token.loc;
 }
 
-let current_loc = ref Token.{ line = 0; col = 0; offset = 0 }
-
-let error msg = raise (Type_error (msg, !current_loc))
+let error ctx msg = raise (Type_error (msg, ctx.loc))
+let error_at loc msg = raise (Type_error (msg, loc))
 
 let rec strip_loc (expr : Ast.expr) =
   match expr with
@@ -130,17 +131,17 @@ let is_immediately_linked name (expr : Ast.expr) =
     (match strip_loc e with Ast.EVar n -> n = name | _ -> false)
   | _ -> false
 
-let try_unify t1 t2 =
+let try_unify ctx t1 t2 =
   try Types.unify t1 t2
-  with Types.Unify_error msg -> error msg
+  with Types.Unify_error msg -> error ctx msg
 
-let try_unify_eff e1 e2 =
+let try_unify_eff ctx e1 e2 =
   try Types.unify_eff e1 e2
-  with Types.Unify_error msg -> error msg
+  with Types.Unify_error msg -> error ctx msg
 
-let try_subeffect source target =
+let try_subeffect ctx source target =
   try Types.subeffect source target
-  with Types.Unify_error msg -> error msg
+  with Types.Unify_error msg -> error ctx msg
 
 let rec max_tgen_in_ty = function
   | Types.TGen i -> i
@@ -191,8 +192,8 @@ let lookup_var ctx level name =
         let equant = if max_effgen >= 0 then max_effgen + 1 else 0 in
         let scheme = { Types.quant; equant; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = method_ty } in
         Types.instantiate level scheme
-      | None -> error (Printf.sprintf "unbound variable: %s" name))
-    | None -> error (Printf.sprintf "unbound variable: %s" name)
+      | None -> error ctx (Printf.sprintf "unbound variable: %s" name))
+    | None -> error ctx (Printf.sprintf "unbound variable: %s" name)
 
 let extend_var ctx name scheme =
   { ctx with vars = (name, scheme) :: ctx.vars;
@@ -314,7 +315,7 @@ let freshen_tvars level ty =
   in
   go ty
 
-let rec resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.ty =
+let rec resolve_ty_annot_shared ctx level tvars eff_tvars (annot : Ast.ty_annot) : Types.ty =
   let rec go = function
     | Ast.TyVar name ->
       (match Hashtbl.find_opt tvars name with
@@ -333,29 +334,29 @@ let rec resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.t
     | Ast.TyName name ->
       let canonical = resolve_type_alias ctx.type_env name in
       if List.mem canonical ctx.type_env.Types.hidden_types then
-        error (Printf.sprintf "unknown type: %s" name);
+        error ctx (Printf.sprintf "unknown type: %s" name);
       (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
        | Some (_, 0, ty) -> freshen_tvars level (freshen_arrow_effects level ty)
        | Some (_, n, _) ->
-         error (Printf.sprintf "type %s expects %d type argument(s)" name n)
+         error ctx (Printf.sprintf "type %s expects %d type argument(s)" name n)
        | None ->
          (match find_variant_info ctx.type_env name with
           | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
           | Some (_, n, _, _) ->
-            error (Printf.sprintf "type %s expects %d type argument(s)" name n)
+            error ctx (Printf.sprintf "type %s expects %d type argument(s)" name n)
           | None ->
             if List.assoc_opt canonical ctx.type_env.records <> None then
               let fields = List.assoc canonical ctx.type_env.records in
               if fields = [] then Types.TRecord Types.RWild
               else Types.TRecord (Types.fields_to_closed_row fields)
             else
-              error (Printf.sprintf "unknown type: %s" name)))
+              error ctx (Printf.sprintf "unknown type: %s" name)))
     | Ast.TyArrow (a, b, eff_opt) ->
       let eff = match eff_opt with
         | None -> Types.new_effvar level          (* infer: today's behavior *)
         | Some Ast.EffAnnotPure -> Types.EffEmpty (* explicitly pure *)
         | Some (Ast.EffAnnotRow items) ->
-          resolve_eff_items ctx level tvars items
+          resolve_eff_items ctx level tvars eff_tvars items
       in
       Types.TArrow (go a, eff, go b)
     | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
@@ -364,22 +365,22 @@ let rec resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.t
     | Ast.TyApp (args, name) ->
       let canonical = resolve_type_alias ctx.type_env name in
       if List.mem canonical ctx.type_env.Types.hidden_types then
-        error (Printf.sprintf "unknown type constructor: %s" name);
+        error ctx (Printf.sprintf "unknown type constructor: %s" name);
       let arg_tys = List.map go args in
       (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
        | Some (_, np, ty) ->
          if List.length arg_tys <> np then
-           error (Printf.sprintf "type %s expects %d type argument(s), got %d"
+           error ctx (Printf.sprintf "type %s expects %d type argument(s), got %d"
              name np (List.length arg_tys));
          freshen_tvars level (freshen_arrow_effects level (subst_tgens arg_tys ty))
        | None ->
          (match find_variant_info ctx.type_env name with
           | Some (_, np, _, _) ->
             if List.length arg_tys <> np then
-              error (Printf.sprintf "type %s expects %d type argument(s), got %d"
+              error ctx (Printf.sprintf "type %s expects %d type argument(s), got %d"
                 name np (List.length arg_tys));
             Types.TVariant (canonical, arg_tys)
-          | None -> error (Printf.sprintf "unknown type constructor: %s" name)))
+          | None -> error ctx (Printf.sprintf "unknown type constructor: %s" name)))
     | Ast.TyRecord (fields, is_open) ->
       let fields = List.map (fun (n, t) -> (n, go t)) fields in
       let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
@@ -405,47 +406,150 @@ let rec resolve_ty_annot_shared ctx level tvars (annot : Ast.ty_annot) : Types.t
   go annot
 
 (* Resolve effect annotation items into an eff row *)
-and resolve_eff_items ctx level tvars (items : Ast.eff_item list) : Types.eff =
+and resolve_eff_items ctx level tvars eff_tvars (items : Ast.eff_item list) : Types.eff =
   let labels = ref [] in
   let row_var = ref None in
   List.iter (fun item ->
     match item with
     | Ast.EffLabel (name, param_annots) ->
       if !row_var <> None then
-        error "effect labels must come before row variable";
+        error ctx "effect labels must come before row variable";
       (* Validate effect exists *)
       let edef = match List.find_opt
         (fun e -> String.equal e.Types.effect_name name)
         ctx.type_env.Types.effects with
         | Some e -> e
-        | None -> error (Printf.sprintf "unknown effect: %s" name)
+        | None -> error ctx (Printf.sprintf "unknown effect: %s" name)
       in
       let expected_params = List.length edef.Types.effect_params in
       let actual_params = List.length param_annots in
       if expected_params <> actual_params then
-        error (Printf.sprintf "effect %s expects %d type parameter(s), got %d"
+        error ctx (Printf.sprintf "effect %s expects %d type parameter(s), got %d"
           name expected_params actual_params);
       labels := (name, param_annots) :: !labels
     | Ast.EffVar name ->
       if !row_var <> None then
-        error "at most one effect row variable allowed";
+        error ctx "at most one effect row variable allowed";
       row_var := Some name
   ) items;
   let labels = List.rev !labels in
-  (* Build the tail: row variable or fresh effvar (open row) *)
+  (* Build the tail: row variable or fresh effvar (open row),
+     sharing named effect variables across the same annotation scope *)
   let tail = match !row_var with
     | None -> Types.new_effvar level
-    | Some _name -> Types.new_effvar level  (* treated as fresh in normal context *)
+    | Some name ->
+      (match Hashtbl.find_opt eff_tvars name with
+       | Some ev -> ev
+       | None ->
+         let ev = Types.new_effvar level in
+         Hashtbl.replace eff_tvars name ev;
+         ev)
   in
   (* Build the eff row chain with resolved type params *)
   List.fold_right (fun (name, param_annots) acc ->
-    let resolved_params = List.map (resolve_ty_annot_shared ctx level tvars) param_annots in
+    let resolved_params = List.map (resolve_ty_annot_shared ctx level tvars eff_tvars) param_annots in
     Types.EffRow (name, resolved_params, acc)
   ) labels tail
 
 let resolve_ty_annot ctx level (annot : Ast.ty_annot) : Types.ty =
   let tvars = Hashtbl.create 4 in
-  resolve_ty_annot_shared ctx level tvars annot
+  let eff_tvars = Hashtbl.create 2 in
+  resolve_ty_annot_shared ctx level tvars eff_tvars annot
+
+(* Generic type annotation resolver for type definition contexts.
+   resolve_var: how to resolve TyVar names (param_tbl -> TGen, tvars -> new_tvar, etc.)
+   resolve_eff: how to resolve TyArrow effect annotations *)
+let resolve_ty_annot_def ~loc ~check_synonyms type_env resolve_var resolve_eff annot =
+  let rec go = function
+    | Ast.TyVar name -> resolve_var name
+    | Ast.TyName "int" -> Types.TInt
+    | Ast.TyName "float" -> Types.TFloat
+    | Ast.TyName "bool" -> Types.TBool
+    | Ast.TyName "string" -> Types.TString
+    | Ast.TyName "byte" -> Types.TByte
+    | Ast.TyName "rune" -> Types.TRune
+    | Ast.TyName "unit" -> Types.TUnit
+    | Ast.TyName name ->
+      let canonical = resolve_type_alias type_env name in
+      let synonym_result =
+        if check_synonyms then
+          List.find_opt (fun (n, _, _) -> String.equal n canonical) type_env.type_synonyms
+        else None
+      in
+      (match synonym_result with
+       | Some (_, 0, ty) -> ty
+       | Some (_, n, _) ->
+         error_at loc (Printf.sprintf "type %s expects %d type argument(s)" name n)
+       | None ->
+         (match find_variant_info type_env name with
+          | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
+          | Some (_, n, _, _) ->
+            error_at loc (Printf.sprintf "type %s expects %d type argument(s)" name n)
+          | None ->
+            if List.assoc_opt canonical type_env.records <> None then
+              let fields = List.assoc canonical type_env.records in
+              if fields = [] then Types.TRecord Types.RWild
+              else Types.TRecord (Types.fields_to_closed_row fields)
+            else
+              error_at loc (Printf.sprintf "unknown type: %s" name)))
+    | Ast.TyArrow (a, b, eff_opt) ->
+      let eff = resolve_eff go eff_opt in
+      Types.TArrow (go a, eff, go b)
+    | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
+    | Ast.TyList t -> Types.TList (go t)
+    | Ast.TyArray t -> Types.TArray (go t)
+    | Ast.TyApp (args, name) ->
+      let canonical = resolve_type_alias type_env name in
+      let arg_tys = List.map go args in
+      let synonym_result =
+        if check_synonyms then
+          List.find_opt (fun (n, _, _) -> String.equal n canonical) type_env.type_synonyms
+        else None
+      in
+      (match synonym_result with
+       | Some (_, np, ty) ->
+         if List.length arg_tys <> np then
+           error_at loc (Printf.sprintf "type %s expects %d type argument(s), got %d"
+             name np (List.length arg_tys));
+         subst_tgens arg_tys ty
+       | None ->
+         (match find_variant_info type_env name with
+          | Some (_, np, _, _) ->
+            if List.length arg_tys <> np then
+              error_at loc (Printf.sprintf "type %s expects %d type argument(s), got %d"
+                name np (List.length arg_tys));
+            Types.TVariant (canonical, arg_tys)
+          | None -> error_at loc (Printf.sprintf "unknown type constructor: %s" name)))
+    | Ast.TyRecord (fields, is_open) ->
+      let fields = List.map (fun (n, t) -> (n, go t)) fields in
+      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
+      let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
+      Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
+    | Ast.TyQualified (path, name) ->
+      let qualified = String.concat "." path ^ "." ^ name in
+      go (Ast.TyName qualified)
+    | Ast.TyPolyVariant (_kind, tags) ->
+      let row = List.fold_right (fun (tag, payload_annot) acc ->
+        Types.PVRow (tag, Option.map go payload_annot, acc)
+      ) tags Types.PVEmpty in
+      Types.TPolyVariant row
+    | Ast.TyWithEffect (ty, _eff) -> go ty
+  in
+  go annot
+
+(* Make a resolve_var callback for type definitions with TGen param tables *)
+let make_def_resolve_var param_tbl tvars name =
+  match Hashtbl.find_opt param_tbl name with
+  | Some idx -> Types.TGen idx
+  | None ->
+    (match Hashtbl.find_opt tvars name with
+     | Some tv -> tv
+     | None ->
+       let tv = Types.new_tvar 0 in
+       Hashtbl.replace tvars name tv;
+       tv)
+
+let eff_empty _go _eff_opt = Types.EffEmpty
 
 (* Instantiate TGen placeholders in record fields as fresh type variables *)
 let instantiate_record_fields level fields =
@@ -462,15 +566,7 @@ let instantiate_record_row level fields =
   let fields = instantiate_record_fields level fields in
   Types.fields_to_closed_row fields
 
-(* Forward references for module functions, resolved after module processing is defined *)
-let find_module_in_env_ref : (Types.type_env -> string -> Types.module_info option) ref =
-  ref (fun _ _ -> failwith "find_module_in_env not yet initialized")
-let open_module_into_ctx_ref : (ctx -> string -> string list option -> ctx) ref =
-  ref (fun _ _ _ -> failwith "open_module_into_ctx not yet initialized")
-let exhaustiveness_check_ref : (ctx -> Types.ty -> (Ast.pattern * texpr option * texpr) list -> unit) ref =
-  ref (fun _ _ _ -> ())
-
-let mk te ty = { expr = te; ty; loc = !current_loc }
+let mk ctx te ty = { expr = te; ty; loc = ctx.loc }
 
 (* Extract params and return annotation from a wrapped EFun/EAnnot expression.
    This is used to recover explicit annotations for polymorphic recursion
@@ -495,7 +591,18 @@ let resolve_module_name ctx name =
   | Some prefix ->
     let rec try_prefix p =
       let qualified = p ^ name in
-      if List.exists (fun (n, _) -> n = qualified) ctx.vars then qualified
+      if List.exists (fun (n, _) -> n = qualified) ctx.vars then
+        (* Check if a local binding of the unqualified name shadows the
+           module-qualified one.  ctx.vars is a list with most-recent
+           bindings first, so whichever name appears first wins. *)
+        let rec first_of vars =
+          match vars with
+          | [] -> qualified
+          | (n, _) :: _ when n = name -> name
+          | (n, _) :: _ when n = qualified -> qualified
+          | _ :: rest -> first_of rest
+        in
+        first_of ctx.vars
       else
         let p' = String.sub p 0 (max 0 (String.length p - 1)) in
         match String.rindex_opt p' '.' with
@@ -504,6 +611,125 @@ let resolve_module_name ctx name =
     in
     try_prefix prefix
   | None -> name
+
+(* ==== Generic texpr traversal helpers ==== *)
+
+(* Apply f to all immediate child texpr nodes (including handler arm bodies) *)
+let iter_texpr_children f te =
+  match te.expr with
+  | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _
+  | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> ()
+  | TELet (_, _, e1, e2) | TELetRec (_, _, e1, e2) | TELetMut (_, e1, e2) ->
+    f e1; f e2
+  | TEBinop (_, e1, e2) | TECons (e1, e2) | TESeq (e1, e2)
+  | TEResume (e1, e2)
+  | TEFieldAssign (e1, _, e2) | TEIndex (e1, e2) ->
+    f e1; f e2
+  | TEWhile { tw_cond; tw_body } ->
+    f tw_cond; f tw_body
+  | TEApp (fn, arg) -> f fn; f arg
+  | TEPerform (_, e) | TEUnop (_, e) | TEFun (_, e, _) | TEField (e, _) | TEBreak e
+  | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign (_, e) ->
+    f e
+  | TEIf (c, t, e) -> f c; f t; f e
+  | TETuple es | TEArray es -> List.iter f es
+  | TERecord fields -> List.iter (fun (_, e) -> f e) fields
+  | TERecordUpdate (base, overrides) -> f base; List.iter (fun (_, e) -> f e) overrides
+  | TERecordUpdateIdx (base, pairs) -> f base; List.iter (fun (i, v) -> f i; f v) pairs
+  | TEConstruct (_, arg) -> Option.iter f arg
+  | TEMatch (scrutinee, arms, _) ->
+    f scrutinee;
+    List.iter (fun (_, guard, body) -> Option.iter f guard; f body) arms
+  | TEMatchTree cm ->
+    f cm.Match_tree_types.scrutinee;
+    Array.iter (fun arm -> f arm.Match_tree_types.arm_body) cm.match_arms;
+    let rec iter_tree = function
+      | Match_tree_types.DSwitch { cases; default; _ } ->
+        List.iter (fun (_, _, sub) -> iter_tree sub) cases;
+        Option.iter iter_tree default
+      | Match_tree_types.DGuard { guard; on_true; on_false; _ } ->
+        f guard; iter_tree on_true; iter_tree on_false
+      | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> ()
+    in
+    iter_tree cm.tree
+  | TEHandle (body, arms) ->
+    f body;
+    List.iter (fun arm -> match arm with
+      | THReturn (_, e) | THOp { body = e; _ }
+      | THOpProvide (_, _, e) | THOpTry (_, _, e) -> f e) arms
+  | TELetRecAnd (bindings, body) ->
+    List.iter (fun (_, e) -> f e) bindings; f body
+
+(* Map f over all immediate child texpr nodes, rebuilding the texpr_kind *)
+let map_texpr_children f te =
+  match te.expr with
+  | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _
+  | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> te.expr
+  | TELet (n, s, e1, e2) -> TELet (n, s, f e1, f e2)
+  | TELetRec (n, s, e1, e2) -> TELetRec (n, s, f e1, f e2)
+  | TEFun (p, body, hr) -> TEFun (p, f body, hr)
+  | TEApp (fn, arg) -> TEApp (f fn, f arg)
+  | TEIf (c, t, e) -> TEIf (f c, f t, f e)
+  | TEBinop (op, l, r) -> TEBinop (op, f l, f r)
+  | TEUnop (op, e) -> TEUnop (op, f e)
+  | TETuple es -> TETuple (List.map f es)
+  | TERecord fs -> TERecord (List.map (fun (n, e) -> (n, f e)) fs)
+  | TERecordUpdate (base, overrides) ->
+    TERecordUpdate (f base, List.map (fun (n, e) -> (n, f e)) overrides)
+  | TERecordUpdateIdx (base, pairs) ->
+    TERecordUpdateIdx (f base, List.map (fun (i, v) -> (f i, f v)) pairs)
+  | TEField (e, name) -> TEField (f e, name)
+  | TEIndex (e, i) -> TEIndex (f e, f i)
+  | TECons (h, t) -> TECons (f h, f t)
+  | TEConstruct (n, arg) -> TEConstruct (n, Option.map f arg)
+  | TEMatch (s, arms, p) ->
+    TEMatch (f s, List.map (fun (pat, g, b) ->
+      (pat, Option.map f g, f b)) arms, p)
+  | TEMatchTree cm ->
+    let scrutinee' = f cm.Match_tree_types.scrutinee in
+    let match_arms' = Array.map (fun arm ->
+      { Match_tree_types.arm_body = f arm.Match_tree_types.arm_body }
+    ) cm.match_arms in
+    let rec map_tree = function
+      | Match_tree_types.DSwitch sw ->
+        Match_tree_types.DSwitch { sw with
+          cases = List.map (fun (test, binds, sub) ->
+            (test, binds, map_tree sub)) sw.cases;
+          default = Option.map map_tree sw.default;
+        }
+      | Match_tree_types.DGuard g ->
+        Match_tree_types.DGuard { g with
+          guard = f g.guard;
+          on_true = map_tree g.on_true;
+          on_false = map_tree g.on_false;
+        }
+      | (Match_tree_types.DLeaf _ | Match_tree_types.DFail _) as leaf -> leaf
+    in
+    TEMatchTree { cm with
+      scrutinee = scrutinee';
+      match_arms = match_arms';
+      tree = map_tree cm.tree;
+    }
+  | TELetMut (n, e1, e2) -> TELetMut (n, f e1, f e2)
+  | TEAssign (n, e) -> TEAssign (n, f e)
+  | TEFieldAssign (e, name, v) -> TEFieldAssign (f e, name, f v)
+  | TESeq (e1, e2) -> TESeq (f e1, f e2)
+  | TEPerform (name, e) -> TEPerform (name, f e)
+  | TEHandle (e, arms) ->
+    TEHandle (f e, List.map (fun arm -> match arm with
+      | THReturn (n, b) -> THReturn (n, f b)
+      | THOp { op_name; arg; k; body } -> THOp { op_name; arg; k; body = f body }
+      | THOpProvide (eff, x, b) -> THOpProvide (eff, x, f b)
+      | THOpTry (eff, x, b) -> THOpTry (eff, x, f b)) arms)
+  | TEResume (k, v) -> TEResume (f k, f v)
+  | TEWhile { tw_cond; tw_body } -> TEWhile { tw_cond = f tw_cond; tw_body = f tw_body }
+  | TEBreak e -> TEBreak (f e)
+  | TEFoldContinue e -> TEFoldContinue (f e)
+  | TEForLoop e -> TEForLoop (f e)
+  | TELetRecAnd (binds, body) ->
+    TELetRecAnd (List.map (fun (n, e) -> (n, f e)) binds, f body)
+  | TEArray es -> TEArray (List.map f es)
+  | TEReturn e -> TEReturn (f e)
 
 (* ==== Implicit typeclass constraint inference ==== *)
 
@@ -515,30 +741,7 @@ let find_var_type_in target_name te =
     if Option.is_some !result then ()
     else match te.expr with
     | TEVar n when String.equal n target_name -> result := Some te.ty
-    | TEVar _ | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _
-    | TERune _ | TEUnit | TENil | TEContinueLoop -> ()
-    | TEApp (fn, arg) -> go fn; go arg
-    | TEFun (_, body, _) | TEUnop (_, body) | TEField (body, _) | TEBreak body
-    | TEFoldContinue body | TEForLoop body | TEReturn body | TEAssign (_, body)
-    | TEPerform (_, body) -> go body
-    | TELet (_, _, e1, e2) | TELetRec (_, _, e1, e2) | TELetMut (_, e1, e2)
-    | TEBinop (_, e1, e2) | TECons (e1, e2) | TESeq (e1, e2)
-    | TEWhile (e1, e2) | TEResume (e1, e2) | TEFieldAssign (e1, _, e2)
-    | TEIndex (e1, e2) -> go e1; go e2
-    | TEIf (c, t, e) -> go c; go t; go e
-    | TETuple es | TEArray es -> List.iter go es
-    | TERecord fields -> List.iter (fun (_, e) -> go e) fields
-    | TERecordUpdate (base, overrides) -> go base; List.iter (fun (_, e) -> go e) overrides
-    | TERecordUpdateIdx (base, pairs) -> go base; List.iter (fun (i, v) -> go i; go v) pairs
-    | TEConstruct (_, arg) -> Option.iter go arg
-    | TEMatch (scr, arms, _) ->
-      go scr; List.iter (fun (_, g, body) -> Option.iter go g; go body) arms
-    | TEHandle (body, arms) ->
-      go body; List.iter (fun arm -> match arm with
-        | THReturn (_, e) | THOp (_, _, _, e)
-        | THOpProvide (_, _, e) | THOpTry (_, _, e) -> go e) arms
-    | TELetRecAnd (bindings, body) ->
-      List.iter (fun (_, e) -> go e) bindings; go body
+    | _ -> iter_texpr_children go te
   in
   go te;
   !result
@@ -613,6 +816,178 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
     let set_add tbl key =
       if not (List.exists (fun k -> k = key) !tbl) then
         tbl := key :: !tbl
+    in
+    (* Find if a variable name corresponds to a class method.
+       Handles both direct names and module-qualified names like "Map.keys". *)
+    let find_class_method_for_var name =
+      match Types.find_method_class type_env.Types.classes name with
+      | Some class_def when not (String.equal name binding_name) ->
+        let method_ty = List.assoc name class_def.Types.class_methods in
+        (match List.assoc_opt name vars with
+         | Some s -> if s.Types.body = method_ty then (Some class_def, name) else (None, name)
+         | None -> (None, name))
+      | _ ->
+        (* Try stripping module prefix for qualified names like "Map.keys" *)
+        (match String.rindex_opt name '.' with
+         | None -> (None, name)
+         | Some i ->
+           let short = String.sub name (i + 1) (String.length name - i - 1) in
+           let class_prefix = String.sub name 0 i in
+           let mod_prefix = String.sub name 0 (i + 1) in
+           (match Types.find_method_class type_env.Types.classes short with
+            | Some class_def when not (String.equal short binding_name)
+                && (String.equal class_def.Types.class_name class_prefix
+                    || (String.length class_def.Types.class_name > String.length mod_prefix
+                        && String.sub class_def.Types.class_name 0 (String.length mod_prefix) = mod_prefix)) ->
+              let method_ty = List.assoc short class_def.Types.class_methods in
+              let var_sch = match List.assoc_opt name vars with
+                | Some _ as r -> r
+                | None -> List.assoc_opt short vars
+              in
+              (match var_sch with
+               | Some s -> if s.Types.body = method_ty then (Some class_def, short) else (None, name)
+               | None -> (None, name))
+            | _ -> (None, name)))
+    in
+    (* Record class constraints for a method reference.
+       Builds a param_map from the class method's schema type, classifies each
+       class parameter as CATGen/CATy/CAPhantom/CAWild, and pushes to
+       found_multi or pending_caty. *)
+    let record_class_constraint class_def method_name te_ty =
+      let method_schema_ty = List.assoc method_name class_def.Types.class_methods in
+      let num_params = List.length class_def.Types.class_params in
+      let param_map = Hashtbl.create num_params in
+      let rec go s r =
+        let r = Types.repr r in
+        match s, r with
+        | Types.TGen i, _ when i < num_params ->
+          if not (Hashtbl.mem param_map i) then Hashtbl.replace param_map i r
+        | Types.TArrow (s1, _, s2), Types.TArrow (r1, _, r2)
+        | Types.TCont (s1, _, s2), Types.TCont (r1, _, r2) -> go s1 r1; go s2 r2
+        | Types.TTuple ss, Types.TTuple rs when List.length ss = List.length rs ->
+          List.iter2 go ss rs
+        | Types.TList s1, Types.TList r1 -> go s1 r1
+        | Types.TArray s1, Types.TArray r1 -> go s1 r1
+        | Types.TVariant (_, ss), Types.TVariant (_, rs) when List.length ss = List.length rs ->
+          List.iter2 go ss rs
+        | _ -> ()
+      in
+      go method_schema_ty te_ty;
+      (* Build class_arg for each class param: CATGen for polymorphic, CATy for concrete *)
+      let cc_args = List.init num_params (fun i ->
+        match Hashtbl.find_opt param_map i with
+        | Some (Types.TVar { contents = Types.Unbound (id, _) } as tv) ->
+          (match Hashtbl.find_opt id_map id with
+           | Some (Types.TGen tgen_idx) -> Some (Types.CATGen tgen_idx)
+           | _ ->
+             let is_fundep_target = List.exists (fun (fd : Types.fundep) ->
+               List.mem i fd.fd_to
+             ) class_def.Types.class_fundeps in
+             if is_fundep_target then begin
+               let phantom_idx = match Hashtbl.find_opt tvar_to_phantom id with
+                 | Some idx -> idx
+                 | None ->
+                   let idx = !phantom_counter in
+                   incr phantom_counter;
+                   Hashtbl.replace tvar_to_phantom id idx;
+                   idx in
+               Some (Types.CAPhantom (phantom_idx, tv))
+             end
+             else Some (Types.CATy tv))
+        | Some ty -> Some (Types.CATy ty)
+        | None ->
+          let is_fundep_target = List.exists (fun (fd : Types.fundep) ->
+            List.mem i fd.fd_to
+          ) class_def.Types.class_fundeps in
+          if is_fundep_target then Some Types.CAWild
+          else None
+      ) in
+      (* If there are CATy entries containing unresolved tvars mixed with
+         CAWild/CAPhantom, the CATy has definition-time tvars that won't match
+         call-site tvars. Revert CAWild/CAPhantom to None so the constraint
+         is dropped. Fully concrete CATy (e.g. CATy(TInt)) is fine. *)
+      let has_nonconc_caty = List.exists (fun opt ->
+        match opt with
+        | Some (Types.CATy ty) -> not (Types.is_concrete ty)
+        | _ -> false
+      ) cc_args in
+      let has_any_caty = List.exists (fun opt ->
+        match opt with Some (Types.CATy _) -> true | _ -> false
+      ) cc_args in
+      let cc_args = if has_nonconc_caty then
+        List.map (fun opt ->
+          match opt with Some Types.CAWild -> None | Some (Types.CAPhantom _) -> None | _ -> opt
+        ) cc_args
+      else cc_args in
+      let has_tgen = List.exists (fun opt ->
+        match opt with Some (Types.CATGen _) -> true | _ -> false
+      ) cc_args in
+      let has_caty = has_any_caty in
+      let all_resolved = List.for_all (fun opt -> opt <> None) cc_args in
+      let allow = has_tgen && all_resolved &&
+        (not has_caty || match scheme.Types.body with Types.TArrow _ | Types.TCont _ -> true | _ -> false) in
+      if allow then begin
+        let cc_args = List.filter_map Fun.id cc_args in
+        set_add found_multi (class_def.Types.class_name, cc_args)
+      end else if (not has_tgen) && all_resolved then begin
+        let has_unbound_caty = List.exists (fun opt ->
+          match opt with
+          | Some (Types.CATy (Types.TVar { contents = Types.Unbound _ })) -> true
+          | _ -> false
+        ) cc_args in
+        let is_arrow = match scheme.Types.body with Types.TArrow _ | Types.TCont _ -> true | _ -> false in
+        if has_unbound_caty && is_arrow then begin
+          let cc_args = List.filter_map Fun.id cc_args in
+          set_add pending_caty (class_def.Types.class_name, cc_args)
+        end
+      end
+    in
+    (* Promote pending CATy-only constraints whose Unbound tvars appear in
+       found_multi. Convert matching CATy entries to CAPhantom so they share
+       the same phantom index and get fresh tvars at each call site. *)
+    let promote_pending_constraints () =
+      let changed = ref true in
+      while !changed do
+        changed := false;
+        let to_promote = List.fold_left (fun acc (cls, args) ->
+          let dominated = List.exists (fun (ca : Types.class_arg) ->
+            match ca with
+            | Types.CATy (Types.TVar { contents = Types.Unbound (id, _) }) ->
+              List.exists (fun (_c, fargs) ->
+                List.exists (fun (fa : Types.class_arg) ->
+                  match fa with
+                  | Types.CATy (Types.TVar { contents = Types.Unbound (fid, _) }) -> fid = id
+                  | Types.CAPhantom (_, (Types.TVar { contents = Types.Unbound (fid, _) })) -> fid = id
+                  | _ -> false
+                ) fargs
+              ) !found_multi
+            | _ -> false
+          ) args in
+          if dominated then (cls, args) :: acc else acc
+        ) [] !pending_caty in
+        List.iter (fun (cls, args) ->
+          let promoted_args = List.map (fun (ca : Types.class_arg) ->
+            match ca with
+            | Types.CATy (Types.TVar { contents = Types.Unbound (id, _) } as tv) ->
+              let phantom_idx = ref None in
+              List.iter (fun (_c, fargs) ->
+                List.iter (fun (fa : Types.class_arg) ->
+                  match fa with
+                  | Types.CAPhantom (idx, Types.TVar { contents = Types.Unbound (fid, _) }) when fid = id ->
+                    phantom_idx := Some idx
+                  | _ -> ()
+                ) fargs
+              ) !found_multi;
+              (match !phantom_idx with
+               | Some idx -> Types.CAPhantom (idx, tv)
+               | None -> ca)
+            | _ -> ca
+          ) args in
+          pending_caty := List.filter (fun k -> k <> (cls, args)) !pending_caty;
+          set_add found_multi (cls, promoted_args);
+          changed := true
+        ) to_promote
+      done
     in
     (* Propagate constraints from a constrained variable reference:
        map the inner scheme's TGens to actual types at this call site,
@@ -692,142 +1067,49 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
           | Some var_sch when var_sch.Types.constraints <> [] ->
             propagate_constrained_ref var_sch te.ty
           | _ -> ());
-         (* A TEVar is a class method if find_method_class matches AND the
-            variable's scheme body in vars equals the class method's schema type
-            (rejects local definitions that shadow class methods).
-            Also handles module-qualified names like "Map.keys". *)
-         let (class_match, method_name) =
-           match Types.find_method_class type_env.Types.classes name with
-           | Some class_def when not (String.equal name binding_name) ->
-             let method_ty = List.assoc name class_def.Types.class_methods in
-             (match List.assoc_opt name vars with
-              | Some s -> if s.Types.body = method_ty then (Some class_def, name) else (None, name)
-              | None -> (None, name))
-           | _ ->
-             (* Try stripping module prefix for qualified names like "Map.keys" *)
-             (match String.rindex_opt name '.' with
-              | None -> (None, name)
-              | Some i ->
-                let short = String.sub name (i + 1) (String.length name - i - 1) in
-                let class_prefix = String.sub name 0 i in
-                let mod_prefix = String.sub name 0 (i + 1) in
-                (match Types.find_method_class type_env.Types.classes short with
-                 | Some class_def when not (String.equal short binding_name)
-                     && (String.equal class_def.Types.class_name class_prefix
-                         || (String.length class_def.Types.class_name > String.length mod_prefix
-                             && String.sub class_def.Types.class_name 0 (String.length mod_prefix) = mod_prefix)) ->
-                   let method_ty = List.assoc short class_def.Types.class_methods in
-                   (* Try both qualified and unqualified names in vars *)
-                   let var_sch = match List.assoc_opt name vars with
-                     | Some _ as r -> r
-                     | None -> List.assoc_opt short vars
-                   in
-                   (match var_sch with
-                    | Some s -> if s.Types.body = method_ty then (Some class_def, short) else (None, name)
-                    | None -> (None, name))
-                 | _ -> (None, name)))
-         in
+         let (class_match, method_name) = find_class_method_for_var name in
          (match class_match with
-          | Some class_def ->
-            let method_schema_ty = List.assoc method_name class_def.Types.class_methods in
-            let num_params = List.length class_def.Types.class_params in
-            let param_map = Hashtbl.create num_params in
-            let rec go s r =
-              let r = Types.repr r in
-              match s, r with
-              | Types.TGen i, _ when i < num_params ->
-                if not (Hashtbl.mem param_map i) then Hashtbl.replace param_map i r
-              | Types.TArrow (s1, _, s2), Types.TArrow (r1, _, r2)
-              | Types.TCont (s1, _, s2), Types.TCont (r1, _, r2) -> go s1 r1; go s2 r2
-              | Types.TTuple ss, Types.TTuple rs when List.length ss = List.length rs ->
-                List.iter2 go ss rs
-              | Types.TList s1, Types.TList r1 -> go s1 r1
-              | Types.TArray s1, Types.TArray r1 -> go s1 r1
-              | Types.TVariant (_, ss), Types.TVariant (_, rs) when List.length ss = List.length rs ->
-                List.iter2 go ss rs
-              | _ -> ()
-            in
-            go method_schema_ty te.ty;
-            (* Build class_arg for each class param: CATGen for polymorphic, CATy for concrete *)
-            let cc_args = List.init num_params (fun i ->
-              match Hashtbl.find_opt param_map i with
-              | Some (Types.TVar { contents = Types.Unbound (id, _) } as tv) ->
-                (match Hashtbl.find_opt id_map id with
-                 | Some (Types.TGen tgen_idx) -> Some (Types.CATGen tgen_idx)
-                 | _ ->
-                   (* Tvar not in id_map: not generalized (doesn't appear in function type).
-                      If it's a fundep target, use CAPhantom so each call site gets a fresh tvar
-                      but constraints sharing the same fundep target share the same phantom index.
-                      CATy would store a mutable ref that gets permanently linked at first call. *)
-                   let is_fundep_target = List.exists (fun (fd : Types.fundep) ->
-                     List.mem i fd.fd_to
-                   ) class_def.Types.class_fundeps in
-                   if is_fundep_target then begin
-                     let phantom_idx = match Hashtbl.find_opt tvar_to_phantom id with
-                       | Some idx -> idx
-                       | None ->
-                         let idx = !phantom_counter in
-                         incr phantom_counter;
-                         Hashtbl.replace tvar_to_phantom id idx;
-                         idx in
-                     Some (Types.CAPhantom (phantom_idx, tv))
-                   end
-                   else Some (Types.CATy tv))
-              | Some ty -> Some (Types.CATy ty)
-              | None ->
-                (* Param not in method type. If it's a fundep target, mark as CAWild
-                   so the constraint is still recorded and resolved via fundep at call site. *)
-                let is_fundep_target = List.exists (fun (fd : Types.fundep) ->
-                  List.mem i fd.fd_to
-                ) class_def.Types.class_fundeps in
-                if is_fundep_target then Some Types.CAWild
-                else None
-            ) in
-            (* If there are CATy entries containing unresolved tvars mixed with
-               CAWild/CAPhantom, the CATy has definition-time tvars that won't match
-               call-site tvars. Revert CAWild/CAPhantom to None so the constraint
-               is dropped. Fully concrete CATy (e.g. CATy(TInt)) is fine. *)
-            let has_nonconc_caty = List.exists (fun opt ->
-              match opt with
-              | Some (Types.CATy ty) -> not (Types.is_concrete ty)
-              | _ -> false
-            ) cc_args in
-            let has_any_caty = List.exists (fun opt ->
-              match opt with Some (Types.CATy _) -> true | _ -> false
-            ) cc_args in
-            let cc_args = if has_nonconc_caty then
-              List.map (fun opt ->
-                match opt with Some Types.CAWild -> None | Some (Types.CAPhantom _) -> None | _ -> opt
-              ) cc_args
-            else cc_args in
-            (* Record if at least one param is a TGen and all params are resolved *)
-            let has_tgen = List.exists (fun opt ->
-              match opt with Some (Types.CATGen _) -> true | _ -> false
-            ) cc_args in
-            let has_caty = has_any_caty in
-            let all_resolved = List.for_all (fun opt -> opt <> None) cc_args in
-            let allow = has_tgen && all_resolved &&
-              (not has_caty || match scheme.Types.body with Types.TArrow _ | Types.TCont _ -> true | _ -> false) in
-            if allow then begin
-              let cc_args = List.filter_map Fun.id cc_args in
-              set_add found_multi (class_def.Types.class_name, cc_args)
-            end else if (not has_tgen) && all_resolved then begin
-              (* Defer CATy-only constraints: their Unbound tvars may link to
-                 constraints found later in the walk (order-independent). *)
-              let has_unbound_caty = List.exists (fun opt ->
-                match opt with
-                | Some (Types.CATy (Types.TVar { contents = Types.Unbound _ })) -> true
-                | _ -> false
-              ) cc_args in
-              let is_arrow = match scheme.Types.body with Types.TArrow _ | Types.TCont _ -> true | _ -> false in
-              if has_unbound_caty && is_arrow then begin
-                let cc_args = List.filter_map Fun.id cc_args in
-                set_add pending_caty (class_def.Types.class_name, cc_args)
-              end
-            end
+          | Some class_def -> record_class_constraint class_def method_name te.ty
           | None -> ())
        | _ -> ());
-      walk_children locals te
+      (* Walk children first so tvar_to_phantom is populated from inner refs *)
+      walk_children locals te;
+      (* Detect operators on polymorphic types: add class constraints *)
+      let add_op_constraint class_name operand_ty =
+        match Types.repr operand_ty with
+        | Types.TVar ({ contents = Types.Unbound (id, _) } as tv) ->
+          (match Hashtbl.find_opt id_map id with
+           | Some (Types.TGen tgen_idx) ->
+             set_add found_multi (class_name, [Types.CATGen tgen_idx])
+           | _ ->
+             (* TVar not in function type — check if it has a phantom mapping
+                from an existing constraint (e.g., fundep-determined type var) *)
+             match Hashtbl.find_opt tvar_to_phantom id with
+             | Some phantom_idx ->
+               set_add found_multi (class_name, [Types.CAPhantom (phantom_idx, Types.TVar tv)])
+             | None -> ())
+        | _ -> ()
+      in
+      (match te.expr with
+       | TEBinop (op, e1, _e2) ->
+         let class_name_opt = match op with
+           | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> Some "Num"
+           | Ast.Eq | Ast.Neq -> Some "Eq"
+           | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> Some "Ord"
+           | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> Some "Bitwise"
+           | _ -> None in
+         (match class_name_opt with
+          | Some class_name -> add_op_constraint class_name e1.ty
+          | None -> ())
+       | TEUnop (op, e) ->
+         let class_name_opt = match op with
+           | Ast.Neg -> Some "Num"
+           | Ast.Lnot -> Some "Bitwise"
+           | _ -> None in
+         (match class_name_opt with
+          | Some class_name -> add_op_constraint class_name e.ty
+          | None -> ())
+       | _ -> ())
     and walk_children locals te =
       match te.expr with
       | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _
@@ -846,16 +1128,18 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
             | Some inst_ty ->
               (match Types.repr inst_ty with
                | Types.TVar { contents = Types.Unbound _ } ->
-                 (try Types.unify e1.ty inst_ty with _ -> ())
+                 (try Types.unify e1.ty inst_ty with Types.Unify_error _ -> ())
                | _ -> ())
             | None -> ())
          | _ -> ());
         walk locals e1; walk locals e2
       | TELetMut (_, e1, e2)
       | TEBinop (_, e1, e2) | TECons (e1, e2) | TESeq (e1, e2)
-      | TEWhile (e1, e2) | TEResume (e1, e2)
+      | TEResume (e1, e2)
       | TEFieldAssign (e1, _, e2) | TEIndex (e1, e2) ->
         walk locals e1; walk locals e2
+      | TEWhile { tw_cond; tw_body } ->
+        walk locals tw_cond; walk locals tw_body
       | TEApp (fn, arg) -> walk locals fn; walk locals arg
       | TEPerform (_, e) | TEUnop (_, e) | TEFun (_, e, _) | TEField (e, _) | TEBreak e
       | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign (_, e) ->
@@ -873,59 +1157,14 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
       | TEHandle (body, arms) ->
         walk locals body;
         List.iter (fun arm -> match arm with
-          | THReturn (_, e) | THOp (_, _, _, e)
+          | THReturn (_, e) | THOp { body = e; _ }
           | THOpProvide (_, _, e) | THOpTry (_, _, e) -> walk locals e) arms
       | TELetRecAnd (bindings, body) ->
         List.iter (fun (_, e) -> walk locals e) bindings; walk locals body
+      | TEMatchTree _ -> ()  (* produced after typechecking *)
     in
     walk [] te;
-    (* Post-process: promote pending CATy-only constraints whose Unbound tvars
-       appear in found_multi (as CATy or CAPhantom). When promoting, convert
-       matching CATy entries to CAPhantom so they share the same phantom index
-       and get fresh tvars at each call site instead of the definition-time tvar. *)
-    let changed = ref true in
-    while !changed do
-      changed := false;
-      let to_promote = List.fold_left (fun acc (cls, args) ->
-        let dominated = List.exists (fun (ca : Types.class_arg) ->
-          match ca with
-          | Types.CATy (Types.TVar { contents = Types.Unbound (id, _) }) ->
-            List.exists (fun (_c, fargs) ->
-              List.exists (fun (fa : Types.class_arg) ->
-                match fa with
-                | Types.CATy (Types.TVar { contents = Types.Unbound (fid, _) }) -> fid = id
-                | Types.CAPhantom (_, (Types.TVar { contents = Types.Unbound (fid, _) })) -> fid = id
-                | _ -> false
-              ) fargs
-            ) !found_multi
-          | _ -> false
-        ) args in
-        if dominated then (cls, args) :: acc else acc
-      ) [] !pending_caty in
-      List.iter (fun (cls, args) ->
-        (* Convert CATy entries to CAPhantom when they match a phantom in found_multi *)
-        let promoted_args = List.map (fun (ca : Types.class_arg) ->
-          match ca with
-          | Types.CATy (Types.TVar { contents = Types.Unbound (id, _) } as tv) ->
-            let phantom_idx = ref None in
-            List.iter (fun (_c, fargs) ->
-              List.iter (fun (fa : Types.class_arg) ->
-                match fa with
-                | Types.CAPhantom (idx, Types.TVar { contents = Types.Unbound (fid, _) }) when fid = id ->
-                  phantom_idx := Some idx
-                | _ -> ()
-              ) fargs
-            ) !found_multi;
-            (match !phantom_idx with
-             | Some idx -> Types.CAPhantom (idx, tv)
-             | None -> ca)
-          | _ -> ca
-        ) args in
-        pending_caty := List.filter (fun k -> k <> (cls, args)) !pending_caty;
-        set_add found_multi (cls, promoted_args);
-        changed := true
-      ) to_promote
-    done;
+    promote_pending_constraints ();
     let cc_list = List.fold_left (fun acc (class_name, cc_args) ->
       let exists = List.exists (fun (cc : Types.class_constraint) ->
         String.equal cc.cc_class class_name && cc.cc_args = cc_args
@@ -1098,37 +1337,7 @@ let infer_record_evidence vars te scheme =
             ) callee_sch.Types.record_evidences
           | _ -> ())
        | _ -> ());
-      walk_children te
-    and walk_children te =
-      match te.expr with
-      | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _
-      | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> ()
-      | TELet (_, _, e1, e2) | TELetRec (_, _, e1, e2) | TELetMut (_, e1, e2) ->
-        walk e1; walk e2
-      | TEBinop (_, e1, e2) | TECons (e1, e2) | TESeq (e1, e2)
-      | TEWhile (e1, e2) | TEResume (e1, e2)
-      | TEFieldAssign (e1, _, e2) | TEIndex (e1, e2) ->
-        walk e1; walk e2
-      | TEApp (fn, arg) -> walk fn; walk arg
-      | TEPerform (_, e) | TEUnop (_, e) | TEFun (_, e, _) | TEField (e, _) | TEBreak e
-      | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign (_, e) ->
-        walk e
-      | TEIf (c, t, e) -> walk c; walk t; walk e
-      | TETuple es | TEArray es -> List.iter walk es
-      | TERecord fields -> List.iter (fun (_, e) -> walk e) fields
-      | TERecordUpdate (base, overrides) -> walk base; List.iter (fun (_, e) -> walk e) overrides
-      | TERecordUpdateIdx (base, pairs) -> walk base; List.iter (fun (i, v) -> walk i; walk v) pairs
-      | TEConstruct (_, arg) -> Option.iter walk arg
-      | TEMatch (scrutinee, arms, _) ->
-        walk scrutinee;
-        List.iter (fun (_, guard, body) -> Option.iter walk guard; walk body) arms
-      | TEHandle (body, arms) ->
-        walk body;
-        List.iter (fun arm -> match arm with
-          | THReturn (_, e) | THOp (_, _, _, e)
-          | THOpProvide (_, _, e) | THOpTry (_, _, e) -> walk e) arms
-      | TELetRecAnd (bindings, body) ->
-        List.iter (fun (_, e) -> walk e) bindings; walk body
+      iter_texpr_children walk te
     in
     walk te;
     let ev_list = Hashtbl.fold (fun rgen_idx fields acc ->
@@ -1211,7 +1420,7 @@ let improve_fundeps_in_expr vars type_env te =
               in
               (match tvar_opt with
                | Some (Types.TVar ({ contents = Types.Unbound _ } as r)) ->
-                 (try Types.unify (Types.TVar r) resolved_ty with _ -> ())
+                 (try Types.unify (Types.TVar r) resolved_ty with Types.Unify_error _ -> ())
                | _ -> ())
             | _ -> ()
           ) improved
@@ -1269,7 +1478,7 @@ let improve_fundeps_in_expr vars type_env te =
         | Some resolved_ty, None ->
           (match Hashtbl.find_opt found i with
            | Some (Types.TVar ({ contents = Types.Unbound _ } as r)) ->
-             (try Types.unify (Types.TVar r) resolved_ty with _ -> ())
+             (try Types.unify (Types.TVar r) resolved_ty with Types.Unify_error _ -> ())
            | _ -> ())
         | _ -> ()
       ) improved
@@ -1333,19 +1542,21 @@ let improve_fundeps_in_expr vars type_env te =
     | TEFieldAssign (e, _, v) -> walk locals e; walk locals v
     | TESeq (e1, e2) -> walk locals e1; walk locals e2
     | TEArray es -> List.iter (walk locals) es
-    | TEWhile (c, b) -> walk locals c; walk locals b
+    | TEWhile { tw_cond; tw_body } -> walk locals tw_cond; walk locals tw_body
     | TEForLoop e -> walk locals e
     | TEReturn e -> walk locals e
     | TEBreak e -> walk locals e
-    | TEContinueLoop | TEFoldContinue _ -> ()
+    | TEContinueLoop -> ()
+    | TEFoldContinue e -> walk locals e
     | TEPerform (_, e) -> walk locals e
     | TEHandle (e, arms) ->
       walk locals e; List.iter (fun arm -> match arm with
-        | THReturn (_, body) | THOp (_, _, _, body)
+        | THReturn (_, body) | THOp { body; _ }
         | THOpProvide (_, _, body) | THOpTry (_, _, body) -> walk locals body) arms
     | TEResume (e1, e2) -> walk locals e1; walk locals e2
     | TELetRecAnd (bindings, body) ->
       List.iter (fun (_, e) -> walk locals e) bindings; walk locals body
+    | TEMatchTree _ -> ()  (* produced after typechecking *)
   in
   walk [] te
 
@@ -1368,1251 +1579,7 @@ let rec is_syntactic_value (expr : Ast.expr) : bool =
   | Ast.EAnnot (e, _) | Ast.ECoerce (e, _) | Ast.ELoc (_, e) -> is_syntactic_value e
   | _ -> false
 
-let mono_scheme ty =
-  { Types.quant = 0; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty }
 
-(* ---- Synthesize ---- *)
-
-let rec synth ctx level (expr : Ast.expr) : texpr =
-  match expr with
-  | Ast.ELoc (loc, inner) -> current_loc := loc; synth ctx level inner
-  | Ast.EInt n -> mk (TEInt n) Types.TInt
-  | Ast.EFloat f -> mk (TEFloat f) Types.TFloat
-  | Ast.EBool b -> mk (TEBool b) Types.TBool
-  | Ast.EString s -> mk (TEString s) Types.TString
-  | Ast.EByte n -> mk (TEByte n) Types.TByte
-  | Ast.ERune n -> mk (TERune n) Types.TRune
-  | Ast.EUnit -> mk TEUnit Types.TUnit
-  | Ast.ENil ->
-    mk TENil (Types.TList (Types.new_tvar level))
-  | Ast.EVar name ->
-    let ty = lookup_var ctx level name in
-    let resolved_name = resolve_module_name ctx name in
-    mk (TEVar resolved_name) ty
-  | Ast.EBinop (op, e1, e2) -> synth_binop ctx level op e1 e2
-  | Ast.EUnop (op, e) -> synth_unop ctx level op e
-  | Ast.EApp (fn, arg) ->
-    let fn_te = synth ctx level fn in
-    let arg_te = synth ctx level arg in
-    let ret_ty = Types.new_tvar level in
-    let call_eff = Types.new_effvar level in
-    try_unify fn_te.ty (Types.TArrow (arg_te.ty, call_eff, ret_ty));
-    try_subeffect call_eff ctx.current_eff;
-    mk (TEApp (fn_te, arg_te)) ret_ty
-  | Ast.EFun (param, body) ->
-    let param_ty = match param.annot with
-      | Some annot -> resolve_ty_annot ctx level annot
-      | None -> Types.new_tvar level
-    in
-    let body_eff = Types.new_effvar level in
-    let ret_ty = Types.new_tvar level in
-    let ctx' = if param.is_generated then
-      (* Generated callback (e.g. for-loop): preserve outer return_type *)
-      { ctx with current_eff = body_eff }
-    else begin
-      (* User function: fresh return scope *)
-      let return_used = ref false in
-      { ctx with current_eff = body_eff; return_type = Some ret_ty;
-        inside_handler = false; return_used }
-    end in
-    let ctx' = extend_var_mono ctx' param.name param_ty in
-    let body_te = synth ctx' level body in
-    try_unify body_te.ty ret_ty;
-    let has_return = if param.is_generated then false
-      else !(ctx'.return_used) in
-    mk (TEFun (param.name, body_te, has_return)) (Types.TArrow (param_ty, body_eff, ret_ty))
-  | Ast.ELet (name, e1, e2) ->
-    let e1_te = synth ctx (level + 1) e1 in
-    improve_fundeps_in_expr ctx.vars ctx.type_env e1_te;
-    let scheme = if is_syntactic_value e1 then Types.generalize level e1_te.ty
-                 else mono_scheme e1_te.ty in
-    let scheme = infer_implicit_constraints "" ctx.type_env ctx.vars e1_te scheme in
-    let scheme = infer_record_evidence ctx.vars e1_te scheme in
-    let stored_scheme = if scheme_needs_xform scheme then Some scheme else None in
-    let ctx' = extend_var ctx name scheme in
-    let e2_te = synth ctx' level e2 in
-    mk (TELet (name, stored_scheme, e1_te, e2_te)) e2_te.ty
-  | Ast.ELetMut (name, e1, e2) ->
-    let e1_te = synth ctx (level + 1) e1 in
-    (* Mutable variables must not be generalized (value restriction):
-       each reference must share the same type, not get a fresh instantiation *)
-    let scheme = { Types.quant = 0; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = e1_te.ty } in
-    let ctx' = extend_var_mutable ctx name scheme in
-    let e2_te = synth ctx' level e2 in
-    mk (TELetMut (name, e1_te, e2_te)) e2_te.ty
-  | Ast.EAssign (name, e) ->
-    if not (List.mem name ctx.mutable_vars) then
-      error (Printf.sprintf "variable %s is not mutable" name);
-    let var_ty = lookup_var ctx level name in
-    let e_te = check ctx level e var_ty in
-    let resolved_name = resolve_module_name ctx name in
-    mk (TEAssign (resolved_name, e_te)) Types.TUnit
-  | Ast.EFieldAssign (record_expr, field, value_expr) ->
-    let r_te = synth ctx level record_expr in
-    (* Use row unification: unify with a record that has at least 'field' *)
-    let field_ty = Types.new_tvar level in
-    let row_tail = Types.new_rvar level in
-    (* Try nominal resolution first for better errors *)
-    (match Types.repr r_te.ty with
-     | Types.TVar _ ->
-       let candidates = List.filter (fun (_name, fields) ->
-         List.mem_assoc field fields
-       ) ctx.type_env.Types.records in
-       (match candidates with
-        | [(_name, fields)] ->
-          let row = instantiate_record_row level fields in
-          try_unify r_te.ty (Types.TRecord row)
-        | _ ->
-          try_unify r_te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))))
-     | _ ->
-       try_unify r_te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))));
-    (* Now extract the field type from the unified record *)
-    let actual_field_ty = match Types.repr r_te.ty with
-      | Types.TRecord row ->
-        let fields = Types.record_row_to_fields row in
-        (match List.assoc_opt field fields with
-         | Some ty -> ty
-         | None -> error (Printf.sprintf "record has no field %s" field))
-      | _ -> error "field assignment on non-record type"
-    in
-    if not (List.mem field ctx.type_env.mutable_fields) then
-      error (Printf.sprintf "field %s is not mutable" field);
-    let v_te = check ctx level value_expr actual_field_ty in
-    mk (TEFieldAssign (r_te, field, v_te)) Types.TUnit
-  | Ast.ELetRec (name, type_params, e1, e2) ->
-    (match strip_loc e1 with
-     | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) ->
-       if type_params <> [] then begin
-         (* Polymorphic recursion: extract annotations, build scheme, bind polymorphically *)
-         let (params, ret_annot, body) = extract_fn_info e1 in
-         let (e1_te, scheme) = synth_poly_rec_fn ctx level name "" type_params params ret_annot body in
-         let ctx' = extend_var ctx name scheme in
-         let e2_te = synth ctx' level e2 in
-         mk (TELetRec (name, None, e1_te, e2_te)) e2_te.ty
-       end else begin
-         let fn_var = Types.new_tvar (level + 1) in
-         let ctx' = extend_var_mono ctx name fn_var in
-         let e1_te = synth ctx' (level + 1) e1 in
-         try_unify fn_var e1_te.ty;
-         improve_fundeps_in_expr ctx.vars ctx.type_env e1_te;
-         let scheme = Types.generalize level e1_te.ty in
-         let scheme = infer_implicit_constraints name ctx.type_env ctx.vars e1_te scheme in
-         let scheme = infer_record_evidence ctx.vars e1_te scheme in
-         let stored_scheme = if scheme_needs_xform scheme then Some scheme else None in
-         let ctx'' = extend_var ctx name scheme in
-         let e2_te = synth ctx'' level e2 in
-         mk (TELetRec (name, stored_scheme, e1_te, e2_te)) e2_te.ty
-       end
-     | _ when is_constructive e1 && not (is_immediately_linked name e1) ->
-       if type_params <> [] then
-         error "recursive value binding does not support polymorphic type parameters";
-       let val_var = Types.new_tvar (level + 1) in
-       let ctx' = extend_var_mono ctx name val_var in
-       let e1_te = synth ctx' (level + 1) e1 in
-       try_unify val_var e1_te.ty;
-       let scheme = Types.generalize level e1_te.ty in
-       let ctx'' = extend_var ctx name scheme in
-       let e2_te = synth ctx'' level e2 in
-       mk (TELetRec (name, None, e1_te, e2_te)) e2_te.ty
-     | _ -> error "let rec binding must be a function or constructive expression")
-  | Ast.EIf (cond, then_e, else_e) ->
-    let cond_te = check ctx level cond Types.TBool in
-    let then_te = synth ctx level then_e in
-    let else_te = check ctx level else_e then_te.ty in
-    mk (TEIf (cond_te, then_te, else_te)) then_te.ty
-  | Ast.ETuple exprs ->
-    let tes = List.map (synth ctx level) exprs in
-    let tys = List.map (fun te -> te.ty) tes in
-    mk (TETuple tes) (Types.TTuple tys)
-  | Ast.ERecord fields ->
-    let typed_fields = List.map (fun (n, e) ->
-      let te = synth ctx level e in (n, te)
-    ) fields in
-    let field_tys = List.map (fun (n, te) -> (n, te.ty)) typed_fields in
-    let field_tys = List.sort (fun (a, _) (b, _) -> String.compare a b) field_tys in
-    let row = Types.fields_to_closed_row field_tys in
-    mk (TERecord typed_fields) (Types.TRecord row)
-  | Ast.ERecordUpdate (base, overrides) ->
-    let base_te = synth ctx level base in
-    (* Ensure base is a record; if fully unknown, try nominal resolution *)
-    (match Types.repr base_te.ty with
-     | Types.TVar _ ->
-       (* Try nominal resolution when base type is completely unknown *)
-       let override_names = List.map fst overrides in
-       let candidates = List.filter (fun (_name, rfields) ->
-         List.for_all (fun f -> List.mem_assoc f rfields) override_names
-       ) ctx.type_env.Types.records in
-       (match candidates with
-        | [(_, rfields)] ->
-          let row = instantiate_record_row level rfields in
-          try_unify base_te.ty (Types.TRecord row)
-        | _ ->
-          (* No unique nominal match — unify with open row containing override fields *)
-          let row_tail = Types.new_rvar level in
-          let row = List.fold_right (fun name acc ->
-            Types.RRow (name, Types.new_tvar level, acc)
-          ) override_names row_tail in
-          try_unify base_te.ty (Types.TRecord row))
-     | Types.TRecord _ -> ()
-     | _ -> error "record update on non-record type");
-    (* For each override, unify base with { field: 'a | ρ } to ensure field exists *)
-    let override_field_tys = List.map (fun (name, _) ->
-      let field_ty = Types.new_tvar level in
-      let row_tail = Types.new_rvar level in
-      try_unify base_te.ty (Types.TRecord (Types.RRow (name, field_ty, row_tail)));
-      (* Extract actual field type after unification *)
-      let actual_ty = match Types.repr base_te.ty with
-        | Types.TRecord row ->
-          let fields = Types.record_row_to_fields row in
-          (match List.assoc_opt name fields with
-           | Some ty -> ty
-           | None -> field_ty)
-        | _ -> field_ty
-      in
-      (name, actual_ty)
-    ) overrides in
-    (* Type-check each override value against the expected field type *)
-    let typed_overrides = List.map2 (fun (name, e) (_, expected_ty) ->
-      let te = check ctx level e expected_ty in
-      (name, te)
-    ) overrides override_field_tys in
-    (* Check if row is closed or open *)
-    let rec has_open_tail row = match Types.rrow_repr row with
-      | Types.RRow (_, _, tail) -> has_open_tail tail
-      | Types.RVar { contents = Types.RUnbound _ } -> true
-      | _ -> false
-    in
-    let is_open = match Types.repr base_te.ty with
-      | Types.TRecord row -> has_open_tail row
-      | _ -> false
-    in
-    if is_open then
-      (* Open row: emit TERecordUpdate — compiled to RECORD_UPDATE *)
-      mk (TERecordUpdate (base_te, typed_overrides)) base_te.ty
-    else begin
-      (* Closed row: desugar to TELet + TERecord (all fields known) *)
-      let field_tys = match Types.repr base_te.ty with
-        | Types.TRecord row -> Types.record_row_to_fields row
-        | _ -> error "record update on non-record type"
-      in
-      let tmp = "__rec_upd" in
-      let tmp_ty = base_te.ty in
-      let all_fields = List.map (fun (name, ty) ->
-        match List.assoc_opt name typed_overrides with
-        | Some te -> (name, te)
-        | None -> (name, mk (TEField (mk (TEVar tmp) tmp_ty, name)) ty)
-      ) field_tys in
-      let record_row = Types.fields_to_closed_row field_tys in
-      let record_expr = mk (TERecord all_fields) (Types.TRecord record_row) in
-      mk (TELet (tmp, None, base_te, record_expr)) (Types.TRecord record_row)
-    end
-  | Ast.EField (e, field) ->
-    let te = synth ctx level e in
-    let field_ty = Types.new_tvar level in
-    let row_tail = Types.new_rvar level in
-    (* Try nominal resolution first when type is unknown *)
-    (match Types.repr te.ty with
-     | Types.TVar _ ->
-       let candidates = List.filter (fun (_name, fields) ->
-         List.mem_assoc field fields
-       ) ctx.type_env.Types.records in
-       (match candidates with
-        | [(_name, fields)] ->
-          let row = instantiate_record_row level fields in
-          try_unify te.ty (Types.TRecord row)
-        | _ ->
-          (* Row unification: unify with { field: 'a; ..rho } *)
-          try_unify te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))))
-     | _ ->
-       (* Row unification handles known records and open records *)
-       try_unify te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))));
-    (* Extract the actual field type from the unified record *)
-    let actual_field_ty = match Types.repr te.ty with
-      | Types.TRecord row ->
-        let fields = Types.record_row_to_fields row in
-        (match List.assoc_opt field fields with
-         | Some ty -> ty
-         | None -> field_ty)
-      | _ -> field_ty
-    in
-    mk (TEField (te, field)) actual_field_ty
-  | Ast.EIndex (base, idx) ->
-    let te_base = synth ctx level base in
-    (match Types.repr te_base.ty with
-     | Types.TString ->
-       let te_idx = check ctx level idx Types.TInt in
-       mk (TEIndex (te_base, te_idx)) Types.TByte
-     | Types.TArray t ->
-       let te_idx = check ctx level idx Types.TInt in
-       mk (TEIndex (te_base, te_idx)) t
-     | _ ->
-       (* Desugar to Index typeclass: at idx base *)
-       let te = synth ctx level (Ast.EApp (Ast.EApp (Ast.EVar "at", idx), base)) in
-       (* Apply fundep improvement: if the container type is concrete,
-          the Index fundep ('c -> 'k 'v) can determine the result type *)
-       (match List.find_opt (fun c -> String.equal c.Types.class_name "Index")
-                ctx.type_env.Types.classes with
-        | Some class_def when class_def.Types.class_fundeps <> [] ->
-          let container_ty = Types.repr te_base.ty in
-          let partial = [Some container_ty; None; None] in
-          let improved = Types.improve_with_fundeps
-            ctx.type_env.Types.instances class_def partial in
-          (match List.nth_opt improved 2 with
-           | Some (Some val_ty) -> try_unify te.ty val_ty
-           | _ -> ())
-        | _ -> ());
-       te)
-  | Ast.ECons (hd, tl) ->
-    let hd_te = synth ctx level hd in
-    let list_ty = Types.TList hd_te.ty in
-    let tl_te = check ctx level tl list_ty in
-    mk (TECons (hd_te, tl_te)) list_ty
-  | Ast.EList (first :: rest) ->
-    let first_te = synth ctx level first in
-    let rest_tes = List.map (fun e -> check ctx level e first_te.ty) rest in
-    let list_ty = Types.TList first_te.ty in
-    mk (TECons (first_te,
-      List.fold_right (fun te acc ->
-        mk (TECons (te, acc)) list_ty
-      ) rest_tes (mk TENil list_ty)
-    )) list_ty
-  | Ast.EList [] ->
-    mk TENil (Types.TList (Types.new_tvar level))
-  | Ast.EArray (first :: rest) ->
-    let first_te = synth ctx level first in
-    let rest_tes = List.map (fun e -> check ctx level e first_te.ty) rest in
-    mk (TEArray (first_te :: rest_tes)) (Types.TArray first_te.ty)
-  | Ast.EArray [] ->
-    mk (TEArray []) (Types.TArray (Types.new_tvar level))
-  | Ast.EConstruct (name, arg) ->
-    synth_construct ctx level name arg
-  | Ast.EMatch (scrut, arms, partial) ->
-    synth_match None ctx level scrut arms partial
-  | Ast.ESeq (e1, e2) ->
-    let e1_te = synth ctx level e1 in
-    let e2_te = synth ctx level e2 in
-    mk (TESeq (e1_te, e2_te)) e2_te.ty
-  | Ast.EAnnot (e, annot) ->
-    let ty = resolve_ty_annot ctx level annot in
-    let te = check ctx level e ty in
-    te
-  | Ast.EPolyVariant (tag, None) ->
-    let tail = Types.new_pvvar level in
-    let row = Types.PVRow (tag, None, tail) in
-    mk (TEConstruct ("`" ^ tag, None)) (Types.TPolyVariant row)
-  | Ast.EPolyVariant (tag, Some arg) ->
-    let arg_te = synth ctx level arg in
-    let tail = Types.new_pvvar level in
-    let row = Types.PVRow (tag, Some arg_te.ty, tail) in
-    mk (TEConstruct ("`" ^ tag, Some arg_te)) (Types.TPolyVariant row)
-  | Ast.ECoerce (inner, target_annot) ->
-    let inner_te = synth ctx level inner in
-    let target_ty = resolve_ty_annot ctx level target_annot in
-    try_unify inner_te.ty target_ty;
-    { inner_te with ty = target_ty }
-  | Ast.EPerform (op_name, arg) ->
-    synth_perform ctx level op_name arg
-  | Ast.EHandle (body, arms) ->
-    synth_handle ctx level body arms
-  | Ast.EWhile (cond, body) ->
-    let ctx' = { ctx with loop_info = Some WhileLoop } in
-    let cond_te = check ctx' level cond Types.TBool in
-    let body_te = check ctx' level body Types.TUnit in
-    mk (TEWhile (cond_te, body_te)) Types.TUnit
-  | Ast.EFor (var_name, coll_expr, body_expr) ->
-    (* Desugar: TEForLoop(fold (fun _ x -> body; ()) () coll) *)
-    let ctx' = { ctx with loop_info = Some UnitLoop } in
-    let desugared = Ast.EApp(Ast.EApp(Ast.EApp(Ast.EVar "fold",
-      Ast.EFun({name="_"; annot=None; is_generated=true},
-        Ast.EFun({name=var_name; annot=None; is_generated=true},
-          Ast.ESeq(body_expr, Ast.EUnit)))),
-      Ast.EUnit),
-      coll_expr) in
-    let fold_te = synth ctx' level desugared in
-    mk (TEForLoop fold_te) Types.TUnit
-  | Ast.EForFold (var_name, coll_expr, acc_name, init_expr, body_expr) ->
-    (* Desugar: TEForLoop(fold (fun acc x -> body) init coll) *)
-    let ctx' = { ctx with loop_info = Some (FoldLoop acc_name) } in
-    let desugared = Ast.EApp(Ast.EApp(Ast.EApp(Ast.EVar "fold",
-      Ast.EFun({name=acc_name; annot=None; is_generated=true},
-        Ast.EFun({name=var_name; annot=None; is_generated=true},
-          body_expr))),
-      init_expr),
-      coll_expr) in
-    let fold_te = synth ctx' level desugared in
-    mk (TEForLoop fold_te) fold_te.ty
-  | Ast.EBreak value_opt ->
-    (match ctx.loop_info with
-     | None -> error "break outside of loop"
-     | Some WhileLoop ->
-       if value_opt <> None then error "break with value only allowed in fold loops";
-       mk (TEBreak (mk TEUnit Types.TUnit)) Types.TUnit
-     | Some UnitLoop ->
-       if value_opt <> None then error "break with value only allowed in fold loops";
-       mk (TEBreak (mk TEUnit Types.TUnit)) Types.TUnit
-     | Some (FoldLoop acc_name) ->
-       let v_te = match value_opt with
-         | Some e -> synth ctx level e
-         | None -> synth ctx level (Ast.EVar acc_name) in
-       mk (TEBreak v_te) (Types.new_tvar level))
-  | Ast.EContinueLoop ->
-    (match ctx.loop_info with
-     | None -> error "continue outside of loop"
-     | Some WhileLoop -> mk TEContinueLoop Types.TUnit
-     | Some UnitLoop -> mk (TEFoldContinue (mk TEUnit Types.TUnit)) Types.TUnit
-     | Some (FoldLoop acc_name) ->
-       let acc_te = synth ctx level (Ast.EVar acc_name) in
-       mk (TEFoldContinue acc_te) (Types.new_tvar level))
-  | Ast.EReturn e ->
-    (match ctx.return_type with
-     | None -> error "return outside of function"
-     | Some ret_ty ->
-       if ctx.inside_handler then
-         error "Type error: return inside try/with is not supported";
-       ctx.return_used := true;
-       let e_te = synth ctx level e in
-       try_unify e_te.ty ret_ty;
-       mk (TEReturn e_te) (Types.new_tvar level))
-  | Ast.EWhileLet (pat, scrutinee, body) ->
-    (* Desugar: for true do match scrutinee with | pat -> body | _ -> break done *)
-    let desugared = Ast.EWhile (Ast.EBool true,
-      Ast.EMatch (scrutinee,
-        [(pat, None, body);
-         (Ast.PatWild, None, Ast.EBreak None)],
-        false)) in
-    synth ctx level desugared
-  | Ast.EResume (k_expr, v_expr) ->
-    let k_te = synth ctx level k_expr in
-    let v_te = synth ctx level v_expr in
-    let ret_ty = Types.new_tvar level in
-    let call_eff = Types.new_effvar level in
-    try_unify k_te.ty (Types.TCont (v_te.ty, call_eff, ret_ty));
-    try_subeffect call_eff ctx.current_eff;
-    mk (TEResume (k_te, v_te)) ret_ty
-  | Ast.EMap pairs ->
-    let pair_list = Ast.EList (List.map (fun (k, v) -> Ast.ETuple [k; v]) pairs) in
-    let desugared = Ast.EApp (Ast.EVar "Map.of_list", pair_list) in
-    synth ctx level desugared
-  | Ast.EMapTyped (mod_name, pairs) ->
-    let pair_list = Ast.EList (List.map (fun (k, v) -> Ast.ETuple [k; v]) pairs) in
-    let desugared = Ast.EApp (Ast.EVar (mod_name ^ ".of_list"), pair_list) in
-    synth ctx level desugared
-  | Ast.ESet elems ->
-    let list_expr = Ast.EList elems in
-    let desugared = Ast.EApp (Ast.EVar "Set.of_list", list_expr) in
-    synth ctx level desugared
-  | Ast.ECollTyped (mod_name, elems) ->
-    let list_expr = Ast.EList elems in
-    let desugared = Ast.EApp (Ast.EVar (mod_name ^ ".of_list"), list_expr) in
-    synth ctx level desugared
-  | Ast.ELocalOpen (mod_name, inner_expr) ->
-    (* Look up module, desugar to let bindings for each pub var *)
-    let minfo = match !find_module_in_env_ref ctx.type_env mod_name with
-      | Some m -> m
-      | None -> error (Printf.sprintf "unknown module: %s" mod_name)
-    in
-    (* Wrap inner_expr with let bindings: let x = M.x in let y = M.y in ... expr *)
-    let desugared = List.fold_left (fun body (short, _scheme) ->
-      let qualified = mod_name ^ "." ^ short in
-      Ast.ELet (short, Ast.EVar qualified, body)
-    ) inner_expr minfo.Types.mod_pub_vars in
-    synth ctx level desugared
-  | Ast.ELetRecAnd (bindings, body) ->
-    let has_poly = List.exists (fun (_, tp, _) -> tp <> []) bindings in
-    if has_poly then begin
-      (* Polymorphic recursion path *)
-      let infos = List.map (fun (name, type_params, fn_expr) ->
-        let (params, ret_annot, inner_body) = extract_fn_info fn_expr in
-        (name, type_params, params, ret_annot, inner_body)
-      ) bindings in
-      let tvars_list = List.map (fun (_, type_params, params, ret_annot, _) ->
-        let shared_tvars = Hashtbl.create 4 in
-        List.iter (fun tp ->
-          Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1))
-        ) type_params;
-        let param_tys = List.map (fun (p : Ast.param) -> match p.annot with
-          | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars annot
-          | None -> Types.new_tvar (level + 1)) params in
-        let (ret_ty, body_eff) = match ret_annot with
-          | Some (Ast.TyWithEffect (ty, eff_annot)) ->
-            let ty' = resolve_ty_annot_shared ctx (level + 1) shared_tvars ty in
-            let eff = match eff_annot with
-              | Ast.EffAnnotPure -> Types.EffEmpty
-              | Ast.EffAnnotRow items -> resolve_eff_items ctx (level + 1) shared_tvars items in
-            (ty', eff)
-          | Some annot ->
-            (resolve_ty_annot_shared ctx (level + 1) shared_tvars annot,
-             Types.new_effvar (level + 1))
-          | None -> (Types.new_tvar (level + 1), Types.new_effvar (level + 1)) in
-        let fn_ty = match List.rev param_tys with
-          | [] -> ret_ty
-          | last :: rest ->
-            let inner = Types.TArrow (last, body_eff, ret_ty) in
-            List.fold_left (fun acc pty -> Types.TArrow (pty, Types.EffEmpty, acc)) inner rest in
-        (param_tys, ret_ty, body_eff, fn_ty)
-      ) infos in
-      let schemes = List.map (fun (_, _, _, fn_ty) -> Types.generalize level fn_ty) tvars_list in
-      let ctx' = List.fold_left2 (fun ctx (name, _, _, _, _) scheme ->
-        extend_var ctx name scheme) ctx infos schemes in
-      let body_tes = List.map2 (fun (_, _, params, _, inner_body) (param_tys, ret_ty, body_eff, _) ->
-        let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
-          extend_var_mono c p.name ty) { ctx' with current_eff = body_eff } params param_tys in
-        let body_te = check inner_ctx (level + 1) inner_body ret_ty in
-        match List.rev params, List.rev param_tys with
-        | [], [] -> body_te
-        | last_p :: rest_ps, last_pty :: rest_ptys ->
-          let inner = mk (TEFun (last_p.Ast.name, body_te, false))
-            (Types.TArrow (last_pty, body_eff, body_te.ty)) in
-          List.fold_left2 (fun acc (p : Ast.param) pty ->
-            mk (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
-          ) inner rest_ps rest_ptys
-        | _ -> assert false
-      ) infos tvars_list in
-      let ctx'' = List.fold_left2 (fun ctx (name, _, _, _, _) scheme ->
-        extend_var ctx name scheme) ctx infos schemes in
-      let body_te = synth ctx'' level body in
-      let typed_bindings = List.map2 (fun (name, _, _, _, _) te -> (name, te)) infos body_tes in
-      mk (TELetRecAnd (typed_bindings, body_te)) body_te.ty
-    end else begin
-      (* Original monomorphic path — validate non-function bindings are constructive *)
-      let all_names = List.map (fun (name, _, _) -> name) bindings in
-      List.iter (fun (name, _, fn_expr) ->
-        match strip_loc fn_expr with
-        | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
-        | _ when is_constructive fn_expr && not (is_immediately_linked name fn_expr) -> ()
-        | _ -> error (Printf.sprintf "let rec binding for '%s' must be a function or constructive expression" name)
-      ) bindings;
-      ignore all_names;
-      let fn_vars = List.map (fun (name, _, _) -> (name, Types.new_tvar (level + 1))) bindings in
-      let ctx' = List.fold_left (fun ctx (name, tv) ->
-        extend_var_mono ctx name tv
-      ) ctx fn_vars in
-      let body_tes = List.map2 (fun (_, _, fn_expr) (_, tv) ->
-        let te = synth ctx' (level + 1) fn_expr in
-        try_unify tv te.ty;
-        te
-      ) bindings fn_vars in
-      let ctx'' = List.fold_left2 (fun ctx (name, _, _) (_, tv) ->
-        let scheme = Types.generalize level tv in
-        extend_var ctx name scheme
-      ) ctx bindings fn_vars in
-      let body_te = synth ctx'' level body in
-      let typed_bindings = List.map2 (fun (name, _, _) te -> (name, te)) bindings body_tes in
-      mk (TELetRecAnd (typed_bindings, body_te)) body_te.ty
-    end
-
-and synth_perform ctx level op_name arg =
-  match Types.find_effect_op ctx.type_env op_name with
-  | None -> error (Printf.sprintf "unknown effect operation: %s" op_name)
-  | Some (effect_name, op_ty) ->
-    (* Find the effect definition for type params *)
-    let edef = List.find (fun e -> String.equal e.Types.effect_name effect_name)
-      ctx.type_env.Types.effects in
-    (* Create fresh type vars for each effect type parameter *)
-    let fresh_params = List.map (fun _ -> Types.new_tvar level) edef.Types.effect_params in
-    (* Freshen any free type variables that are NOT effect type parameters
-       (e.g. 'a in: op : string -> 'a when 'a is not an effect type parameter).
-       Must freshen BEFORE subst_tgens so effect param tvars stay linked. *)
-    let concrete_op_ty = freshen_tvars level op_ty in
-    (* Substitute TGen indices with fresh params *)
-    let concrete_op_ty = if fresh_params = [] then concrete_op_ty
-      else subst_tgens fresh_params concrete_op_ty in
-    (match Types.repr concrete_op_ty with
-     | Types.TArrow (param_ty, _, ret_ty) ->
-       let arg_te = check ctx level arg param_ty in
-       (* Add this effect to the ambient, with type params *)
-       let fresh_tail = Types.new_effvar level in
-       try_unify_eff ctx.current_eff (Types.EffRow (effect_name, fresh_params, fresh_tail));
-       mk (TEPerform (op_name, arg_te)) ret_ty
-     | _ -> error (Printf.sprintf "effect operation %s must have function type" op_name))
-
-and synth_handle ctx level body arms =
-  (* Body gets a fresh effect — it can perform effects that we'll handle *)
-  let body_eff = Types.new_effvar level in
-  let body_ctx = { ctx with current_eff = body_eff; inside_handler = true } in
-  let body_te = synth body_ctx level body in
-  let result_ty = Types.new_tvar level in
-
-  (* Collect handled effect names from op arms *)
-  let handled_effects = List.filter_map (fun arm ->
-    match arm with
-    | Ast.HOp (op_name, _, _, _) ->
-      (match Types.find_effect_op ctx.type_env op_name with
-       | Some (effect_name, _) -> Some effect_name
-       | None -> error (Printf.sprintf "unknown effect operation in handler: %s" op_name))
-    | _ -> None
-  ) arms in
-
-  (* For each handled effect, create fresh type params (shared across ops from same effect) *)
-  let unique_effects = List.sort_uniq String.compare handled_effects in
-  let effect_fresh_params = List.map (fun effect_name ->
-    let edef = List.find (fun e -> String.equal e.Types.effect_name effect_name)
-      ctx.type_env.Types.effects in
-    let fresh_params = List.map (fun _ -> Types.new_tvar level) edef.Types.effect_params in
-    (effect_name, fresh_params)
-  ) unique_effects in
-
-  (* Remove handled effects from body_eff, remainder flows to outer ambient *)
-  let remaining_eff = List.fold_left (fun eff (effect_name, fresh_params) ->
-    try Types.rewrite_row effect_name fresh_params eff
-    with Types.Unify_error msg -> error msg
-  ) (Types.eff_repr body_eff) effect_fresh_params in
-  try_unify_eff remaining_eff ctx.current_eff;
-
-  (* Type the handler arms *)
-  let typed_arms = List.map (fun arm ->
-    match arm with
-    | Ast.HReturn (name, handler_body) ->
-      let ctx' = extend_var_mono ctx name body_te.ty in
-      let handler_te = check ctx' level handler_body result_ty in
-      THReturn (name, handler_te)
-    | Ast.HOp (op_name, arg_name, k_name, handler_body) ->
-      (match Types.find_effect_op ctx.type_env op_name with
-       | None -> error (Printf.sprintf "unknown effect operation in handler: %s" op_name)
-       | Some (effect_name, op_ty) ->
-         (* Substitute effect type params (TGen) with fresh vars *)
-         let fresh_params = match List.assoc_opt effect_name effect_fresh_params with
-           | Some p -> p | None -> [] in
-         let concrete_op_ty = if fresh_params = [] then op_ty
-           else subst_tgens fresh_params op_ty in
-         let param_ty, ret_ty_op = match Types.repr concrete_op_ty with
-           | Types.TArrow (a, _, b) -> a, b
-           | _ -> error (Printf.sprintf "effect operation %s must have function type" op_name)
-         in
-         let k_ty = Types.TCont (ret_ty_op, ctx.current_eff, result_ty) in
-         let ctx' = extend_var_mono ctx arg_name param_ty in
-         let ctx' = extend_var_mono ctx' k_name k_ty in
-         let handler_te = check ctx' level handler_body result_ty in
-         THOp (op_name, arg_name, k_name, handler_te))
-  ) arms in
-  mk (TEHandle (body_te, typed_arms)) result_ty
-
-and synth_binop ctx level op e1 e2 =
-  match op with
-  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
-    (* Unified: works for int, float, and custom types *)
-    let te1 = synth ctx level e1 in
-    let te2 = synth ctx level e2 in
-    try_unify te1.ty te2.ty;
-    let resolved = Types.repr te1.ty in
-    (match resolved with
-     | Types.TFloat ->
-       mk (TEBinop (op, te1, te2)) Types.TFloat
-     | Types.TVar { contents = Types.Unbound (id, _) } ->
-       if List.mem id ctx.constraint_tvars then
-         mk (TEBinop (op, te1, te2)) (Types.repr te1.ty)
-       else begin
-         try_unify te1.ty Types.TInt;
-         mk (TEBinop (op, te1, te2)) Types.TInt
-       end
-     | Types.TInt ->
-       mk (TEBinop (op, te1, te2)) Types.TInt
-     | _ ->
-       mk (TEBinop (op, te1, te2)) (Types.repr te1.ty))
-  | Ast.Mod ->
-    let te1 = check ctx level e1 Types.TInt in
-    let te2 = check ctx level e2 Types.TInt in
-    mk (TEBinop (op, te1, te2)) Types.TInt
-  | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge ->
-    let te1 = synth ctx level e1 in
-    let te2 = synth ctx level e2 in
-    try_unify te1.ty te2.ty;
-    mk (TEBinop (op, te1, te2)) Types.TBool
-  | Ast.Eq | Ast.Neq ->
-    let te1 = synth ctx level e1 in
-    let te2 = synth ctx level e2 in
-    try_unify te1.ty te2.ty;
-    mk (TEBinop (op, te1, te2)) Types.TBool
-  | Ast.And | Ast.Or ->
-    let te1 = check ctx level e1 Types.TBool in
-    let te2 = check ctx level e2 Types.TBool in
-    mk (TEBinop (op, te1, te2)) Types.TBool
-  | Ast.Concat ->
-    let te1 = check ctx level e1 Types.TString in
-    let te2 = check ctx level e2 Types.TString in
-    mk (TEBinop (op, te1, te2)) Types.TString
-  | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr ->
-    let te1 = synth ctx level e1 in
-    let te2 = synth ctx level e2 in
-    try_unify te1.ty te2.ty;
-    let resolved = Types.repr te1.ty in
-    (match resolved with
-     | Types.TInt ->
-       mk (TEBinop (op, te1, te2)) Types.TInt
-     | Types.TVar { contents = Types.Unbound (id, _) } ->
-       if List.mem id ctx.constraint_tvars then
-         mk (TEBinop (op, te1, te2)) (Types.repr te1.ty)
-       else begin
-         try_unify te1.ty Types.TInt;
-         mk (TEBinop (op, te1, te2)) Types.TInt
-       end
-     | _ ->
-       mk (TEBinop (op, te1, te2)) (Types.repr te1.ty))
-  | Ast.Pipe ->
-    let te1 = synth ctx level e1 in
-    let te2 = synth ctx level e2 in
-    let ret_ty = Types.new_tvar level in
-    let call_eff = Types.new_effvar level in
-    try_unify te2.ty (Types.TArrow (te1.ty, call_eff, ret_ty));
-    try_subeffect call_eff ctx.current_eff;
-    mk (TEBinop (op, te1, te2)) ret_ty
-
-and synth_unop ctx level op e =
-  match op with
-  | Ast.Neg ->
-    let te = synth ctx level e in
-    let resolved = Types.repr te.ty in
-    (match resolved with
-     | Types.TFloat ->
-       mk (TEUnop (op, te)) Types.TFloat
-     | Types.TVar { contents = Types.Unbound (id, _) } ->
-       if List.mem id ctx.constraint_tvars then
-         mk (TEUnop (op, te)) (Types.repr te.ty)
-       else begin
-         try_unify te.ty Types.TInt;
-         mk (TEUnop (op, te)) Types.TInt
-       end
-     | Types.TInt ->
-       mk (TEUnop (op, te)) Types.TInt
-     | _ ->
-       mk (TEUnop (op, te)) te.ty)
-  | Ast.Not ->
-    let te = check ctx level e Types.TBool in
-    mk (TEUnop (op, te)) Types.TBool
-  | Ast.Lnot ->
-    let te = synth ctx level e in
-    let resolved = Types.repr te.ty in
-    (match resolved with
-     | Types.TInt ->
-       mk (TEUnop (op, te)) Types.TInt
-     | Types.TVar { contents = Types.Unbound _ } ->
-       try_unify te.ty Types.TInt;
-       mk (TEUnop (op, te)) Types.TInt
-     | _ ->
-       mk (TEUnop (op, te)) te.ty)
-
-and qualify_ctor_name type_env name info =
-  (* Qualify constructor name using ctor_type_name, but only if the qualified
-     version exists in the type_env. This handles the case where constructors
-     from other modules (e.g., Token.EQ via open Token) need qualification to
-     avoid shadowing, while constructors from the current module's own types
-     (e.g., Wrap in an opaque type) remain unqualified since they may not have
-     qualified entries in the type_env. *)
-  if String.contains name '.' then name
-  else match String.rindex_opt info.Types.ctor_type_name '.' with
-    | Some i ->
-      let qualified = String.sub info.Types.ctor_type_name 0 (i + 1) ^ name in
-      if List.assoc_opt qualified type_env.Types.constructors <> None then qualified
-      else name
-    | None -> name
-
-and qualify_pattern type_env pat =
-  let rec go pat = match pat with
-    | Ast.PatConstruct (name, arg) ->
-      let qname = match List.assoc_opt name type_env.Types.constructors with
-        | Some info -> qualify_ctor_name type_env name info
-        | None -> name
-      in
-      Ast.PatConstruct (qname, Option.map go arg)
-    | Ast.PatTuple ps -> Ast.PatTuple (List.map go ps)
-    | Ast.PatCons (hd, tl) -> Ast.PatCons (go hd, go tl)
-    | Ast.PatOr (p1, p2) -> Ast.PatOr (go p1, go p2)
-    | Ast.PatAs (p, n) -> Ast.PatAs (go p, n)
-    | Ast.PatRecord fields -> Ast.PatRecord (List.map (fun (f, p) -> (f, go p)) fields)
-    | Ast.PatArray ps -> Ast.PatArray (List.map go ps)
-    | Ast.PatMap kvs -> Ast.PatMap (List.map (fun (k, v) -> (go k, go v)) kvs)
-    | Ast.PatAnnot (p, a) -> Ast.PatAnnot (go p, a)
-    | _ -> pat
-  in go pat
-
-and synth_construct ctx level name arg =
-  match List.assoc_opt name ctx.type_env.constructors with
-  | None -> error (Printf.sprintf "unknown constructor: %s" name)
-  | Some info ->
-    (* Check visibility: reject constructors from private module types *)
-    if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
-      error (Printf.sprintf "unknown constructor: %s" name);
-    let qname = qualify_ctor_name ctx.type_env name info in
-    (* Fresh tvars for universals (type params) + existentials *)
-    let num_fresh = info.ctor_num_params + info.ctor_existentials in
-    let all_fresh = List.init num_fresh (fun _ -> Types.new_tvar level) in
-    let fresh_universals = List.filteri (fun i _ -> i < info.ctor_num_params) all_fresh in
-    let result_ty = match info.ctor_return_ty_params with
-      | None -> Types.TVariant (info.ctor_type_name, fresh_universals)
-      | Some params ->
-        (* GADT: substitute to get specific return type *)
-        Types.TVariant (info.ctor_type_name, List.map (subst_tgens all_fresh) params)
-    in
-    (match info.ctor_arg_ty, arg with
-     | None, None ->
-       mk (TEConstruct (qname, None)) result_ty
-     | Some expected_ty, Some arg_expr ->
-       let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh expected_ty) in
-       let arg_te = check ctx level arg_expr concrete_ty in
-       mk (TEConstruct (qname, Some arg_te)) result_ty
-     | None, Some _ ->
-       error (Printf.sprintf "constructor %s takes no arguments" name)
-     | Some expected_ty, None ->
-       (* Constructor used as a function: return fun x -> Ctor x *)
-       let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh expected_ty) in
-       let param = "__x" in
-       let param_var = mk (TEVar param) concrete_ty in
-       let body = mk (TEConstruct (qname, Some param_var)) result_ty in
-       mk (TEFun (param, body, false)) (Types.TArrow (concrete_ty, Types.EffEmpty, result_ty)))
-
-(* Freeze all types in a texpr tree using deep_repr — used for GADT snapshot/restore *)
-and freeze_texpr te =
-  let ft = Types.deep_repr te.ty in
-  let fe = match te.expr with
-    | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _
-    | TEUnit | TEVar _ | TENil -> te.expr
-    | TELet (n, s, e1, e2) -> TELet (n, s, freeze_texpr e1, freeze_texpr e2)
-    | TELetRec (n, s, e1, e2) -> TELetRec (n, s, freeze_texpr e1, freeze_texpr e2)
-    | TEFun (p, body, hr) -> TEFun (p, freeze_texpr body, hr)
-    | TEApp (f, a) -> TEApp (freeze_texpr f, freeze_texpr a)
-    | TEIf (c, t, e) -> TEIf (freeze_texpr c, freeze_texpr t, freeze_texpr e)
-    | TEBinop (op, l, r) -> TEBinop (op, freeze_texpr l, freeze_texpr r)
-    | TEUnop (op, e) -> TEUnop (op, freeze_texpr e)
-    | TETuple es -> TETuple (List.map freeze_texpr es)
-    | TERecord fs -> TERecord (List.map (fun (n, e) -> (n, freeze_texpr e)) fs)
-    | TERecordUpdate (base, overrides) -> TERecordUpdate (freeze_texpr base, List.map (fun (n, e) -> (n, freeze_texpr e)) overrides)
-    | TERecordUpdateIdx (base, pairs) -> TERecordUpdateIdx (freeze_texpr base, List.map (fun (i, v) -> (freeze_texpr i, freeze_texpr v)) pairs)
-    | TEField (e, f) -> TEField (freeze_texpr e, f)
-    | TEIndex (e, i) -> TEIndex (freeze_texpr e, freeze_texpr i)
-    | TECons (h, t) -> TECons (freeze_texpr h, freeze_texpr t)
-    | TEConstruct (n, arg) -> TEConstruct (n, Option.map freeze_texpr arg)
-    | TEMatch (s, arms, p) ->
-      TEMatch (freeze_texpr s, List.map (fun (pat, g, b) ->
-        (pat, Option.map freeze_texpr g, freeze_texpr b)) arms, p)
-    | TELetMut (n, e1, e2) -> TELetMut (n, freeze_texpr e1, freeze_texpr e2)
-    | TEAssign (n, e) -> TEAssign (n, freeze_texpr e)
-    | TEFieldAssign (e, f, v) -> TEFieldAssign (freeze_texpr e, f, freeze_texpr v)
-    | TESeq (e1, e2) -> TESeq (freeze_texpr e1, freeze_texpr e2)
-    | TEPerform (name, e) -> TEPerform (name, freeze_texpr e)
-    | TEHandle (e, arms) ->
-      TEHandle (freeze_texpr e, List.map (fun arm -> match arm with
-        | THReturn (n, b) -> THReturn (n, freeze_texpr b)
-        | THOp (eff, x, k, b) -> THOp (eff, x, k, freeze_texpr b)
-        | THOpProvide (eff, x, b) -> THOpProvide (eff, x, freeze_texpr b)
-        | THOpTry (eff, x, b) -> THOpTry (eff, x, freeze_texpr b)) arms)
-    | TEResume (k, v) -> TEResume (freeze_texpr k, freeze_texpr v)
-    | TEWhile (c, b) -> TEWhile (freeze_texpr c, freeze_texpr b)
-    | TEBreak e -> TEBreak (freeze_texpr e)
-    | TEContinueLoop -> TEContinueLoop
-    | TEFoldContinue e -> TEFoldContinue (freeze_texpr e)
-    | TEForLoop e -> TEForLoop (freeze_texpr e)
-    | TELetRecAnd (binds, body) ->
-      TELetRecAnd (List.map (fun (n, e) -> (n, freeze_texpr e)) binds, freeze_texpr body)
-    | TEArray es -> TEArray (List.map freeze_texpr es)
-    | TEReturn e -> TEReturn (freeze_texpr e)
-  in
-  { expr = fe; ty = ft; loc = te.loc }
-
-(* GADT-aware pattern checking: creates fresh tvars for the ctor's universals + existentials,
-   unifies the scrutinee type with the ctor's specific return type to establish local equations,
-   then checks sub-patterns against the instantiated arg type *)
-and check_pattern_gadt ctx level pat scrut_ty =
-  match pat with
-  | Ast.PatConstruct (name, arg_pat) ->
-    (match List.assoc_opt name ctx.type_env.constructors with
-     | None -> error (Printf.sprintf "unknown constructor in pattern: %s" name)
-     | Some info ->
-       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
-         error (Printf.sprintf "unknown constructor in pattern: %s" name);
-       let num_fresh = info.ctor_num_params + info.ctor_existentials in
-       let all_fresh = List.init num_fresh (fun _ -> Types.new_tvar level) in
-       (* Collect existential tvar refs (indices >= ctor_num_params) *)
-       let existential_refs = List.filter_map (fun i ->
-         if i >= info.ctor_num_params then
-           match List.nth all_fresh i with
-           | Types.TVar r -> Some r
-           | _ -> None
-         else None
-       ) (List.init num_fresh Fun.id) in
-       (* Build the specific return type for this GADT constructor *)
-       let return_ty = match info.ctor_return_ty_params with
-         | Some params ->
-           Types.TVariant (info.ctor_type_name, List.map (subst_tgens all_fresh) params)
-         | None ->
-           (* Regular ctor in a GADT type — use universals only *)
-           let fresh_universals = List.filteri (fun i _ -> i < info.ctor_num_params) all_fresh in
-           Types.TVariant (info.ctor_type_name, fresh_universals)
-       in
-       (* Unify scrutinee with this ctor's return type — establishes local equations *)
-       try_unify scrut_ty return_ty;
-       let bindings = match info.ctor_arg_ty, arg_pat with
-        | None, None -> []
-        | Some arg_ty, Some p ->
-          let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh arg_ty) in
-          check_pattern ctx level p concrete_ty
-        | None, Some _ -> error (Printf.sprintf "constructor %s takes no arguments" name)
-        | Some _, None -> error (Printf.sprintf "constructor %s requires an argument" name)
-       in
-       (bindings, existential_refs))
-  | _ -> (check_pattern ctx level pat scrut_ty, [])
-
-and check_existential_escape existential_refs result_ty =
-  (* Check that no existential type variable escaped into the result type.
-     After arm body checking, existential tvars may have been unified with
-     result_ty or parts of it. We detect escape by collecting all unbound tvar
-     refs reachable from result_ty, then checking if any existential tvar ref,
-     after following links, resolves to one of those refs. *)
-  let rec collect_tvar_refs acc ty =
-    match Types.repr ty with
-    | Types.TVar ({ contents = Types.Unbound _ } as r) ->
-      if List.exists (fun x -> (==) x r) acc then acc else r :: acc
-    | Types.TArrow (a, _, b) | Types.TCont (a, _, b) -> collect_tvar_refs (collect_tvar_refs acc a) b
-    | Types.TTuple ts -> List.fold_left collect_tvar_refs acc ts
-    | Types.TList t -> collect_tvar_refs acc t
-    | Types.TArray t -> collect_tvar_refs acc t
-    | Types.TRecord row -> List.fold_left (fun a (_, t) -> collect_tvar_refs a t) acc (Types.record_row_to_fields row)
-    | Types.TVariant (_, args) -> List.fold_left collect_tvar_refs acc args
-    | Types.TPolyVariant row ->
-      let rec collect_pv a = function
-        | Types.PVRow (_, Some t, tail) -> collect_pv (collect_tvar_refs a t) tail
-        | Types.PVRow (_, None, tail) -> collect_pv a tail
-        | _ -> a
-      in collect_pv acc row
-    | _ -> acc
-  in
-  let result_refs = collect_tvar_refs [] (Types.deep_repr result_ty) in
-  let has_escape = List.exists (fun exist_ref ->
-    match Types.repr (Types.TVar exist_ref) with
-    | Types.TVar ({ contents = Types.Unbound _ } as resolved_ref) ->
-      (* Existential resolved to an unbound tvar — check if it's in result_ty *)
-      List.exists (fun r -> (==) r resolved_ref) result_refs
-    | resolved ->
-      (* Existential was unified with a concrete type — check if any tvar in that
-         type is also in result_ty *)
-      let exist_refs = collect_tvar_refs [] resolved in
-      List.exists (fun er -> List.exists (fun rr -> (==) er rr) result_refs) exist_refs
-  ) existential_refs in
-  if has_escape then
-    error "existential type variable would escape the scope of its GADT match arm"
-
-and synth_match expected_ty ctx level scrut arms partial =
-  let scrut_te = synth ctx level scrut in
-  (* Determine if scrutinee is a GADT type *)
-  let gadt_info = match Types.repr scrut_te.ty with
-    | Types.TVariant (name, params) ->
-      (match find_variant_info ctx.type_env name with
-       | Some (_, _, _, true) -> Some (name, params)
-       | _ -> None)
-    | _ -> None
-  in
-  match gadt_info with
-  | Some (_gadt_name, scrut_params) ->
-    (* GADT match — need snapshot/restore for local type equations *)
-    let result_ty = match expected_ty with
-      | Some ty -> ty
-      | None -> Types.new_tvar level
-    in
-    (* Extract tvar refs from scrutinee params for snapshot/restore *)
-    let get_tvar_ref ty = match Types.repr ty with
-      | Types.TVar r -> Some r
-      | _ -> None
-    in
-    let param_refs = List.filter_map (fun p ->
-      match get_tvar_ref p with
-      | Some r -> Some (r, !r)
-      | None -> None
-    ) scrut_params in
-    (* Also save all params' current repr values for non-tvar params *)
-    let save_snapshot () =
-      List.map (fun (r, _) -> (r, !r)) param_refs
-    in
-    let restore_snapshot saved =
-      List.iter (fun (r, v) -> r := v) saved
-    in
-    let check_gadt_arm (pat, guard, body) =
-      let snapshot = save_snapshot () in
-      (* For constructor patterns, we need GADT-aware pattern checking *)
-      let ctor_name = match pat with
-        | Ast.PatConstruct (name, _) -> Some name
-        | _ -> None
-      in
-      let is_gadt_ctor = match ctor_name with
-        | Some name ->
-          (match List.assoc_opt name ctx.type_env.constructors with
-           | Some info -> info.Types.ctor_return_ty_params <> None
-           | None -> false)
-        | None -> false
-      in
-      let (bindings, existential_refs) =
-        if is_gadt_ctor then
-          check_pattern_gadt ctx level pat scrut_te.ty
-        else
-          (check_pattern ctx level pat scrut_te.ty, [])
-      in
-      let ctx' = List.fold_left (fun c (n, t) -> extend_var_mono c n t) ctx bindings in
-      let guard_te = match guard with
-        | Some g -> Some (check ctx' level g Types.TBool)
-        | None -> None
-      in
-      let body_te = check ctx' level body result_ty in
-      (* Freeze all types in the arm before restoring *)
-      let guard_te = Option.map freeze_texpr guard_te in
-      let body_te = freeze_texpr body_te in
-      (* Check existential escape *)
-      if existential_refs <> [] then
-        check_existential_escape existential_refs result_ty;
-      (* Restore snapshot *)
-      restore_snapshot snapshot;
-      (qualify_pattern ctx.type_env pat, guard_te, body_te)
-    in
-    (match arms with
-     | [] -> error "match expression has no arms"
-     | first :: rest ->
-       let first_arm = check_gadt_arm first in
-       let rest_arms = List.map check_gadt_arm rest in
-       let all_arms = first_arm :: rest_arms in
-       (* Check exhaustiveness *)
-       if not partial then
-         !exhaustiveness_check_ref ctx (Types.repr scrut_te.ty) all_arms;
-       mk (TEMatch (scrut_te, all_arms, partial)) result_ty)
-  | None ->
-    (* Regular ADT match — original logic *)
-    let check_arm ctx (pat, guard, body) =
-      let bindings = check_pattern ctx level pat scrut_te.ty in
-      let ctx' = List.fold_left (fun c (n, t) -> extend_var_mono c n t) ctx bindings in
-      let guard_te = match guard with
-        | Some g ->
-          let gte = check ctx' level g Types.TBool in
-          Some gte
-        | None -> None
-      in
-      let body_te = synth ctx' level body in
-      (qualify_pattern ctx.type_env pat, guard_te, body_te)
-    in
-    match arms with
-    | [] -> error "match expression has no arms"
-    | first :: rest ->
-      let (fp, fg, fb) = check_arm ctx first in
-      let result_ty = fb.ty in
-      let all_arms = (fp, fg, fb) ::
-        List.map (fun arm ->
-          let (p, g, b) = check_arm ctx arm in
-          try_unify b.ty result_ty;
-          (p, g, b)
-        ) rest
-      in
-      (* Check exhaustiveness *)
-      if not partial then
-        !exhaustiveness_check_ref ctx (Types.repr scrut_te.ty) all_arms;
-      mk (TEMatch (scrut_te, all_arms, partial)) result_ty
-
-(* ---- Check ---- *)
-
-and check ctx level (expr : Ast.expr) (expected : Types.ty) : texpr =
-  match expr with
-  | Ast.ELoc (loc, inner) -> current_loc := loc; check ctx level inner expected
-  | Ast.EFun (param, body) when param.annot = None ->
-    let arg_ty = Types.new_tvar level in
-    let ret_ty = Types.new_tvar level in
-    let fn_eff = Types.new_effvar level in
-    try_unify expected (Types.TArrow (arg_ty, fn_eff, ret_ty));
-    let return_used = ref false in
-    let ctx' = extend_var_mono { ctx with current_eff = fn_eff; return_type = Some ret_ty; inside_handler = false; return_used } param.name (Types.repr arg_ty) in
-    let body_te = check ctx' level body ret_ty in
-    let has_return = if param.is_generated then false else !return_used in
-    mk (TEFun (param.name, body_te, has_return)) (Types.TArrow (arg_ty, fn_eff, body_te.ty))
-  | Ast.EMatch (scrut, arms, partial) ->
-    synth_match (Some expected) ctx level scrut arms partial
-  | _ ->
-    let te = synth ctx level expr in
-    try_unify te.ty expected;
-    { te with ty = expected }
-
-(* ---- Pattern checking ---- *)
-
-and check_pattern ctx level (pat : Ast.pattern) (ty : Types.ty) : (string * Types.ty) list =
-  match pat with
-  | Ast.PatWild -> []
-  | Ast.PatVar name -> [(name, ty)]
-  | Ast.PatInt _ -> try_unify ty Types.TInt; []
-  | Ast.PatFloat _ -> try_unify ty Types.TFloat; []
-  | Ast.PatBool _ -> try_unify ty Types.TBool; []
-  | Ast.PatString _ -> try_unify ty Types.TString; []
-  | Ast.PatUnit -> try_unify ty Types.TUnit; []
-  | Ast.PatTuple pats ->
-    let tys = List.map (fun _ -> Types.new_tvar level) pats in
-    try_unify ty (Types.TTuple tys);
-    List.concat (List.map2 (check_pattern ctx level) pats tys)
-  | Ast.PatCons (hd_pat, tl_pat) ->
-    let elem_ty = Types.new_tvar level in
-    try_unify ty (Types.TList elem_ty);
-    let hd_bindings = check_pattern ctx level hd_pat elem_ty in
-    let tl_bindings = check_pattern ctx level tl_pat ty in
-    hd_bindings @ tl_bindings
-  | Ast.PatNil ->
-    let elem_ty = Types.new_tvar level in
-    try_unify ty (Types.TList elem_ty);
-    []
-  | Ast.PatConstruct (name, arg_pat) ->
-    (match List.assoc_opt name ctx.type_env.constructors with
-     | None -> error (Printf.sprintf "unknown constructor in pattern: %s" name)
-     | Some info ->
-       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
-         error (Printf.sprintf "unknown constructor in pattern: %s" name);
-       let fresh_args = List.init info.ctor_num_params (fun _ -> Types.new_tvar level) in
-       let expected_variant = Types.TVariant (info.ctor_type_name, fresh_args) in
-       try_unify ty expected_variant;
-       (match info.ctor_arg_ty, arg_pat with
-        | None, None -> []
-        | Some arg_ty, Some p ->
-          let concrete_ty = freshen_arrow_effects level (subst_tgens fresh_args arg_ty) in
-          check_pattern ctx level p concrete_ty
-        | None, Some _ -> error (Printf.sprintf "constructor %s takes no arguments" name)
-        | Some _, None -> error (Printf.sprintf "constructor %s requires an argument" name)))
-  | Ast.PatRecord field_pats ->
-    let field_tys = match Types.repr ty with
-      | Types.TRecord row -> Types.record_row_to_fields row
-      | _ ->
-        (* Try to infer record type from field names in the pattern *)
-        let pat_field_names = List.map fst field_pats in
-        let candidates = List.filter (fun (_name, fields) ->
-          List.for_all (fun fn -> List.mem_assoc fn fields) pat_field_names
-        ) ctx.type_env.Types.records in
-        (match candidates with
-         | [(_name, fields)] ->
-           let row = instantiate_record_row level fields in
-           try_unify ty (Types.TRecord row);
-           instantiate_record_fields level fields
-         | [] ->
-           (* No nominal record found. If the type is still unknown,
-              construct an open record type from pattern fields and unify. *)
-           (match Types.repr ty with
-            | Types.TVar _ ->
-              let row = List.fold_right (fun fname rest ->
-                Types.RRow (fname, Types.new_tvar level, rest)
-              ) pat_field_names (Types.new_rvar level) in
-              try_unify ty (Types.TRecord row);
-              Types.record_row_to_fields (match Types.repr ty with
-                | Types.TRecord r -> r
-                | _ -> error "record pattern used with non-record type")
-            | _ -> error "record pattern used with non-record type")
-         | _ -> error "ambiguous record pattern — annotate the type")
-    in
-    List.concat (List.map (fun (name, pat) ->
-      match List.assoc_opt name field_tys with
-      | Some fty -> check_pattern ctx level pat fty
-      | None -> error (Printf.sprintf "record type has no field %s" name)
-    ) field_pats)
-  | Ast.PatAs (inner_pat, name) ->
-    let bindings = check_pattern ctx level inner_pat ty in
-    (name, ty) :: bindings
-  | Ast.PatOr (p1, p2) ->
-    let bindings1 = check_pattern ctx level p1 ty in
-    let bindings2 = check_pattern ctx level p2 ty in
-    let names1 = List.map fst bindings1 |> List.sort String.compare in
-    let names2 = List.map fst bindings2 |> List.sort String.compare in
-    if names1 <> names2 then
-      error "or-pattern branches must bind the same variables";
-    List.iter (fun (name, ty1) ->
-      match List.assoc_opt name bindings2 with
-      | Some ty2 -> try_unify ty1 ty2
-      | None -> ()
-    ) bindings1;
-    bindings1
-  | Ast.PatArray pats ->
-    let elem_ty = Types.new_tvar level in
-    try_unify ty (Types.TArray elem_ty);
-    List.concat_map (fun p -> check_pattern ctx level p elem_ty) pats
-  | Ast.PatMap entries ->
-    let key_ty = Types.new_tvar level in
-    let val_ty = Types.new_tvar level in
-    try_unify ty (Types.TVariant ("map", [key_ty; val_ty]));
-    List.concat_map (fun (kpat, vpat) ->
-      check_pattern ctx level kpat key_ty @
-      check_pattern ctx level vpat val_ty
-    ) entries
-  | Ast.PatPolyVariant (tag, None) ->
-    let tail = Types.new_pvvar level in
-    let row = Types.PVRow (tag, None, tail) in
-    try_unify ty (Types.TPolyVariant row);
-    []
-  | Ast.PatPolyVariant (tag, Some sub_pat) ->
-    let payload_ty = Types.new_tvar level in
-    let tail = Types.new_pvvar level in
-    let row = Types.PVRow (tag, Some payload_ty, tail) in
-    try_unify ty (Types.TPolyVariant row);
-    check_pattern ctx level sub_pat payload_ty
-  | Ast.PatPin name ->
-    (match List.assoc_opt name ctx.vars with
-     | Some scheme ->
-       let var_ty = Types.instantiate level scheme in
-       try_unify ty var_ty;
-       []
-     | None -> error (Printf.sprintf "unbound variable in pin pattern: %s" name))
-  | Ast.PatAnnot (inner_pat, annot) ->
-    let annot_ty = resolve_ty_annot ctx level annot in
-    try_unify ty annot_ty;
-    check_pattern ctx level inner_pat ty
-
-(* ---- Polymorphic recursion (locally abstract types) ---- *)
-(* When a let rec has explicit type params via (type 'a ...), we bind the
-   recursive name with a polymorphic scheme from the start, enabling
-   recursive calls at different type instantiations. *)
-
-and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot body =
-  let shared_tvars = Hashtbl.create 4 in
-  (* Pre-allocate tvars for locally abstract types at level+1 *)
-  List.iter (fun tp ->
-    Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1))
-  ) type_params;
-  (* Resolve param types *)
-  let param_tys = List.map (fun (p : Ast.param) ->
-    match p.annot with
-    | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars annot
-    | None -> Types.new_tvar (level + 1)
-  ) params in
-  (* Resolve return type and optional effect annotation *)
-  let (ret_ty, body_eff) = match ret_annot with
-    | Some (Ast.TyWithEffect (ty, eff_annot)) ->
-      let ty' = resolve_ty_annot_shared ctx (level + 1) shared_tvars ty in
-      let eff = match eff_annot with
-        | Ast.EffAnnotPure -> Types.EffEmpty
-        | Ast.EffAnnotRow items -> resolve_eff_items ctx (level + 1) shared_tvars items
-      in
-      (ty', eff)
-    | Some annot ->
-      (resolve_ty_annot_shared ctx (level + 1) shared_tvars annot,
-       Types.new_effvar (level + 1))
-    | None ->
-      (Types.new_tvar (level + 1), Types.new_effvar (level + 1))
-  in
-  (* Build function type: p1 -> p2 -> ... -> ret *)
-  let fn_ty = match List.rev param_tys with
-    | [] -> ret_ty
-    | last :: rest ->
-      let inner = Types.TArrow (last, body_eff, ret_ty) in
-      List.fold_left (fun acc pty ->
-        Types.TArrow (pty, Types.EffEmpty, acc)
-      ) inner rest
-  in
-  (* Generalize to get polymorphic scheme *)
-  let scheme = Types.generalize level fn_ty in
-  (* Bind name polymorphically — this enables polymorphic recursion *)
-  let ctx_with_self = extend_var ctx name scheme in
-  let ctx_with_self = if qualified_name <> "" then extend_var ctx_with_self qualified_name scheme else ctx_with_self in
-  (* Build inner context with params bound at their resolved types *)
-  let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
-    extend_var_mono c p.name ty
-  ) { ctx_with_self with current_eff = body_eff } params param_tys in
-  (* Check body against declared return type *)
-  let body_te = check inner_ctx (level + 1) body ret_ty in
-  (* Build TEFun chain *)
-  let te = match List.rev params, List.rev param_tys with
-    | [], [] -> body_te
-    | last_p :: rest_ps, last_pty :: rest_ptys ->
-      let inner = mk (TEFun (last_p.Ast.name, body_te, false))
-        (Types.TArrow (last_pty, body_eff, body_te.ty)) in
-      List.fold_left2 (fun acc (p : Ast.param) pty ->
-        mk (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
-      ) inner rest_ps rest_ptys
-    | _ -> assert false
-  in
-  (te, scheme)
 
 (* ---- Exhaustiveness checking ---- *)
 
@@ -2712,11 +1679,11 @@ let rec uncovered_patterns type_env ty pats =
         | _ -> None
       ) pats in
       let lengths_set = List.sort_uniq compare lengths in
-      let rec find_missing n =
-        if List.mem n lengths_set then find_missing (n + 1)
-        else n
+      let rec find_missing expected = function
+        | n :: rest when n = expected -> find_missing (expected + 1) rest
+        | _ -> expected
       in
-      let missing_len = find_missing 0 in
+      let missing_len = find_missing 0 lengths_set in
       let missing_pat = if missing_len = 0 then "#[]"
         else "#[" ^ String.concat "; " (List.init missing_len (fun _ -> "_")) ^ "]"
       in
@@ -2759,10 +1726,1186 @@ let exhaustiveness_check ctx ty arms =
   ) arms in
   let missing = uncovered_patterns ctx.type_env ty unguarded_pats in
   if missing <> [] then
-    error (Printf.sprintf "non-exhaustive match, missing: %s"
+    error ctx (Printf.sprintf "non-exhaustive match, missing: %s"
              (String.concat ", " missing))
 
-let () = exhaustiveness_check_ref := exhaustiveness_check
+(* ---- Module lookup (used by ELocalOpen in synth) ---- *)
+
+let find_module_in_env type_env mod_name =
+  (* Support dotted module paths like "Outer.Inner" *)
+  match String.split_on_char '.' mod_name with
+  | [] -> None
+  | [name] -> List.assoc_opt name type_env.Types.modules
+  | first :: rest ->
+    (match List.assoc_opt first type_env.Types.modules with
+     | None -> None
+     | Some minfo ->
+       let rec drill mi = function
+         | [] -> Some mi
+         | seg :: rest ->
+           (match List.assoc_opt seg mi.Types.mod_submodules with
+            | None -> None
+            | Some sub -> drill sub rest)
+       in
+       drill minfo rest)
+
+(* ---- Synthesize ---- *)
+
+let rec synth ctx level (expr : Ast.expr) : texpr =
+  match expr with
+  | Ast.ELoc (loc, inner) -> synth { ctx with loc } level inner
+  | Ast.EInt n -> mk ctx (TEInt n) Types.TInt
+  | Ast.EFloat f -> mk ctx (TEFloat f) Types.TFloat
+  | Ast.EBool b -> mk ctx (TEBool b) Types.TBool
+  | Ast.EString s -> mk ctx (TEString s) Types.TString
+  | Ast.EByte n -> mk ctx (TEByte n) Types.TByte
+  | Ast.ERune n -> mk ctx (TERune n) Types.TRune
+  | Ast.EUnit -> mk ctx TEUnit Types.TUnit
+  | Ast.ENil ->
+    mk ctx TENil (Types.TList (Types.new_tvar level))
+  | Ast.EVar name ->
+    let ty = lookup_var ctx level name in
+    let resolved_name = resolve_module_name ctx name in
+    mk ctx (TEVar resolved_name) ty
+  | Ast.EBinop (op, e1, e2) -> synth_binop ctx level op e1 e2
+  | Ast.EUnop (op, e) -> synth_unop ctx level op e
+  | Ast.EApp (fn, arg) ->
+    let fn_te = synth ctx level fn in
+    let arg_te = synth ctx level arg in
+    let ret_ty = Types.new_tvar level in
+    let call_eff = Types.new_effvar level in
+    try_unify ctx fn_te.ty (Types.TArrow (arg_te.ty, call_eff, ret_ty));
+    try_subeffect ctx call_eff ctx.current_eff;
+    mk ctx (TEApp (fn_te, arg_te)) ret_ty
+  | Ast.EFun (param, body) ->
+    let param_ty = match param.annot with
+      | Some annot -> resolve_ty_annot ctx level annot
+      | None -> Types.new_tvar level
+    in
+    let body_eff = Types.new_effvar level in
+    let ret_ty = Types.new_tvar level in
+    let ctx' = if param.is_generated then
+      (* Generated callback (e.g. for-loop): preserve outer return_type *)
+      { ctx with current_eff = body_eff }
+    else begin
+      (* User function: fresh return scope *)
+      let return_used = ref false in
+      { ctx with current_eff = body_eff; return_type = Some ret_ty;
+        inside_handler = false; return_used }
+    end in
+    let ctx' = extend_var_mono ctx' param.name param_ty in
+    let body_te = synth ctx' level body in
+    try_unify ctx body_te.ty ret_ty;
+    let has_return = if param.is_generated then false
+      else !(ctx'.return_used) in
+    mk ctx (TEFun (param.name, body_te, has_return)) (Types.TArrow (param_ty, body_eff, ret_ty))
+  | Ast.ELet (name, e1, e2) ->
+    let e1_te = synth ctx (level + 1) e1 in
+    improve_fundeps_in_expr ctx.vars ctx.type_env e1_te;
+    let scheme = if is_syntactic_value e1 then Types.generalize level e1_te.ty
+                 else Types.mono e1_te.ty in
+    let scheme = infer_implicit_constraints "" ctx.type_env ctx.vars e1_te scheme in
+    let scheme = infer_record_evidence ctx.vars e1_te scheme in
+    let stored_scheme = if scheme_needs_xform scheme then Some scheme else None in
+    let ctx' = extend_var ctx name scheme in
+    let e2_te = synth ctx' level e2 in
+    mk ctx (TELet (name, stored_scheme, e1_te, e2_te)) e2_te.ty
+  | Ast.ELetMut (name, e1, e2) ->
+    let e1_te = synth ctx (level + 1) e1 in
+    (* Mutable variables must not be generalized (value restriction):
+       each reference must share the same type, not get a fresh instantiation *)
+    let scheme = { Types.quant = 0; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = e1_te.ty } in
+    let ctx' = extend_var_mutable ctx name scheme in
+    let e2_te = synth ctx' level e2 in
+    mk ctx (TELetMut (name, e1_te, e2_te)) e2_te.ty
+  | Ast.EAssign (name, e) ->
+    if not (List.mem name ctx.mutable_vars) then
+      error ctx (Printf.sprintf "variable %s is not mutable" name);
+    let var_ty = lookup_var ctx level name in
+    let e_te = check ctx level e var_ty in
+    let resolved_name = resolve_module_name ctx name in
+    mk ctx (TEAssign (resolved_name, e_te)) Types.TUnit
+  | Ast.EFieldAssign (record_expr, field, value_expr) ->
+    synth_field_assign ctx level record_expr field value_expr
+  | Ast.ELetRec (name, type_params, e1, e2) ->
+    synth_let_rec ctx level name type_params e1 e2
+  | Ast.EIf (cond, then_e, else_e) ->
+    let cond_te = check ctx level cond Types.TBool in
+    let then_te = synth ctx level then_e in
+    let else_te = check ctx level else_e then_te.ty in
+    mk ctx (TEIf (cond_te, then_te, else_te)) then_te.ty
+  | Ast.ETuple exprs ->
+    let tes = List.map (synth ctx level) exprs in
+    let tys = List.map (fun te -> te.ty) tes in
+    mk ctx (TETuple tes) (Types.TTuple tys)
+  | Ast.ERecord fields ->
+    let typed_fields = List.map (fun (n, e) ->
+      let te = synth ctx level e in (n, te)
+    ) fields in
+    let field_tys = List.map (fun (n, te) -> (n, te.ty)) typed_fields in
+    let field_tys = List.sort (fun (a, _) (b, _) -> String.compare a b) field_tys in
+    let row = Types.fields_to_closed_row field_tys in
+    mk ctx (TERecord typed_fields) (Types.TRecord row)
+  | Ast.ERecordUpdate (base, overrides) ->
+    synth_record_update ctx level base overrides
+  | Ast.EField (e, field) -> synth_field ctx level e field
+  | Ast.EIndex (base, idx) ->
+    let te_base = synth ctx level base in
+    (match Types.repr te_base.ty with
+     | Types.TString ->
+       let te_idx = check ctx level idx Types.TInt in
+       mk ctx (TEIndex (te_base, te_idx)) Types.TByte
+     | Types.TArray t ->
+       let te_idx = check ctx level idx Types.TInt in
+       mk ctx (TEIndex (te_base, te_idx)) t
+     | _ ->
+       (* Desugar to Index typeclass: at idx base *)
+       let te = synth ctx level (Ast.EApp (Ast.EApp (Ast.EVar "at", idx), base)) in
+       (* Apply fundep improvement: if the container type is concrete,
+          the Index fundep ('c -> 'k 'v) can determine the result type *)
+       (match List.find_opt (fun c -> String.equal c.Types.class_name "Index")
+                ctx.type_env.Types.classes with
+        | Some class_def when class_def.Types.class_fundeps <> [] ->
+          let container_ty = Types.repr te_base.ty in
+          let partial = [Some container_ty; None; None] in
+          let improved = Types.improve_with_fundeps
+            ctx.type_env.Types.instances class_def partial in
+          (match List.nth_opt improved 2 with
+           | Some (Some val_ty) -> try_unify ctx te.ty val_ty
+           | _ -> ())
+        | _ -> ());
+       te)
+  | Ast.ECons (hd, tl) ->
+    let hd_te = synth ctx level hd in
+    let list_ty = Types.TList hd_te.ty in
+    let tl_te = check ctx level tl list_ty in
+    mk ctx (TECons (hd_te, tl_te)) list_ty
+  | Ast.EList (first :: rest) ->
+    let first_te = synth ctx level first in
+    let rest_tes = List.map (fun e -> check ctx level e first_te.ty) rest in
+    let list_ty = Types.TList first_te.ty in
+    mk ctx (TECons (first_te,
+      List.fold_right (fun te acc ->
+        mk ctx (TECons (te, acc)) list_ty
+      ) rest_tes (mk ctx TENil list_ty)
+    )) list_ty
+  | Ast.EList [] ->
+    mk ctx TENil (Types.TList (Types.new_tvar level))
+  | Ast.EArray (first :: rest) ->
+    let first_te = synth ctx level first in
+    let rest_tes = List.map (fun e -> check ctx level e first_te.ty) rest in
+    mk ctx (TEArray (first_te :: rest_tes)) (Types.TArray first_te.ty)
+  | Ast.EArray [] ->
+    mk ctx (TEArray []) (Types.TArray (Types.new_tvar level))
+  | Ast.EConstruct (name, arg) ->
+    synth_construct ctx level name arg
+  | Ast.EMatch (scrut, arms, partial) ->
+    synth_match None ctx level scrut arms partial
+  | Ast.ESeq (e1, e2) ->
+    let e1_te = synth ctx level e1 in
+    let e2_te = synth ctx level e2 in
+    mk ctx (TESeq (e1_te, e2_te)) e2_te.ty
+  | Ast.EAnnot (e, annot) ->
+    let ty = resolve_ty_annot ctx level annot in
+    let te = check ctx level e ty in
+    te
+  | Ast.EPolyVariant (tag, None) ->
+    let tail = Types.new_pvvar level in
+    let row = Types.PVRow (tag, None, tail) in
+    mk ctx (TEConstruct ("`" ^ tag, None)) (Types.TPolyVariant row)
+  | Ast.EPolyVariant (tag, Some arg) ->
+    let arg_te = synth ctx level arg in
+    let tail = Types.new_pvvar level in
+    let row = Types.PVRow (tag, Some arg_te.ty, tail) in
+    mk ctx (TEConstruct ("`" ^ tag, Some arg_te)) (Types.TPolyVariant row)
+  | Ast.ECoerce (inner, target_annot) ->
+    let inner_te = synth ctx level inner in
+    let target_ty = resolve_ty_annot ctx level target_annot in
+    try_unify ctx inner_te.ty target_ty;
+    { inner_te with ty = target_ty }
+  | Ast.EPerform (op_name, arg) ->
+    synth_perform ctx level op_name arg
+  | Ast.EHandle (body, arms) ->
+    synth_handle ctx level body arms
+  | Ast.EWhile { while_cond; while_body } ->
+    let ctx' = { ctx with loop_info = Some WhileLoop } in
+    let cond_te = check ctx' level while_cond Types.TBool in
+    let body_te = check ctx' level while_body Types.TUnit in
+    mk ctx (TEWhile { tw_cond = cond_te; tw_body = body_te }) Types.TUnit
+  | Ast.EFor { for_var; for_iter; for_body } ->
+    (* Desugar: TEForLoop(fold (fun _ x -> body; ()) () coll) *)
+    let ctx' = { ctx with loop_info = Some UnitLoop } in
+    let desugared = Ast.EApp(Ast.EApp(Ast.EApp(Ast.EVar "fold",
+      Ast.EFun({name="_"; annot=None; is_generated=true},
+        Ast.EFun({name=for_var; annot=None; is_generated=true},
+          Ast.ESeq(for_body, Ast.EUnit)))),
+      Ast.EUnit),
+      for_iter) in
+    let fold_te = synth ctx' level desugared in
+    mk ctx (TEForLoop fold_te) Types.TUnit
+  | Ast.EForFold { loop_var = var_name; loop_iter = coll_expr; accum_var = acc_name; accum_init = init_expr; fold_body = body_expr } ->
+    (* Desugar: TEForLoop(fold (fun acc x -> body) init coll) *)
+    let ctx' = { ctx with loop_info = Some (FoldLoop acc_name) } in
+    let desugared = Ast.EApp(Ast.EApp(Ast.EApp(Ast.EVar "fold",
+      Ast.EFun({name=acc_name; annot=None; is_generated=true},
+        Ast.EFun({name=var_name; annot=None; is_generated=true},
+          body_expr))),
+      init_expr),
+      coll_expr) in
+    let fold_te = synth ctx' level desugared in
+    mk ctx (TEForLoop fold_te) fold_te.ty
+  | Ast.EBreak value_opt ->
+    (match ctx.loop_info with
+     | None -> error ctx "break outside of loop"
+     | Some WhileLoop ->
+       if value_opt <> None then error ctx "break with value only allowed in fold loops";
+       mk ctx (TEBreak (mk ctx TEUnit Types.TUnit)) Types.TUnit
+     | Some UnitLoop ->
+       if value_opt <> None then error ctx "break with value only allowed in fold loops";
+       mk ctx (TEBreak (mk ctx TEUnit Types.TUnit)) Types.TUnit
+     | Some (FoldLoop acc_name) ->
+       let v_te = match value_opt with
+         | Some e -> synth ctx level e
+         | None -> synth ctx level (Ast.EVar acc_name) in
+       mk ctx (TEBreak v_te) (Types.new_tvar level))
+  | Ast.EContinueLoop ->
+    (match ctx.loop_info with
+     | None -> error ctx "continue outside of loop"
+     | Some WhileLoop -> mk ctx TEContinueLoop Types.TUnit
+     | Some UnitLoop -> mk ctx (TEFoldContinue (mk ctx TEUnit Types.TUnit)) Types.TUnit
+     | Some (FoldLoop acc_name) ->
+       let acc_te = synth ctx level (Ast.EVar acc_name) in
+       mk ctx (TEFoldContinue acc_te) (Types.new_tvar level))
+  | Ast.EReturn e ->
+    (match ctx.return_type with
+     | None -> error ctx "return outside of function"
+     | Some ret_ty ->
+       if ctx.inside_handler then
+         error ctx "Type error: return inside try/with is not supported";
+       ctx.return_used := true;
+       let e_te = synth ctx level e in
+       try_unify ctx e_te.ty ret_ty;
+       mk ctx (TEReturn e_te) (Types.new_tvar level))
+  | Ast.EWhileLet (pat, scrutinee, body) ->
+    (* Desugar: for true do match scrutinee with | pat -> body | _ -> break done *)
+    let desugared = Ast.EWhile { while_cond = Ast.EBool true; while_body =
+      Ast.EMatch (scrutinee,
+        [(pat, None, body);
+         (Ast.PatWild, None, Ast.EBreak None)],
+        Total) } in
+    synth ctx level desugared
+  | Ast.EResume (k_expr, v_expr) ->
+    let k_te = synth ctx level k_expr in
+    let v_te = synth ctx level v_expr in
+    let ret_ty = Types.new_tvar level in
+    let call_eff = Types.new_effvar level in
+    try_unify ctx k_te.ty (Types.TCont (v_te.ty, call_eff, ret_ty));
+    try_subeffect ctx call_eff ctx.current_eff;
+    mk ctx (TEResume (k_te, v_te)) ret_ty
+  | Ast.EMap pairs ->
+    let pair_list = Ast.EList (List.map (fun (k, v) -> Ast.ETuple [k; v]) pairs) in
+    let desugared = Ast.EApp (Ast.EVar "Map.of_list", pair_list) in
+    synth ctx level desugared
+  | Ast.EMapTyped (mod_name, pairs) ->
+    let pair_list = Ast.EList (List.map (fun (k, v) -> Ast.ETuple [k; v]) pairs) in
+    let desugared = Ast.EApp (Ast.EVar (mod_name ^ ".of_list"), pair_list) in
+    synth ctx level desugared
+  | Ast.ESet elems ->
+    let list_expr = Ast.EList elems in
+    let desugared = Ast.EApp (Ast.EVar "Set.of_list", list_expr) in
+    synth ctx level desugared
+  | Ast.ECollTyped (mod_name, elems) ->
+    let list_expr = Ast.EList elems in
+    let desugared = Ast.EApp (Ast.EVar (mod_name ^ ".of_list"), list_expr) in
+    synth ctx level desugared
+  | Ast.ELocalOpen (mod_name, inner_expr) ->
+    (* Look up module, desugar to let bindings for each pub var *)
+    let minfo = match find_module_in_env ctx.type_env mod_name with
+      | Some m -> m
+      | None -> error ctx (Printf.sprintf "unknown module: %s" mod_name)
+    in
+    (* Wrap inner_expr with let bindings: let x = M.x in let y = M.y in ... expr *)
+    let desugared = List.fold_left (fun body (short, _scheme) ->
+      let qualified = mod_name ^ "." ^ short in
+      Ast.ELet (short, Ast.EVar qualified, body)
+    ) inner_expr minfo.Types.mod_pub_vars in
+    synth ctx level desugared
+  | Ast.ELetRecAnd (bindings, body) ->
+    synth_let_rec_and ctx level bindings body
+
+and synth_field ctx level e field =
+  let te = synth ctx level e in
+  let field_ty = Types.new_tvar level in
+  let row_tail = Types.new_rvar level in
+  (* Try nominal resolution first when type is unknown *)
+  (match Types.repr te.ty with
+   | Types.TVar _ ->
+     let candidates = List.filter (fun (_name, fields) ->
+       List.mem_assoc field fields
+     ) ctx.type_env.Types.records in
+     (match candidates with
+      | [(_name, fields)] ->
+        let row = instantiate_record_row level fields in
+        try_unify ctx te.ty (Types.TRecord row)
+      | _ ->
+        try_unify ctx te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))))
+   | _ ->
+     try_unify ctx te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))));
+  (* Extract the actual field type from the unified record *)
+  let actual_field_ty = match Types.repr te.ty with
+    | Types.TRecord row ->
+      let fields = Types.record_row_to_fields row in
+      (match List.assoc_opt field fields with
+       | Some ty -> ty
+       | None -> field_ty)
+    | _ -> field_ty
+  in
+  mk ctx (TEField (te, field)) actual_field_ty
+
+and synth_field_assign ctx level record_expr field value_expr =
+  let r_te = synth ctx level record_expr in
+  let field_ty = Types.new_tvar level in
+  let row_tail = Types.new_rvar level in
+  (* Try nominal resolution first for better errors *)
+  (match Types.repr r_te.ty with
+   | Types.TVar _ ->
+     let candidates = List.filter (fun (_name, fields) ->
+       List.mem_assoc field fields
+     ) ctx.type_env.Types.records in
+     (match candidates with
+      | [(_name, fields)] ->
+        let row = instantiate_record_row level fields in
+        try_unify ctx r_te.ty (Types.TRecord row)
+      | _ ->
+        try_unify ctx r_te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))))
+   | _ ->
+     try_unify ctx r_te.ty (Types.TRecord (Types.RRow (field, field_ty, row_tail))));
+  (* Now extract the field type from the unified record *)
+  let actual_field_ty = match Types.repr r_te.ty with
+    | Types.TRecord row ->
+      let fields = Types.record_row_to_fields row in
+      (match List.assoc_opt field fields with
+       | Some ty -> ty
+       | None -> error ctx (Printf.sprintf "record has no field %s" field))
+    | _ -> error ctx "field assignment on non-record type"
+  in
+  if not (List.mem field ctx.type_env.mutable_fields) then
+    error ctx (Printf.sprintf "field %s is not mutable" field);
+  let v_te = check ctx level value_expr actual_field_ty in
+  mk ctx (TEFieldAssign (r_te, field, v_te)) Types.TUnit
+
+and synth_let_rec ctx level name type_params e1 e2 =
+  match strip_loc e1 with
+  | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) ->
+    if type_params <> [] then begin
+      let (params, ret_annot, body) = extract_fn_info e1 in
+      let (e1_te, scheme) = synth_poly_rec_fn ctx level name "" type_params params ret_annot body in
+      let ctx' = extend_var ctx name scheme in
+      let e2_te = synth ctx' level e2 in
+      mk ctx (TELetRec (name, None, e1_te, e2_te)) e2_te.ty
+    end else begin
+      let fn_var = Types.new_tvar (level + 1) in
+      let ctx' = extend_var_mono ctx name fn_var in
+      let e1_te = synth ctx' (level + 1) e1 in
+      try_unify ctx fn_var e1_te.ty;
+      improve_fundeps_in_expr ctx.vars ctx.type_env e1_te;
+      let scheme = Types.generalize level e1_te.ty in
+      let scheme = infer_implicit_constraints name ctx.type_env ctx.vars e1_te scheme in
+      let scheme = infer_record_evidence ctx.vars e1_te scheme in
+      let stored_scheme = if scheme_needs_xform scheme then Some scheme else None in
+      let ctx'' = extend_var ctx name scheme in
+      let e2_te = synth ctx'' level e2 in
+      mk ctx (TELetRec (name, stored_scheme, e1_te, e2_te)) e2_te.ty
+    end
+  | _ when is_constructive e1 && not (is_immediately_linked name e1) ->
+    if type_params <> [] then
+      error ctx "recursive value binding does not support polymorphic type parameters";
+    let val_var = Types.new_tvar (level + 1) in
+    let ctx' = extend_var_mono ctx name val_var in
+    let e1_te = synth ctx' (level + 1) e1 in
+    try_unify ctx val_var e1_te.ty;
+    let scheme = Types.generalize level e1_te.ty in
+    let ctx'' = extend_var ctx name scheme in
+    let e2_te = synth ctx'' level e2 in
+    mk ctx (TELetRec (name, None, e1_te, e2_te)) e2_te.ty
+  | _ -> error ctx "let rec binding must be a function or constructive expression"
+
+and synth_record_update ctx level base overrides =
+  let base_te = synth ctx level base in
+  (* Ensure base is a record; if fully unknown, try nominal resolution *)
+  (match Types.repr base_te.ty with
+   | Types.TVar _ ->
+     let override_names = List.map fst overrides in
+     let candidates = List.filter (fun (_name, rfields) ->
+       List.for_all (fun f -> List.mem_assoc f rfields) override_names
+     ) ctx.type_env.Types.records in
+     (match candidates with
+      | [(_, rfields)] ->
+        let row = instantiate_record_row level rfields in
+        try_unify ctx base_te.ty (Types.TRecord row)
+      | _ ->
+        let row_tail = Types.new_rvar level in
+        let row = List.fold_right (fun name acc ->
+          Types.RRow (name, Types.new_tvar level, acc)
+        ) override_names row_tail in
+        try_unify ctx base_te.ty (Types.TRecord row))
+   | Types.TRecord _ -> ()
+   | _ -> error ctx "record update on non-record type");
+  (* For each override, unify base with { field: 'a | ρ } to ensure field exists *)
+  let override_field_tys = List.map (fun (name, _) ->
+    let field_ty = Types.new_tvar level in
+    let row_tail = Types.new_rvar level in
+    try_unify ctx base_te.ty (Types.TRecord (Types.RRow (name, field_ty, row_tail)));
+    let actual_ty = match Types.repr base_te.ty with
+      | Types.TRecord row ->
+        let fields = Types.record_row_to_fields row in
+        (match List.assoc_opt name fields with
+         | Some ty -> ty
+         | None -> field_ty)
+      | _ -> field_ty
+    in
+    (name, actual_ty)
+  ) overrides in
+  let typed_overrides = List.map2 (fun (name, e) (_, expected_ty) ->
+    let te = check ctx level e expected_ty in
+    (name, te)
+  ) overrides override_field_tys in
+  (* Check if row is closed or open *)
+  let rec has_open_tail row = match Types.rrow_repr row with
+    | Types.RRow (_, _, tail) -> has_open_tail tail
+    | Types.RVar { contents = Types.RUnbound _ } -> true
+    | _ -> false
+  in
+  let is_open = match Types.repr base_te.ty with
+    | Types.TRecord row -> has_open_tail row
+    | _ -> false
+  in
+  if is_open then
+    mk ctx (TERecordUpdate (base_te, typed_overrides)) base_te.ty
+  else begin
+    let field_tys = match Types.repr base_te.ty with
+      | Types.TRecord row -> Types.record_row_to_fields row
+      | _ -> error ctx "record update on non-record type"
+    in
+    let tmp = "__rec_upd" in
+    let tmp_ty = base_te.ty in
+    let all_fields = List.map (fun (name, ty) ->
+      match List.assoc_opt name typed_overrides with
+      | Some te -> (name, te)
+      | None -> (name, mk ctx (TEField (mk ctx (TEVar tmp) tmp_ty, name)) ty)
+    ) field_tys in
+    let record_row = Types.fields_to_closed_row field_tys in
+    let record_expr = mk ctx (TERecord all_fields) (Types.TRecord record_row) in
+    mk ctx (TELet (tmp, None, base_te, record_expr)) (Types.TRecord record_row)
+  end
+
+and synth_let_rec_and ctx level bindings body =
+  let has_poly = List.exists (fun (_, tp, _) -> tp <> []) bindings in
+  if has_poly then begin
+    let infos = List.map (fun (name, type_params, fn_expr) ->
+      let (params, ret_annot, inner_body) = extract_fn_info fn_expr in
+      (name, type_params, params, ret_annot, inner_body)
+    ) bindings in
+    let tvars_list = List.map (fun (_, type_params, params, ret_annot, _) ->
+      let shared_tvars = Hashtbl.create 4 in
+      let shared_eff_tvars = Hashtbl.create 2 in
+      List.iter (fun tp ->
+        Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1))
+      ) type_params;
+      let param_tys = List.map (fun (p : Ast.param) -> match p.annot with
+        | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot
+        | None -> Types.new_tvar (level + 1)) params in
+      let (ret_ty, body_eff) = match ret_annot with
+        | Some (Ast.TyWithEffect (ty, eff_annot)) ->
+          let ty' = resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars ty in
+          let eff = match eff_annot with
+            | Ast.EffAnnotPure -> Types.EffEmpty
+            | Ast.EffAnnotRow items -> resolve_eff_items ctx (level + 1) shared_tvars shared_eff_tvars items in
+          (ty', eff)
+        | Some annot ->
+          (resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot,
+           Types.new_effvar (level + 1))
+        | None -> (Types.new_tvar (level + 1), Types.new_effvar (level + 1)) in
+      let fn_ty = match List.rev param_tys with
+        | [] -> ret_ty
+        | last :: rest ->
+          let inner = Types.TArrow (last, body_eff, ret_ty) in
+          List.fold_left (fun acc pty -> Types.TArrow (pty, Types.EffEmpty, acc)) inner rest in
+      (param_tys, ret_ty, body_eff, fn_ty)
+    ) infos in
+    let schemes = List.map (fun (_, _, _, fn_ty) -> Types.generalize level fn_ty) tvars_list in
+    let ctx' = List.fold_left2 (fun ctx (name, _, _, _, _) scheme ->
+      extend_var ctx name scheme) ctx infos schemes in
+    let body_tes = List.map2 (fun (_, _, params, _, inner_body) (param_tys, ret_ty, body_eff, _) ->
+      let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
+        extend_var_mono c p.name ty) { ctx' with current_eff = body_eff } params param_tys in
+      let body_te = check inner_ctx (level + 1) inner_body ret_ty in
+      match List.rev params, List.rev param_tys with
+      | [], [] -> body_te
+      | (last_p : Ast.param) :: rest_ps, last_pty :: rest_ptys ->
+        let inner = mk ctx (TEFun (last_p.name, body_te, false))
+          (Types.TArrow (last_pty, body_eff, body_te.ty)) in
+        List.fold_left2 (fun acc (p : Ast.param) pty ->
+          mk ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
+        ) inner rest_ps rest_ptys
+      | _ -> assert false
+    ) infos tvars_list in
+    let ctx'' = List.fold_left2 (fun ctx (name, _, _, _, _) scheme ->
+      extend_var ctx name scheme) ctx infos schemes in
+    let body_te = synth ctx'' level body in
+    let typed_bindings = List.map2 (fun (name, _, _, _, _) te -> (name, te)) infos body_tes in
+    mk ctx (TELetRecAnd (typed_bindings, body_te)) body_te.ty
+  end else begin
+    List.iter (fun (name, _, fn_expr) ->
+      match strip_loc fn_expr with
+      | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
+      | _ when is_constructive fn_expr && not (is_immediately_linked name fn_expr) -> ()
+      | _ -> error ctx (Printf.sprintf "let rec binding for '%s' must be a function or constructive expression" name)
+    ) bindings;
+    let fn_vars = List.map (fun (name, _, _) -> (name, Types.new_tvar (level + 1))) bindings in
+    let ctx' = List.fold_left (fun ctx (name, tv) ->
+      extend_var_mono ctx name tv
+    ) ctx fn_vars in
+    let body_tes = List.map2 (fun (_, _, fn_expr) (_, tv) ->
+      let te = synth ctx' (level + 1) fn_expr in
+      try_unify ctx tv te.ty;
+      te
+    ) bindings fn_vars in
+    let ctx'' = List.fold_left2 (fun ctx (name, _, _) (_, tv) ->
+      let scheme = Types.generalize level tv in
+      extend_var ctx name scheme
+    ) ctx bindings fn_vars in
+    let body_te = synth ctx'' level body in
+    let typed_bindings = List.map2 (fun (name, _, _) te -> (name, te)) bindings body_tes in
+    mk ctx (TELetRecAnd (typed_bindings, body_te)) body_te.ty
+  end
+
+and synth_perform ctx level op_name arg =
+  match Types.find_effect_op ctx.type_env op_name with
+  | None -> error ctx (Printf.sprintf "unknown effect operation: %s" op_name)
+  | Some (effect_name, op_ty) ->
+    (* Find the effect definition for type params *)
+    let edef = List.find (fun e -> String.equal e.Types.effect_name effect_name)
+      ctx.type_env.Types.effects in
+    (* Create fresh type vars for each effect type parameter *)
+    let fresh_params = List.map (fun _ -> Types.new_tvar level) edef.Types.effect_params in
+    (* Freshen any free type variables that are NOT effect type parameters
+       (e.g. 'a in: op : string -> 'a when 'a is not an effect type parameter).
+       Must freshen BEFORE subst_tgens so effect param tvars stay linked. *)
+    let concrete_op_ty = freshen_tvars level op_ty in
+    (* Substitute TGen indices with fresh params *)
+    let concrete_op_ty = if fresh_params = [] then concrete_op_ty
+      else subst_tgens fresh_params concrete_op_ty in
+    (match Types.repr concrete_op_ty with
+     | Types.TArrow (param_ty, _, ret_ty) ->
+       let arg_te = check ctx level arg param_ty in
+       (* Add this effect to the ambient, with type params *)
+       let fresh_tail = Types.new_effvar level in
+       try_unify_eff ctx ctx.current_eff (Types.EffRow (effect_name, fresh_params, fresh_tail));
+       mk ctx (TEPerform (op_name, arg_te)) ret_ty
+     | _ -> error ctx (Printf.sprintf "effect operation %s must have function type" op_name))
+
+and synth_handle ctx level body arms =
+  (* Body gets a fresh effect — it can perform effects that we'll handle *)
+  let body_eff = Types.new_effvar level in
+  let body_ctx = { ctx with current_eff = body_eff; inside_handler = true } in
+  let body_te = synth body_ctx level body in
+  let result_ty = Types.new_tvar level in
+
+  (* Collect handled effect names from op arms *)
+  let handled_effects = List.filter_map (fun arm ->
+    match arm with
+    | Ast.HOp { op_name; _ } ->
+      (match Types.find_effect_op ctx.type_env op_name with
+       | Some (effect_name, _) -> Some effect_name
+       | None -> error ctx (Printf.sprintf "unknown effect operation in handler: %s" op_name))
+    | _ -> None
+  ) arms in
+
+  (* For each handled effect, create fresh type params (shared across ops from same effect) *)
+  let unique_effects = List.sort_uniq String.compare handled_effects in
+  let effect_fresh_params = List.map (fun effect_name ->
+    let edef = List.find (fun e -> String.equal e.Types.effect_name effect_name)
+      ctx.type_env.Types.effects in
+    let fresh_params = List.map (fun _ -> Types.new_tvar level) edef.Types.effect_params in
+    (effect_name, fresh_params)
+  ) unique_effects in
+
+  (* Remove handled effects from body_eff, remainder flows to outer ambient *)
+  let remaining_eff = List.fold_left (fun eff (effect_name, fresh_params) ->
+    try Types.rewrite_row effect_name fresh_params eff
+    with Types.Unify_error msg -> error ctx msg
+  ) (Types.eff_repr body_eff) effect_fresh_params in
+  try_unify_eff ctx remaining_eff ctx.current_eff;
+
+  (* Type the handler arms *)
+  let typed_arms = List.map (fun arm ->
+    match arm with
+    | Ast.HReturn (name, handler_body) ->
+      let ctx' = extend_var_mono ctx name body_te.ty in
+      let handler_te = check ctx' level handler_body result_ty in
+      THReturn (name, handler_te)
+    | Ast.HOp { op_name; arg = arg_name; k = k_name; body = handler_body } ->
+      (match Types.find_effect_op ctx.type_env op_name with
+       | None -> error ctx (Printf.sprintf "unknown effect operation in handler: %s" op_name)
+       | Some (effect_name, op_ty) ->
+         (* Substitute effect type params (TGen) with fresh vars *)
+         let fresh_params = match List.assoc_opt effect_name effect_fresh_params with
+           | Some p -> p | None -> [] in
+         let concrete_op_ty = if fresh_params = [] then op_ty
+           else subst_tgens fresh_params op_ty in
+         let param_ty, ret_ty_op = match Types.repr concrete_op_ty with
+           | Types.TArrow (a, _, b) -> a, b
+           | _ -> error ctx (Printf.sprintf "effect operation %s must have function type" op_name)
+         in
+         let k_ty = Types.TCont (ret_ty_op, ctx.current_eff, result_ty) in
+         let ctx' = extend_var_mono ctx arg_name param_ty in
+         let ctx' = extend_var_mono ctx' k_name k_ty in
+         let handler_te = check ctx' level handler_body result_ty in
+         THOp { op_name; arg = arg_name; k = k_name; body = handler_te })
+  ) arms in
+  mk ctx (TEHandle (body_te, typed_arms)) result_ty
+
+and synth_binop ctx level op e1 e2 =
+  match op with
+  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
+    (* Unified: works for int, float, and custom types via Num typeclass *)
+    let te1 = synth ctx level e1 in
+    let te2 = synth ctx level e2 in
+    try_unify ctx te1.ty te2.ty;
+    mk ctx (TEBinop (op, te1, te2)) (Types.repr te1.ty)
+  | Ast.Mod ->
+    let te1 = check ctx level e1 Types.TInt in
+    let te2 = check ctx level e2 Types.TInt in
+    mk ctx (TEBinop (op, te1, te2)) Types.TInt
+  | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge ->
+    let te1 = synth ctx level e1 in
+    let te2 = synth ctx level e2 in
+    try_unify ctx te1.ty te2.ty;
+    mk ctx (TEBinop (op, te1, te2)) Types.TBool
+  | Ast.Eq | Ast.Neq ->
+    let te1 = synth ctx level e1 in
+    let te2 = synth ctx level e2 in
+    try_unify ctx te1.ty te2.ty;
+    mk ctx (TEBinop (op, te1, te2)) Types.TBool
+  | Ast.And | Ast.Or ->
+    let te1 = check ctx level e1 Types.TBool in
+    let te2 = check ctx level e2 Types.TBool in
+    mk ctx (TEBinop (op, te1, te2)) Types.TBool
+  | Ast.Concat ->
+    let te1 = check ctx level e1 Types.TString in
+    let te2 = check ctx level e2 Types.TString in
+    mk ctx (TEBinop (op, te1, te2)) Types.TString
+  | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr ->
+    (* Unified: works for int and custom types via Bitwise typeclass *)
+    let te1 = synth ctx level e1 in
+    let te2 = synth ctx level e2 in
+    try_unify ctx te1.ty te2.ty;
+    mk ctx (TEBinop (op, te1, te2)) (Types.repr te1.ty)
+  | Ast.Pipe ->
+    let te1 = synth ctx level e1 in
+    let te2 = synth ctx level e2 in
+    let ret_ty = Types.new_tvar level in
+    let call_eff = Types.new_effvar level in
+    try_unify ctx te2.ty (Types.TArrow (te1.ty, call_eff, ret_ty));
+    try_subeffect ctx call_eff ctx.current_eff;
+    mk ctx (TEBinop (op, te1, te2)) ret_ty
+
+and synth_unop ctx level op e =
+  match op with
+  | Ast.Neg ->
+    (* Unified: works for int, float, and custom types via Num typeclass *)
+    let te = synth ctx level e in
+    mk ctx (TEUnop (op, te)) (Types.repr te.ty)
+  | Ast.Not ->
+    let te = check ctx level e Types.TBool in
+    mk ctx (TEUnop (op, te)) Types.TBool
+  | Ast.Lnot ->
+    (* Unified: works for int and custom types via Bitwise typeclass *)
+    let te = synth ctx level e in
+    mk ctx (TEUnop (op, te)) (Types.repr te.ty)
+
+and qualify_ctor_name type_env name info =
+  (* Qualify constructor name using ctor_type_name, but only if the qualified
+     version exists in the type_env. This handles the case where constructors
+     from other modules (e.g., Token.EQ via open Token) need qualification to
+     avoid shadowing, while constructors from the current module's own types
+     (e.g., Wrap in an opaque type) remain unqualified since they may not have
+     qualified entries in the type_env. *)
+  if String.contains name '.' then name
+  else match String.rindex_opt info.Types.ctor_type_name '.' with
+    | Some i ->
+      let qualified = String.sub info.Types.ctor_type_name 0 (i + 1) ^ name in
+      if List.assoc_opt qualified type_env.Types.constructors <> None then qualified
+      else name
+    | None -> name
+
+and qualify_pattern type_env pat =
+  let rec go pat = match pat with
+    | Ast.PatConstruct (name, arg) ->
+      let qname = match List.assoc_opt name type_env.Types.constructors with
+        | Some info -> qualify_ctor_name type_env name info
+        | None -> name
+      in
+      Ast.PatConstruct (qname, Option.map go arg)
+    | Ast.PatTuple ps -> Ast.PatTuple (List.map go ps)
+    | Ast.PatCons (hd, tl) -> Ast.PatCons (go hd, go tl)
+    | Ast.PatOr (p1, p2) -> Ast.PatOr (go p1, go p2)
+    | Ast.PatAs (p, n) -> Ast.PatAs (go p, n)
+    | Ast.PatRecord fields -> Ast.PatRecord (List.map (fun (f, p) -> (f, go p)) fields)
+    | Ast.PatArray ps -> Ast.PatArray (List.map go ps)
+    | Ast.PatMap kvs -> Ast.PatMap (List.map (fun (k, v) -> (go k, go v)) kvs)
+    | Ast.PatAnnot (p, a) -> Ast.PatAnnot (go p, a)
+    | _ -> pat
+  in go pat
+
+and synth_construct ctx level name arg =
+  match List.assoc_opt name ctx.type_env.constructors with
+  | None -> error ctx (Printf.sprintf "unknown constructor: %s" name)
+  | Some info ->
+    (* Check visibility: reject constructors from private module types *)
+    if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
+      error ctx (Printf.sprintf "unknown constructor: %s" name);
+    let qname = qualify_ctor_name ctx.type_env name info in
+    (* Fresh tvars for universals (type params) + existentials *)
+    let num_fresh = info.ctor_num_params + info.ctor_existentials in
+    let all_fresh = List.init num_fresh (fun _ -> Types.new_tvar level) in
+    let fresh_universals = List.filteri (fun i _ -> i < info.ctor_num_params) all_fresh in
+    let result_ty = match info.ctor_return_ty_params with
+      | None -> Types.TVariant (info.ctor_type_name, fresh_universals)
+      | Some params ->
+        (* GADT: substitute to get specific return type *)
+        Types.TVariant (info.ctor_type_name, List.map (subst_tgens all_fresh) params)
+    in
+    (match info.ctor_arg_ty, arg with
+     | None, None ->
+       mk ctx (TEConstruct (qname, None)) result_ty
+     | Some expected_ty, Some arg_expr ->
+       let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh expected_ty) in
+       let arg_te = check ctx level arg_expr concrete_ty in
+       mk ctx (TEConstruct (qname, Some arg_te)) result_ty
+     | None, Some _ ->
+       error ctx (Printf.sprintf "constructor %s takes no arguments" name)
+     | Some expected_ty, None ->
+       (* Constructor used as a function: return fun x -> Ctor x *)
+       let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh expected_ty) in
+       let param = "__x" in
+       let param_var = mk ctx (TEVar param) concrete_ty in
+       let body = mk ctx (TEConstruct (qname, Some param_var)) result_ty in
+       mk ctx (TEFun (param, body, false)) (Types.TArrow (concrete_ty, Types.EffEmpty, result_ty)))
+
+(* Freeze all types in a texpr tree using deep_repr — used for GADT snapshot/restore *)
+and freeze_texpr te =
+  let ft = Types.deep_repr te.ty in
+  let fe = map_texpr_children freeze_texpr te in
+  { expr = fe; ty = ft; loc = te.loc }
+
+(* GADT-aware pattern checking: creates fresh tvars for the ctor's universals + existentials,
+   unifies the scrutinee type with the ctor's specific return type to establish local equations,
+   then checks sub-patterns against the instantiated arg type *)
+and check_pattern_gadt ctx level pat scrut_ty =
+  match pat with
+  | Ast.PatConstruct (name, arg_pat) ->
+    (match List.assoc_opt name ctx.type_env.constructors with
+     | None -> error ctx (Printf.sprintf "unknown constructor in pattern: %s" name)
+     | Some info ->
+       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
+         error ctx (Printf.sprintf "unknown constructor in pattern: %s" name);
+       let num_fresh = info.ctor_num_params + info.ctor_existentials in
+       let all_fresh = List.init num_fresh (fun _ -> Types.new_tvar level) in
+       (* Collect existential tvar refs (indices >= ctor_num_params) *)
+       let existential_refs = List.filter_map (fun i ->
+         if i >= info.ctor_num_params then
+           match List.nth all_fresh i with
+           | Types.TVar r -> Some r
+           | _ -> None
+         else None
+       ) (List.init num_fresh Fun.id) in
+       (* Build the specific return type for this GADT constructor *)
+       let return_ty = match info.ctor_return_ty_params with
+         | Some params ->
+           Types.TVariant (info.ctor_type_name, List.map (subst_tgens all_fresh) params)
+         | None ->
+           (* Regular ctor in a GADT type — use universals only *)
+           let fresh_universals = List.filteri (fun i _ -> i < info.ctor_num_params) all_fresh in
+           Types.TVariant (info.ctor_type_name, fresh_universals)
+       in
+       (* Unify scrutinee with this ctor's return type — establishes local equations *)
+       try_unify ctx scrut_ty return_ty;
+       let bindings = match info.ctor_arg_ty, arg_pat with
+        | None, None -> []
+        | Some arg_ty, Some p ->
+          let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh arg_ty) in
+          check_pattern ctx level p concrete_ty
+        | None, Some _ -> error ctx (Printf.sprintf "constructor %s takes no arguments" name)
+        | Some _, None -> error ctx (Printf.sprintf "constructor %s requires an argument" name)
+       in
+       (bindings, existential_refs))
+  | _ -> (check_pattern ctx level pat scrut_ty, [])
+
+and check_existential_escape ctx existential_refs result_ty =
+  (* Check that no existential type variable escaped into the result type.
+     After arm body checking, existential tvars may have been unified with
+     result_ty or parts of it. We detect escape by collecting all unbound tvar
+     refs reachable from result_ty, then checking if any existential tvar ref,
+     after following links, resolves to one of those refs. *)
+  let rec collect_tvar_refs acc ty =
+    match Types.repr ty with
+    | Types.TVar ({ contents = Types.Unbound _ } as r) ->
+      if List.exists (fun x -> (==) x r) acc then acc else r :: acc
+    | Types.TArrow (a, _, b) | Types.TCont (a, _, b) -> collect_tvar_refs (collect_tvar_refs acc a) b
+    | Types.TTuple ts -> List.fold_left collect_tvar_refs acc ts
+    | Types.TList t -> collect_tvar_refs acc t
+    | Types.TArray t -> collect_tvar_refs acc t
+    | Types.TRecord row -> List.fold_left (fun a (_, t) -> collect_tvar_refs a t) acc (Types.record_row_to_fields row)
+    | Types.TVariant (_, args) -> List.fold_left collect_tvar_refs acc args
+    | Types.TPolyVariant row ->
+      let rec collect_pv a = function
+        | Types.PVRow (_, Some t, tail) -> collect_pv (collect_tvar_refs a t) tail
+        | Types.PVRow (_, None, tail) -> collect_pv a tail
+        | _ -> a
+      in collect_pv acc row
+    | _ -> acc
+  in
+  let result_refs = collect_tvar_refs [] (Types.deep_repr result_ty) in
+  let has_escape = List.exists (fun exist_ref ->
+    match Types.repr (Types.TVar exist_ref) with
+    | Types.TVar ({ contents = Types.Unbound _ } as resolved_ref) ->
+      (* Existential resolved to an unbound tvar — check if it's in result_ty *)
+      List.exists (fun r -> (==) r resolved_ref) result_refs
+    | resolved ->
+      (* Existential was unified with a concrete type — check if any tvar in that
+         type is also in result_ty *)
+      let exist_refs = collect_tvar_refs [] resolved in
+      List.exists (fun er -> List.exists (fun rr -> (==) er rr) result_refs) exist_refs
+  ) existential_refs in
+  if has_escape then
+    error ctx "existential type variable would escape the scope of its GADT match arm"
+
+and synth_match expected_ty ctx level scrut arms partial =
+  let scrut_te = synth ctx level scrut in
+  (* Determine if scrutinee is a GADT type *)
+  let gadt_info = match Types.repr scrut_te.ty with
+    | Types.TVariant (name, params) ->
+      (match find_variant_info ctx.type_env name with
+       | Some (_, _, _, true) -> Some (name, params)
+       | _ -> None)
+    | _ -> None
+  in
+  match gadt_info with
+  | Some (_gadt_name, scrut_params) ->
+    (* GADT match — need snapshot/restore for local type equations *)
+    let result_ty = match expected_ty with
+      | Some ty -> ty
+      | None -> Types.new_tvar level
+    in
+    (* Extract tvar refs from scrutinee params for snapshot/restore *)
+    let get_tvar_ref ty = match Types.repr ty with
+      | Types.TVar r -> Some r
+      | _ -> None
+    in
+    let param_refs = List.filter_map (fun p ->
+      match get_tvar_ref p with
+      | Some r -> Some (r, !r)
+      | None -> None
+    ) scrut_params in
+    (* Also save all params' current repr values for non-tvar params *)
+    let save_snapshot () =
+      List.map (fun (r, _) -> (r, !r)) param_refs
+    in
+    let restore_snapshot saved =
+      List.iter (fun (r, v) -> r := v) saved
+    in
+    let check_gadt_arm (pat, guard, body) =
+      let snapshot = save_snapshot () in
+      (* For constructor patterns, we need GADT-aware pattern checking *)
+      let ctor_name = match pat with
+        | Ast.PatConstruct (name, _) -> Some name
+        | _ -> None
+      in
+      let is_gadt_ctor = match ctor_name with
+        | Some name ->
+          (match List.assoc_opt name ctx.type_env.constructors with
+           | Some info -> info.Types.ctor_return_ty_params <> None
+           | None -> false)
+        | None -> false
+      in
+      let (bindings, existential_refs) =
+        if is_gadt_ctor then
+          check_pattern_gadt ctx level pat scrut_te.ty
+        else
+          (check_pattern ctx level pat scrut_te.ty, [])
+      in
+      let ctx' = List.fold_left (fun c (n, t) -> extend_var_mono c n t) ctx bindings in
+      let guard_te = match guard with
+        | Some g -> Some (check ctx' level g Types.TBool)
+        | None -> None
+      in
+      let body_te = check ctx' level body result_ty in
+      (* Freeze all types in the arm before restoring *)
+      let guard_te = Option.map freeze_texpr guard_te in
+      let body_te = freeze_texpr body_te in
+      (* Check existential escape *)
+      if existential_refs <> [] then
+        check_existential_escape ctx existential_refs result_ty;
+      (* Restore snapshot *)
+      restore_snapshot snapshot;
+      (qualify_pattern ctx.type_env pat, guard_te, body_te)
+    in
+    (match arms with
+     | [] -> error ctx "match expression has no arms"
+     | first :: rest ->
+       let first_arm = check_gadt_arm first in
+       let rest_arms = List.map check_gadt_arm rest in
+       let all_arms = first_arm :: rest_arms in
+       (* Check exhaustiveness *)
+       if partial = Ast.Total then
+         exhaustiveness_check ctx (Types.repr scrut_te.ty) all_arms;
+       mk ctx (TEMatch (scrut_te, all_arms, partial)) result_ty)
+  | None ->
+    (* Regular ADT match — original logic *)
+    let check_arm ctx (pat, guard, body) =
+      let bindings = check_pattern ctx level pat scrut_te.ty in
+      let ctx' = List.fold_left (fun c (n, t) -> extend_var_mono c n t) ctx bindings in
+      let guard_te = match guard with
+        | Some g ->
+          let gte = check ctx' level g Types.TBool in
+          Some gte
+        | None -> None
+      in
+      let body_te = synth ctx' level body in
+      (qualify_pattern ctx.type_env pat, guard_te, body_te)
+    in
+    match arms with
+    | [] -> error ctx "match expression has no arms"
+    | first :: rest ->
+      let (fp, fg, fb) = check_arm ctx first in
+      let result_ty = fb.ty in
+      let all_arms = (fp, fg, fb) ::
+        List.map (fun arm ->
+          let (p, g, b) = check_arm ctx arm in
+          try_unify ctx b.ty result_ty;
+          (p, g, b)
+        ) rest
+      in
+      (* Check exhaustiveness *)
+      if partial = Ast.Total then
+        exhaustiveness_check ctx (Types.repr scrut_te.ty) all_arms;
+      mk ctx (TEMatch (scrut_te, all_arms, partial)) result_ty
+
+(* ---- Check ---- *)
+
+and check ctx level (expr : Ast.expr) (expected : Types.ty) : texpr =
+  match expr with
+  | Ast.ELoc (loc, inner) -> check { ctx with loc } level inner expected
+  | Ast.EFun (param, body) when param.annot = None ->
+    let arg_ty = Types.new_tvar level in
+    let ret_ty = Types.new_tvar level in
+    let fn_eff = Types.new_effvar level in
+    try_unify ctx expected (Types.TArrow (arg_ty, fn_eff, ret_ty));
+    let return_used = ref false in
+    let ctx' = extend_var_mono { ctx with current_eff = fn_eff; return_type = Some ret_ty; inside_handler = false; return_used } param.name (Types.repr arg_ty) in
+    let body_te = check ctx' level body ret_ty in
+    let has_return = if param.is_generated then false else !return_used in
+    mk ctx (TEFun (param.name, body_te, has_return)) (Types.TArrow (arg_ty, fn_eff, body_te.ty))
+  | Ast.EMatch (scrut, arms, partial) ->
+    synth_match (Some expected) ctx level scrut arms partial
+  | _ ->
+    let te = synth ctx level expr in
+    try_unify ctx te.ty expected;
+    { te with ty = expected }
+
+(* ---- Pattern checking ---- *)
+
+and check_pattern ctx level (pat : Ast.pattern) (ty : Types.ty) : (string * Types.ty) list =
+  match pat with
+  | Ast.PatWild -> []
+  | Ast.PatVar name -> [(name, ty)]
+  | Ast.PatInt _ -> try_unify ctx ty Types.TInt; []
+  | Ast.PatFloat _ -> try_unify ctx ty Types.TFloat; []
+  | Ast.PatBool _ -> try_unify ctx ty Types.TBool; []
+  | Ast.PatString _ -> try_unify ctx ty Types.TString; []
+  | Ast.PatUnit -> try_unify ctx ty Types.TUnit; []
+  | Ast.PatTuple pats ->
+    let tys = List.map (fun _ -> Types.new_tvar level) pats in
+    try_unify ctx ty (Types.TTuple tys);
+    List.concat (List.map2 (check_pattern ctx level) pats tys)
+  | Ast.PatCons (hd_pat, tl_pat) ->
+    let elem_ty = Types.new_tvar level in
+    try_unify ctx ty (Types.TList elem_ty);
+    let hd_bindings = check_pattern ctx level hd_pat elem_ty in
+    let tl_bindings = check_pattern ctx level tl_pat ty in
+    hd_bindings @ tl_bindings
+  | Ast.PatNil ->
+    let elem_ty = Types.new_tvar level in
+    try_unify ctx ty (Types.TList elem_ty);
+    []
+  | Ast.PatConstruct (name, arg_pat) ->
+    (match List.assoc_opt name ctx.type_env.constructors with
+     | None -> error ctx (Printf.sprintf "unknown constructor in pattern: %s" name)
+     | Some info ->
+       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types then
+         error ctx (Printf.sprintf "unknown constructor in pattern: %s" name);
+       let fresh_args = List.init info.ctor_num_params (fun _ -> Types.new_tvar level) in
+       let expected_variant = Types.TVariant (info.ctor_type_name, fresh_args) in
+       try_unify ctx ty expected_variant;
+       (match info.ctor_arg_ty, arg_pat with
+        | None, None -> []
+        | Some arg_ty, Some p ->
+          let concrete_ty = freshen_arrow_effects level (subst_tgens fresh_args arg_ty) in
+          check_pattern ctx level p concrete_ty
+        | None, Some _ -> error ctx (Printf.sprintf "constructor %s takes no arguments" name)
+        | Some _, None -> error ctx (Printf.sprintf "constructor %s requires an argument" name)))
+  | Ast.PatRecord field_pats ->
+    let field_tys = match Types.repr ty with
+      | Types.TRecord row -> Types.record_row_to_fields row
+      | _ ->
+        (* Try to infer record type from field names in the pattern *)
+        let pat_field_names = List.map fst field_pats in
+        let candidates = List.filter (fun (_name, fields) ->
+          List.for_all (fun fn -> List.mem_assoc fn fields) pat_field_names
+        ) ctx.type_env.Types.records in
+        (match candidates with
+         | [(_name, fields)] ->
+           let row = instantiate_record_row level fields in
+           try_unify ctx ty (Types.TRecord row);
+           instantiate_record_fields level fields
+         | [] ->
+           (* No nominal record found. If the type is still unknown,
+              construct an open record type from pattern fields and unify. *)
+           (match Types.repr ty with
+            | Types.TVar _ ->
+              let row = List.fold_right (fun fname rest ->
+                Types.RRow (fname, Types.new_tvar level, rest)
+              ) pat_field_names (Types.new_rvar level) in
+              try_unify ctx ty (Types.TRecord row);
+              Types.record_row_to_fields (match Types.repr ty with
+                | Types.TRecord r -> r
+                | _ -> error ctx "record pattern used with non-record type")
+            | _ -> error ctx "record pattern used with non-record type")
+         | _ -> error ctx "ambiguous record pattern — annotate the type")
+    in
+    List.concat (List.map (fun (name, pat) ->
+      match List.assoc_opt name field_tys with
+      | Some fty -> check_pattern ctx level pat fty
+      | None -> error ctx (Printf.sprintf "record type has no field %s" name)
+    ) field_pats)
+  | Ast.PatAs (inner_pat, name) ->
+    let bindings = check_pattern ctx level inner_pat ty in
+    (name, ty) :: bindings
+  | Ast.PatOr (p1, p2) ->
+    let bindings1 = check_pattern ctx level p1 ty in
+    let bindings2 = check_pattern ctx level p2 ty in
+    let names1 = List.map fst bindings1 |> List.sort String.compare in
+    let names2 = List.map fst bindings2 |> List.sort String.compare in
+    if names1 <> names2 then
+      error ctx "or-pattern branches must bind the same variables";
+    List.iter (fun (name, ty1) ->
+      match List.assoc_opt name bindings2 with
+      | Some ty2 -> try_unify ctx ty1 ty2
+      | None -> ()
+    ) bindings1;
+    bindings1
+  | Ast.PatArray pats ->
+    let elem_ty = Types.new_tvar level in
+    try_unify ctx ty (Types.TArray elem_ty);
+    List.concat_map (fun p -> check_pattern ctx level p elem_ty) pats
+  | Ast.PatMap entries ->
+    let key_ty = Types.new_tvar level in
+    let val_ty = Types.new_tvar level in
+    try_unify ctx ty (Types.TVariant ("map", [key_ty; val_ty]));
+    List.concat_map (fun (kpat, vpat) ->
+      check_pattern ctx level kpat key_ty @
+      check_pattern ctx level vpat val_ty
+    ) entries
+  | Ast.PatPolyVariant (tag, None) ->
+    let tail = Types.new_pvvar level in
+    let row = Types.PVRow (tag, None, tail) in
+    try_unify ctx ty (Types.TPolyVariant row);
+    []
+  | Ast.PatPolyVariant (tag, Some sub_pat) ->
+    let payload_ty = Types.new_tvar level in
+    let tail = Types.new_pvvar level in
+    let row = Types.PVRow (tag, Some payload_ty, tail) in
+    try_unify ctx ty (Types.TPolyVariant row);
+    check_pattern ctx level sub_pat payload_ty
+  | Ast.PatPin name ->
+    (match List.assoc_opt name ctx.vars with
+     | Some scheme ->
+       let var_ty = Types.instantiate level scheme in
+       try_unify ctx ty var_ty;
+       []
+     | None -> error ctx (Printf.sprintf "unbound variable in pin pattern: %s" name))
+  | Ast.PatAnnot (inner_pat, annot) ->
+    let annot_ty = resolve_ty_annot ctx level annot in
+    try_unify ctx ty annot_ty;
+    check_pattern ctx level inner_pat ty
+
+(* ---- Polymorphic recursion (locally abstract types) ---- *)
+(* When a let rec has explicit type params via (type 'a ...), we bind the
+   recursive name with a polymorphic scheme from the start, enabling
+   recursive calls at different type instantiations. *)
+
+and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot body =
+  let shared_tvars = Hashtbl.create 4 in
+  let shared_eff_tvars = Hashtbl.create 2 in
+  (* Pre-allocate tvars for locally abstract types at level+1 *)
+  List.iter (fun tp ->
+    Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1))
+  ) type_params;
+  (* Resolve param types *)
+  let param_tys = List.map (fun (p : Ast.param) ->
+    match p.annot with
+    | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot
+    | None -> Types.new_tvar (level + 1)
+  ) params in
+  (* Resolve return type and optional effect annotation *)
+  let (ret_ty, body_eff) = match ret_annot with
+    | Some (Ast.TyWithEffect (ty, eff_annot)) ->
+      let ty' = resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars ty in
+      let eff = match eff_annot with
+        | Ast.EffAnnotPure -> Types.EffEmpty
+        | Ast.EffAnnotRow items -> resolve_eff_items ctx (level + 1) shared_tvars shared_eff_tvars items
+      in
+      (ty', eff)
+    | Some annot ->
+      (resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot,
+       Types.new_effvar (level + 1))
+    | None ->
+      (Types.new_tvar (level + 1), Types.new_effvar (level + 1))
+  in
+  (* Build function type: p1 -> p2 -> ... -> ret *)
+  let fn_ty = match List.rev param_tys with
+    | [] -> ret_ty
+    | last :: rest ->
+      let inner = Types.TArrow (last, body_eff, ret_ty) in
+      List.fold_left (fun acc pty ->
+        Types.TArrow (pty, Types.EffEmpty, acc)
+      ) inner rest
+  in
+  (* Generalize to get polymorphic scheme *)
+  let scheme = Types.generalize level fn_ty in
+  (* Bind name polymorphically — this enables polymorphic recursion *)
+  let ctx_with_self = extend_var ctx name scheme in
+  let ctx_with_self = if qualified_name <> "" then extend_var ctx_with_self qualified_name scheme else ctx_with_self in
+  (* Build inner context with params bound at their resolved types *)
+  let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
+    extend_var_mono c p.name ty
+  ) { ctx_with_self with current_eff = body_eff } params param_tys in
+  (* Check body against declared return type *)
+  let body_te = check inner_ctx (level + 1) body ret_ty in
+  (* Build TEFun chain *)
+  let te = match List.rev params, List.rev param_tys with
+    | [], [] -> body_te
+    | (last_p : Ast.param) :: rest_ps, last_pty :: rest_ptys ->
+      let inner = mk ctx (TEFun (last_p.name, body_te, false))
+        (Types.TArrow (last_pty, body_eff, body_te.ty)) in
+      List.fold_left2 (fun acc (p : Ast.param) pty ->
+        mk ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
+      ) inner rest_ps rest_ptys
+    | _ -> assert false
+  in
+  (te, scheme)
 
 (* ---- Type definition processing ---- *)
 
@@ -2778,76 +2921,7 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
     List.iteri (fun i name -> Hashtbl.replace param_tbl name i) type_params;
     let resolve_with_params annot =
       let tvars = Hashtbl.create 4 in
-      let rec go = function
-        | Ast.TyVar name ->
-          (match Hashtbl.find_opt param_tbl name with
-           | Some idx -> Types.TGen idx
-           | None ->
-             (match Hashtbl.find_opt tvars name with
-              | Some tv -> tv
-              | None ->
-                let tv = Types.new_tvar 0 in
-                Hashtbl.replace tvars name tv;
-                tv))
-        | Ast.TyName "int" -> Types.TInt
-        | Ast.TyName "float" -> Types.TFloat
-        | Ast.TyName "bool" -> Types.TBool
-        | Ast.TyName "string" -> Types.TString
-        | Ast.TyName "unit" -> Types.TUnit
-        | Ast.TyName name ->
-          let canonical = resolve_type_alias pre_ctx.type_env name in
-          (match List.find_opt (fun (n, _, _) -> String.equal n canonical) pre_ctx.type_env.type_synonyms with
-           | Some (_, 0, ty) -> ty
-           | Some (_, n, _) ->
-             error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-           | None ->
-             (match find_variant_info pre_ctx.type_env name with
-              | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
-              | Some (_, n, _, _) ->
-                error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-              | None ->
-                if List.assoc_opt canonical pre_ctx.type_env.records <> None then
-                  let fields = List.assoc canonical pre_ctx.type_env.records in
-                  Types.TRecord (Types.fields_to_closed_row fields)
-                else
-                  error (Printf.sprintf "unknown type: %s" name)))
-        | Ast.TyArrow (a, b, _) -> Types.TArrow (go a, Types.EffEmpty, go b)
-        | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
-        | Ast.TyList t -> Types.TList (go t)
-        | Ast.TyArray t -> Types.TArray (go t)
-        | Ast.TyApp (args, tname) ->
-          let canonical = resolve_type_alias pre_ctx.type_env tname in
-          let arg_tys = List.map go args in
-          (match List.find_opt (fun (n, _, _) -> String.equal n canonical) pre_ctx.type_env.type_synonyms with
-           | Some (_, np, ty) ->
-             if List.length arg_tys <> np then
-               error (Printf.sprintf "type %s expects %d type argument(s), got %d"
-                 tname np (List.length arg_tys));
-             subst_tgens arg_tys ty
-           | None ->
-             (match find_variant_info pre_ctx.type_env tname with
-              | Some (_, np, _, _) ->
-                if List.length arg_tys <> np then
-                  error (Printf.sprintf "type %s expects %d type argument(s), got %d"
-                    tname np (List.length arg_tys));
-                Types.TVariant (canonical, arg_tys)
-              | None -> error (Printf.sprintf "unknown type constructor: %s" tname)))
-        | Ast.TyRecord (fields, is_open) ->
-          let fields = List.map (fun (n, t) -> (n, go t)) fields in
-          let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-          let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-          Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-        | Ast.TyQualified (path, name) ->
-          let qualified = String.concat "." path ^ "." ^ name in
-          go (Ast.TyName qualified)
-        | Ast.TyPolyVariant (_kind, tags) ->
-          let row = List.fold_right (fun (tag, payload_annot) acc ->
-            Types.PVRow (tag, Option.map go payload_annot, acc)
-          ) tags Types.PVEmpty in
-          Types.TPolyVariant row
-        | Ast.TyWithEffect (ty, _) -> go ty
-      in
-      go annot
+      resolve_ty_annot_def ~loc:pre_ctx.loc ~check_synonyms:true pre_ctx.type_env (make_def_resolve_var param_tbl tvars) eff_empty annot
     in
     let is_gadt = List.exists (fun (_, _, ret) -> ret <> None) ctors in
     (* Collect free type variable names from an annotation *)
@@ -2880,7 +2954,7 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
         let (ret_type_name, ret_type_args) = match ret with
           | Ast.TyName n -> (n, [])
           | Ast.TyApp (args, n) -> (n, args)
-          | _ -> error (Printf.sprintf "GADT constructor %s: return type must be %s" name type_name)
+          | _ -> error ctx (Printf.sprintf "GADT constructor %s: return type must be %s" name type_name)
         in
         let canonical_ret = resolve_type_alias pre_ctx.type_env ret_type_name in
         (* Also accept short name matching the last component of a qualified type_name *)
@@ -2893,10 +2967,10 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
            | None -> false)
         in
         if not name_matches then
-          error (Printf.sprintf "GADT constructor %s: return type must be %s, got %s"
+          error ctx (Printf.sprintf "GADT constructor %s: return type must be %s, got %s"
             name type_name ret_type_name);
         if List.length ret_type_args <> num_params then
-          error (Printf.sprintf "GADT constructor %s: return type has %d type arg(s), expected %d"
+          error ctx (Printf.sprintf "GADT constructor %s: return type has %d type arg(s), expected %d"
             name (List.length ret_type_args) num_params);
         (* 2. Collect vars in return annotation and arg annotation *)
         let ret_vars = List.fold_left collect_annot_vars [] ret_type_args in
@@ -2915,71 +2989,7 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
         List.iteri (fun i e -> Hashtbl.replace gadt_tbl e (num_params + i)) existentials;
         (* 5. Resolve types using GADT param table *)
         let gadt_tvars = Hashtbl.create 4 in
-        let rec gadt_resolve = function
-          | Ast.TyVar vname ->
-            (match Hashtbl.find_opt gadt_tbl vname with
-             | Some idx -> Types.TGen idx
-             | None ->
-               (match Hashtbl.find_opt gadt_tvars vname with
-                | Some tv -> tv
-                | None ->
-                  let tv = Types.new_tvar 0 in
-                  Hashtbl.replace gadt_tvars vname tv;
-                  tv))
-          | Ast.TyName "int" -> Types.TInt
-          | Ast.TyName "float" -> Types.TFloat
-          | Ast.TyName "bool" -> Types.TBool
-          | Ast.TyName "string" -> Types.TString
-          | Ast.TyName "unit" -> Types.TUnit
-          | Ast.TyName n ->
-            let canonical = resolve_type_alias pre_ctx.type_env n in
-            (match List.find_opt (fun (tn, _, _) -> String.equal tn canonical) pre_ctx.type_env.type_synonyms with
-             | Some (_, 0, ty) -> ty
-             | Some (_, np, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" n np)
-             | None ->
-               (match find_variant_info pre_ctx.type_env n with
-                | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
-                | Some (_, np, _, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" n np)
-                | None ->
-                  if List.assoc_opt canonical pre_ctx.type_env.records <> None then
-                    let fields = List.assoc canonical pre_ctx.type_env.records in
-                    if fields = [] then Types.TRecord Types.RWild
-                    else Types.TRecord (Types.fields_to_closed_row fields)
-                  else error (Printf.sprintf "unknown type: %s" n)))
-          | Ast.TyArrow (a, b, _) -> Types.TArrow (gadt_resolve a, Types.EffEmpty, gadt_resolve b)
-          | Ast.TyTuple ts -> Types.TTuple (List.map gadt_resolve ts)
-          | Ast.TyList t -> Types.TList (gadt_resolve t)
-          | Ast.TyArray t -> Types.TArray (gadt_resolve t)
-          | Ast.TyApp (args, tname) ->
-            let canonical = resolve_type_alias pre_ctx.type_env tname in
-            let arg_tys = List.map gadt_resolve args in
-            (match List.find_opt (fun (tn, _, _) -> String.equal tn canonical) pre_ctx.type_env.type_synonyms with
-             | Some (_, np, ty) ->
-               if List.length arg_tys <> np then
-                 error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
-               subst_tgens arg_tys ty
-             | None ->
-               (match find_variant_info pre_ctx.type_env tname with
-                | Some (_, np, _, _) ->
-                  if List.length arg_tys <> np then
-                    error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
-                  Types.TVariant (canonical, arg_tys)
-                | None -> error (Printf.sprintf "unknown type constructor: %s" tname)))
-          | Ast.TyRecord (fields, is_open) ->
-            let fields = List.sort (fun (a,_) (b,_) -> String.compare a b)
-              (List.map (fun (fn, ft) -> (fn, gadt_resolve ft)) fields) in
-            let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-            Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-          | Ast.TyQualified (path, n) ->
-            let qualified = String.concat "." path ^ "." ^ n in
-            gadt_resolve (Ast.TyName qualified)
-          | Ast.TyPolyVariant (_kind, tags) ->
-            let row = List.fold_right (fun (tag, payload_annot) acc ->
-              Types.PVRow (tag, Option.map gadt_resolve payload_annot, acc)
-            ) tags Types.PVEmpty in
-            Types.TPolyVariant row
-          | Ast.TyWithEffect (ty, _) -> gadt_resolve ty
-        in
+        let gadt_resolve annot = resolve_ty_annot_def ~loc:pre_ctx.loc ~check_synonyms:true pre_ctx.type_env (make_def_resolve_var gadt_tbl gadt_tvars) eff_empty annot in
         let arg_ty = Option.map gadt_resolve arg_annot in
         let ret_params = List.map gadt_resolve ret_type_args in
         let info = Types.{ ctor_type_name = type_name; ctor_arg_ty = arg_ty;
@@ -3003,63 +3013,12 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
     }} in
     let param_tbl = Hashtbl.create 4 in
     List.iteri (fun i name -> Hashtbl.replace param_tbl name i) type_params;
-    let typed_fields = List.map (fun (_is_mut, name, annot) ->
+    let typed_fields = List.map (fun (f : Ast.record_field_def) ->
       let tvars = Hashtbl.create 4 in
-      let rec resolve_field = function
-        | Ast.TyVar vname ->
-          (match Hashtbl.find_opt param_tbl vname with
-           | Some idx -> Types.TGen idx
-           | None ->
-             (match Hashtbl.find_opt tvars vname with
-              | Some tv -> tv
-              | None ->
-                let tv = Types.new_tvar 0 in
-                Hashtbl.replace tvars vname tv;
-                tv))
-        | Ast.TyName "int" -> Types.TInt
-        | Ast.TyName "float" -> Types.TFloat
-        | Ast.TyName "bool" -> Types.TBool
-        | Ast.TyName "string" -> Types.TString
-        | Ast.TyName "unit" -> Types.TUnit
-        | Ast.TyName n -> resolve_ty_annot pre_ctx 0 (Ast.TyName n)
-        | Ast.TyArrow (a, b, _) -> Types.TArrow (resolve_field a, Types.EffEmpty, resolve_field b)
-        | Ast.TyTuple ts -> Types.TTuple (List.map resolve_field ts)
-        | Ast.TyList t -> Types.TList (resolve_field t)
-        | Ast.TyArray t -> Types.TArray (resolve_field t)
-        | Ast.TyApp (args, n) ->
-          let arg_tys = List.map resolve_field args in
-          (match List.find_opt (fun (tn, _, _) -> String.equal tn n) pre_ctx.type_env.type_synonyms with
-           | Some (_, np, ty) ->
-             if List.length arg_tys <> np then
-               error (Printf.sprintf "type %s expects %d arg(s), got %d" n np (List.length arg_tys));
-             subst_tgens arg_tys ty
-           | None ->
-             (match find_variant_info pre_ctx.type_env n with
-              | Some (_, np, _, _) ->
-                if List.length arg_tys <> np then
-                  error (Printf.sprintf "type %s expects %d arg(s), got %d" n np (List.length arg_tys));
-                let canonical = resolve_type_alias pre_ctx.type_env n in
-                Types.TVariant (canonical, arg_tys)
-              | None -> error (Printf.sprintf "unknown type constructor: %s" n)))
-        | Ast.TyRecord (fs, is_open) ->
-          let fields = List.sort (fun (a,_) (b,_) -> String.compare a b)
-            (List.map (fun (fn, ft) -> (fn, resolve_field ft)) fs) in
-          let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-          Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-        | Ast.TyQualified (path, n) ->
-          let qualified = String.concat "." path ^ "." ^ n in
-          resolve_field (Ast.TyName qualified)
-        | Ast.TyPolyVariant (_kind, tags) ->
-          let row = List.fold_right (fun (tag, payload_annot) acc ->
-            Types.PVRow (tag, Option.map resolve_field payload_annot, acc)
-          ) tags Types.PVEmpty in
-          Types.TPolyVariant row
-        | Ast.TyWithEffect (ty, _) -> resolve_field ty
-      in
-      (name, resolve_field annot)
+      (f.rfd_name, resolve_ty_annot_def ~loc:pre_ctx.loc ~check_synonyms:true pre_ctx.type_env (make_def_resolve_var param_tbl tvars) eff_empty f.rfd_type)
     ) fields in
-    let mut_fields = List.filter_map (fun (is_mut, name, _) ->
-      if is_mut then Some name else None
+    let mut_fields = List.filter_map (fun (f : Ast.record_field_def) ->
+      if f.rfd_mutable then Some f.rfd_name else None
     ) fields in
     let sorted_fields = List.sort (fun (a, _) (b, _) -> String.compare a b) typed_fields in
     let type_env = { ctx.type_env with
@@ -3074,73 +3033,7 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
     let param_tbl = Hashtbl.create 4 in
     List.iteri (fun i name -> Hashtbl.replace param_tbl name i) type_params;
     let tvars = Hashtbl.create 4 in
-    let rec resolve_alias = function
-      | Ast.TyVar name ->
-        (match Hashtbl.find_opt param_tbl name with
-         | Some idx -> Types.TGen idx
-         | None ->
-           (match Hashtbl.find_opt tvars name with
-            | Some tv -> tv
-            | None ->
-              let tv = Types.new_tvar 0 in
-              Hashtbl.replace tvars name tv;
-              tv))
-      | Ast.TyName "int" -> Types.TInt
-      | Ast.TyName "float" -> Types.TFloat
-      | Ast.TyName "bool" -> Types.TBool
-      | Ast.TyName "string" -> Types.TString
-      | Ast.TyName "unit" -> Types.TUnit
-      | Ast.TyName name ->
-        let canonical = resolve_type_alias ctx.type_env name in
-        (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
-         | Some (_, 0, ty) -> ty
-         | Some (_, n, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-         | None ->
-           (match find_variant_info ctx.type_env name with
-            | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
-            | Some (_, n, _, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-            | None ->
-              if List.assoc_opt canonical ctx.type_env.records <> None then
-                let fields = List.assoc canonical ctx.type_env.records in
-                if fields = [] then Types.TRecord Types.RWild
-                else Types.TRecord (Types.fields_to_closed_row fields)
-              else
-                error (Printf.sprintf "unknown type: %s" name)))
-      | Ast.TyArrow (a, b, _) -> Types.TArrow (resolve_alias a, Types.EffEmpty, resolve_alias b)
-      | Ast.TyTuple ts -> Types.TTuple (List.map resolve_alias ts)
-      | Ast.TyList t -> Types.TList (resolve_alias t)
-      | Ast.TyArray t -> Types.TArray (resolve_alias t)
-      | Ast.TyApp (args, tname) ->
-        let canonical = resolve_type_alias ctx.type_env tname in
-        let arg_tys = List.map resolve_alias args in
-        (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
-         | Some (_, np, ty) ->
-           if List.length arg_tys <> np then
-             error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
-           subst_tgens arg_tys ty
-         | None ->
-           (match find_variant_info ctx.type_env tname with
-            | Some (_, np, _, _) ->
-              if List.length arg_tys <> np then
-                error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
-              Types.TVariant (canonical, arg_tys)
-            | None -> error (Printf.sprintf "unknown type constructor: %s" tname)))
-      | Ast.TyRecord (fields, is_open) ->
-        let fields = List.map (fun (n, t) -> (n, resolve_alias t)) fields in
-        let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-        let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-        Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-      | Ast.TyQualified (path, name) ->
-        let qualified = String.concat "." path ^ "." ^ name in
-        resolve_alias (Ast.TyName qualified)
-      | Ast.TyPolyVariant (_kind, tags) ->
-        let row = List.fold_right (fun (tag, payload_annot) acc ->
-          Types.PVRow (tag, Option.map resolve_alias payload_annot, acc)
-        ) tags Types.PVEmpty in
-        Types.TPolyVariant row
-      | Ast.TyWithEffect (ty, _) -> resolve_alias ty
-    in
-    let resolved_ty = resolve_alias annot in
+    let resolved_ty = resolve_ty_annot_def ~loc:ctx.loc ~check_synonyms:true ctx.type_env (make_def_resolve_var param_tbl tvars) eff_empty annot in
     let type_env = { ctx.type_env with
       type_synonyms = (type_name, num_params, resolved_ty) :: ctx.type_env.type_synonyms;
     } in
@@ -3150,73 +3043,7 @@ let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
     let param_tbl = Hashtbl.create 4 in
     List.iteri (fun i name -> Hashtbl.replace param_tbl name i) type_params;
     let tvars = Hashtbl.create 4 in
-    let rec resolve_nt = function
-      | Ast.TyVar name ->
-        (match Hashtbl.find_opt param_tbl name with
-         | Some idx -> Types.TGen idx
-         | None ->
-           (match Hashtbl.find_opt tvars name with
-            | Some tv -> tv
-            | None ->
-              let tv = Types.new_tvar 0 in
-              Hashtbl.replace tvars name tv;
-              tv))
-      | Ast.TyName "int" -> Types.TInt
-      | Ast.TyName "float" -> Types.TFloat
-      | Ast.TyName "bool" -> Types.TBool
-      | Ast.TyName "string" -> Types.TString
-      | Ast.TyName "unit" -> Types.TUnit
-      | Ast.TyName name ->
-        let canonical = resolve_type_alias ctx.type_env name in
-        (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
-         | Some (_, 0, ty) -> ty
-         | Some (_, n, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-         | None ->
-           (match find_variant_info ctx.type_env name with
-            | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
-            | Some (_, n, _, _) -> error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-            | None ->
-              if List.assoc_opt canonical ctx.type_env.records <> None then
-                let fields = List.assoc canonical ctx.type_env.records in
-                if fields = [] then Types.TRecord Types.RWild
-                else Types.TRecord (Types.fields_to_closed_row fields)
-              else
-                error (Printf.sprintf "unknown type: %s" name)))
-      | Ast.TyArrow (a, b, _) -> Types.TArrow (resolve_nt a, Types.EffEmpty, resolve_nt b)
-      | Ast.TyTuple ts -> Types.TTuple (List.map resolve_nt ts)
-      | Ast.TyList t -> Types.TList (resolve_nt t)
-      | Ast.TyArray t -> Types.TArray (resolve_nt t)
-      | Ast.TyApp (args, tname) ->
-        let canonical = resolve_type_alias ctx.type_env tname in
-        let arg_tys = List.map resolve_nt args in
-        (match List.find_opt (fun (n, _, _) -> String.equal n canonical) ctx.type_env.type_synonyms with
-         | Some (_, np, ty) ->
-           if List.length arg_tys <> np then
-             error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
-           subst_tgens arg_tys ty
-         | None ->
-           (match find_variant_info ctx.type_env tname with
-            | Some (_, np, _, _) ->
-              if List.length arg_tys <> np then
-                error (Printf.sprintf "type %s expects %d type argument(s), got %d" tname np (List.length arg_tys));
-              Types.TVariant (canonical, arg_tys)
-            | None -> error (Printf.sprintf "unknown type constructor: %s" tname)))
-      | Ast.TyRecord (fields, is_open) ->
-        let fields = List.map (fun (n, t) -> (n, resolve_nt t)) fields in
-        let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-        let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-        Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-      | Ast.TyQualified (path, name) ->
-        let qualified = String.concat "." path ^ "." ^ name in
-        resolve_nt (Ast.TyName qualified)
-      | Ast.TyPolyVariant (_kind, tags) ->
-        let row = List.fold_right (fun (tag, payload_annot) acc ->
-          Types.PVRow (tag, Option.map resolve_nt payload_annot, acc)
-        ) tags Types.PVEmpty in
-        Types.TPolyVariant row
-      | Ast.TyWithEffect (ty, _) -> resolve_nt ty
-    in
-    let underlying_ty = resolve_nt underlying_annot in
+    let underlying_ty = resolve_ty_annot_def ~loc:ctx.loc ~check_synonyms:true ctx.type_env (make_def_resolve_var param_tbl tvars) eff_empty underlying_annot in
     let variant_def = [(ctor_name, Some underlying_ty)] in
     let ctor_info = Types.{
       ctor_type_name = type_name;
@@ -3243,16 +3070,16 @@ let wrap_params_decl params ret_annot body =
     (* Build the full arrow type with effect on the innermost arrow *)
     let rec build_arrow = function
       | [] -> ret_ty
-      | [p] ->
-        let pty = match p.Ast.annot with
+      | [(p : Ast.param)] ->
+        let pty = match p.annot with
           | Some t -> t
-          | None -> Ast.TyVar ("'_eff_p_" ^ p.Ast.name)
+          | None -> Ast.TyVar ("'_eff_p_" ^ p.name)
         in
         Ast.TyArrow (pty, ret_ty, Some eff_annot)
-      | p :: rest ->
-        let pty = match p.Ast.annot with
+      | (p : Ast.param) :: rest ->
+        let pty = match p.annot with
           | Some t -> t
-          | None -> Ast.TyVar ("'_eff_p_" ^ p.Ast.name)
+          | None -> Ast.TyVar ("'_eff_p_" ^ p.name)
         in
         Ast.TyArrow (pty, build_arrow rest, None)
     in
@@ -3273,7 +3100,7 @@ let process_class_def ctx (class_name : string) (tyvar_names : string list)
     (methods : (string * Ast.ty_annot) list) : ctx * tdecl =
   if List.exists (fun c -> String.equal c.Types.class_name class_name)
        ctx.type_env.Types.classes then
-    error (Printf.sprintf "duplicate class definition: %s" class_name);
+    error ctx (Printf.sprintf "duplicate class definition: %s" class_name);
   let num_class_params = List.length tyvar_names in
   let method_tys = List.map (fun (mname, annot) ->
     let tvars = Hashtbl.create 4 in
@@ -3294,79 +3121,35 @@ let process_class_def ctx (class_name : string) (tyvar_names : string list)
         Hashtbl.replace eff_tvars name eg;
         eg
     in
-    let rec resolve = function
-      | Ast.TyVar name ->
-        (match Hashtbl.find_opt tvars name with
-         | Some tv -> tv
-         | None ->
-           (* Extra method-level type variable *)
-           let idx = !next_gen in
-           next_gen := idx + 1;
-           Hashtbl.replace tvars name (Types.TGen idx);
-           Types.TGen idx)
-      | Ast.TyName "int" -> Types.TInt
-      | Ast.TyName "float" -> Types.TFloat
-      | Ast.TyName "bool" -> Types.TBool
-      | Ast.TyName "string" -> Types.TString
-      | Ast.TyName "unit" -> Types.TUnit
-      | Ast.TyName name ->
-        let canonical = resolve_type_alias ctx.type_env name in
-        (match find_variant_info ctx.type_env name with
-         | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
-         | Some (_, n, _, _) ->
-           error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-         | None -> error (Printf.sprintf "unknown type: %s" name))
-      | Ast.TyArrow (a, b, eff_opt) ->
-        let eff = match eff_opt with
-          | None -> Types.EffEmpty  (* default: class methods are pure *)
-          | Some Ast.EffAnnotPure -> Types.EffEmpty
-          | Some (Ast.EffAnnotRow items) ->
-            resolve_class_eff_items items
-        in
-        Types.TArrow (resolve a, eff, resolve b)
-      | Ast.TyTuple ts -> Types.TTuple (List.map resolve ts)
-      | Ast.TyList t -> Types.TList (resolve t)
-      | Ast.TyArray t -> Types.TArray (resolve t)
-      | Ast.TyApp (args, name) ->
-        let canonical = resolve_type_alias ctx.type_env name in
-        let arg_tys = List.map resolve args in
-        (match find_variant_info ctx.type_env name with
-         | Some (_, np, _, _) ->
-           if List.length arg_tys <> np then
-             error (Printf.sprintf "type %s expects %d type argument(s), got %d"
-               name np (List.length arg_tys));
-           Types.TVariant (canonical, arg_tys)
-         | None -> error (Printf.sprintf "unknown type constructor: %s" name))
-      | Ast.TyRecord (fields, is_open) ->
-        let fields = List.sort (fun (a,_) (b,_) -> String.compare a b)
-          (List.map (fun (n, t) -> (n, resolve t)) fields) in
-        let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-        Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-      | Ast.TyQualified (path, name) ->
-        let qualified = String.concat "." path ^ "." ^ name in
-        resolve (Ast.TyName qualified)
-      | Ast.TyPolyVariant (_kind, tags) ->
-        let row = List.fold_right (fun (tag, payload_annot) acc ->
-          Types.PVRow (tag, Option.map resolve payload_annot, acc)
-        ) tags Types.PVEmpty in
-        Types.TPolyVariant row
-      | Ast.TyWithEffect (ty, _) -> resolve ty
-    and resolve_class_eff_items items =
-      let labels = ref [] in
-      let tail = ref Types.EffEmpty in
-      List.iter (fun item ->
-        match item with
-        | Ast.EffLabel (name, param_annots) ->
-          let resolved_params = List.map resolve param_annots in
-          labels := (name, resolved_params) :: !labels
-        | Ast.EffVar name ->
-          tail := resolve_eff_var name
-      ) items;
-      List.fold_right (fun (name, params) acc ->
-        Types.EffRow (name, params, acc)
-      ) (List.rev !labels) !tail
+    let resolve_var name =
+      match Hashtbl.find_opt tvars name with
+      | Some tv -> tv
+      | None ->
+        let idx = !next_gen in
+        next_gen := idx + 1;
+        Hashtbl.replace tvars name (Types.TGen idx);
+        Types.TGen idx
     in
-    let ty = resolve annot in
+    let class_resolve_eff go eff_opt =
+      match eff_opt with
+      | None -> Types.EffEmpty
+      | Some Ast.EffAnnotPure -> Types.EffEmpty
+      | Some (Ast.EffAnnotRow items) ->
+        let labels = ref [] in
+        let tail = ref Types.EffEmpty in
+        List.iter (fun item ->
+          match item with
+          | Ast.EffLabel (name, param_annots) ->
+            labels := (name, List.map go param_annots) :: !labels
+          | Ast.EffVar name ->
+            tail := resolve_eff_var name
+        ) items;
+        List.fold_right (fun (name, params) acc ->
+          Types.EffRow (name, params, acc)
+        ) (List.rev !labels) !tail
+    in
+    let ty = resolve_ty_annot_def ~loc:ctx.loc ~check_synonyms:false
+      ctx.type_env resolve_var class_resolve_eff annot in
     let method_quant = !next_gen in
     let method_equant = !next_effgen in
     (mname, ty, method_quant, method_equant)
@@ -3376,7 +3159,7 @@ let process_class_def ctx (class_name : string) (tyvar_names : string list)
     let resolve_idx name =
       match List.find_index (fun n -> String.equal n name) tyvar_names with
       | Some i -> i
-      | None -> error (Printf.sprintf "functional dependency type variable '%s not in class parameters" name)
+      | None -> error ctx (Printf.sprintf "functional dependency type variable '%s not in class parameters" name)
     in
     Types.{ fd_from = List.map resolve_idx from_names;
             fd_to = List.map resolve_idx to_names }
@@ -3400,65 +3183,20 @@ let process_class_def ctx (class_name : string) (tyvar_names : string list)
 let resolve_inst_tys ctx (annots : Ast.ty_annot list) =
   let tvars = Hashtbl.create 4 in
   let next_idx = ref 0 in
-  let rec go = function
-    | Ast.TyVar name ->
-      (match Hashtbl.find_opt tvars name with
-       | Some idx -> Types.TGen idx
-       | None ->
-         let idx = !next_idx in
-         next_idx := idx + 1;
-         Hashtbl.replace tvars name idx;
-         Types.TGen idx)
-    | Ast.TyName "int" -> Types.TInt
-    | Ast.TyName "float" -> Types.TFloat
-    | Ast.TyName "bool" -> Types.TBool
-    | Ast.TyName "string" -> Types.TString
-    | Ast.TyName "byte" -> Types.TByte
-    | Ast.TyName "rune" -> Types.TRune
-    | Ast.TyName "unit" -> Types.TUnit
-    | Ast.TyName name ->
-      let canonical = resolve_type_alias ctx.type_env name in
-      (match find_variant_info ctx.type_env name with
-       | Some (_, 0, _, _) -> Types.TVariant (canonical, [])
-       | Some (_, n, _, _) ->
-         error (Printf.sprintf "type %s expects %d type argument(s)" name n)
-       | None ->
-         if List.assoc_opt name ctx.type_env.records <> None then
-           let fields = List.assoc name ctx.type_env.records in
-           if fields = [] then Types.TRecord Types.RWild
-           else Types.TRecord (Types.fields_to_closed_row fields)
-         else
-           error (Printf.sprintf "unknown type: %s" name))
-    | Ast.TyArrow (a, b, _) -> Types.TArrow (go a, Types.EffEmpty, go b)
-    | Ast.TyTuple ts -> Types.TTuple (List.map go ts)
-    | Ast.TyList t -> Types.TList (go t)
-    | Ast.TyArray t -> Types.TArray (go t)
-    | Ast.TyApp (args, name) ->
-      let canonical = resolve_type_alias ctx.type_env name in
-      let arg_tys = List.map go args in
-      (match find_variant_info ctx.type_env name with
-       | Some (_, np, _, _) ->
-         if List.length arg_tys <> np then
-           error (Printf.sprintf "type %s expects %d type argument(s), got %d"
-             name np (List.length arg_tys));
-         Types.TVariant (canonical, arg_tys)
-       | None -> error (Printf.sprintf "unknown type constructor: %s" name))
-    | Ast.TyRecord (fields, is_open) ->
-      let fields = List.map (fun (n, t) -> (n, go t)) fields in
-      let fields = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      let tail = if is_open then Types.new_rvar 0 else Types.REmpty in
-      Types.TRecord (List.fold_right (fun (n, t) acc -> Types.RRow (n, t, acc)) fields tail)
-    | Ast.TyQualified (path, name) ->
-      let qualified = String.concat "." path ^ "." ^ name in
-      go (Ast.TyName qualified)
-    | Ast.TyPolyVariant (_kind, tags) ->
-      let row = List.fold_right (fun (tag, payload_annot) acc ->
-        Types.PVRow (tag, Option.map go payload_annot, acc)
-      ) tags Types.PVEmpty in
-      Types.TPolyVariant row
-    | Ast.TyWithEffect (ty, _) -> go ty
+  let resolve_var name =
+    match Hashtbl.find_opt tvars name with
+    | Some idx -> Types.TGen idx
+    | None ->
+      let idx = !next_idx in
+      next_idx := idx + 1;
+      Hashtbl.replace tvars name idx;
+      Types.TGen idx
   in
-  let tys = List.map go annots in
+  let resolve annot =
+    resolve_ty_annot_def ~loc:ctx.loc ~check_synonyms:false
+      ctx.type_env resolve_var eff_empty annot
+  in
+  let tys = List.map resolve annots in
   (tys, !next_idx, tvars)
 
 let process_instance_def ctx level (class_name : string)
@@ -3469,13 +3207,13 @@ let process_instance_def ctx level (class_name : string)
   let class_def = match List.find_opt
     (fun c -> String.equal c.Types.class_name class_name) ctx.type_env.Types.classes with
     | Some c -> c
-    | None -> error (Printf.sprintf "unknown class: %s" class_name)
+    | None -> error ctx (Printf.sprintf "unknown class: %s" class_name)
   in
   let num_class_params = List.length class_def.Types.class_params in
   (* Resolve instance types: TGen for storage, fresh tvars for typechecking *)
   let (stored_tys, num_inst_vars, inst_tvars) = resolve_inst_tys ctx inst_ty_annots in
   if List.length stored_tys <> num_class_params then
-    error (Printf.sprintf "class %s expects %d type parameters, got %d"
+    error ctx (Printf.sprintf "class %s expects %d type parameters, got %d"
       class_name num_class_params (List.length stored_tys));
   let dname = Types.dict_name class_name stored_tys in
   (* Create fresh tvars for typechecking method bodies *)
@@ -3486,17 +3224,17 @@ let process_instance_def ctx level (class_name : string)
     List.length i.Types.inst_tys = List.length stored_tys &&
     Types.match_partial_inst i.Types.inst_tys (List.map (fun t -> Some t) stored_tys)
   ) ctx.type_env.Types.instances then
-    error (Printf.sprintf "duplicate instance %s for types %s"
+    error ctx (Printf.sprintf "duplicate instance %s for types %s"
       class_name (String.concat ", " (List.map Types.pp_ty stored_tys)));
   List.iter (fun (mname, _) ->
     if not (List.exists (fun (n, _, _) -> String.equal n mname) methods) then
-      error (Printf.sprintf "instance %s %s missing method: %s"
+      error ctx (Printf.sprintf "instance %s %s missing method: %s"
         class_name (String.concat " " (List.map Types.pp_ty stored_tys)) mname)
   ) class_def.class_methods;
   let typed_methods = List.map (fun (mname, params, body) ->
     let method_schema_ty = match List.assoc_opt mname class_def.class_methods with
       | Some ty -> ty
-      | None -> error (Printf.sprintf "%s is not a method of class %s" mname class_name)
+      | None -> error ctx (Printf.sprintf "%s is not a method of class %s" mname class_name)
     in
     let concrete_method_ty = subst_tgens check_tys method_schema_ty in
     (* Instantiate any remaining TGens (extra method-level type vars like 'c in fold) *)
@@ -3516,14 +3254,14 @@ let process_instance_def ctx level (class_name : string)
   ) methods in
   let sorted_methods = List.sort (fun (a, _) (b, _) -> String.compare a b) typed_methods in
   let record_ty = Types.TRecord (Types.fields_to_closed_row (List.map (fun (n, te) -> (n, te.ty)) sorted_methods)) in
-  let dict_expr = mk (TERecord sorted_methods) record_ty in
+  let dict_expr = mk ctx (TERecord sorted_methods) record_ty in
   (* Resolve instance constraints using the inst_tvars table (name -> TGen index) *)
   let inst_constraints = List.map (fun (cclass, tyvar_names) ->
     let cclass = resolve_type_alias ctx.type_env cclass in
     let cc_args = List.map (fun tvname ->
       match Hashtbl.find_opt inst_tvars tvname with
       | Some idx -> Types.CATGen idx
-      | None -> error (Printf.sprintf "constraint type variable '%s not found in instance type parameters" tvname)
+      | None -> error ctx (Printf.sprintf "constraint type variable '%s not found in instance type parameters" tvname)
     ) tyvar_names in
     Types.{ cc_class = cclass; cc_args }
   ) constraints in
@@ -3535,7 +3273,7 @@ let process_instance_def ctx level (class_name : string)
   } in
   (* Check functional dependency consistency *)
   (try Types.check_fundep_consistency class_def inst_def ctx.type_env.Types.instances
-   with Types.Unify_error msg -> error msg);
+   with Types.Unify_error msg -> error ctx msg);
   let type_env = { ctx.type_env with
     Types.instances = inst_def :: ctx.type_env.instances;
   } in
@@ -3567,7 +3305,7 @@ let extract_tyvar_ids annot ty =
   mapping
 
 (* Resolve AST constraints to class_constraints using param annotations and generalization *)
-let resolve_let_constraints type_env level constraints params ret_annot te_ty shared_tvars =
+let resolve_let_constraints ~loc type_env level constraints params ret_annot te_ty shared_tvars =
   if constraints = [] then
     Types.generalize level te_ty
   else begin
@@ -3615,7 +3353,7 @@ let resolve_let_constraints type_env level constraints params ret_annot te_ty sh
         | Some tvar_id ->
           (match Hashtbl.find_opt id_map tvar_id with
            | Some (Types.TGen idx) -> Types.CATGen idx
-           | _ -> error (Printf.sprintf "constraint type variable '%s is not polymorphic" tvname))
+           | _ -> error_at loc (Printf.sprintf "constraint type variable '%s is not polymorphic" tvname))
         | None ->
           (* Not in annotations. Check shared_tvars for fundep-determined vars. *)
           (match Hashtbl.find_opt shared_tvars tvname with
@@ -3640,7 +3378,7 @@ let resolve_let_constraints type_env level constraints params ret_annot te_ty sh
                     idx in
                 Types.CAPhantom (idx, tv))
            | None ->
-             error (Printf.sprintf "constraint type variable '%s not found in function signature" tvname))
+             error_at loc (Printf.sprintf "constraint type variable '%s not found in function signature" tvname))
       ) tyvar_names in
       Types.{ cc_class = cclass; cc_args }
     ) constraints in
@@ -3725,7 +3463,7 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
                          let tvname = List.nth tyvar_names ti in
                          (match Hashtbl.find_opt shared_tvars tvname with
                           | Some constraint_tv ->
-                            (try Types.unify body_tv constraint_tv with _ -> ())
+                            (try Types.unify body_tv constraint_tv with Types.Unify_error _ -> ())
                           | None -> ())
                        | None -> ()
                      ) fd.fd_to
@@ -3759,7 +3497,7 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
      | TEPerform (_, e) -> walk e
      | TEHandle (body, _) -> walk body
      | TEResume (e1, e2) -> walk e1; walk e2
-     | TEWhile (cond, body) -> walk cond; walk body
+     | TEWhile { tw_cond; tw_body } -> walk tw_cond; walk tw_body
      | TEForLoop body -> walk body
      | TEArray es -> List.iter walk es
      | TEReturn e -> walk e
@@ -3774,6 +3512,7 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
 
 let synth_constrained_fn ctx level constraints params ret_annot body =
   let shared_tvars = Hashtbl.create 4 in
+  let shared_eff_tvars = Hashtbl.create 2 in
   (* Pre-allocate tvars for constraint type variables *)
   let constraint_tyvar_names =
     List.flatten (List.map (fun (_, names) -> names) constraints)
@@ -3790,20 +3529,20 @@ let synth_constrained_fn ctx level constraints params ret_annot body =
   (* Resolve param types with shared tvars *)
   let param_tys = List.map (fun p ->
     match p.Ast.annot with
-    | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars annot
+    | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot
     | None -> Types.new_tvar (level + 1)
   ) params in
   (* Resolve return type with shared tvars *)
   let ret_ty_opt = match ret_annot with
-    | Some annot -> Some (resolve_ty_annot_shared ctx (level + 1) shared_tvars annot)
+    | Some annot -> Some (resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot)
     | None -> None
   in
   (* Build ctx with params and constraint_tvars *)
   let body_eff = Types.new_effvar (level + 1) in
-  let inner_ctx = List.fold_left2 (fun c p ty ->
-    extend_var_mono c p.Ast.name ty
-  ) { ctx with constraint_tvars = constraint_tvar_ids @ ctx.constraint_tvars;
-               current_eff = body_eff } params param_tys in
+  let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
+    extend_var_mono c p.name ty
+  ) ({ ctx with constraint_tvars = constraint_tvar_ids @ ctx.constraint_tvars;
+               current_eff = body_eff }) params param_tys in
   (* Typecheck body *)
   let body_te = match ret_ty_opt with
     | Some ret_ty -> check inner_ctx (level + 1) body ret_ty
@@ -3814,40 +3553,22 @@ let synth_constrained_fn ctx level constraints params ret_annot body =
   (* Build TEFun chain — innermost arrow gets body_eff, outer arrows are pure *)
   let te = match List.rev params, List.rev param_tys with
     | [], [] -> body_te
-    | last_p :: rest_ps, last_pty :: rest_ptys ->
-      let inner = mk (TEFun (last_p.Ast.name, body_te, false))
+    | (last_p : Ast.param) :: rest_ps, last_pty :: rest_ptys ->
+      let inner = mk ctx (TEFun (last_p.name, body_te, false))
         (Types.TArrow (last_pty, body_eff, body_te.ty)) in
-      List.fold_left2 (fun acc p pty ->
-        mk (TEFun (p.Ast.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
+      List.fold_left2 (fun acc (p : Ast.param) pty ->
+        mk ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
       ) inner rest_ps rest_ptys
     | _ -> assert false
   in
-  let scheme = resolve_let_constraints ctx.type_env level constraints params ret_annot te.ty shared_tvars in
+  let scheme = resolve_let_constraints ~loc:ctx.loc ctx.type_env level constraints params ret_annot te.ty shared_tvars in
   (te, scheme)
 
 (* ---- Module processing ---- *)
 
-let find_module_in_env type_env mod_name =
-  (* Support dotted module paths like "Outer.Inner" *)
-  match String.split_on_char '.' mod_name with
-  | [] -> None
-  | [name] -> List.assoc_opt name type_env.Types.modules
-  | first :: rest ->
-    (match List.assoc_opt first type_env.Types.modules with
-     | None -> None
-     | Some minfo ->
-       let rec drill mi = function
-         | [] -> Some mi
-         | seg :: rest ->
-           (match List.assoc_opt seg mi.Types.mod_submodules with
-            | None -> None
-            | Some sub -> drill sub rest)
-       in
-       drill minfo rest)
-
 let open_module_into_ctx ctx mod_name names_opt =
   match find_module_in_env ctx.type_env mod_name with
-  | None -> error (Printf.sprintf "unknown module: %s" mod_name)
+  | None -> error ctx (Printf.sprintf "unknown module: %s" mod_name)
   | Some minfo ->
     let filter name =
       match names_opt with
@@ -3925,9 +3646,6 @@ let open_module_into_ctx ctx mod_name names_opt =
     ) type_env minfo.Types.mod_pub_classes in
     { ctx with type_env }
 
-let () = find_module_in_env_ref := find_module_in_env
-let () = open_module_into_ctx_ref := open_module_into_ctx
-
 (* ---- Deriving generation ---- *)
 
 let rec collect_tyvars_annot = function
@@ -3987,19 +3705,19 @@ let gen_show_variant type_params name ctors =
         Ast.EString ")"] in
       (pat, None, body)
   ) ctors in
-  let body = Ast.EMatch (Ast.EVar "__x", arms, false) in
+  let body = Ast.EMatch (Ast.EVar "__x", arms, Total) in
   ("Show", [inst_ty], constraints,
    [("show", [Ast.{name = "__x"; annot = None; is_generated = false}], body)])
 
 let gen_show_record type_params name fields =
   let inst_ty = make_inst_ty type_params name in
-  let annots = List.map (fun (_, _, a) -> a) fields in
+  let annots = List.map (fun (f : Ast.record_field_def) -> f.rfd_type) fields in
   let constraints = make_constraints "Show" type_params annots in
   let parts = [Ast.EString "{ "] @
-    List.concat (List.mapi (fun i (_, fname, _) ->
-      let sf = Ast.EApp (Ast.EVar "show", Ast.EField (Ast.EVar "__x", fname)) in
-      if i = 0 then [Ast.EString (fname ^ " = "); sf]
-      else [Ast.EString ("; " ^ fname ^ " = "); sf]
+    List.concat (List.mapi (fun i (f : Ast.record_field_def) ->
+      let sf = Ast.EApp (Ast.EVar "show", Ast.EField (Ast.EVar "__x", f.rfd_name)) in
+      if i = 0 then [Ast.EString (f.rfd_name ^ " = "); sf]
+      else [Ast.EString ("; " ^ f.rfd_name ^ " = "); sf]
     ) fields) @ [Ast.EString " }"] in
   let body = concat_str_exprs parts in
   ("Show", [inst_ty], constraints,
@@ -4038,22 +3756,22 @@ let gen_eq_variant type_params name ctors =
       (Ast.PatTuple [lp; rp], None, Ast.EBinop (Ast.Eq, Ast.EVar "__v0", Ast.EVar "__w0"))
   ) ctors in
   let arms = arms @ [(Ast.PatWild, None, Ast.EBool false)] in
-  let eq_body = Ast.EMatch (Ast.ETuple [Ast.EVar "__a"; Ast.EVar "__b"], arms, false) in
+  let eq_body = Ast.EMatch (Ast.ETuple [Ast.EVar "__a"; Ast.EVar "__b"], arms, Total) in
   let neq_body = Ast.EUnop (Ast.Not,
     Ast.EMatch (Ast.ETuple [Ast.EVar "__a"; Ast.EVar "__b"],
-      List.map (fun (p, g, e) -> (p, g, e)) arms, false)) in
+      List.map (fun (p, g, e) -> (p, g, e)) arms, Total)) in
   ("Eq", [inst_ty], constraints,
    [("=", [Ast.{name="__a"; annot=None; is_generated=false}; Ast.{name="__b"; annot=None; is_generated=false}], eq_body);
     ("<>", [Ast.{name="__a"; annot=None; is_generated=false}; Ast.{name="__b"; annot=None; is_generated=false}], neq_body)])
 
 let gen_eq_record type_params name fields =
   let inst_ty = make_inst_ty type_params name in
-  let annots = List.map (fun (_, _, a) -> a) fields in
+  let annots = List.map (fun (f : Ast.record_field_def) -> f.rfd_type) fields in
   let constraints = make_constraints "Eq" type_params annots in
-  let eqs = List.map (fun (_, fname, _) ->
+  let eqs = List.map (fun (f : Ast.record_field_def) ->
     Ast.EBinop (Ast.Eq,
-      Ast.EField (Ast.EVar "__a", fname),
-      Ast.EField (Ast.EVar "__b", fname))
+      Ast.EField (Ast.EVar "__a", f.rfd_name),
+      Ast.EField (Ast.EVar "__b", f.rfd_name))
   ) fields in
   let eq_body = match eqs with
     | [] -> Ast.EBool true
@@ -4065,10 +3783,10 @@ let gen_eq_record type_params name fields =
    [("=", [Ast.{name="__a"; annot=None; is_generated=false}; Ast.{name="__b"; annot=None; is_generated=false}], eq_body);
     ("<>", [Ast.{name="__a"; annot=None; is_generated=false}; Ast.{name="__b"; annot=None; is_generated=false}], neq_body)])
 
-let generate_derived_instance type_params name def class_name =
+let generate_derived_instance ~loc type_params name def class_name =
   match class_name, def with
   | _, Ast.TDVariant ctors when List.exists (fun (_, _, ret) -> ret <> None) ctors ->
-    error (Printf.sprintf "cannot derive %s for GADT type %s" class_name name)
+    error_at loc (Printf.sprintf "cannot derive %s for GADT type %s" class_name name)
   | "Show", Ast.TDVariant ctors -> Some (gen_show_variant type_params name ctors)
   | "Show", Ast.TDRecord fields -> Some (gen_show_record type_params name fields)
   | "Show", Ast.TDNewtype (ctor_name, underlying) ->
@@ -4079,6 +3797,46 @@ let generate_derived_instance type_params name def class_name =
     Some (gen_eq_variant type_params name [(ctor_name, Some underlying, None)])
   | _ -> None
 
+type module_acc = {
+  ma_pub_vars: (string * Types.scheme) list ref;
+  ma_pub_mutable_vars: string list ref;
+  ma_pub_types: string list ref;
+  ma_opaque_types: string list ref;
+  ma_newtypes: string list ref;
+  ma_pub_constructors: (string * Types.ctor_info) list ref;
+  ma_all_instances: Types.instance_def list ref;
+  ma_submodules: (string * Types.module_info) list ref;
+  ma_pub_classes: string list ref;
+  ma_typed_decls: tdecl list ref;
+  ma_all_member_schemes: (string * Types.scheme) list ref;
+}
+
+let make_module_acc () = {
+  ma_pub_vars = ref [];
+  ma_pub_mutable_vars = ref [];
+  ma_pub_types = ref [];
+  ma_opaque_types = ref [];
+  ma_newtypes = ref [];
+  ma_pub_constructors = ref [];
+  ma_all_instances = ref [];
+  ma_submodules = ref [];
+  ma_pub_classes = ref [];
+  ma_typed_decls = ref [];
+  ma_all_member_schemes = ref [];
+}
+
+(* For extern declarations, default unannotated top-level arrows to EffEmpty (pure).
+   Only walks the return-type spine — callback parameter arrows keep their fresh variables. *)
+let rec default_extern_effects ty =
+  match ty with
+  | Types.TArrow (param, eff, ret) ->
+    let eff' = match Types.eff_repr eff with
+      | Types.EffVar { contents = Types.EffUnbound _ } -> Types.EffEmpty
+      | _ -> eff
+    in
+    Types.TArrow (param, eff', default_extern_effects ret)
+  | _ -> ty
+
 let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   let prefix = match ctx.current_module with
     | None -> mod_name ^ "."
@@ -4086,36 +3844,25 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   in
   (* Sub-context: inherits parent, has current_module set *)
   let sub_ctx = { ctx with current_module = Some prefix } in
-  (* Accumulators for module_info *)
-  let pub_vars = ref [] in
-  let pub_mutable_vars = ref [] in
-  let pub_types = ref [] in
-  let opaque_types = ref [] in
-  let newtypes = ref [] in
-  let pub_constructors = ref [] in
-  let all_instances = ref [] in
-  let submodules = ref [] in
-  let pub_classes = ref [] in
-  let typed_decls = ref [] in
+  let acc = make_module_acc () in
   (* Process each module body item *)
   let sub_ctx = List.fold_left (fun sub_ctx (item : Ast.module_decl) ->
-    let (sub_ctx', tdecl) = check_module_item sub_ctx level prefix item
-      pub_vars pub_mutable_vars pub_types opaque_types newtypes pub_constructors all_instances submodules pub_classes typed_decls in
-    typed_decls := tdecl :: !typed_decls;
+    let (sub_ctx', tdecl) = check_module_item sub_ctx level prefix item acc in
+    acc.ma_typed_decls := tdecl :: !(acc.ma_typed_decls);
     sub_ctx'
   ) sub_ctx items in
   (* Build module_info *)
   let minfo = Types.{
     mod_name;
-    mod_pub_vars = !pub_vars;
-    mod_pub_mutable_vars = !pub_mutable_vars;
-    mod_pub_types = !pub_types;
-    mod_opaque_types = !opaque_types;
-    mod_newtypes = !newtypes;
-    mod_pub_constructors = !pub_constructors;
-    mod_instances = !all_instances;
-    mod_submodules = !submodules;
-    mod_pub_classes = !pub_classes;
+    mod_pub_vars = !(acc.ma_pub_vars);
+    mod_pub_mutable_vars = !(acc.ma_pub_mutable_vars);
+    mod_pub_types = !(acc.ma_pub_types);
+    mod_opaque_types = !(acc.ma_opaque_types);
+    mod_newtypes = !(acc.ma_newtypes);
+    mod_pub_constructors = !(acc.ma_pub_constructors);
+    mod_instances = !(acc.ma_all_instances);
+    mod_submodules = !(acc.ma_submodules);
+    mod_pub_classes = !(acc.ma_pub_classes);
   } in
   (* Add module to outer type_env, starting from sub_ctx to preserve inner registrations
      (compiler needs all constructor entries for typed AST compilation) *)
@@ -4141,8 +3888,8 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
     info.Types.mod_pub_types
     @ List.concat_map (fun (_, sub) -> submodule_types sub) info.mod_submodules
   in
-  let submod_type_names = List.concat_map (fun (_, info) -> submodule_types info) !submodules in
-  let is_exported name = List.mem name !pub_types || List.mem name submod_type_names in
+  let submod_type_names = List.concat_map (fun (_, info) -> submodule_types info) !(acc.ma_submodules) in
+  let is_exported name = List.mem name !(acc.ma_pub_types) || List.mem name submod_type_names in
   let private_type_names =
     List.filter_map (fun (name, _, _, _) ->
       if is_exported name then None else Some name) new_variants
@@ -4155,7 +3902,7 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
     Types.hidden_types = private_type_names @ outer_type_env.Types.hidden_types;
   } in
   (* Track types whose constructors are hidden (private + opaque) *)
-  let hidden_ctor_type_names = private_type_names @ !opaque_types in
+  let hidden_ctor_type_names = private_type_names @ !(acc.ma_opaque_types) in
   let outer_type_env = { outer_type_env with
     Types.hidden_ctor_types = hidden_ctor_type_names @ outer_type_env.Types.hidden_ctor_types;
   } in
@@ -4181,27 +3928,27 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
             | Some i -> String.sub tname (i + 1) (String.length tname - i - 1)
             | None -> tname
           in
-          error (Printf.sprintf
+          error ctx (Printf.sprintf
             "public binding '%s' exposes private type '%s'. Use 'pub type' or 'opaque type' to export it"
             short short_tname)
         end
       ) type_names
-    ) !pub_vars;
+    ) !(acc.ma_pub_vars);
   (* Also add all qualified pub vars to outer ctx *)
   let outer_vars = List.fold_left (fun vars (short, scheme) ->
     let qualified = prefix ^ short in
     (qualified, scheme) :: vars
-  ) ctx.vars !pub_vars in
+  ) ctx.vars !(acc.ma_pub_vars) in
   (* Add qualified pub constructors *)
   let outer_type_env = List.fold_left (fun te (short, info) ->
     let qualified = prefix ^ short in
     { te with Types.constructors = (qualified, info) :: te.Types.constructors }
-  ) outer_type_env !pub_constructors in
+  ) outer_type_env !(acc.ma_pub_constructors) in
   (* Add instances to outer env — deduplicate since sub_ctx already has them *)
   let existing_dict_names = List.map (fun i -> i.Types.inst_dict_name) outer_type_env.Types.instances in
   let new_insts = List.filter (fun inst ->
     not (List.mem inst.Types.inst_dict_name existing_dict_names)
-  ) !all_instances in
+  ) !(acc.ma_all_instances) in
   let outer_type_env = { outer_type_env with
     Types.instances = new_insts @ outer_type_env.Types.instances;
   } in
@@ -4209,16 +3956,15 @@ let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   let outer_mutable_vars = List.fold_left (fun mvs short ->
     let qualified = prefix ^ short in
     qualified :: mvs
-  ) ctx.mutable_vars !pub_mutable_vars in
+  ) ctx.mutable_vars !(acc.ma_pub_mutable_vars) in
   let outer_ctx = { ctx with
     vars = outer_vars;
     mutable_vars = outer_mutable_vars;
     type_env = outer_type_env;
   } in
-  (outer_ctx, TDModule (mod_name, List.rev !typed_decls))
+  (outer_ctx, TDModule (mod_name, List.rev !(acc.ma_typed_decls), !(acc.ma_all_member_schemes)))
 
-and check_module_item sub_ctx level prefix (item : Ast.module_decl)
-    pub_vars pub_mutable_vars pub_types opaque_types newtypes pub_constructors all_instances submodules pub_classes typed_decls =
+and check_module_item sub_ctx level prefix (item : Ast.module_decl) (acc : module_acc) =
   let decl = item.decl in
   match decl with
   | Ast.DModule (inner_name, inner_items) ->
@@ -4228,19 +3974,19 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
      | Ast.Public ->
        (match find_module_in_env sub_ctx'.type_env inner_name with
         | Some inner_info ->
-          submodules := (inner_name, inner_info) :: !submodules;
+          acc.ma_submodules := (inner_name, inner_info) :: !(acc.ma_submodules);
           (* Also export inner module's pub vars so they're visible as Outer.Inner.f *)
           List.iter (fun (short, scheme) ->
-            pub_vars := (inner_name ^ "." ^ short, scheme) :: !pub_vars
+            acc.ma_pub_vars := (inner_name ^ "." ^ short, scheme) :: !(acc.ma_pub_vars)
           ) inner_info.Types.mod_pub_vars;
           (* Export inner module's pub constructors *)
           List.iter (fun (short, info) ->
-            pub_constructors := (inner_name ^ "." ^ short, info) :: !pub_constructors
+            acc.ma_pub_constructors := (inner_name ^ "." ^ short, info) :: !(acc.ma_pub_constructors)
           ) inner_info.Types.mod_pub_constructors
         | None -> ());
      | _ -> ());
     (sub_ctx', tdecl)
-  | Ast.DType (type_params, name, def, deriving) ->
+  | Ast.DType { td_params = type_params; td_name = name; td_def = def; td_deriving = deriving } ->
     let qualified_name = prefix ^ name in
     (* Add type alias BEFORE processing so GADT return types can resolve short names *)
     let sub_ctx_with_alias = { sub_ctx with type_env = { sub_ctx.type_env with
@@ -4250,11 +3996,11 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
     let sub_ctx' = process_type_def sub_ctx_with_alias type_params qualified_name def in
     (* Track newtypes *)
     (match def with
-     | Ast.TDNewtype _ -> newtypes := qualified_name :: !newtypes
+     | Ast.TDNewtype _ -> acc.ma_newtypes := qualified_name :: !(acc.ma_newtypes)
      | _ -> ());
     (match item.vis with
      | Ast.Public ->
-       pub_types := qualified_name :: !pub_types;
+       acc.ma_pub_types := qualified_name :: !(acc.ma_pub_types);
        (* Export constructors with qualified type name *)
        (match def with
         | Ast.TDVariant ctors ->
@@ -4262,45 +4008,47 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
             match List.assoc_opt ctor_name sub_ctx'.type_env.Types.constructors with
             | Some info ->
               let qual_info = { info with Types.ctor_type_name = qualified_name } in
-              pub_constructors := (ctor_name, qual_info) :: !pub_constructors
+              acc.ma_pub_constructors := (ctor_name, qual_info) :: !(acc.ma_pub_constructors)
             | None -> ()
           ) ctors
         | Ast.TDNewtype (ctor_name, _) ->
           (match List.assoc_opt ctor_name sub_ctx'.type_env.Types.constructors with
            | Some info ->
              let qual_info = { info with Types.ctor_type_name = qualified_name } in
-             pub_constructors := (ctor_name, qual_info) :: !pub_constructors
+             acc.ma_pub_constructors := (ctor_name, qual_info) :: !(acc.ma_pub_constructors)
            | None -> ())
         | Ast.TDRecord _ | Ast.TDAlias _ -> ())
      | Ast.Opaque ->
-       pub_types := qualified_name :: !pub_types;
-       opaque_types := qualified_name :: !opaque_types
+       acc.ma_pub_types := qualified_name :: !(acc.ma_pub_types);
+       acc.ma_opaque_types := qualified_name :: !(acc.ma_opaque_types)
        (* Don't export constructors *)
      | Ast.Private -> ());
     (* Process deriving — use short name so type resolution works *)
     let sub_ctx' = List.fold_left (fun ctx cls ->
-      match generate_derived_instance type_params name def cls with
+      match generate_derived_instance ~loc:sub_ctx.loc type_params name def cls with
       | Some (class_name, inst_tys, constraints, methods) ->
         let (ctx', tdecl) = process_instance_def ctx level class_name inst_tys constraints methods in
-        typed_decls := tdecl :: !typed_decls;
-        all_instances := ctx'.type_env.Types.instances;
+        acc.ma_typed_decls := tdecl :: !(acc.ma_typed_decls);
+        acc.ma_all_instances := ctx'.type_env.Types.instances;
         ctx'
       | None ->
-        error (Printf.sprintf "cannot derive %s for type %s" cls name)
+        error sub_ctx (Printf.sprintf "cannot derive %s for type %s" cls name)
     ) sub_ctx' deriving in
     (sub_ctx', TDType (qualified_name, def))
-  | Ast.DLet (name, params, ret_annot, constraints, body) ->
+  | Ast.DLet { name; params; ret_annot; constraints; body } ->
     let qualified_name = prefix ^ name in
     let (te, scheme) =
       if constraints <> [] then
         synth_constrained_fn sub_ctx level constraints params ret_annot body
       else begin
+        let eff = Types.new_effvar level in
+        let eff_ctx = { sub_ctx with current_eff = eff } in
         let full_body = wrap_params_decl params ret_annot body in
-        let te = synth sub_ctx (level + 1) full_body in
+        let te = synth eff_ctx (level + 1) full_body in
         improve_fundeps_in_expr sub_ctx.vars sub_ctx.type_env te;
         let scheme =
-          if params = [] && not (is_syntactic_value body) then mono_scheme te.ty
-          else resolve_let_constraints Types.empty_type_env level [] params ret_annot te.ty (Hashtbl.create 0) in
+          if params = [] && not (is_syntactic_value body) then Types.mono te.ty
+          else resolve_let_constraints ~loc:sub_ctx.loc Types.empty_type_env level [] params ret_annot te.ty (Hashtbl.create 0) in
         let scheme = infer_implicit_constraints "" sub_ctx.type_env sub_ctx.vars te scheme in
         let scheme = infer_record_evidence sub_ctx.vars te scheme in
         (te, scheme)
@@ -4308,23 +4056,26 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
     in
     let sub_ctx' = extend_var sub_ctx name scheme in
     let sub_ctx' = extend_var sub_ctx' qualified_name scheme in
+    acc.ma_all_member_schemes := (qualified_name, scheme) :: !(acc.ma_all_member_schemes);
     (match item.vis with
-     | Ast.Public -> pub_vars := (name, scheme) :: !pub_vars
+     | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
      | _ -> ());
     (sub_ctx', TDLet (qualified_name, te))
   | Ast.DLetMut (name, body) ->
     let qualified_name = prefix ^ name in
-    let te = synth sub_ctx (level + 1) body in
-    let scheme = mono_scheme te.ty in
+    let eff = Types.new_effvar level in
+    let eff_ctx = { sub_ctx with current_eff = eff } in
+    let te = synth eff_ctx (level + 1) body in
+    let scheme = Types.mono te.ty in
     let sub_ctx' = extend_var_mutable sub_ctx name scheme in
     let sub_ctx' = extend_var_mutable sub_ctx' qualified_name scheme in
     (match item.vis with
      | Ast.Public ->
-       pub_vars := (name, scheme) :: !pub_vars;
-       pub_mutable_vars := name :: !pub_mutable_vars
+       acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars);
+       acc.ma_pub_mutable_vars := name :: !(acc.ma_pub_mutable_vars)
      | _ -> ());
     (sub_ctx', TDLetMut (qualified_name, te))
-  | Ast.DLetRec (name, type_params, params, ret_annot, constraints, body) ->
+  | Ast.DLetRec { lr_name = name; type_params; params; ret_annot; constraints; body } ->
     let qualified_name = prefix ^ name in
     let (fn_te, scheme) =
       if type_params <> [] then
@@ -4334,17 +4085,19 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
         let sub_ctx_self = extend_var_mono sub_ctx name fn_var in
         let sub_ctx_self = extend_var_mono sub_ctx_self qualified_name fn_var in
         let (te, scheme) = synth_constrained_fn sub_ctx_self level constraints params ret_annot body in
-        try_unify fn_var te.ty;
+        try_unify sub_ctx fn_var te.ty;
         (te, scheme)
       end else begin
+        let eff = Types.new_effvar level in
+        let eff_ctx = { sub_ctx with current_eff = eff } in
         let full_body = wrap_params_decl params ret_annot body in
         let fn_var = Types.new_tvar (level + 1) in
-        let sub_ctx' = extend_var_mono sub_ctx name fn_var in
+        let sub_ctx' = extend_var_mono eff_ctx name fn_var in
         let sub_ctx' = extend_var_mono sub_ctx' qualified_name fn_var in
         let fn_te = synth sub_ctx' (level + 1) full_body in
-        try_unify fn_var fn_te.ty;
+        try_unify sub_ctx fn_var fn_te.ty;
         improve_fundeps_in_expr sub_ctx.vars sub_ctx.type_env fn_te;
-        let scheme = resolve_let_constraints Types.empty_type_env level [] params ret_annot fn_te.ty (Hashtbl.create 0) in
+        let scheme = resolve_let_constraints ~loc:sub_ctx.loc Types.empty_type_env level [] params ret_annot fn_te.ty (Hashtbl.create 0) in
         let scheme = infer_implicit_constraints name sub_ctx.type_env sub_ctx.vars fn_te scheme in
         let scheme = infer_record_evidence sub_ctx.vars fn_te scheme in
         (fn_te, scheme)
@@ -4352,11 +4105,12 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
     in
     let sub_ctx'' = extend_var sub_ctx name scheme in
     let sub_ctx'' = extend_var sub_ctx'' qualified_name scheme in
+    acc.ma_all_member_schemes := (qualified_name, scheme) :: !(acc.ma_all_member_schemes);
     (match item.vis with
-     | Ast.Public -> pub_vars := (name, scheme) :: !pub_vars
+     | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
      | _ -> ());
     (sub_ctx'', TDLetRec (qualified_name, fn_te))
-  | Ast.DClass (name, tyvars, fundeps, methods) ->
+  | Ast.DClass { class_name = name; tyvars; fundeps; methods } ->
     let qualified = prefix ^ name in
     let (sub_ctx', tdecl) = process_class_def sub_ctx qualified tyvars fundeps methods in
     (* Add alias so unqualified name resolves inside the module *)
@@ -4364,16 +4118,16 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
       Types.type_aliases = (name, qualified) :: sub_ctx'.type_env.Types.type_aliases }} in
     (match item.vis with
      | Ast.Public ->
-       pub_classes := qualified :: !pub_classes;
+       acc.ma_pub_classes := qualified :: !(acc.ma_pub_classes);
        (* Export class methods as pub vars *)
        List.iter (fun (mname, _) ->
          match List.assoc_opt mname sub_ctx'.vars with
-         | Some scheme -> pub_vars := (mname, scheme) :: !pub_vars
+         | Some scheme -> acc.ma_pub_vars := (mname, scheme) :: !(acc.ma_pub_vars)
          | None -> ()
        ) methods
      | _ -> ());
     (sub_ctx', tdecl)
-  | Ast.DInstance (class_name, inst_ty_annots, constraints, methods) ->
+  | Ast.DInstance { inst_class = class_name; inst_types = inst_ty_annots; inst_constraints = constraints; inst_methods = methods } ->
     let (sub_ctx', tdecl) = process_instance_def sub_ctx level class_name inst_ty_annots constraints methods in
     (* Instances are always public *)
     let new_insts = List.filter (fun inst ->
@@ -4381,13 +4135,14 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
         String.equal prev.Types.inst_dict_name inst.Types.inst_dict_name
       ) sub_ctx.type_env.Types.instances)
     ) sub_ctx'.type_env.Types.instances in
-    all_instances := new_insts @ !all_instances;
+    acc.ma_all_instances := new_insts @ !(acc.ma_all_instances);
     (sub_ctx', tdecl)
   | Ast.DEffect (name, type_params, ops) ->
     let tvars = Hashtbl.create 4 in
+    let eff_tvars = Hashtbl.create 2 in
     List.iteri (fun i p -> Hashtbl.replace tvars p (Types.TGen i)) type_params;
     let resolved_ops = List.map (fun (op_name, annot) ->
-      let ty = resolve_ty_annot_shared sub_ctx 0 tvars annot in
+      let ty = resolve_ty_annot_shared sub_ctx 0 tvars eff_tvars annot in
       (op_name, ty)
     ) ops in
     let effect_def = Types.{
@@ -4401,22 +4156,36 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
   | Ast.DExtern (name, ty_annot) ->
     let qualified_name = prefix ^ name in
     let tvars = Hashtbl.create 4 in
-    let ty = resolve_ty_annot_shared sub_ctx 1 tvars ty_annot in
+    let eff_tvars = Hashtbl.create 2 in
+    let ty = resolve_ty_annot_shared sub_ctx 1 tvars eff_tvars ty_annot in
+    let ty = default_extern_effects ty in
     let scheme = Types.generalize 0 ty in
     let sub_ctx' = extend_var sub_ctx name scheme in
     let sub_ctx' = extend_var sub_ctx' qualified_name scheme in
     (match item.vis with
-     | Ast.Public -> pub_vars := (name, scheme) :: !pub_vars
+     | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
      | _ -> ());
     (sub_ctx', TDExtern (qualified_name, scheme))
   | Ast.DExpr expr ->
-    let te = synth sub_ctx level expr in
+    let eff = Types.new_effvar level in
+    let eff_ctx = { sub_ctx with current_eff = eff } in
+    let te = synth eff_ctx level expr in
+    (* Allow IO as ambient effect in module-level expressions *)
+    let rec close_ambient_effects e =
+      match Types.eff_repr e with
+      | Types.EffRow ("IO", _, tail) -> close_ambient_effects tail
+      | remaining ->
+        (try Types.unify_eff remaining Types.EffEmpty
+         with Types.Unify_error _ ->
+           error sub_ctx (Printf.sprintf "expression has unhandled effects: %s" (Types.pp_eff eff)))
+    in
+    close_ambient_effects (Types.eff_repr eff);
     (sub_ctx, TDExpr te)
   | Ast.DOpen (mod_name, names_opt) ->
     let sub_ctx' = open_module_into_ctx sub_ctx mod_name names_opt in
     (* Inside a module, create qualified aliases so opened names resolve correctly *)
     let minfo = match find_module_in_env sub_ctx.type_env mod_name with
-      | Some m -> m | None -> error (Printf.sprintf "unknown module: %s" mod_name)
+      | Some m -> m | None -> error sub_ctx (Printf.sprintf "unknown module: %s" mod_name)
     in
     let class_method_names = List.concat_map (fun qname ->
       match List.find_opt (fun (c : Types.class_def) ->
@@ -4444,27 +4213,28 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
     ) sub_ctx' minfo.Types.mod_pub_vars in
     (sub_ctx', TDOpen alias_pairs)
   | Ast.DLetRecAnd bindings ->
-    let has_poly = List.exists (fun (_, tp, _, _, _, _) -> tp <> []) bindings in
+    let has_poly = List.exists (fun { Ast.type_params = tp; _ } -> tp <> []) bindings in
     if has_poly then begin
-      let shared_tvars_list = List.map (fun (_, type_params, params, ret_annot, _, _) ->
+      let shared_tvars_list = List.map (fun { Ast.type_params; params; ret_annot; _ } ->
         let shared_tvars = Hashtbl.create 4 in
+        let shared_eff_tvars = Hashtbl.create 2 in
         List.iter (fun tp ->
           Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1))
         ) type_params;
         let param_tys = List.map (fun (p : Ast.param) ->
           match p.annot with
-          | Some annot -> resolve_ty_annot_shared sub_ctx (level + 1) shared_tvars annot
+          | Some annot -> resolve_ty_annot_shared sub_ctx (level + 1) shared_tvars shared_eff_tvars annot
           | None -> Types.new_tvar (level + 1)
         ) params in
         let (ret_ty, body_eff) = match ret_annot with
           | Some (Ast.TyWithEffect (ty, eff_annot)) ->
-            let ty' = resolve_ty_annot_shared sub_ctx (level + 1) shared_tvars ty in
+            let ty' = resolve_ty_annot_shared sub_ctx (level + 1) shared_tvars shared_eff_tvars ty in
             let eff = match eff_annot with
               | Ast.EffAnnotPure -> Types.EffEmpty
-              | Ast.EffAnnotRow items -> resolve_eff_items sub_ctx (level + 1) shared_tvars items
+              | Ast.EffAnnotRow items -> resolve_eff_items sub_ctx (level + 1) shared_tvars shared_eff_tvars items
             in (ty', eff)
           | Some annot ->
-            (resolve_ty_annot_shared sub_ctx (level + 1) shared_tvars annot,
+            (resolve_ty_annot_shared sub_ctx (level + 1) shared_tvars shared_eff_tvars annot,
              Types.new_effvar (level + 1))
           | None ->
             (Types.new_tvar (level + 1), Types.new_effvar (level + 1))
@@ -4483,45 +4253,45 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
         Types.generalize level fn_ty
       ) shared_tvars_list in
       (* Bind both short and qualified names *)
-      let sub_ctx' = List.fold_left2 (fun ctx (name, _, _, _, _, _) scheme ->
+      let sub_ctx' = List.fold_left2 (fun ctx { Ast.lr_name = name; _ } scheme ->
         let qualified_name = prefix ^ name in
         let ctx = extend_var ctx name scheme in
         extend_var ctx qualified_name scheme
       ) sub_ctx bindings schemes in
-      let body_tes = List.map2 (fun (_, _, params, _, _, body) (_, param_tys, ret_ty, body_eff, _) ->
+      let body_tes = List.map2 (fun { Ast.params; body; _ } (_, param_tys, ret_ty, body_eff, _) ->
         let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
           extend_var_mono c p.name ty
         ) { sub_ctx' with current_eff = body_eff } params param_tys in
         let body_te = check inner_ctx (level + 1) body ret_ty in
         match List.rev params, List.rev param_tys with
         | [], [] -> body_te
-        | last_p :: rest_ps, last_pty :: rest_ptys ->
-          let inner = mk (TEFun (last_p.Ast.name, body_te, false))
+        | (last_p : Ast.param) :: rest_ps, last_pty :: rest_ptys ->
+          let inner = mk sub_ctx (TEFun (last_p.name, body_te, false))
             (Types.TArrow (last_pty, body_eff, body_te.ty)) in
           List.fold_left2 (fun acc (p : Ast.param) pty ->
-            mk (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
+            mk sub_ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
           ) inner rest_ps rest_ptys
         | _ -> assert false
       ) bindings shared_tvars_list in
-      let sub_ctx'' = List.fold_left2 (fun ctx (name, _, _, _, _, _) scheme ->
+      let sub_ctx'' = List.fold_left2 (fun ctx { Ast.lr_name = name; _ } scheme ->
         let qualified_name = prefix ^ name in
         let ctx = extend_var ctx name scheme in
         extend_var ctx qualified_name scheme
       ) sub_ctx bindings schemes in
-      let typed_bindings = List.map2 (fun (name, _, _, _, _, _) te ->
+      let typed_bindings = List.map2 (fun { Ast.lr_name = name; _ } te ->
         let qualified_name = prefix ^ name in
         (qualified_name, te)
       ) bindings body_tes in
       (* Track visibility *)
-      List.iter (fun (name, _, _, _, _, _) ->
-        let scheme = List.assoc name (List.map2 (fun (n, _, _, _, _, _) s -> (n, s)) bindings schemes) in
+      List.iter (fun { Ast.lr_name = name; _ } ->
+        let scheme = List.assoc name (List.map2 (fun { Ast.lr_name = n; _ } s -> (n, s)) bindings schemes) in
         (match item.vis with
-         | Ast.Public -> pub_vars := (name, scheme) :: !pub_vars
+         | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
          | _ -> ())
       ) bindings;
       (sub_ctx'', TDLetRecAnd typed_bindings)
     end else begin
-      let fn_vars = List.map (fun (name, _, _, _, _, _) ->
+      let fn_vars = List.map (fun { Ast.lr_name = name; _ } ->
         (name, Types.new_tvar (level + 1))
       ) bindings in
       (* Bind both short and qualified names for self-recursion *)
@@ -4530,41 +4300,40 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
         let ctx = extend_var_mono ctx name tv in
         extend_var_mono ctx qualified_name tv
       ) sub_ctx fn_vars in
-      let body_tes = List.map2 (fun (name, _, params, ret_annot, constraints, body) (_, tv) ->
-        ignore name;
+      let body_tes = List.map2 (fun { Ast.lr_name = _; params; ret_annot; constraints; body; _ } (_, tv) ->
         if constraints <> [] then
           let (te, _scheme) = synth_constrained_fn sub_ctx' level constraints params ret_annot body in
-          try_unify tv te.ty;
+          try_unify sub_ctx tv te.ty;
           te
         else begin
           let full_body = wrap_params_decl params ret_annot body in
           let te = synth sub_ctx' (level + 1) full_body in
-          try_unify tv te.ty;
+          try_unify sub_ctx tv te.ty;
           te
         end
       ) bindings fn_vars in
-      let sub_ctx'' = List.fold_left2 (fun ctx (name, _, _, _, _, _) (_, tv) ->
+      let sub_ctx'' = List.fold_left2 (fun ctx { Ast.lr_name = name; _ } (_, tv) ->
         let qualified_name = prefix ^ name in
         let scheme = Types.generalize level tv in
         let ctx = extend_var ctx name scheme in
         extend_var ctx qualified_name scheme
       ) sub_ctx bindings fn_vars in
-      let typed_bindings = List.map2 (fun (name, _, _, _, _, _) te ->
+      let typed_bindings = List.map2 (fun { Ast.lr_name = name; _ } te ->
         let qualified_name = prefix ^ name in
         (qualified_name, te)
       ) bindings body_tes in
       (* Track visibility *)
-      List.iter2 (fun (name, _, _, _, _, _) (_, tv) ->
+      List.iter2 (fun { Ast.lr_name = name; _ } (_, tv) ->
         let scheme = Types.generalize level tv in
         (match item.vis with
-         | Ast.Public -> pub_vars := (name, scheme) :: !pub_vars
+         | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
          | _ -> ())
       ) bindings fn_vars;
       (sub_ctx'', TDLetRecAnd typed_bindings)
     end
   | Ast.DTypeAnd type_defs ->
     (* Pass 1: register type aliases and placeholders *)
-    let sub_ctx' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
+    let sub_ctx' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; _ } ->
       let qualified_name = prefix ^ name in
       let num_params = List.length type_params in
       let ctx = { ctx with type_env = { ctx.type_env with
@@ -4587,7 +4356,7 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
     ) sub_ctx type_defs in
     (* Pass 2a: process record types first so their fields are populated
        before variant constructors reference them *)
-    let sub_ctx' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
+    let sub_ctx' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; _ } ->
       match def with
       | Ast.TDRecord _ ->
         let qualified_name = prefix ^ name in
@@ -4595,7 +4364,7 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
       | _ -> ctx
     ) sub_ctx' type_defs in
     (* Pass 2b: process variant and alias types *)
-    let sub_ctx' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
+    let sub_ctx' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; _ } ->
       match def with
       | Ast.TDRecord _ -> ctx
       | _ ->
@@ -4603,56 +4372,56 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
         process_type_def ctx type_params qualified_name def
     ) sub_ctx' type_defs in
     (* Visibility *)
-    List.iter (fun (_type_params, name, def, _deriving) ->
+    List.iter (fun { Ast.td_name = name; td_def = def; _ } ->
       let qualified_name = prefix ^ name in
       match item.vis with
       | Ast.Public ->
-        pub_types := qualified_name :: !pub_types;
+        acc.ma_pub_types := qualified_name :: !(acc.ma_pub_types);
         (match def with
          | Ast.TDVariant ctors ->
            List.iter (fun (ctor_name, _, _) ->
              match List.assoc_opt ctor_name sub_ctx'.type_env.Types.constructors with
              | Some info ->
                let qual_info = { info with Types.ctor_type_name = qualified_name } in
-               pub_constructors := (ctor_name, qual_info) :: !pub_constructors
+               acc.ma_pub_constructors := (ctor_name, qual_info) :: !(acc.ma_pub_constructors)
              | None -> ()
            ) ctors
          | Ast.TDNewtype (ctor_name, _) ->
-           newtypes := qualified_name :: !newtypes;
+           acc.ma_newtypes := qualified_name :: !(acc.ma_newtypes);
            (match List.assoc_opt ctor_name sub_ctx'.type_env.Types.constructors with
             | Some info ->
               let qual_info = { info with Types.ctor_type_name = qualified_name } in
-              pub_constructors := (ctor_name, qual_info) :: !pub_constructors
+              acc.ma_pub_constructors := (ctor_name, qual_info) :: !(acc.ma_pub_constructors)
             | None -> ())
          | Ast.TDRecord _ | Ast.TDAlias _ -> ())
       | Ast.Opaque ->
-        pub_types := qualified_name :: !pub_types;
-        opaque_types := qualified_name :: !opaque_types;
-        (match def with Ast.TDNewtype _ -> newtypes := qualified_name :: !newtypes | _ -> ())
+        acc.ma_pub_types := qualified_name :: !(acc.ma_pub_types);
+        acc.ma_opaque_types := qualified_name :: !(acc.ma_opaque_types);
+        (match def with Ast.TDNewtype _ -> acc.ma_newtypes := qualified_name :: !(acc.ma_newtypes) | _ -> ())
       | Ast.Private ->
-        (match def with Ast.TDNewtype _ -> newtypes := qualified_name :: !newtypes | _ -> ())
+        (match def with Ast.TDNewtype _ -> acc.ma_newtypes := qualified_name :: !(acc.ma_newtypes) | _ -> ())
     ) type_defs;
     (* Handle deriving for each type *)
-    let sub_ctx' = List.fold_left (fun ctx (type_params, name, def, deriving) ->
+    let sub_ctx' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; td_deriving = deriving } ->
       List.fold_left (fun ctx cls ->
-        match generate_derived_instance type_params name def cls with
+        match generate_derived_instance ~loc:sub_ctx.loc type_params name def cls with
         | Some (class_name, inst_tys, constraints, methods) ->
           let (ctx', tdecl) = process_instance_def ctx level class_name inst_tys constraints methods in
-          typed_decls := tdecl :: !typed_decls;
-          all_instances := ctx'.type_env.Types.instances;
+          acc.ma_typed_decls := tdecl :: !(acc.ma_typed_decls);
+          acc.ma_all_instances := ctx'.type_env.Types.instances;
           ctx'
         | None ->
-          error (Printf.sprintf "cannot derive %s for type %s" cls name)
+          error sub_ctx (Printf.sprintf "cannot derive %s for type %s" cls name)
       ) ctx deriving
     ) sub_ctx' type_defs in
     (* Return: push all but last TDType to typed_decls, return last *)
-    let type_decls = List.map (fun (_tp, name, def, _d) ->
+    let type_decls = List.map (fun { Ast.td_name = name; td_def = def; _ } ->
       TDType (prefix ^ name, def)
     ) type_defs in
     let rec push_all_but_last = function
       | [] -> failwith "empty DTypeAnd"
       | [last] -> last
-      | hd :: tl -> typed_decls := hd :: !typed_decls; push_all_but_last tl
+      | hd :: tl -> acc.ma_typed_decls := hd :: !(acc.ma_typed_decls); push_all_but_last tl
     in
     let last_tdecl = push_all_but_last type_decls in
     (sub_ctx', last_tdecl)
@@ -4660,7 +4429,7 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
 let process_open ctx mod_name names_opt =
   let minfo = match find_module_in_env ctx.type_env mod_name with
     | Some m -> m
-    | None -> error (Printf.sprintf "unknown module: %s" mod_name)
+    | None -> error ctx (Printf.sprintf "unknown module: %s" mod_name)
   in
   (* Collect class method names to skip (they have no runtime globals) *)
   let class_method_names =
@@ -4691,18 +4460,18 @@ let process_open ctx mod_name names_opt =
 
 let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
   match decl with
-  | Ast.DType (type_params, name, def, deriving) ->
+  | Ast.DType { td_params = type_params; td_name = name; td_def = def; td_deriving = deriving } ->
     let ctx' = process_type_def ctx type_params name def in
     let (ctx', derived_tdecls) = List.fold_left (fun (ctx, acc) cls ->
-      match generate_derived_instance type_params name def cls with
+      match generate_derived_instance ~loc:ctx.loc type_params name def cls with
       | Some (class_name, inst_tys, constraints, methods) ->
         let (ctx', tdecl) = process_instance_def ctx level class_name inst_tys constraints methods in
         (ctx', tdecl :: acc)
       | None ->
-        error (Printf.sprintf "cannot derive %s for type %s" cls name)
+        error ctx (Printf.sprintf "cannot derive %s for type %s" cls name)
     ) (ctx', []) deriving in
     (ctx', TDType (name, def) :: List.rev derived_tdecls)
-  | Ast.DLet (name, params, ret_annot, constraints, body) ->
+  | Ast.DLet { name; params; ret_annot; constraints; body } ->
     if constraints <> [] then begin
       let (te, scheme) = synth_constrained_fn ctx level constraints params ret_annot body in
       let ctx' = extend_var ctx name scheme in
@@ -4714,8 +4483,8 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let te = synth eff_ctx (level + 1) full_body in
       improve_fundeps_in_expr ctx.vars ctx.type_env te;
       let scheme =
-        if params = [] && not (is_syntactic_value body) then mono_scheme te.ty
-        else resolve_let_constraints Types.empty_type_env level [] params ret_annot te.ty (Hashtbl.create 0) in
+        if params = [] && not (is_syntactic_value body) then Types.mono te.ty
+        else resolve_let_constraints ~loc:ctx.loc Types.empty_type_env level [] params ret_annot te.ty (Hashtbl.create 0) in
       let scheme = infer_implicit_constraints "" ctx.type_env ctx.vars te scheme in
       let scheme = infer_record_evidence ctx.vars te scheme in
       let ctx' = extend_var ctx name scheme in
@@ -4725,10 +4494,10 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
     let eff = Types.new_effvar level in
     let eff_ctx = { ctx with current_eff = eff } in
     let te = synth eff_ctx (level + 1) body in
-    let scheme = mono_scheme te.ty in
+    let scheme = Types.mono te.ty in
     let ctx' = extend_var_mutable ctx name scheme in
     (ctx', [TDLetMut (name, te)])
-  | Ast.DLetRec (name, type_params, params, ret_annot, constraints, body) ->
+  | Ast.DLetRec { lr_name = name; type_params; params; ret_annot; constraints; body } ->
     if type_params <> [] then begin
       let (te, scheme) = synth_poly_rec_fn ctx level name "" type_params params ret_annot body in
       let ctx' = extend_var ctx name scheme in
@@ -4737,7 +4506,7 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let fn_var = Types.new_tvar (level + 1) in
       let ctx_with_self = extend_var_mono ctx name fn_var in
       let (te, scheme) = synth_constrained_fn ctx_with_self level constraints params ret_annot body in
-      try_unify fn_var te.ty;
+      try_unify ctx fn_var te.ty;
       let ctx' = extend_var ctx name scheme in
       (ctx', [TDLetRec (name, te)])
     end else begin
@@ -4746,7 +4515,7 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
         match strip_loc body with
         | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
         | _ when is_constructive body && not (is_immediately_linked name body) -> ()
-        | _ -> error "let rec binding must be a function or constructive expression"
+        | _ -> error ctx "let rec binding must be a function or constructive expression"
       end;
       let eff = Types.new_effvar level in
       let eff_ctx = { ctx with current_eff = eff } in
@@ -4754,9 +4523,9 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let fn_var = Types.new_tvar (level + 1) in
       let ctx' = extend_var_mono eff_ctx name fn_var in
       let fn_te = synth ctx' (level + 1) full_body in
-      try_unify fn_var fn_te.ty;
+      try_unify ctx fn_var fn_te.ty;
       improve_fundeps_in_expr ctx.vars ctx.type_env fn_te;
-      let scheme = resolve_let_constraints Types.empty_type_env level [] params ret_annot fn_te.ty (Hashtbl.create 0) in
+      let scheme = resolve_let_constraints ~loc:ctx.loc Types.empty_type_env level [] params ret_annot fn_te.ty (Hashtbl.create 0) in
       let scheme = infer_implicit_constraints name ctx.type_env ctx.vars fn_te scheme in
       let scheme = infer_record_evidence ctx.vars fn_te scheme in
       let ctx'' = extend_var ctx name scheme in
@@ -4766,22 +4535,29 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
     let eff = Types.new_effvar level in
     let ctx' = { ctx with current_eff = eff } in
     let te = synth ctx' level expr in
-    (* Enforce no unhandled effects at top level *)
-    (try Types.unify_eff (Types.eff_repr eff) Types.EffEmpty
-     with Types.Unify_error _ ->
-       error (Printf.sprintf "expression has unhandled effects: %s" (Types.pp_eff eff)));
+    (* Enforce no unhandled effects at top level (IO is ambient) *)
+    let rec close_ambient_effects e =
+      match Types.eff_repr e with
+      | Types.EffRow ("IO", _, tail) -> close_ambient_effects tail
+      | remaining ->
+        (try Types.unify_eff remaining Types.EffEmpty
+         with Types.Unify_error _ ->
+           error ctx (Printf.sprintf "expression has unhandled effects: %s" (Types.pp_eff eff)))
+    in
+    close_ambient_effects (Types.eff_repr eff);
     (ctx, [TDExpr te])
-  | Ast.DClass (name, tyvars, fundeps, methods) ->
+  | Ast.DClass { class_name = name; tyvars; fundeps; methods } ->
     let (ctx', td) = process_class_def ctx name tyvars fundeps methods in
     (ctx', [td])
-  | Ast.DInstance (class_name, inst_ty_annots, constraints, methods) ->
+  | Ast.DInstance { inst_class = class_name; inst_types = inst_ty_annots; inst_constraints = constraints; inst_methods = methods } ->
     let (ctx', td) = process_instance_def ctx level class_name inst_ty_annots constraints methods in
     (ctx', [td])
   | Ast.DEffect (name, type_params, ops) ->
     let tvars = Hashtbl.create 4 in
+    let eff_tvars = Hashtbl.create 2 in
     List.iteri (fun i p -> Hashtbl.replace tvars p (Types.TGen i)) type_params;
     let resolved_ops = List.map (fun (op_name, annot) ->
-      let ty = resolve_ty_annot_shared ctx 0 tvars annot in
+      let ty = resolve_ty_annot_shared ctx 0 tvars eff_tvars annot in
       (op_name, ty)
     ) ops in
     let effect_def = Types.{
@@ -4794,7 +4570,9 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
     (ctx, [TDEffect name])
   | Ast.DExtern (name, ty_annot) ->
     let tvars = Hashtbl.create 4 in
-    let ty = resolve_ty_annot_shared ctx 1 tvars ty_annot in
+    let eff_tvars = Hashtbl.create 2 in
+    let ty = resolve_ty_annot_shared ctx 1 tvars eff_tvars ty_annot in
+    let ty = default_extern_effects ty in
     let scheme = Types.generalize 0 ty in
     let ctx = extend_var ctx name scheme in
     (ctx, [TDExtern (name, scheme)])
@@ -4806,28 +4584,29 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
     (ctx', [td])
   | Ast.DLetRecAnd bindings ->
     (* Check if any binding has type_params — if so, use polymorphic scheme for those *)
-    let has_poly = List.exists (fun (_, tp, _, _, _, _) -> tp <> []) bindings in
+    let has_poly = List.exists (fun { Ast.type_params = tp; _ } -> tp <> []) bindings in
     if has_poly then begin
       (* Build schemes for all bindings, bind all polymorphically, then check all *)
-      let shared_tvars_list = List.map (fun (_, type_params, params, ret_annot, _, _) ->
+      let shared_tvars_list = List.map (fun { Ast.type_params; params; ret_annot; _ } ->
         let shared_tvars = Hashtbl.create 4 in
+        let shared_eff_tvars = Hashtbl.create 2 in
         List.iter (fun tp ->
           Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1))
         ) type_params;
         let param_tys = List.map (fun (p : Ast.param) ->
           match p.annot with
-          | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars annot
+          | Some annot -> resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot
           | None -> Types.new_tvar (level + 1)
         ) params in
         let (ret_ty, body_eff) = match ret_annot with
           | Some (Ast.TyWithEffect (ty, eff_annot)) ->
-            let ty' = resolve_ty_annot_shared ctx (level + 1) shared_tvars ty in
+            let ty' = resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars ty in
             let eff = match eff_annot with
               | Ast.EffAnnotPure -> Types.EffEmpty
-              | Ast.EffAnnotRow items -> resolve_eff_items ctx (level + 1) shared_tvars items
+              | Ast.EffAnnotRow items -> resolve_eff_items ctx (level + 1) shared_tvars shared_eff_tvars items
             in (ty', eff)
           | Some annot ->
-            (resolve_ty_annot_shared ctx (level + 1) shared_tvars annot,
+            (resolve_ty_annot_shared ctx (level + 1) shared_tvars shared_eff_tvars annot,
              Types.new_effvar (level + 1))
           | None ->
             (Types.new_tvar (level + 1), Types.new_effvar (level + 1))
@@ -4846,69 +4625,68 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let schemes = List.map (fun (_, _, _, _, fn_ty) ->
         Types.generalize level fn_ty
       ) shared_tvars_list in
-      let ctx' = List.fold_left2 (fun ctx (name, _, _, _, _, _) scheme ->
+      let ctx' = List.fold_left2 (fun ctx { Ast.lr_name = name; _ } scheme ->
         extend_var ctx name scheme
       ) ctx bindings schemes in
       (* Check all bodies *)
-      let body_tes = List.map2 (fun (_, _, params, _, _, body) (_, param_tys, ret_ty, body_eff, _) ->
+      let body_tes = List.map2 (fun { Ast.params; body; _ } (_, param_tys, ret_ty, body_eff, _) ->
         let inner_ctx = List.fold_left2 (fun c (p : Ast.param) ty ->
           extend_var_mono c p.name ty
         ) { ctx' with current_eff = body_eff } params param_tys in
         let body_te = check inner_ctx (level + 1) body ret_ty in
         match List.rev params, List.rev param_tys with
         | [], [] -> body_te
-        | last_p :: rest_ps, last_pty :: rest_ptys ->
-          let inner = mk (TEFun (last_p.Ast.name, body_te, false))
+        | (last_p : Ast.param) :: rest_ps, last_pty :: rest_ptys ->
+          let inner = mk ctx (TEFun (last_p.name, body_te, false))
             (Types.TArrow (last_pty, body_eff, body_te.ty)) in
           List.fold_left2 (fun acc (p : Ast.param) pty ->
-            mk (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
+            mk ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))
           ) inner rest_ps rest_ptys
         | _ -> assert false
       ) bindings shared_tvars_list in
-      let ctx'' = List.fold_left2 (fun ctx (name, _, _, _, _, _) scheme ->
+      let ctx'' = List.fold_left2 (fun ctx { Ast.lr_name = name; _ } scheme ->
         extend_var ctx name scheme
       ) ctx bindings schemes in
-      let typed_bindings = List.map2 (fun (name, _, _, _, _, _) te -> (name, te)) bindings body_tes in
+      let typed_bindings = List.map2 (fun { Ast.lr_name = name; _ } te -> (name, te)) bindings body_tes in
       (ctx'', [TDLetRecAnd typed_bindings])
     end else begin
       (* Original path: monomorphic recursion — validate non-function bindings *)
-      List.iter (fun (name, _, params, _, _, body) ->
+      List.iter (fun { Ast.lr_name = name; params; body; _ } ->
         if params = [] then begin
           match strip_loc body with
           | Ast.EFun _ | Ast.EAnnot (Ast.EFun _, _) -> ()
           | _ when is_constructive body && not (is_immediately_linked name body) -> ()
-          | _ -> error (Printf.sprintf "let rec binding for '%s' must be a function or constructive expression" name)
+          | _ -> error ctx (Printf.sprintf "let rec binding for '%s' must be a function or constructive expression" name)
         end
       ) bindings;
-      let fn_vars = List.map (fun (name, _, _, _, _, _) ->
+      let fn_vars = List.map (fun { Ast.lr_name = name; _ } ->
         (name, Types.new_tvar (level + 1))
       ) bindings in
       let ctx' = List.fold_left (fun ctx (name, tv) ->
         extend_var_mono ctx name tv
       ) ctx fn_vars in
-      let body_tes = List.map2 (fun (name, _, params, ret_annot, constraints, body) (_, tv) ->
-        ignore name;
+      let body_tes = List.map2 (fun { Ast.lr_name = _; params; ret_annot; constraints; body; _ } (_, tv) ->
         if constraints <> [] then
           let (te, _scheme) = synth_constrained_fn ctx' level constraints params ret_annot body in
-          try_unify tv te.ty;
+          try_unify ctx tv te.ty;
           te
         else begin
           let full_body = wrap_params_decl params ret_annot body in
           let te = synth ctx' (level + 1) full_body in
-          try_unify tv te.ty;
+          try_unify ctx tv te.ty;
           te
         end
       ) bindings fn_vars in
-      let ctx'' = List.fold_left2 (fun ctx (name, _, _, _, _, _) (_, tv) ->
+      let ctx'' = List.fold_left2 (fun ctx { Ast.lr_name = name; _ } (_, tv) ->
         let scheme = Types.generalize level tv in
         extend_var ctx name scheme
       ) ctx bindings fn_vars in
-      let typed_bindings = List.map2 (fun (name, _, _, _, _, _) te -> (name, te)) bindings body_tes in
+      let typed_bindings = List.map2 (fun { Ast.lr_name = name; _ } te -> (name, te)) bindings body_tes in
       (ctx'', [TDLetRecAnd typed_bindings])
     end
   | Ast.DTypeAnd type_defs ->
     (* First pass: register all type names as placeholders *)
-    let ctx' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
+    let ctx' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; _ } ->
       let num_params = List.length type_params in
       match def with
       | Ast.TDVariant _ ->
@@ -4929,32 +4707,32 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
         { ctx with type_env }
     ) ctx type_defs in
     (* Second pass: process records first, then variants/aliases/newtypes *)
-    let ctx' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
+    let ctx' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; _ } ->
       match def with
       | Ast.TDRecord _ -> process_type_def ctx type_params name def
       | _ -> ctx
     ) ctx' type_defs in
-    let ctx'' = List.fold_left (fun ctx (type_params, name, def, _deriving) ->
+    let ctx'' = List.fold_left (fun ctx { Ast.td_params = type_params; td_name = name; td_def = def; _ } ->
       match def with
       | Ast.TDRecord _ -> ctx
       | _ -> process_type_def ctx type_params name def
     ) ctx' type_defs in
     (* Handle deriving for each type *)
-    let (ctx_final, derived_tdecls) = List.fold_left (fun (ctx, acc) (type_params, name, def, deriving) ->
+    let (ctx_final, derived_tdecls) = List.fold_left (fun (ctx, acc) { Ast.td_params = type_params; td_name = name; td_def = def; td_deriving = deriving } ->
       let (ctx', new_decls) = List.fold_left (fun (ctx, acc) cls ->
-        match generate_derived_instance type_params name def cls with
+        match generate_derived_instance ~loc:ctx.loc type_params name def cls with
         | Some (class_name, inst_tys, constraints, methods) ->
           let (ctx', tdecl) = process_instance_def ctx level class_name inst_tys constraints methods in
           (ctx', tdecl :: acc)
         | None ->
-          error (Printf.sprintf "cannot derive %s for type %s" cls name)
+          error ctx (Printf.sprintf "cannot derive %s for type %s" cls name)
       ) (ctx, []) deriving in
       (ctx', List.rev new_decls @ acc)
     ) (ctx'', []) type_defs in
-    let type_decls = List.map (fun (_tp, name, def, _d) -> TDType (name, def)) type_defs in
+    let type_decls = List.map (fun { Ast.td_name = name; td_def = def; _ } -> TDType (name, def)) type_defs in
     (ctx_final, type_decls @ List.rev derived_tdecls)
 
-let empty_ctx = { vars = []; mutable_vars = []; type_env = Types.empty_type_env; loop_info = None; current_module = None; constraint_tvars = []; current_eff = Types.EffEmpty; return_type = None; inside_handler = false; return_used = ref false }
+let empty_ctx = { vars = []; mutable_vars = []; type_env = Types.empty_type_env; loop_info = None; current_module = None; constraint_tvars = []; current_eff = Types.EffEmpty; return_type = None; inside_handler = false; return_used = ref false; loc = Token.{ line = 0; col = 0; offset = 0 } }
 
 (* ==== Constraint transformation pass ==== *)
 (* Rewrites the typed AST to insert dictionary passing for typeclass constraints *)
@@ -4968,7 +4746,11 @@ type xform_ctx = {
   xf_record_evidence: (int * string * string) list;
   (* Locally bound names that shadow typeclass methods *)
   xf_locals: string list;
+  xf_loc: Token.loc;
 }
+
+let mk_xf xctx te ty = { expr = te; ty; loc = xctx.xf_loc }
+let error_xf xctx msg = raise (Type_error (msg, xctx.xf_loc))
 
 (* Walk two types in parallel, extracting TGen index -> actual type mappings *)
 let build_tgen_map schema_ty actual_ty =
@@ -5063,9 +4845,9 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
   let has_unresolved = List.exists (fun opt -> opt = None) arg_types in
   if has_unresolved then begin
     if String.equal cc.cc_class "Show" then
-      mk (TERecord [("show", mk (TEVar "__show_value") Types.TUnit)]) Types.TUnit
+      mk_xf xctx (TERecord [("show", mk_xf xctx (TEVar "__show_value") Types.TUnit)]) Types.TUnit
     else
-      error (Printf.sprintf "could not resolve constraint type argument for %s" cc.cc_class)
+      error_xf xctx (Printf.sprintf "could not resolve constraint type argument for %s" cc.cc_class)
   end else
   let arg_types = List.filter_map Fun.id arg_types in
   (* Apply fundep improvement: if some args are concrete and class has fundeps,
@@ -5091,7 +4873,7 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
         List.iter2 (fun orig_ty imp ->
           match imp, Types.repr orig_ty with
           | Some resolved, Types.TVar ({ contents = Types.Unbound _ } as r) ->
-            (try Types.unify (Types.TVar r) resolved with _ -> ())
+            (try Types.unify (Types.TVar r) resolved with Types.Unify_error _ -> ())
           | _ -> ()
         ) arg_types improved;
         List.map Types.repr arg_types
@@ -5106,7 +4888,7 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
     | _ -> None
   ) arg_types in
   match constrained_match with
-  | Some dparam -> mk (TEVar dparam) Types.TUnit
+  | Some dparam -> mk_xf xctx (TEVar dparam) Types.TUnit
   | None ->
     (* Check for unbound tvars without constrained match — use runtime fallback *)
     let has_unbound_tvar = List.exists (fun ty ->
@@ -5114,9 +4896,9 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
     ) arg_types in
     if has_unbound_tvar then begin
       if String.equal cc.cc_class "Show" then
-        mk (TERecord [("show", mk (TEVar "__show_value") Types.TUnit)]) Types.TUnit
+        mk_xf xctx (TERecord [("show", mk_xf xctx (TEVar "__show_value") Types.TUnit)]) Types.TUnit
       else
-        error (Printf.sprintf "no instance of %s for types %s"
+        error_xf xctx (Printf.sprintf "no instance of %s for types %s"
           cc.cc_class (String.concat ", " (List.map Types.pp_ty arg_types)))
     end else begin
     (* All concrete — find instance *)
@@ -5131,7 +4913,7 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
        if inst.inst_constraints <> [] then
          resolve_factory_dict xctx inst arg_types
        else
-         mk (TEVar inst.inst_dict_name) Types.TUnit
+         mk_xf xctx (TEVar inst.inst_dict_name) Types.TUnit
      | [] ->
        let is_structural = List.exists (fun ty ->
          match Types.repr ty with
@@ -5139,9 +4921,20 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
          | _ -> false
        ) arg_types in
        if is_structural && String.equal cc.cc_class "Show" then
-         mk (TERecord [("show", mk (TEVar "__show_value") Types.TUnit)]) Types.TUnit
+         let show_ty = Types.TArrow (List.hd arg_types, Types.EffEmpty, Types.TString) in
+         mk_xf xctx (TERecord [("show", mk_xf xctx (TEVar "__show_value") show_ty)]) Types.TUnit
+       else if String.equal cc.cc_class "Eq" then
+         (* Fallback: use structural equality for types without explicit Eq instances *)
+         mk_xf xctx (TERecord [("=", mk_xf xctx (TEVar "__structural_eq") Types.TUnit);
+                        ("<>", mk_xf xctx (TEVar "__structural_neq") Types.TUnit)]) Types.TUnit
+       else if String.equal cc.cc_class "Ord" then
+         (* Fallback: use structural comparison for types without explicit Ord instances *)
+         mk_xf xctx (TERecord [("<", mk_xf xctx (TEVar "__structural_lt") Types.TUnit);
+                        (">", mk_xf xctx (TEVar "__structural_gt") Types.TUnit);
+                        ("<=", mk_xf xctx (TEVar "__structural_le") Types.TUnit);
+                        (">=", mk_xf xctx (TEVar "__structural_ge") Types.TUnit)]) Types.TUnit
        else
-         error (Printf.sprintf "no instance of %s for types %s"
+         error_xf xctx (Printf.sprintf "no instance of %s for types %s"
            cc.cc_class (String.concat ", " (List.map Types.pp_ty arg_types)))
      | _ ->
        (* Try specificity-based selection *)
@@ -5150,9 +4943,9 @@ let rec resolve_dict_arg xctx (cc : Types.class_constraint) tgen_map =
           if inst.inst_constraints <> [] then
             resolve_factory_dict xctx inst arg_types
           else
-            mk (TEVar inst.inst_dict_name) Types.TUnit
+            mk_xf xctx (TEVar inst.inst_dict_name) Types.TUnit
         | None ->
-          error (Printf.sprintf "ambiguous instance for %s"  cc.cc_class)))
+          error_xf xctx (Printf.sprintf "ambiguous instance for %s"  cc.cc_class)))
     end
 
 (* Resolve a factory dict: apply the factory with sub-dicts *)
@@ -5184,10 +4977,10 @@ and resolve_factory_dict xctx inst arg_types =
     walk inst_ty actual_ty
   ) inst.inst_tys arg_types;
   (* Apply factory with sub-dicts *)
-  let base = mk (TEVar inst.inst_dict_name) Types.TUnit in
+  let base = mk_xf xctx (TEVar inst.inst_dict_name) Types.TUnit in
   List.fold_left (fun fn sub_cc ->
     let sub_dict = resolve_dict_arg xctx sub_cc sub_map in
-    mk (TEApp (fn, sub_dict)) Types.TUnit
+    mk_xf xctx (TEApp (fn, sub_dict)) Types.TUnit
   ) base inst.inst_constraints
 
 let rec pat_bound_names = function
@@ -5208,8 +5001,11 @@ let rec pat_bound_names = function
 let rec xform_expr xctx te =
   match te.expr with
   | TEVar name ->
-    let te = xform_class_method xctx name te in
-    xform_constrained_ref xctx name te
+    let te' = xform_class_method xctx name te in
+    (* If class method dispatch already resolved this reference, don't also
+       try constrained-ref resolution (which would double-process the name) *)
+    if te' != te then te'
+    else xform_constrained_ref xctx name te
   | TEBinop (op, e1, e2) ->
     let e1' = xform_expr xctx e1 in
     let e2' = xform_expr xctx e2 in
@@ -5220,41 +5016,41 @@ let rec xform_expr xctx te =
   | TEApp (fn, arg) ->
     let fn' = xform_expr xctx fn in
     let arg' = xform_expr xctx arg in
-    mk (TEApp (fn', arg')) te.ty
+    mk_xf xctx (TEApp (fn', arg')) te.ty
   | TEFun (param, body, hr) ->
     let xctx' = { xctx with xf_locals = param :: xctx.xf_locals } in
-    mk (TEFun (param, xform_expr xctx' body, hr)) te.ty
+    mk_xf xctx (TEFun (param, xform_expr xctx' body, hr)) te.ty
   | TELet (name, Some scheme, e1, e2) ->
     let e1' = xform_constrained_def xctx scheme e1 in
     let xctx' = { xctx with xf_schemes = (name, scheme) :: xctx.xf_schemes } in
-    mk (TELet (name, Some scheme, e1', xform_expr xctx' e2)) te.ty
+    mk_xf xctx (TELet (name, Some scheme, e1', xform_expr xctx' e2)) te.ty
   | TELet (name, None, e1, e2) ->
     let xctx' = { xctx with xf_locals = name :: xctx.xf_locals } in
-    mk (TELet (name, None, xform_expr xctx e1, xform_expr xctx' e2)) te.ty
+    mk_xf xctx (TELet (name, None, xform_expr xctx e1, xform_expr xctx' e2)) te.ty
   | TELetRec (name, Some scheme, e1, e2) ->
     (* Add scheme before processing e1 so recursive calls can resolve dicts *)
     let xctx' = { xctx with xf_schemes = (name, scheme) :: xctx.xf_schemes } in
     let e1' = xform_constrained_def xctx' scheme e1 in
-    mk (TELetRec (name, Some scheme, e1', xform_expr xctx' e2)) te.ty
+    mk_xf xctx (TELetRec (name, Some scheme, e1', xform_expr xctx' e2)) te.ty
   | TELetRec (name, None, e1, e2) ->
     let xctx' = { xctx with xf_locals = name :: xctx.xf_locals } in
-    mk (TELetRec (name, None, xform_expr xctx' e1, xform_expr xctx' e2)) te.ty
+    mk_xf xctx (TELetRec (name, None, xform_expr xctx' e1, xform_expr xctx' e2)) te.ty
   | TELetMut (name, e1, e2) ->
     let xctx' = { xctx with xf_locals = name :: xctx.xf_locals } in
-    mk (TELetMut (name, xform_expr xctx e1, xform_expr xctx' e2)) te.ty
-  | TEWhile (cond, body) ->
-    mk (TEWhile (xform_expr xctx cond, xform_expr xctx body)) te.ty
+    mk_xf xctx (TELetMut (name, xform_expr xctx e1, xform_expr xctx' e2)) te.ty
+  | TEWhile { tw_cond; tw_body } ->
+    mk_xf xctx (TEWhile { tw_cond = xform_expr xctx tw_cond; tw_body = xform_expr xctx tw_body }) te.ty
   | TELetRecAnd (bindings, body) ->
     let names = List.map fst bindings in
     let xctx' = { xctx with xf_locals = names @ xctx.xf_locals } in
     let bindings' = List.map (fun (n, e) -> (n, xform_expr xctx' e)) bindings in
-    mk (TELetRecAnd (bindings', xform_expr xctx' body)) te.ty
+    mk_xf xctx (TELetRecAnd (bindings', xform_expr xctx' body)) te.ty
   | TEIf (c, t, e) ->
-    mk (TEIf (xform_expr xctx c, xform_expr xctx t, xform_expr xctx e)) te.ty
+    mk_xf xctx (TEIf (xform_expr xctx c, xform_expr xctx t, xform_expr xctx e)) te.ty
   | TETuple es ->
-    mk (TETuple (List.map (xform_expr xctx) es)) te.ty
+    mk_xf xctx (TETuple (List.map (xform_expr xctx) es)) te.ty
   | TERecord fields ->
-    mk (TERecord (List.map (fun (n, e) -> (n, xform_expr xctx e)) fields)) te.ty
+    mk_xf xctx (TERecord (List.map (fun (n, e) -> (n, xform_expr xctx e)) fields)) te.ty
   | TERecordUpdate (base, overrides) ->
     let base' = xform_expr xctx base in
     let overrides' = List.map (fun (n, e) -> (n, xform_expr xctx e)) overrides in
@@ -5280,43 +5076,43 @@ let rec xform_expr xctx te =
           if rid = rvar_id && String.equal fname name then Some pname else None
         ) xctx.xf_record_evidence in
         match ev_param with
-        | Some pname -> (mk (TEVar pname) Types.TInt, e)
-        | None -> error (Printf.sprintf "missing record evidence for field %s" name)
+        | Some pname -> (mk_xf xctx (TEVar pname) Types.TInt, e)
+        | None -> error_xf xctx (Printf.sprintf "missing record evidence for field %s" name)
       ) overrides' in
-      mk (TERecordUpdateIdx (base', idx_val_pairs)) te.ty
+      mk_xf xctx (TERecordUpdateIdx (base', idx_val_pairs)) te.ty
     end else
-      mk (TERecordUpdate (base', overrides')) te.ty
+      mk_xf xctx (TERecordUpdate (base', overrides')) te.ty
   | TERecordUpdateIdx (base, pairs) ->
-    mk (TERecordUpdateIdx (xform_expr xctx base, List.map (fun (i, v) -> (xform_expr xctx i, xform_expr xctx v)) pairs)) te.ty
+    mk_xf xctx (TERecordUpdateIdx (xform_expr xctx base, List.map (fun (i, v) -> (xform_expr xctx i, xform_expr xctx v)) pairs)) te.ty
   | TEField (e, name) ->
-    mk (TEField (xform_expr xctx e, name)) te.ty
+    mk_xf xctx (TEField (xform_expr xctx e, name)) te.ty
   | TECons (hd, tl) ->
-    mk (TECons (xform_expr xctx hd, xform_expr xctx tl)) te.ty
+    mk_xf xctx (TECons (xform_expr xctx hd, xform_expr xctx tl)) te.ty
   | TEConstruct (name, arg) ->
-    mk (TEConstruct (name, Option.map (xform_expr xctx) arg)) te.ty
+    mk_xf xctx (TEConstruct (name, Option.map (xform_expr xctx) arg)) te.ty
   | TEMatch (scrutinee, arms, partial) ->
     let arms' = List.map (fun (pat, guard, body) ->
       let pvars = pat_bound_names pat in
       let xctx' = { xctx with xf_locals = pvars @ xctx.xf_locals } in
       (pat, Option.map (xform_expr xctx') guard, xform_expr xctx' body)
     ) arms in
-    mk (TEMatch (xform_expr xctx scrutinee, arms', partial)) te.ty
+    mk_xf xctx (TEMatch (xform_expr xctx scrutinee, arms', partial)) te.ty
   | TEAssign (name, e) ->
-    mk (TEAssign (name, xform_expr xctx e)) te.ty
+    mk_xf xctx (TEAssign (name, xform_expr xctx e)) te.ty
   | TEFieldAssign (r, f, e) ->
-    mk (TEFieldAssign (xform_expr xctx r, f, xform_expr xctx e)) te.ty
+    mk_xf xctx (TEFieldAssign (xform_expr xctx r, f, xform_expr xctx e)) te.ty
   | TESeq (e1, e2) ->
-    mk (TESeq (xform_expr xctx e1, xform_expr xctx e2)) te.ty
+    mk_xf xctx (TESeq (xform_expr xctx e1, xform_expr xctx e2)) te.ty
   | TEPerform (name, e) ->
-    mk (TEPerform (name, xform_expr xctx e)) te.ty
+    mk_xf xctx (TEPerform (name, xform_expr xctx e)) te.ty
   | TEHandle (body, arms) ->
     let arms' = List.map (fun arm -> match arm with
       | THReturn (n, e) ->
         let xctx' = { xctx with xf_locals = n :: xctx.xf_locals } in
         THReturn (n, xform_expr xctx' e)
-      | THOp (op, p, k, e) ->
-        let xctx' = { xctx with xf_locals = k :: p :: xctx.xf_locals } in
-        THOp (op, p, k, xform_expr xctx' e)
+      | THOp { op_name; arg; k; body } ->
+        let xctx' = { xctx with xf_locals = k :: arg :: xctx.xf_locals } in
+        THOp { op_name; arg; k; body = xform_expr xctx' body }
       | THOpProvide (op, p, e) ->
         let xctx' = { xctx with xf_locals = p :: xctx.xf_locals } in
         THOpProvide (op, p, xform_expr xctx' e)
@@ -5324,19 +5120,20 @@ let rec xform_expr xctx te =
         let xctx' = { xctx with xf_locals = p :: xctx.xf_locals } in
         THOpTry (op, p, xform_expr xctx' e)
     ) arms in
-    mk (TEHandle (xform_expr xctx body, arms')) te.ty
+    mk_xf xctx (TEHandle (xform_expr xctx body, arms')) te.ty
   | TEResume (k, e) ->
-    mk (TEResume (xform_expr xctx k, xform_expr xctx e)) te.ty
+    mk_xf xctx (TEResume (xform_expr xctx k, xform_expr xctx e)) te.ty
   | TEArray es ->
-    mk (TEArray (List.map (xform_expr xctx) es)) te.ty
+    mk_xf xctx (TEArray (List.map (xform_expr xctx) es)) te.ty
   | TEIndex (base, idx) ->
-    mk (TEIndex (xform_expr xctx base, xform_expr xctx idx)) te.ty
-  | TEBreak e -> mk (TEBreak (xform_expr xctx e)) te.ty
+    mk_xf xctx (TEIndex (xform_expr xctx base, xform_expr xctx idx)) te.ty
+  | TEBreak e -> mk_xf xctx (TEBreak (xform_expr xctx e)) te.ty
   | TEContinueLoop -> te
-  | TEFoldContinue e -> mk (TEFoldContinue (xform_expr xctx e)) te.ty
-  | TEForLoop e -> mk (TEForLoop (xform_expr xctx e)) te.ty
-  | TEReturn e -> mk (TEReturn (xform_expr xctx e)) te.ty
+  | TEFoldContinue e -> mk_xf xctx (TEFoldContinue (xform_expr xctx e)) te.ty
+  | TEForLoop e -> mk_xf xctx (TEForLoop (xform_expr xctx e)) te.ty
+  | TEReturn e -> mk_xf xctx (TEReturn (xform_expr xctx e)) te.ty
   | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit | TENil -> te
+  | TEMatchTree _ -> te  (* produced after constraint transform *)
 
 (* Replace class method TEVar with dict field access when type arg is a constrained tvar *)
 and xform_class_method xctx name te =
@@ -5421,7 +5218,7 @@ and xform_class_method xctx name te =
     else None in
     (match constrained_match with
      | Some dp ->
-       mk (TEField (mk (TEVar dp) Types.TUnit, method_name)) te.ty
+       mk_xf xctx (TEField (mk_xf xctx (TEVar dp) Types.TUnit, method_name)) te.ty
      | None ->
        (* Phase 2: Check if concrete type matches a factory instance *)
        let type_args = List.init num_params (fun i -> Hashtbl.find_opt found i) in
@@ -5466,15 +5263,95 @@ and xform_class_method xctx name te =
            | None -> te.ty
          in
          match resolved with
-         | Some inst when inst.inst_constraints <> [] && all_concrete ->
-           let arg_types = List.filter_map Fun.id type_args in
-           let factory = resolve_factory_dict xctx inst arg_types in
-           let resolved_ty = resolve_method_type inst in
-           mk (TEField (factory, method_name)) resolved_ty
+         | Some inst when inst.inst_constraints <> [] ->
+           (* Build complete arg_types, filling in missing params from instance structure *)
+           let arg_types =
+             if all_concrete then
+               List.filter_map Fun.id type_args
+             else
+               (* Infer missing type params from known ones via instance types.
+                  E.g. for Map (('k,'v) map) 'k 'v, if we know 'm=(string,int) map
+                  and 'k=string but not 'v, we can extract 'v=int from the map type. *)
+               let inst_sub = Hashtbl.create 4 in
+               List.iter2 (fun inst_ty arg_opt ->
+                 match arg_opt with
+                 | Some concrete_ty ->
+                   let rec walk s a =
+                     let a = Types.repr a in
+                     match s with
+                     | Types.TGen i ->
+                       if not (Hashtbl.mem inst_sub i) then Hashtbl.replace inst_sub i a
+                     | Types.TVariant (_, ss) ->
+                       (match a with Types.TVariant (_, aa) when List.length ss = List.length aa ->
+                         List.iter2 walk ss aa | _ -> ())
+                     | Types.TList s1 -> (match a with Types.TList a1 -> walk s1 a1 | _ -> ())
+                     | Types.TArray s1 -> (match a with Types.TArray a1 -> walk s1 a1 | _ -> ())
+                     | Types.TTuple ss ->
+                       (match a with Types.TTuple aa when List.length ss = List.length aa ->
+                         List.iter2 walk ss aa | _ -> ())
+                     | Types.TArrow (s1, _, s2) ->
+                       (match a with Types.TArrow (a1, _, a2) -> walk s1 a1; walk s2 a2 | _ -> ())
+                     | Types.TCont (s1, _, s2) ->
+                       (match a with Types.TCont (a1, _, a2) -> walk s1 a1; walk s2 a2 | _ -> ())
+                     | _ -> ()
+                   in
+                   walk inst_ty (Types.repr concrete_ty)
+                 | None -> ()
+               ) inst.inst_tys partial_args;
+               let rec subst t = match t with
+                 | Types.TGen i -> (match Hashtbl.find_opt inst_sub i with Some ty -> ty | None -> t)
+                 | Types.TArrow (a, e, r) -> Types.TArrow (subst a, e, subst r)
+                 | Types.TTuple ts -> Types.TTuple (List.map subst ts)
+                 | Types.TList t -> Types.TList (subst t)
+                 | Types.TArray t -> Types.TArray (subst t)
+                 | Types.TVariant (n, ts) -> Types.TVariant (n, List.map subst ts)
+                 | _ -> t
+               in
+               List.map subst inst.inst_tys
+           in
+           (* Check no unresolved TGens remain *)
+           let has_tgen =
+             let found = ref false in
+             let rec check t = match t with
+               | Types.TGen _ -> found := true
+               | Types.TArrow (a, _, r) -> check a; check r
+               | Types.TTuple ts | Types.TVariant (_, ts) -> List.iter check ts
+               | Types.TList t | Types.TArray t -> check t
+               | _ -> ()
+             in List.iter check arg_types; !found
+           in
+           if has_tgen then te
+           else begin
+             let factory = resolve_factory_dict xctx inst arg_types in
+             let resolved_ty = resolve_method_type inst in
+             mk_xf xctx (TEField (factory, method_name)) resolved_ty
+           end
          | Some inst when inst.inst_constraints = [] ->
            let resolved_ty = resolve_method_type inst in
-           mk (TEField (mk (TEVar inst.inst_dict_name) Types.TUnit, method_name)) resolved_ty
-         | _ -> te
+           mk_xf xctx (TEField (mk_xf xctx (TEVar inst.inst_dict_name) Types.TUnit, method_name)) resolved_ty
+         | _ ->
+           (* Fallback for structural types (poly variants, anonymous records) *)
+           let is_structural = List.exists (fun opt ->
+             match opt with
+             | Some ty -> (match Types.repr ty with
+               | Types.TPolyVariant _ | Types.TRecord _ -> true | _ -> false)
+             | None -> false
+           ) partial_args in
+           if is_structural && String.equal class_def.Types.class_name "Show" then
+             let structural_ty = List.find_map (fun opt ->
+               match opt with
+               | Some ty -> (match Types.repr ty with
+                 | Types.TPolyVariant _ | Types.TRecord _ -> Some (Types.repr ty)
+                 | _ -> None)
+               | None -> None
+             ) partial_args in
+             let show_ty = match structural_ty with
+               | Some ty -> Types.TArrow (ty, Types.EffEmpty, Types.TString)
+               | None -> Types.TUnit
+             in
+             mk_xf xctx (TEField (mk_xf xctx (TERecord [("show", mk_xf xctx (TEVar "__show_value") show_ty)]) Types.TUnit, method_name)) te.ty
+           else
+             te
        end else begin
          (* No concrete type info — fallback: if there's exactly one unconstrained
             instance of this class, resolve to it unambiguously *)
@@ -5504,7 +5381,7 @@ and xform_class_method xctx name te =
              | None -> te.ty
            in
            let resolved_ty = resolve_method_type inst in
-           mk (TEField (mk (TEVar inst.inst_dict_name) Types.TUnit, method_name)) resolved_ty
+           mk_xf xctx (TEField (mk_xf xctx (TEVar inst.inst_dict_name) Types.TUnit, method_name)) resolved_ty
          | None -> te
        end)
   | None -> te
@@ -5521,7 +5398,7 @@ and xform_constrained_ref xctx name te =
         resolve_dict_arg xctx cc tgen_map
       ) scheme.Types.constraints in
       result := List.fold_left (fun fn dict_arg ->
-        mk (TEApp (fn, dict_arg)) Types.TUnit
+        mk_xf xctx (TEApp (fn, dict_arg)) Types.TUnit
       ) !result dict_args
     end;
     (* Pass evidence args for record field offsets *)
@@ -5531,7 +5408,7 @@ and xform_constrained_ref xctx name te =
         resolve_record_evidence_args xctx rgen_map re
       ) scheme.Types.record_evidences in
       result := List.fold_left (fun fn ev_arg ->
-        mk (TEApp (fn, ev_arg)) Types.TUnit
+        mk_xf xctx (TEApp (fn, ev_arg)) Types.TUnit
       ) !result ev_args
     end;
     !result
@@ -5553,8 +5430,8 @@ and resolve_record_evidence_args xctx rgen_map (re : Types.record_evidence) =
       List.map (fun field_name ->
         let idx = ref (-1) in
         List.iteri (fun i n -> if String.equal n field_name then idx := i) sorted_names;
-        if !idx >= 0 then mk (TEInt !idx) Types.TInt
-        else error (Printf.sprintf "field %s not found in concrete record for evidence" field_name)
+        if !idx >= 0 then mk_xf xctx (TEInt !idx) Types.TInt
+        else error_xf xctx (Printf.sprintf "field %s not found in concrete record for evidence" field_name)
       ) re.re_fields
     else begin
       (* Still polymorphic: forward evidence from context *)
@@ -5568,13 +5445,13 @@ and resolve_record_evidence_args xctx rgen_map (re : Types.record_evidence) =
           match List.find_map (fun (rid, fname, pname) ->
             if rid = id && String.equal fname field_name then Some pname else None
           ) xctx.xf_record_evidence with
-          | Some pname -> mk (TEVar pname) Types.TInt
-          | None -> error (Printf.sprintf "no evidence for field %s in polymorphic context" field_name)
+          | Some pname -> mk_xf xctx (TEVar pname) Types.TInt
+          | None -> error_xf xctx (Printf.sprintf "no evidence for field %s in polymorphic context" field_name)
         ) re.re_fields
-      | _ -> error "expected open row for evidence forwarding"
+      | _ -> error_xf xctx "expected open row for evidence forwarding"
     end
   | None ->
-    error (Printf.sprintf "internal error: no record evidence for fields [%s]"
+    error_xf xctx (Printf.sprintf "internal error: no record evidence for fields [%s]"
       (String.concat ", " re.re_fields))
 
 (* Rewrite binops where operand is a constrained tvar *)
@@ -5596,18 +5473,21 @@ and xform_binop xctx op e1 e2 result_ty =
      | Types.TVar { contents = Types.Unbound (id, _) } ->
        (match find_constrained_dict xctx id class_name with
         | Some dparam ->
-          let dict_ref = mk (TEVar dparam) Types.TUnit in
-          let method_ref = mk (TEField (dict_ref, method_name)) Types.TUnit in
-          let app1 = mk (TEApp (method_ref, e1)) Types.TUnit in
-          mk (TEApp (app1, e2)) result_ty
-        | None -> mk (TEBinop (op, e1, e2)) result_ty)
-     | _ -> mk (TEBinop (op, e1, e2)) result_ty)
-  | _ -> mk (TEBinop (op, e1, e2)) result_ty
+          let dict_ref = mk_xf xctx (TEVar dparam) Types.TUnit in
+          let method_ref = mk_xf xctx (TEField (dict_ref, method_name)) Types.TUnit in
+          let app1 = mk_xf xctx (TEApp (method_ref, e1)) Types.TUnit in
+          mk_xf xctx (TEApp (app1, e2)) result_ty
+        | None ->
+          mk_xf xctx (TEBinop (op, e1, e2)) result_ty)
+     | _ ->
+       mk_xf xctx (TEBinop (op, e1, e2)) result_ty)
+  | _ -> mk_xf xctx (TEBinop (op, e1, e2)) result_ty
 
 (* Rewrite unops where operand is a constrained tvar *)
 and xform_unop xctx op e result_ty =
   let class_info = match op with
-    | Ast.Neg -> Some ("Num", "negate")
+    | Ast.Neg -> Some ("Num", "neg")
+    | Ast.Lnot -> Some ("Bitwise", "lnot")
     | _ -> None
   in
   match class_info with
@@ -5616,12 +5496,12 @@ and xform_unop xctx op e result_ty =
      | Types.TVar { contents = Types.Unbound (id, _) } ->
        (match find_constrained_dict xctx id class_name with
         | Some dparam ->
-          let dict_ref = mk (TEVar dparam) Types.TUnit in
-          let method_ref = mk (TEField (dict_ref, method_name)) Types.TUnit in
-          mk (TEApp (method_ref, e)) result_ty
-        | None -> mk (TEUnop (op, e)) result_ty)
-     | _ -> mk (TEUnop (op, e)) result_ty)
-  | _ -> mk (TEUnop (op, e)) result_ty
+          let dict_ref = mk_xf xctx (TEVar dparam) Types.TUnit in
+          let method_ref = mk_xf xctx (TEField (dict_ref, method_name)) Types.TUnit in
+          mk_xf xctx (TEApp (method_ref, e)) result_ty
+        | None -> mk_xf xctx (TEUnop (op, e)) result_ty)
+     | _ -> mk_xf xctx (TEUnop (op, e)) result_ty)
+  | _ -> mk_xf xctx (TEUnop (op, e)) result_ty
 
 (* Transform a constrained function definition *)
 and xform_constrained_def xctx scheme te =
@@ -5697,7 +5577,7 @@ and xform_constrained_def xctx scheme te =
   (* Wrap with TEFun params: dict params first, then evidence params *)
   let all_params = dict_param_names @ ev_param_names in
   List.fold_right (fun dparam body ->
-    mk (TEFun (dparam, body, false)) (Types.TArrow (Types.TUnit, Types.EffEmpty, body.ty))
+    mk_xf xctx (TEFun (dparam, body, false)) (Types.TArrow (Types.TUnit, Types.EffEmpty, body.ty))
   ) all_params rewritten
 
 (* Transform a constrained instance definition *)
@@ -5713,7 +5593,7 @@ let xform_constrained_inst xctx inst_def dict_expr =
         String.equal c.Types.class_name inst_def.Types.inst_class
       ) xctx.xf_type_env.Types.classes with
       | Some cd -> cd
-      | None -> error (Printf.sprintf "class %s not found" inst_def.inst_class)
+      | None -> error_xf xctx (Printf.sprintf "class %s not found" inst_def.inst_class)
   in
   (* Extract instance TGen -> tvar_id mapping from method types *)
   let class_param_map = Hashtbl.create 4 in
@@ -5807,7 +5687,7 @@ let xform_constrained_inst xctx inst_def dict_expr =
   let xctx = { xctx with xf_constrained = all_constrained @ xctx.xf_constrained } in
   let rewritten = xform_expr xctx dict_expr in
   List.fold_right (fun dparam body ->
-    mk (TEFun (dparam, body, false)) (Types.TArrow (Types.TUnit, Types.EffEmpty, body.ty))
+    mk_xf xctx (TEFun (dparam, body, false)) (Types.TArrow (Types.TUnit, Types.EffEmpty, body.ty))
   ) dict_param_names rewritten
 
 (* Post-typechecking fundep improvement: delegates to improve_fundeps_in_expr
@@ -5819,7 +5699,7 @@ let apply_fundep_improvement type_env vars =
         improve_fundeps_in_expr vars type_env te
       | TDLetRecAnd bindings ->
         List.iter (fun (_, te) -> improve_fundeps_in_expr vars type_env te) bindings
-      | TDModule (_, decls) ->
+      | TDModule (_, decls, _) ->
         List.iter (fun d -> match d with
           | TDLet (_, te) | TDLetRec (_, te) | TDExpr te | TDLetMut (_, te) ->
             improve_fundeps_in_expr vars type_env te
@@ -5840,6 +5720,7 @@ let transform_constraints ctx (tprog : tprogram) : tprogram =
     xf_constrained = [];
     xf_record_evidence = [];
     xf_locals = [];
+    xf_loc = ctx.loc;
   } in
   let xform_decl xctx tdecl =
     match tdecl with
@@ -5893,8 +5774,9 @@ let transform_constraints ctx (tprog : tprogram) : tprogram =
     | [] -> []
     | tdecl :: rest ->
       let tdecl' = match tdecl with
-        | TDModule (name, decls) ->
-          TDModule (name, xform_decls xctx decls)
+        | TDModule (name, decls, mod_schemes) ->
+          let mod_xctx = { xctx with xf_schemes = mod_schemes @ xctx.xf_schemes } in
+          TDModule (name, xform_decls mod_xctx decls, mod_schemes)
         | _ -> xform_decl xctx tdecl
       in
       let names = decl_names tdecl in
@@ -5927,47 +5809,64 @@ let check_program_in_ctx (ctx : ctx) (program : Ast.program) : ctx * tprogram =
 (* ================================================================ *)
 
 (* Does a handler body contain any TEResume? Don't descend into TEFun/TEHandle *)
-let rec handler_body_has_resume (te : texpr) =
+(* Walk a handler arm body checking sub-expressions with a predicate.
+   Does not recurse into TEFun (closures are opaque to handler classification)
+   or TELetRec/TELetRecAnd binding expressions (function definitions). *)
+let rec handler_body_walk ~pred (te : texpr) =
+  pred te ||
   match te.expr with
-  | TEResume _ -> true
-  | TELet (_, _, e1, e2) | TESeq (e1, e2) | TELetMut (_, e1, e2) ->
-    handler_body_has_resume e1 || handler_body_has_resume e2
-  | TEIf (_, e1, e2) ->
-    handler_body_has_resume e1 || handler_body_has_resume e2
-  | TEMatch (_, arms, _) ->
-    List.exists (fun (_, _, body) -> handler_body_has_resume body) arms
-  | TELetRec (_, _, _, e2) -> handler_body_has_resume e2
-  | TELetRecAnd (_, e2) -> handler_body_has_resume e2
-  | _ -> false
-
-(* Does a handler body contain any TEPerform or TEResume?
-   Scoped to handler body — don't cross TEFun/TEHandle boundaries *)
-let rec handler_body_has_perform (te : texpr) =
-  match te.expr with
-  | TEPerform _ -> true
-  | TEResume _ -> true
-  | TELet (_, _, e1, e2) | TESeq (e1, e2) | TELetMut (_, e1, e2) ->
-    handler_body_has_perform e1 || handler_body_has_perform e2
-  | TEIf (cond, e1, e2) ->
-    handler_body_has_perform cond ||
-    handler_body_has_perform e1 || handler_body_has_perform e2
-  | TEMatch (scrut, arms, _) ->
-    handler_body_has_perform scrut ||
-    List.exists (fun (_, g, body) ->
-      handler_body_has_perform body ||
-      (match g with Some g -> handler_body_has_perform g | None -> false)
-    ) arms
-  | TELetRec (_, _, _, e2) -> handler_body_has_perform e2
-  | TELetRecAnd (_, e2) -> handler_body_has_perform e2
+  | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _
+  | TERune _ | TEUnit | TEVar _ | TENil | TEContinueLoop -> false
+  | TEFun _ -> false
+  | TELetRec (_, _, _, e2) | TELetRecAnd (_, e2) ->
+    handler_body_walk ~pred e2
+  | TELet (_, _, e1, e2) | TESeq (e1, e2) | TELetMut (_, e1, e2)
+  | TEBinop (_, e1, e2) | TECons (e1, e2) | TEResume (e1, e2)
+  | TEFieldAssign (e1, _, e2) | TEIndex (e1, e2) ->
+    handler_body_walk ~pred e1 || handler_body_walk ~pred e2
+  | TEWhile { tw_cond; tw_body } ->
+    handler_body_walk ~pred tw_cond || handler_body_walk ~pred tw_body
   | TEApp (fn, arg) ->
-    handler_body_has_perform fn || handler_body_has_perform arg
-  | TEBinop (_, e1, e2) ->
-    handler_body_has_perform e1 || handler_body_has_perform e2
-  | TEUnop (_, e) -> handler_body_has_perform e
-  | TECons (e1, e2) -> handler_body_has_perform e1 || handler_body_has_perform e2
-  | TETuple es -> List.exists handler_body_has_perform es
-  | TERecord fields -> List.exists (fun (_, e) -> handler_body_has_perform e) fields
-  | _ -> false
+    handler_body_walk ~pred fn || handler_body_walk ~pred arg
+  | TEIf (c, t, e) ->
+    handler_body_walk ~pred c || handler_body_walk ~pred t || handler_body_walk ~pred e
+  | TEMatch (scrut, arms, _) ->
+    handler_body_walk ~pred scrut ||
+    List.exists (fun (_, g, body) ->
+      handler_body_walk ~pred body ||
+      (match g with Some g -> handler_body_walk ~pred g | None -> false)
+    ) arms
+  | TEPerform (_, e) | TEUnop (_, e) | TEField (e, _) | TEBreak e
+  | TEFoldContinue e | TEForLoop e | TEReturn e | TEAssign (_, e) ->
+    handler_body_walk ~pred e
+  | TETuple es | TEArray es ->
+    List.exists (handler_body_walk ~pred) es
+  | TERecord fields ->
+    List.exists (fun (_, e) -> handler_body_walk ~pred e) fields
+  | TERecordUpdate (base, overrides) ->
+    handler_body_walk ~pred base ||
+    List.exists (fun (_, e) -> handler_body_walk ~pred e) overrides
+  | TERecordUpdateIdx (base, pairs) ->
+    handler_body_walk ~pred base ||
+    List.exists (fun (i, v) ->
+      handler_body_walk ~pred i || handler_body_walk ~pred v) pairs
+  | TEConstruct (_, arg) ->
+    (match arg with Some e -> handler_body_walk ~pred e | None -> false)
+  | TEHandle (body, arms) ->
+    handler_body_walk ~pred body ||
+    List.exists (fun arm -> match arm with
+      | THReturn (_, e) | THOp { body = e; _ }
+      | THOpProvide (_, _, e) | THOpTry (_, _, e) ->
+        handler_body_walk ~pred e) arms
+  | TEMatchTree _ -> false  (* produced after handler classification *)
+
+let handler_body_has_resume te =
+  handler_body_walk ~pred:(fun te ->
+    match te.expr with TEResume _ -> true | _ -> false) te
+
+let handler_body_has_perform te =
+  handler_body_walk ~pred:(fun te ->
+    match te.expr with TEPerform _ | TEResume _ -> true | _ -> false) te
 
 (* Check that ALL terminal branches end with TEResume *)
 let rec classify_all_branches_resume (te : texpr) =
@@ -6022,79 +5921,31 @@ let rec strip_tail_resume (te : texpr) =
 (* Classify a single handler arm *)
 let classify_arm arm =
   match arm with
-  | THOp (op, arg, _k, body) ->
+  | THOp { op_name; arg; k = _; body } ->
     if not (handler_body_has_resume body) && not (handler_body_has_perform body) then
-      THOpTry (op, arg, body)
+      THOpTry (op_name, arg, body)
     else if handler_body_has_resume body
          && classify_all_branches_resume body
          && classify_all_resumes_tail body then
-      THOpProvide (op, arg, strip_tail_resume body)
+      THOpProvide (op_name, arg, strip_tail_resume body)
     else
       arm
   | _ -> arm
 
 (* Walk a texpr to classify all handler arms *)
 let rec classify_texpr (te : texpr) : texpr =
-  let mk e = { te with expr = e } in
   match te.expr with
   | TEHandle (body, arms) ->
     let body' = classify_texpr body in
     let arms' = List.map (fun arm -> match arm with
       | THReturn (n, e) -> THReturn (n, classify_texpr e)
-      | THOp (op, arg, k, e) ->
-        classify_arm (THOp (op, arg, k, classify_texpr e))
+      | THOp { op_name; arg; k; body } ->
+        classify_arm (THOp { op_name; arg; k; body = classify_texpr body })
       | THOpProvide (op, arg, e) -> THOpProvide (op, arg, classify_texpr e)
       | THOpTry (op, arg, e) -> THOpTry (op, arg, classify_texpr e)
     ) arms in
-    mk (TEHandle (body', arms'))
-  | TELet (r, n, e1, e2) ->
-    mk (TELet (r, n, classify_texpr e1, classify_texpr e2))
-  | TELetRec (r, n, fn_e, body) ->
-    mk (TELetRec (r, n, classify_texpr fn_e, classify_texpr body))
-  | TELetRecAnd (binds, body) ->
-    mk (TELetRecAnd (List.map (fun (n, e) -> (n, classify_texpr e)) binds,
-                      classify_texpr body))
-  | TEFun (p, body, f) -> mk (TEFun (p, classify_texpr body, f))
-  | TEApp (fn, arg) -> mk (TEApp (classify_texpr fn, classify_texpr arg))
-  | TEIf (c, t, f) ->
-    mk (TEIf (classify_texpr c, classify_texpr t, classify_texpr f))
-  | TESeq (e1, e2) -> mk (TESeq (classify_texpr e1, classify_texpr e2))
-  | TELetMut (n, e1, e2) ->
-    mk (TELetMut (n, classify_texpr e1, classify_texpr e2))
-  | TEMatch (scrut, arms, p) ->
-    mk (TEMatch (classify_texpr scrut,
-                  List.map (fun (pat, g, body) ->
-                    (pat, Option.map classify_texpr g, classify_texpr body)) arms, p))
-  | TEBinop (op, e1, e2) ->
-    mk (TEBinop (op, classify_texpr e1, classify_texpr e2))
-  | TEUnop (op, e) -> mk (TEUnop (op, classify_texpr e))
-  | TETuple es -> mk (TETuple (List.map classify_texpr es))
-  | TERecord fields ->
-    mk (TERecord (List.map (fun (n, e) -> (n, classify_texpr e)) fields))
-  | TERecordUpdate (base, fields) ->
-    mk (TERecordUpdate (classify_texpr base,
-                         List.map (fun (n, e) -> (n, classify_texpr e)) fields))
-  | TERecordUpdateIdx (base, pairs) ->
-    mk (TERecordUpdateIdx (classify_texpr base,
-                            List.map (fun (i, v) -> (classify_texpr i, classify_texpr v)) pairs))
-  | TEField (e, f) -> mk (TEField (classify_texpr e, f))
-  | TEIndex (e1, e2) -> mk (TEIndex (classify_texpr e1, classify_texpr e2))
-  | TECons (e1, e2) -> mk (TECons (classify_texpr e1, classify_texpr e2))
-  | TEConstruct (name, arg) ->
-    mk (TEConstruct (name, Option.map classify_texpr arg))
-  | TEAssign (n, e) -> mk (TEAssign (n, classify_texpr e))
-  | TEFieldAssign (e1, f, e2) ->
-    mk (TEFieldAssign (classify_texpr e1, f, classify_texpr e2))
-  | TEPerform (name, e) -> mk (TEPerform (name, classify_texpr e))
-  | TEResume (k, v) -> mk (TEResume (classify_texpr k, classify_texpr v))
-  | TEWhile (c, b) -> mk (TEWhile (classify_texpr c, classify_texpr b))
-  | TEBreak e -> mk (TEBreak (classify_texpr e))
-  | TEFoldContinue e -> mk (TEFoldContinue (classify_texpr e))
-  | TEForLoop e -> mk (TEForLoop (classify_texpr e))
-  | TEArray es -> mk (TEArray (List.map classify_texpr es))
-  | TEReturn e -> mk (TEReturn (classify_texpr e))
-  | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _
-  | TEUnit | TEVar _ | TENil | TEContinueLoop -> te
+    { te with expr = TEHandle (body', arms') }
+  | _ -> { te with expr = map_texpr_children classify_texpr te }
 
 let rec classify_handlers (program : tprogram) : tprogram =
   List.map (fun decl -> match decl with
@@ -6104,6 +5955,6 @@ let rec classify_handlers (program : tprogram) : tprogram =
     | TDExpr e -> TDExpr (classify_texpr e)
     | TDLetRecAnd binds ->
       TDLetRecAnd (List.map (fun (n, e) -> (n, classify_texpr e)) binds)
-    | TDModule (name, decls) -> TDModule (name, classify_handlers decls)
+    | TDModule (name, decls, schemes) -> TDModule (name, classify_handlers decls, schemes)
     | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDOpen _ -> decl
   ) program
