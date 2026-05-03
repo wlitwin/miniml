@@ -1969,6 +1969,38 @@ for let x :: rest = items do
 end
 ```
 
+### Numeric for loop
+
+`for i = init; cond; step do ... end` is a general-purpose counted loop. The
+variable `i` is initialized to `init`, the loop runs while `cond` is true, and
+`i` is rebound to `step` after each iteration. The step expression produces the
+next value (it is not a mutation).
+
+```
+-- sum 1 to 10
+let mut sum = 0 in
+for i = 1; i <= 10; i + 1 do
+  sum := sum + i
+end;
+sum    -- 55
+
+-- count down
+for i = 10; i > 0; i - 1 do print i end
+
+-- step by 2
+for i = 0; i < 100; i + 2 do print i end
+
+-- powers of 2
+for i = 1; i < 1000; i * 2 do print i end
+```
+
+`break`, `continue`, and `return` all work as expected. Notably, `continue`
+executes the step expression before re-checking the condition (matching C `for`
+semantics), so the loop variable always advances.
+
+The loop variable is scoped to the loop body and shadows any outer binding with
+the same name.
+
 ### Foreach loop
 
 `for x in coll do ... end` iterates over any collection that implements the
@@ -2037,6 +2069,37 @@ let result = for x in [1; 2; 3; 4; 5] with (sum, count) = (0, 0) do
   (sum + x, count + 1)
 end
 -- result is (15, 5)
+```
+
+### Indexed iteration
+
+`for x in coll with index i do ... end` adds a zero-based index counter to any
+foreach or fold loop. The index variable is read-only and increments
+automatically each iteration.
+
+```
+for x in ["a"; "b"; "c"] with index i do
+  print $"{i}: {x}"
+end
+-- prints 0: a, 1: b, 2: c
+```
+
+This avoids the need for a manual `let mut i = 0` counter. It works with
+pattern destructuring, so iterating maps with an index is clean:
+
+```
+for (k, v) in my_map with index i do
+  print $"{i}. {k} => {v}"
+end
+```
+
+The index clause can be combined with a fold accumulator:
+
+```
+for x in [10; 20; 30] with index i with acc = 0 do
+  acc + i * x
+end
+-- evaluates to 80  (0*10 + 1*20 + 2*30)
 ```
 
 ### Break

@@ -418,9 +418,10 @@ let rec is_captured_in_closures name (body : Typechecker.texpr) =
           scan init;
           if n <> name then scan body
       | TEAssign (_, e) -> scan e
-      | TEWhile { tw_cond; tw_body } ->
+      | TEWhile { tw_cond; tw_body; tw_step } ->
           scan tw_cond;
-          scan tw_body
+          scan tw_body;
+          Option.iter scan tw_step
       | TEContinueLoop -> ()
       | TETuple es -> List.iter scan es
       | TERecord fields -> List.iter (fun (_, e) -> scan e) fields
@@ -505,8 +506,9 @@ and mentions_var name (e : Typechecker.texpr) =
       mentions_var name init || (n <> name && mentions_var name body)
   | TEAssign (n, e) -> n = name || mentions_var name e
   | TEFun (p, body, _) -> p <> name && mentions_var name body
-  | TEWhile { tw_cond; tw_body } ->
+  | TEWhile { tw_cond; tw_body; tw_step } ->
       mentions_var name tw_cond || mentions_var name tw_body
+      || (match tw_step with Some s -> mentions_var name s | None -> false)
   | TEContinueLoop -> false
   | TETuple es -> List.exists (mentions_var name) es
   | TERecord fields -> List.exists (fun (_, e) -> mentions_var name e) fields
@@ -745,7 +747,7 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
       | _ ->
           failwith (Printf.sprintf "native codegen: cannot assign to %s" name))
   | TEIf (cond, then_e, else_e) -> emit_if ctx cond then_e else_e
-  | TEWhile { tw_cond; tw_body } -> emit_while ctx tw_cond tw_body
+  | TEWhile { tw_cond; tw_body; tw_step } -> emit_while ctx tw_cond tw_body tw_step
   | TEBreak value_expr -> (
       let v = emit_expr ctx value_expr in
       match ctx.loop_stack with
@@ -1749,12 +1751,25 @@ and emit_if ctx cond then_e else_e =
 
 (* ---- While loops ---- *)
 
-and emit_while ctx cond body =
+and emit_while ctx cond body step =
   let cond_label = fresh_label ctx "while_cond" in
   let body_label = fresh_label ctx "while_body" in
   let exit_label = fresh_label ctx "while_exit" in
 
-  Ir_emit.emit_br ctx.ir ~label:cond_label;
+  let continue_label =
+    match step with
+    | Some step_te ->
+        let step_label = fresh_label ctx "while_step" in
+        Ir_emit.emit_br ctx.ir ~label:cond_label;
+        Ir_emit.emit_label ctx.ir step_label;
+        ctx.current_label <- step_label;
+        ignore (emit_expr ctx step_te);
+        Ir_emit.emit_br ctx.ir ~label:cond_label;
+        step_label
+    | None ->
+        Ir_emit.emit_br ctx.ir ~label:cond_label;
+        cond_label
+  in
 
   Ir_emit.emit_label ctx.ir cond_label;
   ctx.current_label <- cond_label;
@@ -1767,10 +1782,10 @@ and emit_while ctx cond body =
 
   Ir_emit.emit_label ctx.ir body_label;
   ctx.current_label <- body_label;
-  ctx.loop_stack <- (cond_label, exit_label) :: ctx.loop_stack;
+  ctx.loop_stack <- (continue_label, exit_label) :: ctx.loop_stack;
   ignore (emit_expr ctx body);
   ctx.loop_stack <- List.tl ctx.loop_stack;
-  Ir_emit.emit_br ctx.ir ~label:cond_label;
+  Ir_emit.emit_br ctx.ir ~label:continue_label;
 
   Ir_emit.emit_label ctx.ir exit_label;
   ctx.current_label <- exit_label;
@@ -4923,9 +4938,10 @@ and free_vars_of_fun ?(ctx = None) params body =
         Hashtbl.replace param_set p ();
         scan_expr body;
         if not was_param then Hashtbl.remove param_set p
-    | TEWhile { tw_cond; tw_body } ->
+    | TEWhile { tw_cond; tw_body; tw_step } ->
         scan_expr tw_cond;
-        scan_expr tw_body
+        scan_expr tw_body;
+        Option.iter scan_expr tw_step
     | TEBreak e -> scan_expr e
     | TEContinueLoop -> ()
     | TEReturn e -> scan_expr e

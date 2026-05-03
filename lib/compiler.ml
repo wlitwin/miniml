@@ -444,10 +444,31 @@ let rec compile_expr tail s (te : Typechecker.texpr) =
       compile_expr tail s e2;
       s.mutable_locals <- remove_first_occurrence name s.mutable_locals;
       free_local s
-  | Typechecker.TEWhile { tw_cond; tw_body } ->
+  | Typechecker.TEWhile { tw_cond; tw_body; tw_step } ->
       let enter_idx = emit_idx s (Bytecode.ENTER_LOOP 0) in
       let prev_loop_start = s.loop_start in
-      let loop_start = current_offset s in
+      let skip_step_jump =
+        match tw_step with
+        | Some _ -> Some (emit_idx s (Bytecode.JUMP 0))
+        | None -> None
+      in
+      let step_start =
+        match tw_step with
+        | Some step_te ->
+            let pos = current_offset s in
+            compile_expr false s step_te;
+            emit s Bytecode.POP;
+            pos
+        | None -> current_offset s
+      in
+      (match skip_step_jump with
+      | Some idx -> patch s idx (Bytecode.JUMP (current_offset s))
+      | None -> ());
+      let loop_start =
+        match tw_step with
+        | Some _ -> step_start
+        | None -> current_offset s
+      in
       s.loop_start <- Some loop_start;
       compile_expr false s tw_cond;
       let exit_jump = emit_idx s (Bytecode.JUMP_IF_FALSE 0) in

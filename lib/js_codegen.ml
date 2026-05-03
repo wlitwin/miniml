@@ -512,7 +512,9 @@ let rec expr_has_perform_with ~check_perform (te : Typechecker.texpr) =
                  go e)
            arms
   | Typechecker.TELetMut (_, e1, e2) -> go e1 || go e2
-  | Typechecker.TEWhile { tw_cond; tw_body } -> go tw_cond || go tw_body
+  | Typechecker.TEWhile { tw_cond; tw_body; tw_step } ->
+      go tw_cond || go tw_body
+      || (match tw_step with Some s -> go s | None -> false)
   | Typechecker.TECons (e1, e2) -> go e1 || go e2
   | Typechecker.TETuple es -> List.exists go es
   | Typechecker.TERecord fields -> List.exists (fun (_, e) -> go e) fields
@@ -687,8 +689,8 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
       let base = compile_non_tail ctx record_e in
       let v = compile_non_tail ctx value_e in
       "(" ^ base ^ "." ^ mangle_name field ^ " = " ^ v ^ ", undefined)"
-  | Typechecker.TEWhile { tw_cond; tw_body } ->
-      compile_while ctx tw_cond tw_body
+  | Typechecker.TEWhile { tw_cond; tw_body; tw_step } ->
+      compile_while ctx tw_cond tw_body tw_step
   | Typechecker.TEBreak value_te ->
       let v = compile_non_tail ctx value_te in
       if ctx.in_fold_loop then "_throw_break(" ^ v ^ ")"
@@ -1596,19 +1598,33 @@ and compile_let_mut ctx name init body =
 
 (* ---- While loops ---- *)
 
-and compile_while ctx cond body =
+and compile_while ctx cond body step =
   let result = fresh_tmp ctx in
   let break_flag = fresh_tmp ctx in
   let break_val = fresh_tmp ctx in
   with_loop_ctx ctx ~break_flag ~break_val (fun () ->
       emit_line ctx (Printf.sprintf "let %s = undefined;" result);
       emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
-      emit_line ctx "while (true) {";
-      ctx.indent <- ctx.indent + 1;
-      let c = compile_expr ctx cond in
-      emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
-      let v_body = compile_expr ctx body in
-      emit_line ctx (v_body ^ ";");
+      (match step with
+      | Some step_te ->
+          let step_flag = fresh_tmp ctx in
+          emit_line ctx (Printf.sprintf "let %s = false;" step_flag);
+          emit_line ctx "while (true) {";
+          ctx.indent <- ctx.indent + 1;
+          emit_line ctx (Printf.sprintf "if (%s) { %s; }" step_flag
+            (compile_expr ctx step_te));
+          emit_line ctx (Printf.sprintf "%s = true;" step_flag);
+          let c = compile_expr ctx cond in
+          emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
+          let v_body = compile_expr ctx body in
+          emit_line ctx (v_body ^ ";")
+      | None ->
+          emit_line ctx "while (true) {";
+          ctx.indent <- ctx.indent + 1;
+          let c = compile_expr ctx cond in
+          emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
+          let v_body = compile_expr ctx body in
+          emit_line ctx (v_body ^ ";"));
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}";
       emit_line ctx
@@ -2390,8 +2406,8 @@ and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
         compile_cps ctx body cont;
         pop_scope ctx
       end
-  | Typechecker.TEWhile { tw_cond; tw_body } ->
-      compile_while_cps ctx tw_cond tw_body cont
+  | Typechecker.TEWhile { tw_cond; tw_body; tw_step } ->
+      compile_while_cps ctx tw_cond tw_body tw_step cont
   (* Non-compound expressions: use expr_has_perform guard *)
   | Typechecker.TEApp _ when not (expr_has_perform te) ->
       (* Function call in potential tail position: temporarily clear in_cps
@@ -2447,14 +2463,28 @@ and compile_letrec_and_cps ctx bindings body cont =
   compile_cps ctx body cont;
   pop_scope ctx
 
-and compile_while_cps ctx cond body cont =
+and compile_while_cps ctx cond body step cont =
   let loop_fn = fresh_tmp ctx in
   let break_flag = fresh_tmp ctx in
   let break_val = fresh_tmp ctx in
   with_loop_ctx ctx ~break_flag ~break_val (fun () ->
       emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
+      let step_flag =
+        match step with
+        | Some _ ->
+            let f = fresh_tmp ctx in
+            emit_line ctx (Printf.sprintf "let %s = false;" f);
+            Some f
+        | None -> None
+      in
       emit_line ctx (Printf.sprintf "function %s() {" loop_fn);
       ctx.indent <- ctx.indent + 1;
+      (match step, step_flag with
+      | Some step_te, Some sf ->
+          emit_line ctx (Printf.sprintf "if (%s) { %s; }" sf
+            (compile_non_tail ctx step_te));
+          emit_line ctx (Printf.sprintf "%s = true;" sf)
+      | _ -> ());
       let c = compile_non_tail ctx cond in
       emit_line ctx (Printf.sprintf "if (!(%s)) {" c);
       ctx.indent <- ctx.indent + 1;

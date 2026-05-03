@@ -37,7 +37,7 @@ and texpr_kind =
   | TEPerform of string * texpr
   | TEHandle of texpr * thandle_arm list
   | TEResume of texpr * texpr
-  | TEWhile of { tw_cond : texpr; tw_body : texpr }
+  | TEWhile of { tw_cond : texpr; tw_body : texpr; tw_step : texpr option }
   | TEBreak of texpr
   | TEContinueLoop
   | TEFoldContinue of texpr
@@ -726,9 +726,10 @@ let iter_texpr_children f te =
   | TEIndex (e1, e2) ->
       f e1;
       f e2
-  | TEWhile { tw_cond; tw_body } ->
+  | TEWhile { tw_cond; tw_body; tw_step } ->
       f tw_cond;
-      f tw_body
+      f tw_body;
+      Option.iter f tw_step
   | TEApp (fn, arg) ->
       f fn;
       f arg
@@ -875,8 +876,8 @@ let map_texpr_children f te =
               | THOpTry (eff, x, b) -> THOpTry (eff, x, f b))
             arms )
   | TEResume (k, v) -> TEResume (f k, f v)
-  | TEWhile { tw_cond; tw_body } ->
-      TEWhile { tw_cond = f tw_cond; tw_body = f tw_body }
+  | TEWhile { tw_cond; tw_body; tw_step } ->
+      TEWhile { tw_cond = f tw_cond; tw_body = f tw_body; tw_step = Option.map f tw_step }
   | TEBreak e -> TEBreak (f e)
   | TEFoldContinue e -> TEFoldContinue (f e)
   | TEForLoop e -> TEForLoop (f e)
@@ -1435,9 +1436,10 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
       | TEIndex (e1, e2) ->
           walk locals e1;
           walk locals e2
-      | TEWhile { tw_cond; tw_body } ->
+      | TEWhile { tw_cond; tw_body; tw_step } ->
           walk locals tw_cond;
-          walk locals tw_body
+          walk locals tw_body;
+          Option.iter (walk locals) tw_step
       | TEApp (fn, arg) ->
           walk locals fn;
           walk locals arg
@@ -2012,9 +2014,10 @@ let improve_fundeps_in_expr vars type_env te =
         walk locals e1;
         walk locals e2
     | TEArray es -> List.iter (walk locals) es
-    | TEWhile { tw_cond; tw_body } ->
+    | TEWhile { tw_cond; tw_body; tw_step } ->
         walk locals tw_cond;
-        walk locals tw_body
+        walk locals tw_body;
+        Option.iter (walk locals) tw_step
     | TEForLoop e -> walk locals e
     | TEReturn e -> walk locals e
     | TEBreak e -> walk locals e
@@ -2500,11 +2503,26 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
       let ctx' = { ctx with loop_info = Some WhileLoop } in
       let cond_te = check ctx' level while_cond Types.TBool in
       let body_te = check ctx' level while_body Types.TUnit in
-      mk ctx (TEWhile { tw_cond = cond_te; tw_body = body_te }) Types.TUnit
-  | Ast.EFor { for_var; for_iter; for_body } ->
+      mk ctx (TEWhile { tw_cond = cond_te; tw_body = body_te; tw_step = None }) Types.TUnit
+  | Ast.EFor { for_var; for_iter; for_body; for_index } ->
       (* Desugar: TEForLoop(fold (fun _ x -> body; ()) () coll) *)
+      (* With index: let mut __idx = 0 in fold (fun _ x -> let i = __idx in body; __idx := __idx + 1; ()) () coll *)
       let ctx' = { ctx with loop_info = Some UnitLoop } in
-      let desugared =
+      let body_with_idx =
+        match for_index with
+        | None -> Ast.ESeq (for_body, Ast.EUnit)
+        | Some idx_name ->
+            let idx_var = "__for_index" in
+            Ast.ELet
+              ( idx_name,
+                Ast.EVar idx_var,
+                Ast.ESeq
+                  ( for_body,
+                    Ast.ESeq
+                      ( Ast.EAssign (idx_var, Ast.EBinop (Add, Ast.EVar idx_var, Ast.EInt 1)),
+                        Ast.EUnit ) ) )
+      in
+      let fold_expr =
         Ast.EApp
           ( Ast.EApp
               ( Ast.EApp
@@ -2513,9 +2531,15 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
                       ( { name = "_"; annot = None; is_generated = true },
                         Ast.EFun
                           ( { name = for_var; annot = None; is_generated = true },
-                            Ast.ESeq (for_body, Ast.EUnit) ) ) ),
+                            body_with_idx ) ) ),
                 Ast.EUnit ),
             for_iter )
+      in
+      let desugared =
+        match for_index with
+        | None -> fold_expr
+        | Some _ ->
+            Ast.ELetMut ("__for_index", Ast.EInt 0, fold_expr)
       in
       let fold_te = synth ctx' level desugared in
       mk ctx (TEForLoop fold_te) Types.TUnit
@@ -2526,10 +2550,28 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
         accum_var = acc_name;
         accum_init = init_expr;
         fold_body = body_expr;
+        fold_index;
       } ->
       (* Desugar: TEForLoop(fold (fun acc x -> body) init coll) *)
+      (* With index: let mut __idx = 0 in fold (fun acc x -> let i = __idx in let r = body in __idx := __idx + 1; r) init coll *)
       let ctx' = { ctx with loop_info = Some (FoldLoop acc_name) } in
-      let desugared =
+      let body_with_idx =
+        match fold_index with
+        | None -> body_expr
+        | Some idx_name ->
+            let idx_var = "__for_index" in
+            let result_var = "__for_result" in
+            Ast.ELet
+              ( idx_name,
+                Ast.EVar idx_var,
+                Ast.ELet
+                  ( result_var,
+                    body_expr,
+                    Ast.ESeq
+                      ( Ast.EAssign (idx_var, Ast.EBinop (Add, Ast.EVar idx_var, Ast.EInt 1)),
+                        Ast.EVar result_var ) ) )
+      in
+      let fold_expr =
         Ast.EApp
           ( Ast.EApp
               ( Ast.EApp
@@ -2542,12 +2584,39 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
                               annot = None;
                               is_generated = true;
                             },
-                            body_expr ) ) ),
+                            body_with_idx ) ) ),
                 init_expr ),
             coll_expr )
       in
+      let desugared =
+        match fold_index with
+        | None -> fold_expr
+        | Some _ ->
+            Ast.ELetMut ("__for_index", Ast.EInt 0, fold_expr)
+      in
       let fold_te = synth ctx' level desugared in
       mk ctx (TEForLoop fold_te) fold_te.ty
+  | Ast.EForNumeric { fn_var; fn_init; fn_cond; fn_step; fn_body } ->
+      (* Typecheck directly to TELetMut + TEWhile with tw_step for correct continue semantics *)
+      let init_te = synth ctx level fn_init in
+      let ctx' =
+        {
+          ctx with
+          vars = (fn_var, Types.mono init_te.ty) :: ctx.vars;
+          mutable_vars = fn_var :: ctx.mutable_vars;
+          loop_info = Some WhileLoop;
+        }
+      in
+      let cond_te = check ctx' level fn_cond Types.TBool in
+      let body_te = check ctx' level fn_body Types.TUnit in
+      let step_te = check ctx' level fn_step init_te.ty in
+      let assign_te = mk ctx' (TEAssign (fn_var, step_te)) Types.TUnit in
+      let while_te =
+        mk ctx'
+          (TEWhile { tw_cond = cond_te; tw_body = body_te; tw_step = Some assign_te })
+          Types.TUnit
+      in
+      mk ctx (TELetMut (fn_var, init_te, while_te)) Types.TUnit
   | Ast.EBreak value_opt -> (
       match ctx.loop_info with
       | None -> error ctx "break outside of loop"
@@ -4683,9 +4752,10 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
     | TEResume (e1, e2) ->
         walk e1;
         walk e2
-    | TEWhile { tw_cond; tw_body } ->
+    | TEWhile { tw_cond; tw_body; tw_step } ->
         walk tw_cond;
-        walk tw_body
+        walk tw_body;
+        Option.iter walk tw_step
     | TEForLoop body -> walk body
     | TEArray es -> List.iter walk es
     | TEReturn e -> walk e
@@ -7085,12 +7155,13 @@ let rec xform_expr xctx te =
       mk_xf xctx
         (TELetMut (name, xform_expr xctx e1, xform_expr xctx' e2))
         te.ty
-  | TEWhile { tw_cond; tw_body } ->
+  | TEWhile { tw_cond; tw_body; tw_step } ->
       mk_xf xctx
         (TEWhile
            {
              tw_cond = xform_expr xctx tw_cond;
              tw_body = xform_expr xctx tw_body;
+             tw_step = Option.map (xform_expr xctx) tw_step;
            })
         te.ty
   | TELetRecAnd (bindings, body) ->
@@ -8212,8 +8283,9 @@ let rec handler_body_walk ~pred (te : texpr) =
   | TEFieldAssign (e1, _, e2)
   | TEIndex (e1, e2) ->
       handler_body_walk ~pred e1 || handler_body_walk ~pred e2
-  | TEWhile { tw_cond; tw_body } ->
+  | TEWhile { tw_cond; tw_body; tw_step } ->
       handler_body_walk ~pred tw_cond || handler_body_walk ~pred tw_body
+      || (match tw_step with Some s -> handler_body_walk ~pred s | None -> false)
   | TEApp (fn, arg) -> handler_body_walk ~pred fn || handler_body_walk ~pred arg
   | TEIf (c, t, e) ->
       handler_body_walk ~pred c || handler_body_walk ~pred t

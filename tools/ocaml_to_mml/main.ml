@@ -166,6 +166,7 @@ let rec emit_type e (ct : core_type) =
       emit e " -> ";
       emit_type e t2
   | Ptyp_tuple ts ->
+      let types = List.map (fun (_lbl, t) -> t) ts in
       List.iteri
         (fun i t ->
           if i > 0 then emit e " * ";
@@ -177,7 +178,7 @@ let rec emit_type e (ct : core_type) =
           if needs_parens then emit e "(";
           emit_type e t;
           if needs_parens then emit e ")")
-        ts
+        types
   | Ptyp_constr (lid, args) -> (
       let name = Longident.last lid.txt in
       (* ref type: t ref → t Ref.t *)
@@ -191,7 +192,7 @@ let rec emit_type e (ct : core_type) =
       else
         let module_path =
           match lid.txt with
-          | Longident.Ldot (Longident.Lident m, _) -> Some m
+          | Longident.Ldot ({txt = Longident.Lident m; _}, _) -> Some m
           | _ -> None
         in
         let full_name =
@@ -237,10 +238,10 @@ and emit_pattern e (pat : pattern) =
   | Ppat_any -> emit e "_"
   | Ppat_var v -> emit e (escape_keyword v.txt)
   | Ppat_constant c -> emit_constant e c
-  | Ppat_tuple ps ->
+  | Ppat_tuple (ps, _) ->
       emit e "(";
       List.iteri
-        (fun i p ->
+        (fun i (_lbl, p) ->
           if i > 0 then emit e ", ";
           emit_pattern e p)
         ps;
@@ -249,7 +250,7 @@ and emit_pattern e (pat : pattern) =
       let name = Longident.last lid.txt in
       let full_name =
         match lid.txt with
-        | Longident.Ldot (Longident.Lident m, n) -> m ^ "." ^ n
+        | Longident.Ldot ({txt = Longident.Lident m; _}, {txt = n; _}) -> m ^ "." ^ n
         | _ -> name
       in
       match full_name with
@@ -259,7 +260,7 @@ and emit_pattern e (pat : pattern) =
       | "[]" -> emit e "[]"
       | "::" -> (
           match arg with
-          | Some (_, { ppat_desc = Ppat_tuple [ hd; tl ]; _ }) ->
+          | Some (_, { ppat_desc = Ppat_tuple ([ (_, hd); (_, tl) ], _); _ }) ->
               let needs_parens =
                 match hd.ppat_desc with
                 | Ppat_construct ({ txt = Lident "::"; _ }, _) -> true
@@ -409,11 +410,11 @@ and emit_expr e (expr : expression) =
       let name =
         match lid.txt with
         | Longident.Lident s -> translate_ident s
-        | Longident.Ldot (Longident.Lident "Fun", "id") -> "(fn x -> x)"
-        | Longident.Ldot (Longident.Lident m, s) ->
+        | Longident.Ldot ({txt = Longident.Lident "Fun"; _}, {txt = "id"; _}) -> "(fn x -> x)"
+        | Longident.Ldot ({txt = Longident.Lident m; _}, {txt = s; _}) ->
             let m, s = translate_qualified m s in
             if m = "" then s else m ^ "." ^ s
-        | Longident.Ldot (Longident.Ldot (Longident.Lident m1, m2), s) ->
+        | Longident.Ldot ({txt = Longident.Ldot ({txt = Longident.Lident m1; _}, {txt = m2; _}); _}, {txt = s; _}) ->
             m1 ^ "." ^ m2 ^ "." ^ translate_ident s
         | _ -> Format.asprintf "%a" Pprintast.longident lid.txt
       in
@@ -479,7 +480,7 @@ and emit_expr e (expr : expression) =
   | Pexp_tuple es ->
       emit e "(";
       List.iteri
-        (fun i ex ->
+        (fun i (_lbl, ex) ->
           if i > 0 then emit e ", ";
           emit_expr e ex)
         es;
@@ -488,7 +489,7 @@ and emit_expr e (expr : expression) =
       let name = Longident.last lid.txt in
       let full_name =
         match lid.txt with
-        | Longident.Ldot (Longident.Lident m, n) -> m ^ "." ^ n
+        | Longident.Ldot ({txt = Longident.Lident m; _}, {txt = n; _}) -> m ^ "." ^ n
         | _ -> name
       in
       match full_name with
@@ -498,7 +499,7 @@ and emit_expr e (expr : expression) =
       | "[]" -> emit e "[]"
       | "::" -> (
           match arg with
-          | Some { pexp_desc = Pexp_tuple [ hd; tl ]; _ } ->
+          | Some { pexp_desc = Pexp_tuple [ (_, hd); (_, tl) ]; _ } ->
               emit_expr e hd;
               emit e " :: ";
               emit_expr e tl
@@ -940,7 +941,7 @@ and emit_apply e fn args =
       emit_expr e arg;
       if needs_parens_subexpr arg then emit e ")"
   (* Lazy.force x → x () *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "Lazy", "force"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "Lazy"; _}, {txt = "force"; _}); _ },
       [ (_, arg) ] ) ->
       emit_expr e arg;
       emit e " ()"
@@ -966,7 +967,7 @@ and emit_apply e fn args =
         ( _,
           {
             pexp_desc =
-              Pexp_construct ({ txt = Longident.Ldot (_, ctor); _ }, payload);
+              Pexp_construct ({ txt = Longident.Ldot (_, {txt = ctor; _}); _ }, payload);
             _;
           } );
       ] ) -> (
@@ -1004,10 +1005,10 @@ and emit_apply e fn args =
       emit_expr e arg;
       emit e " - 1)"
   (* Fun.id x → x *)
-  | Pexp_ident { txt = Longident.Ldot (Lident "Fun", "id"); _ }, [ (_, arg) ] ->
+  | Pexp_ident { txt = Longident.Ldot ({txt = Lident "Fun"; _}, {txt = "id"; _}); _ }, [ (_, arg) ] ->
       emit_expr e arg
   (* Fun.protect ~finally:cleanup f → let _r = f () in cleanup (); _r *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "Fun", "protect"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "Fun"; _}, {txt = "protect"; _}); _ },
       [ (_, cleanup); (_, f) ] ) ->
       emit e "(let _protect_result = (";
       emit_expr e f;
@@ -1015,19 +1016,19 @@ and emit_apply e fn args =
       emit_expr e cleanup;
       emit e ") (); _protect_result)"
   (* Dynarray.create () → Dynarray.empty () *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "Dynarray", "create"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "Dynarray"; _}, {txt = "create"; _}); _ },
       [
         (_, { pexp_desc = Pexp_construct ({ txt = Lident "()"; _ }, None); _ });
       ] ) ->
       emit e "Dynarray.empty ()"
   (* Hashtbl.hash x → hash x (MiniML has a Hash typeclass) *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "Hashtbl", "hash"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "Hashtbl"; _}, {txt = "hash"; _}); _ },
       [ (_, arg) ] ) ->
       emit e "(hash (";
       emit_expr e arg;
       emit e "))"
   (* String.equal a b → a = b *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "String", "equal"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "String"; _}, {txt = "equal"; _}); _ },
       [ (_, lhs); (_, rhs) ] ) ->
       if needs_parens_subexpr lhs then emit e "(";
       emit_expr e lhs;
@@ -1043,13 +1044,13 @@ and emit_apply e fn args =
       emit_expr e arg;
       if needs_parens_subexpr arg then emit e ")"
   (* Printf.sprintf → string interpolation $"..." *)
-  | Pexp_ident { txt = Longident.Ldot (Lident "Printf", "sprintf"); _ }, _ ->
+  | Pexp_ident { txt = Longident.Ldot ({txt = Lident "Printf"; _}, {txt = "sprintf"; _}); _ }, _ ->
       emit_sprintf e args
   (* Format.asprintf → string interpolation $"..." *)
-  | Pexp_ident { txt = Longident.Ldot (Lident "Format", "asprintf"); _ }, _ ->
+  | Pexp_ident { txt = Longident.Ldot ({txt = Lident "Format"; _}, {txt = "asprintf"; _}); _ }, _ ->
       emit_sprintf e args
   (* String.split_on_char 'c' s → String.split "c" s (char→string delimiter first) *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "String", "split_on_char"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "String"; _}, {txt = "split_on_char"; _}); _ },
       [ (_, c_arg); (_, s_arg) ] ) ->
       emit e "String.split ";
       (* Convert char argument to string (delimiter comes first in MiniML) *)
@@ -1073,7 +1074,7 @@ and emit_apply e fn args =
       if needs_parens_subexpr s_arg then emit e ")"
   (* String.contains : string -> char -> bool  →  String.contains : string -> string -> bool
      OCaml: String.contains haystack char  →  MiniML: String.contains substring haystack *)
-  | ( Pexp_ident { txt = Longident.Ldot (Lident "String", "contains"); _ },
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "String"; _}, {txt = "contains"; _}); _ },
       [ (_, s_arg); (_, c_arg) ] ) ->
       emit e "String.contains ";
       (* Emit the char/substring argument FIRST (MiniML takes sub, haystack) *)
@@ -1219,8 +1220,8 @@ and emit_cases e cases =
               pat with
               ppat_desc = Ppat_var { txt = var_name; loc = pat.ppat_loc };
             }
-        | Ppat_tuple ps ->
-            { pat with ppat_desc = Ppat_tuple (List.map rewrite_char_pat ps) }
+        | Ppat_tuple (ps, cf) ->
+            { pat with ppat_desc = Ppat_tuple (List.map (fun (lbl, p) -> (lbl, rewrite_char_pat p)) ps, cf) }
         | Ppat_construct (lid, Some (vars, inner)) ->
             {
               pat with
@@ -1302,7 +1303,7 @@ and emit_exn_cases e cases =
               emit e " ";
               emit_pattern e pat
           | None -> ())
-      | Ppat_construct ({ txt = Longident.Ldot (_, ctor); _ }, payload) -> (
+      | Ppat_construct ({ txt = Longident.Ldot (_, {txt = ctor; _}); _ }, payload) -> (
           let op_name = exn_to_effect_op ctor in
           emit e op_name;
           match payload with

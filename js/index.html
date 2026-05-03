@@ -415,7 +415,7 @@ const HL_KEYWORDS = new Set([
   'let','rec','in','if','else','fn','match','with','type','of','not','mod',
   'true','false','class','instance','effect','extern','perform','handle','try',
   'provide','resume','return','continue','mut','for','do','break','when','where','module',
-  'pub','open','end','opaque','and','deriving','land','lor','lxor','lnot','lsl','lsr'
+  'pub','open','end','opaque','and','deriving','land','lor','lxor','lnot','lsl','lsr','index'
 ]);
 
 const HL_OPS2 = new Set(['->', '=>', '|>', '::', ':=', '<>', '<=', '>=', '&&', '||', ';;']);
@@ -2784,11 +2784,54 @@ let () = print $"sum of 10 ones: {Enum.sum (Enum.take 10 ones)}"
   loops: `-- Loops & Control Flow
 -- MiniML has powerful loop constructs with break, continue, and return
 
+-- === Numeric for loops ===
+-- C-style: for var = init; cond; step do ... end
+let mut sum = 0
+let () = for i = 1; i <= 10; i + 1 do
+  sum := sum + i
+end
+let () = print $"sum 1..10: {sum}"
+
+-- Arbitrary step expressions
+let () = print "Powers of 2:"
+let () = for i = 1; i < 1000; i * 2 do
+  print $"  {i}"
+end
+
+-- Continue correctly advances the step
+let odd_sum = let mut s = 0 in
+  for i = 0; i < 10; i + 1 do
+    if i mod 2 = 0 do continue else ();
+    s := s + i
+  end; s
+let () = print $"sum of odds 0..9: {odd_sum}"
+
+-- === Indexed for loops ===
+-- 'with index i' adds a zero-based counter
+let () = print ""
+let () = print "Indexed iteration:"
+let items = ["apple"; "banana"; "cherry"]
+let () = for x in items with index i do
+  print $"  {i}: {x}"
+end
+
+-- Works with pattern destructuring
+let () = for (k, v) in [("x", 10); ("y", 20)] with index i do
+  print $"  [{i}] {k} = {v}"
+end
+
+-- Index + fold accumulator
+let weighted = for x in [10; 20; 30] with index i with acc = 0 do
+  acc + i * x
+end
+let () = print $"weighted sum: {weighted}"
+
 -- === Fold loops (with accumulator) ===
+let () = print ""
 let sum = for x in [1; 2; 3; 4; 5] with acc = 0 do
   acc + x
 end
-let () = print $"sum: {sum}"
+let () = print $"fold sum: {sum}"
 
 -- Tuple accumulator
 let (total, count) = for x in [10; 20; 30] with (sum, n) = (0, 0) do
@@ -2819,13 +2862,6 @@ let found = for x in [4; 7; 2; 9; 1; 8] with result = -1 do
 end
 let () = print $"first > 5: {found}"
 
--- Break with custom value in fold
-let partial_sum = for x in [1; 2; 3; 4; 5] with acc = 0 do
-  if acc + x > 8 do break acc
-  else acc + x
-end
-let () = print $"partial sum (until > 8): {partial_sum}"
-
 -- === Continue ===
 -- Skip even numbers
 let odd_sum = for x in [1; 2; 3; 4; 5; 6; 7; 8; 9; 10] with acc = 0 do
@@ -2835,11 +2871,10 @@ end
 let () = print $"sum of odds: {odd_sum}"
 
 -- === Return (early exit from function) ===
+-- 'with index' replaces manual index tracking
 let find_index target xs =
-  let mut i = 0 in
-  for x in xs do
-    if x = target do return i else ();
-    i := i + 1
+  for x in xs with index i do
+    if x = target do return i else ()
   end;
   -1
 

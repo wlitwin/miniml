@@ -692,3 +692,158 @@ let find_index target xs =
 in
 find_index 30 [10; 20; 30; 40; 50]
 --- expect: 2
+
+=== Numeric For Loop Tests ===
+
+--- test: numeric for basic sum
+let mut sum = 0 in
+for i = 1; i <= 10; i + 1 do
+  sum := sum + i
+end;
+sum
+--- expect: 55
+
+--- test: numeric for step by 2
+let mut sum = 0 in
+for i = 0; i < 10; i + 2 do
+  sum := sum + i
+end;
+sum
+--- expect: 20
+
+--- test: numeric for count down
+let mut sum = 0 in
+for i = 5; i > 0; i - 1 do
+  sum := sum + i
+end;
+sum
+--- expect: 15
+
+--- test: numeric for zero iterations
+let mut sum = 0 in
+for i = 10; i < 5; i + 1 do
+  sum := sum + i
+end;
+sum
+--- expect: 0
+
+--- test: numeric for returns unit
+for i = 0; i < 3; i + 1 do
+  ()
+end
+--- expect: ()
+
+--- test: numeric for with break
+let mut sum = 0 in
+for i = 0; i < 100; i + 1 do
+  if i = 5 do break else ();
+  sum := sum + i
+end;
+sum
+--- expect: 10
+
+--- test: numeric for with continue
+let mut sum = 0 in
+for i = 0; i < 10; i + 1 do
+  if i mod 2 = 0 do continue else ();
+  sum := sum + i
+end;
+sum
+--- expect: 25
+
+--- test: numeric for powers of 2
+let mut result = [] in
+for i = 1; i < 1000; i * 2 do
+  result := i :: result
+end;
+List.rev result
+--- expect: [1; 2; 4; 8; 16; 32; 64; 128; 256; 512]
+
+--- test: numeric for nested
+let mut sum = 0 in
+for i = 0; i < 3; i + 1 do
+  for j = 0; j < 3; j + 1 do
+    sum := sum + (i * 3 + j)
+  end
+end;
+sum
+--- expect: 36
+
+--- test: numeric for with return
+let f () =
+  for i = 0; i < 100; i + 1 do
+    if i = 5 do return i else ()
+  end;
+  -1
+in
+f ()
+--- expect: 5
+
+--- test: numeric for variable scoping
+let i = 999 in
+let mut sum = 0 in
+for i = 0; i < 5; i + 1 do
+  sum := sum + i
+end;
+(sum, i)
+--- expect: (10, 999)
+
+=== Indexed For Loop Tests ===
+
+--- test: indexed for basic
+let mut result = [] in
+for x in [10; 20; 30] with index i do
+  result := (i, x) :: result
+end;
+List.rev result
+--- expect: [(0, 10); (1, 20); (2, 30)]
+
+--- test: indexed for with array
+let arr = #["a"; "b"; "c"] in
+let mut result = [] in
+for x in arr with index i do
+  result := (i, x) :: result
+end;
+List.rev result
+--- expect: [(0, a); (1, b); (2, c)]
+
+--- test: indexed fold
+for x in [10; 20; 30] with index i with acc = 0 do
+  acc + i * x
+end
+--- expect: 80
+
+--- test: indexed for pattern destructuring
+let mut result = [] in
+for (k, v) in [("a", 1); ("b", 2)] with index i do
+  result := (i, k, v) :: result
+end;
+List.rev result
+--- expect: [(0, a, 1); (1, b, 2)]
+
+--- test: indexed for empty list
+let mut result = [] in
+for x in [] with index i do
+  result := (i, x) :: result
+end;
+result
+--- expect: []
+
+--- test: indexed for with break
+let mut last_i = -1 in
+for x in [10; 20; 30; 40; 50] with index i do
+  last_i := i;
+  if x = 30 do break else ()
+end;
+last_i
+--- expect: 2
+
+--- test: indexed for replaces manual index pattern
+let find_index target xs =
+  for x in xs with index i do
+    if x = target do return i else ()
+  end;
+  -1
+in
+find_index 30 [10; 20; 30; 40; 50]
+--- expect: 2

@@ -1709,7 +1709,28 @@ and pat_to_name_and_wrap pat =
         fun body -> Ast.EMatch (Ast.EVar pname, [ (pat, None, body) ], Partial)
       )
 
+and parse_for_index_clause p =
+  (* Check for 'with index <ident>' — must be 'index' followed by ident then DO/WITH, not '=' *)
+  match peek_kind p with
+  | Token.WITH -> (
+      match peek_kind_at p 1 with
+      | Token.IDENT "index" -> (
+          match peek_kind_at p 2 with
+          | Token.EQ ->
+              (* 'with index = ...' — accumulator named "index", not index clause *)
+              None
+          | _ ->
+              (* 'with index <ident>' — index clause *)
+              ignore (advance p); (* consume WITH *)
+              ignore (advance p); (* consume 'index' *)
+              let idx_name = expect_ident p in
+              Some idx_name)
+      | _ -> None)
+  | _ -> None
+
 and parse_for_in_rest p elem_name elem_wrap coll =
+  (* First check for 'with index <ident>' *)
+  let index_var = parse_for_index_clause p in
   match peek_kind p with
   | Token.WITH ->
       ignore (advance p);
@@ -1734,13 +1755,19 @@ and parse_for_in_rest p elem_name elem_wrap coll =
           accum_var = acc_name;
           accum_init = init;
           fold_body = elem_wrap (acc_wrap body);
+          fold_index = index_var;
         }
   | Token.DO ->
       ignore (advance p);
       let body = parse_expr p in
       expect p Token.END;
       Ast.EFor
-        { for_var = elem_name; for_iter = coll; for_body = elem_wrap body }
+        {
+          for_var = elem_name;
+          for_iter = coll;
+          for_body = elem_wrap body;
+          for_index = index_var;
+        }
   | _ -> error p "expected 'do' or 'with' after for collection"
 
 and parse_for_expr p =
@@ -1781,6 +1808,43 @@ and parse_for_expr p =
       let coll = parse_expr_bp p 0 in
       let elem_name, elem_wrap = pat_to_name_and_wrap pat in
       parse_for_in_rest p elem_name elem_wrap coll
+  | (Token.IDENT _ | Token.UNDERSCORE) when peek_kind_at p 1 = Token.EQ ->
+      (* Try: for i = init; cond; step do body end — numeric for loop *)
+      let saved_pos = p.pos in
+      let var_name =
+        if peek_kind p = Token.UNDERSCORE then (
+          ignore (advance p);
+          "_")
+        else expect_ident p
+      in
+      ignore (advance p); (* consume = *)
+      let init = parse_expr_bp p 0 in
+      if peek_kind p = Token.SEMICOLON then begin
+        ignore (advance p);
+        let cond = parse_expr_bp p 0 in
+        expect p Token.SEMICOLON;
+        let step = parse_expr_bp p 0 in
+        expect p Token.DO;
+        let body = parse_expr p in
+        expect p Token.END;
+        Ast.EForNumeric
+          {
+            fn_var = var_name;
+            fn_init = init;
+            fn_cond = cond;
+            fn_step = step;
+            fn_body = body;
+          }
+      end
+      else begin
+        (* Not a numeric for — restore and fall through to while *)
+        p.pos <- saved_pos;
+        let cond = parse_expr_bp p 0 in
+        expect p Token.DO;
+        let body = parse_expr p in
+        expect p Token.END;
+        Ast.EWhile { while_cond = cond; while_body = body }
+      end
   | _ ->
       (* for cond do body end — while loop *)
       let cond = parse_expr_bp p 0 in

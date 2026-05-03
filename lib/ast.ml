@@ -105,15 +105,28 @@ type expr =
   | ESeq of expr * expr
   | EAnnot of expr * ty_annot
   | EWhile of { while_cond : expr; while_body : expr }
-  | EFor of { for_var : string; for_iter : expr; for_body : expr }
+  | EFor of {
+      for_var : string;
+      for_iter : expr;
+      for_body : expr;
+      for_index : string option;
+    }
   | EForFold of {
       loop_var : string;
       loop_iter : expr;
       accum_var : string;
       accum_init : expr;
       fold_body : expr;
+      fold_index : string option;
     }
   | EWhileLet of pattern * expr * expr
+  | EForNumeric of {
+      fn_var : string;
+      fn_init : expr;
+      fn_cond : expr;
+      fn_step : expr;
+      fn_body : expr;
+    }
   | EBreak of expr option
   | EContinueLoop
   | EReturn of expr
