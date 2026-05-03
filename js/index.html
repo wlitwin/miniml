@@ -2801,7 +2801,7 @@ end
 -- Continue correctly advances the step
 let odd_sum = let mut s = 0 in
   for i = 0; i < 10; i + 1 do
-    if i mod 2 = 0 do continue else ();
+    if i mod 2 = 0 do continue end;
     s := s + i
   end; s
 let () = print $"sum of odds 0..9: {odd_sum}"
@@ -2874,7 +2874,7 @@ let () = print $"sum of odds: {odd_sum}"
 -- 'with index' replaces manual index tracking
 let find_index target xs =
   for x in xs with index i do
-    if x = target do return i else ()
+    if x = target do return i end
   end;
   -1
 
