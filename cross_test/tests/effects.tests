@@ -2068,3 +2068,50 @@ with
 | return x -> x
 | tick () k -> count := count + 1; resume k ()
 --- expect: 11
+
+--- test: continuation captured in closure and resumed later
+effect E =
+  op : unit -> unit
+end
+let mut saved = [] in
+let mut trace = "" in
+let _ =
+  handle
+    trace := trace ^ "a"; perform op (); trace := trace ^ "c"
+  with
+  | return x -> x
+  | op () k -> trace := trace ^ "b"; saved := [(fn () -> resume k ())]
+in
+let _ = (match saved with [] -> () | t :: _ -> t ()) in
+trace
+--- expect: abc
+
+--- test: yielding scheduler with list queue
+effect Sched =
+  yield : unit -> unit
+  fork  : (unit -> unit) -> unit
+end
+let mut q = [] in
+let mut trace = "" in
+let enqueue t = q := List.concat q [t] in
+let dequeue () = match q with [] -> () | t :: rest -> q := rest; t () in
+let rec spawn task =
+  handle task ()
+  with
+  | return _ -> dequeue ()
+  | yield () k -> enqueue (fn () -> resume k ()); dequeue ()
+  | fork f k -> enqueue (fn () -> resume k ()); spawn f
+in
+let worker name n =
+  let rec loop i =
+    if i > n do ()
+    else (trace := trace ^ name ^ show i; perform yield (); loop (i + 1))
+  in loop 1
+in
+let _ =
+  spawn (fn () ->
+    perform fork (fn () -> worker "A" 2);
+    worker "B" 2)
+in
+trace
+--- expect: A1B1A2B2

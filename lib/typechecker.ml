@@ -8401,13 +8401,58 @@ let rec strip_tail_resume (te : texpr) =
       { te with expr = TEMatch (s, arms', p) }
   | _ -> te
 
+(* Does the continuation variable [name] appear free in [te]?
+
+   Unlike [handler_body_walk], this DOES descend into closures (TEFun):
+   a continuation captured inside a closure escapes the handler arm and is
+   genuinely used later, even though no [resume] appears in tail position.
+   This is what makes patterns like a yielding scheduler work:
+
+     | yield () k -> enqueue (fn () -> resume k ()); dequeue ()
+
+   Here [k] is used (stored for later) but [handler_body_has_resume] reports
+   false because it stops at the [fn]. Without this check the arm would be
+   misclassified as [THOpTry], which discards the continuation binding.
+
+   Shadowing is respected for the common value binders. Pattern binders are
+   handled conservatively (recursed into without checking what they bind),
+   which can only over-report usage — keeping the arm as a general handler,
+   which is always semantically correct, just less optimized. *)
+let rec cont_used name (te : texpr) =
+  match te.expr with
+  | TEVar n -> String.equal n name
+  | TEAssign (n, e) -> String.equal n name || cont_used name e
+  | TEFun (p, body, _) -> (not (String.equal p name)) && cont_used name body
+  | TELet (n, _, e1, e2) ->
+      cont_used name e1
+      || ((not (String.equal n name)) && cont_used name e2)
+  | TELetMut (n, e1, e2) ->
+      cont_used name e1
+      || ((not (String.equal n name)) && cont_used name e2)
+  | TELetRec (n, _, e1, e2) ->
+      (not (String.equal n name)) && (cont_used name e1 || cont_used name e2)
+  | TELetRecAnd (binds, body) ->
+      (not (List.exists (fun (n, _) -> String.equal n name) binds))
+      && (List.exists (fun (_, e) -> cont_used name e) binds
+         || cont_used name body)
+  | _ ->
+      let found = ref false in
+      ignore
+        (map_texpr_children
+           (fun child ->
+             if cont_used name child then found := true;
+             child)
+           te);
+      !found
+
 (* Classify a single handler arm *)
 let classify_arm arm =
   match arm with
-  | THOp { op_name; arg; k = _; body } ->
+  | THOp { op_name; arg; k; body } ->
       if
         (not (handler_body_has_resume body))
-        && not (handler_body_has_perform body)
+        && (not (handler_body_has_perform body))
+        && not (cont_used k body)
       then THOpTry (op_name, arg, body)
       else if
         handler_body_has_resume body

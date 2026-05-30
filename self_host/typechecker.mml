@@ -6419,10 +6419,28 @@ module Typechecker =
     | _ -> te
 
 
+  pub let rec cont_used name (te : texpr) =
+    match te.expr with
+    | TEVar n -> n = name
+    | TEAssign ((n, e)) -> (n = name) || (cont_used name e)
+    | TEFun ((p, body, _)) -> (not (p = name)) && (cont_used name body)
+    | TELet ((n, _, e1, e2)) -> (cont_used name e1) || ((not (n = name)) && (cont_used name e2))
+    | TELetMut ((n, e1, e2)) -> (cont_used name e1) || ((not (n = name)) && (cont_used name e2))
+    | TELetRec ((n, _, e1, e2)) -> (not (n = name)) && ((cont_used name e1) || (cont_used name e2))
+    | TELetRecAnd ((binds, body)) -> (not (List.exists (fn (n, _) -> n = name) binds)) && ((List.exists (fn (_, e) -> cont_used name e) binds) || (cont_used name body))
+    | _ -> 
+      let found = Ref.create false in
+      (map_texpr_children (fn child -> if cont_used name child do
+        Ref.set found true
+      end;
+      child) te; ());
+      Ref.get found
+
+
   pub let classify_arm arm =
     match arm with
-    | THOp {op_name; arg; k = _; body} -> 
-      if (not (handler_body_has_resume body)) && (not (handler_body_has_perform body)) do
+    | THOp {op_name; arg; k; body} -> 
+      if (not (handler_body_has_resume body)) && ((not (handler_body_has_perform body)) && (not (cont_used k body))) do
         THOpTry (op_name, arg, body)
       else if (handler_body_has_resume body) && ((classify_all_branches_resume body) && (classify_all_resumes_tail body)) do
         THOpProvide (op_name, arg, strip_tail_resume body)
