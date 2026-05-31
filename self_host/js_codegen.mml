@@ -284,16 +284,29 @@ module Js_codegen =
 
   pub let expr_has_unhandled_perform handled_ops te = expr_has_perform_with (fn op -> not (List.mem op handled_ops)) te
 
+  pub let rec decision_guards_have_perform =
+    fn
+      | Match_tree_types.DGuard {guard; on_true; on_false; _} -> (expr_has_perform guard) || ((decision_guards_have_perform on_true) || (decision_guards_have_perform on_false))
+      | Match_tree_types.DSwitch {cases; default; _} -> (List.exists (fn (_, _, sub) -> decision_guards_have_perform sub) cases) || (match default with
+      | Some d -> decision_guards_have_perform d
+      | None -> false
+      )
+      | (Match_tree_types.DLeaf _ | Match_tree_types.DFail _) -> false
+
+
   pub let rec all_resumes_are_tail (te : Typechecker.texpr) =
     match te.expr with
     | Typechecker.TEResume _ -> true
-    | Typechecker.TESeq ((_, e2)) -> all_resumes_are_tail e2
+    | Typechecker.TESeq ((e1, e2)) -> (not (expr_has_perform e1)) && (all_resumes_are_tail e2)
     | Typechecker.TELet ((_, _, e1, e2)) -> (not (expr_has_perform e1)) && (all_resumes_are_tail e2)
     | Typechecker.TELetRec ((_, _, _, e2)) -> all_resumes_are_tail e2
     | Typechecker.TELetMut ((_, e1, e2)) -> (not (expr_has_perform e1)) && (all_resumes_are_tail e2)
-    | Typechecker.TEIf ((_, then_e, else_e)) -> (all_resumes_are_tail then_e) && (all_resumes_are_tail else_e)
-    | Typechecker.TEMatch ((_, arms, _)) -> List.forall (fn (_, _, body) -> all_resumes_are_tail body) arms
-    | Typechecker.TEMatchTree cm -> Array.forall (fn arm -> all_resumes_are_tail arm.arm_body) cm.match_arms
+    | Typechecker.TEIf ((cond, then_e, else_e)) -> (not (expr_has_perform cond)) && ((all_resumes_are_tail then_e) && (all_resumes_are_tail else_e))
+    | Typechecker.TEMatch ((scrut, arms, _)) -> (not (expr_has_perform scrut)) && (List.forall (fn (_, g, body) -> (match g with
+    | Some g -> not (expr_has_perform g)
+    | None -> true
+    ) && (all_resumes_are_tail body)) arms)
+    | Typechecker.TEMatchTree cm -> (not (expr_has_perform cm.scrutinee)) && ((not (decision_guards_have_perform cm.tree)) && (Array.forall (fn arm -> all_resumes_are_tail arm.arm_body) cm.match_arms))
     | _ -> true
 
 
@@ -722,7 +735,7 @@ module Js_codegen =
       List.iter2 (fn mml_name js_nm -> bind_var ctx mml_name js_nm) all_params js_params;
       ctx.in_tail_position := true;
       let body_code_start = Buffer.length ctx.buf in
-      let tco_was_used = with_function_ctx ctx (Some js_name) js_params [] [] false (fn () -> if expr_has_perform final_body do
+      let tco_was_used = with_handler_tail_resume ctx false (fn () -> with_function_ctx ctx (Some js_name) js_params [] [] false (fn () -> if expr_has_perform final_body do
         with_in_cps ctx true (fn () -> emit_line ctx ($"return _trampoline(function() \{");
         ctx.indent := ctx.indent + 1;
         compile_cps ctx final_body (fn v -> emit_line ctx ($"return {v};"));
@@ -744,7 +757,7 @@ module Js_codegen =
         let v = compile_expr ctx final_body in
         emit_line ctx ($"return {v};")
       end;
-      ctx.tco_used) in
+      ctx.tco_used)) in
       ctx.in_tail_position := false;
       pop_scope ctx;
       ctx.indent := ctx.indent - 1;

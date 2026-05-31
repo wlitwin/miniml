@@ -130,8 +130,11 @@ let parse_test_file filename =
          match !state with
          | CollectingSource _ ->
              if Buffer.length source_buf > 0 || trimmed <> "" then begin
-               if String.length trimmed > 3 && String.sub trimmed 0 3 = "==="
-               then ()
+               if
+                 (String.length trimmed > 3 && String.sub trimmed 0 3 = "===")
+                 || (String.length trimmed > 4 && String.sub trimmed 0 4 = "--- ")
+               then () (* skip section banners and directives meant for other backends
+                          (e.g. --- skip-emit-js:) — don't absorb them into the source *)
                else begin
                  if Buffer.length source_buf > 0 then
                    Buffer.add_char source_buf '\n';

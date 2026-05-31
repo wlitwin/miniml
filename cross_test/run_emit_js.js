@@ -30,6 +30,10 @@ function parseTestFile(filename) {
     if (trimmed.startsWith("--- test:")) {
       const name = trimmed.slice(9).trim();
       state = { name, sourceLines: [] };
+    } else if (line.startsWith("--- skip-emit-js:")) {
+      // Mark a test the JS (--emit-js) backend can't yet run (e.g. advanced effect
+      // features it doesn't support). Mirrors --- skip-native for the native runner.
+      if (state) state.skipEmitJs = line.slice(17).trim();
     } else if (line.startsWith("--- expect: ")) {
       if (state) {
         let expected = line.slice(12); // preserve trailing whitespace
@@ -39,6 +43,7 @@ function parseTestFile(filename) {
         tests.push({
           name: state.name,
           source: state.sourceLines.join("\n").trim(),
+          skipEmitJs: state.skipEmitJs,
           expect: { type: "value", value: expected },
         });
         state = null;
@@ -66,6 +71,7 @@ function parseTestFile(filename) {
         tests.push({
           name: state.name,
           source: state.sourceLines.join("\n").trim(),
+          skipEmitJs: state.skipEmitJs,
           expect: { type: "type-error" },
         });
         state = null;
@@ -76,6 +82,7 @@ function parseTestFile(filename) {
         tests.push({
           name: state.name,
           source: state.sourceLines.join("\n").trim(),
+          skipEmitJs: state.skipEmitJs,
           expect: { type: "runtime-error", substring: substr },
         });
         state = null;
@@ -299,6 +306,11 @@ for (const file of files) {
     continue;
   }
   for (const tc of tests) {
+    if (tc.skipEmitJs) {
+      console.log(`  SKIP: ${tc.name} (${tc.skipEmitJs})`);
+      skipped++;
+      continue;
+    }
     runTest(tc);
   }
   console.log();

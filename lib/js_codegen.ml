@@ -530,24 +530,51 @@ let expr_has_unhandled_perform handled_ops te =
     ~check_perform:(fun op -> not (List.mem op handled_ops))
     te
 
-(* Check if all TEResume in body are in tail position (safe to skip _trampoline) *)
+(* Do any DGuard guard expressions in a decision tree contain a perform/resume?
+   Guards run in non-tail (dispatch) position, so a resume there must be trampolined.
+   Leaves are skipped (they reference arm bodies, checked separately as tail). *)
+let rec decision_guards_have_perform = function
+  | Match_tree_types.DGuard { guard; on_true; on_false; _ } ->
+      expr_has_perform guard
+      || decision_guards_have_perform on_true
+      || decision_guards_have_perform on_false
+  | Match_tree_types.DSwitch { cases; default; _ } ->
+      List.exists (fun (_, _, sub) -> decision_guards_have_perform sub) cases
+      || (match default with Some d -> decision_guards_have_perform d | None -> false)
+  | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> false
+
+(* Check if all TEResume in body are in tail position (safe to skip _trampoline).
+   A resume (or perform, which likewise returns a trampoline bounce) in a NON-tail
+   position must be trampolined to resolve its value, so it makes this false. Every
+   non-tail sub-position (let/seq RHS, if-condition, match scrutinee, match guards,
+   decision-tree guards) is checked with [expr_has_perform]; tail sub-positions
+   (bodies/branches/arms) are checked recursively. *)
 let rec all_resumes_are_tail (te : Typechecker.texpr) =
   match te.expr with
   | Typechecker.TEResume _ -> true
-  | Typechecker.TESeq (_, e2) -> all_resumes_are_tail e2
+  | Typechecker.TESeq (e1, e2) ->
+      (not (expr_has_perform e1)) && all_resumes_are_tail e2
   | Typechecker.TELet (_, _, e1, e2) ->
       (not (expr_has_perform e1)) && all_resumes_are_tail e2
   | Typechecker.TELetRec (_, _, _, e2) -> all_resumes_are_tail e2
   | Typechecker.TELetMut (_, e1, e2) ->
       (not (expr_has_perform e1)) && all_resumes_are_tail e2
-  | Typechecker.TEIf (_, then_e, else_e) ->
-      all_resumes_are_tail then_e && all_resumes_are_tail else_e
-  | Typechecker.TEMatch (_, arms, _) ->
-      List.for_all (fun (_, _, body) -> all_resumes_are_tail body) arms
+  | Typechecker.TEIf (cond, then_e, else_e) ->
+      (not (expr_has_perform cond))
+      && all_resumes_are_tail then_e && all_resumes_are_tail else_e
+  | Typechecker.TEMatch (scrut, arms, _) ->
+      (not (expr_has_perform scrut))
+      && List.for_all
+           (fun (_, g, body) ->
+             (match g with Some g -> not (expr_has_perform g) | None -> true)
+             && all_resumes_are_tail body)
+           arms
   | Typechecker.TEMatchTree cm ->
-      Array.for_all
-        (fun arm -> all_resumes_are_tail arm.Match_tree_types.arm_body)
-        cm.match_arms
+      (not (expr_has_perform cm.Match_tree_types.scrutinee))
+      && (not (decision_guards_have_perform cm.Match_tree_types.tree))
+      && Array.for_all
+           (fun arm -> all_resumes_are_tail arm.Match_tree_types.arm_body)
+           cm.match_arms
   | _ -> true (* No resume — safe *)
 
 (* ---- Expression compilation ---- *)
@@ -1070,7 +1097,14 @@ and compile_named_function ctx js_name fn_expr =
       ctx.in_tail_position <- true;
       (* Record position where body starts *)
       let body_code_start = Buffer.length ctx.buf in
+      (* A nested function is a fresh tail context: any `resume` inside it is
+         resolved by THIS function's own trampoline wrapper, not the enclosing handler
+         arm's bounce wrapper. Clear handler_tail_resume so those resumes are
+         trampolined (otherwise a non-tail resume inside a nested fn — e.g. a `match
+         resume k v with ...` in a recursive helper — would skip _trampoline and yield
+         an unresolved bounce). *)
       let tco_was_used =
+        with_handler_tail_resume ctx false (fun () ->
         with_function_ctx ctx ~fn_name:(Some js_name) ~fn_params:js_params
           ~ddo:[] ~two:[] ~in_fold:false (fun () ->
             if expr_has_perform final_body then begin
@@ -1103,7 +1137,7 @@ and compile_named_function ctx js_name fn_expr =
               let v = compile_expr ctx final_body in
               emit_line ctx (Printf.sprintf "return %s;" v)
             end;
-            ctx.tco_used)
+            ctx.tco_used))
       in
       ctx.in_tail_position <- false;
       pop_scope ctx;
