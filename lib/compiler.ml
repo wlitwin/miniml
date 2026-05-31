@@ -1694,21 +1694,28 @@ and compile_handle s body_te arms =
   let return_arm = ref None in
   let general_arms = ref [] in
   (* THOpTry arms (op_name, arg_name, arm_body). When ALL op arms are THOpTry the
-     handler never resumes, so it needs no fiber: lower it inline (see
-     [compile_handle_try]). Otherwise fall back to the fiber-based path. *)
+     handler never resumes; when ALL are THOpProvide it resumes exactly once in tail
+     position. Either way it needs no fiber: lower it inline (see [compile_handle_try]
+     / [compile_handle_provide]). A general (THOp) arm, or a mix of try and provide,
+     falls back to the fiber-based path. *)
   let try_arms = ref [] in
-  let all_try = ref true in
+  let provide_arms = ref [] in
+  let saw_general = ref false in
+  let saw_try = ref false in
+  let saw_provide = ref false in
   List.iter
     (function
       | Typechecker.THReturn (name, handler_body) ->
           return_arm := Some (name, handler_body)
       | Typechecker.THOp
           { op_name; arg = arg_name; k = k_name; body = handler_body } ->
-          all_try := false;
+          saw_general := true;
           general_arms := (op_name, arg_name, k_name, handler_body) :: !general_arms
       | Typechecker.THOpProvide (op_name, arg_name, value_expr) ->
-          all_try := false;
-          (* Reconstruct TEResume for bytecode: handler evaluates value and resumes k *)
+          saw_provide := true;
+          provide_arms := (op_name, arg_name, value_expr) :: !provide_arms;
+          (* Fiber-fallback form: reconstruct `resume k value` so the general path
+             can handle a try/provide mix or a nested-fiber resume. *)
           let k_name = "__k_provide" in
           let k_var =
             {
@@ -1722,6 +1729,7 @@ and compile_handle s body_te arms =
           in
           general_arms := (op_name, arg_name, k_name, resume_expr) :: !general_arms
       | Typechecker.THOpTry (op_name, arg_name, fallback_expr) ->
+          saw_try := true;
           (* Handler receives (arg, k) but never calls k *)
           try_arms := (op_name, arg_name, fallback_expr) :: !try_arms;
           general_arms := (op_name, arg_name, "__k_try", fallback_expr) :: !general_arms)
@@ -1731,8 +1739,10 @@ and compile_handle s body_te arms =
     | Some arm -> arm
     | None -> error "handle expression missing return arm"
   in
-  if !all_try && !try_arms <> [] then
+  if (not !saw_general) && !saw_try && not !saw_provide then
     compile_handle_try s body_te ret_arm (List.rev !try_arms)
+  else if (not !saw_general) && !saw_provide && not !saw_try then
+    compile_handle_provide s body_te ret_arm (List.rev !provide_arms)
   else compile_handle_fiber s body_te ret_arm (List.rev !general_arms)
 
 (* No-fiber lowering for all-THOpTry handlers. The handled body runs INLINE in the
@@ -1772,6 +1782,49 @@ and compile_handle_try s body_te (ret_name, ret_body) try_arms =
   let end_target = current_offset s in
   List.iter (fun idx -> patch s idx (Bytecode.JUMP end_target)) !end_jumps;
   patch s try_begin_idx (Bytecode.TRY_BEGIN catch_targets)
+
+(* No-fiber lowering for all-THOpProvide (tail-resumptive) handlers. Like
+   [compile_handle_try], the body runs INLINE in the enclosing frame bracketed by
+   PROVIDE/PROVIDE_END, so `return` inside the body reaches the enclosing function.
+   Each op arm is compiled as a one-argument closure [fun arg -> value] (the resume
+   value, with the trailing `resume k` already stripped by classification). A matching
+   PERFORM calls that arm on the current fiber and continues the body with its result —
+   no thunk, no fiber, no continuation, since tail-resumption resumes exactly once
+   immediately. *)
+and compile_handle_provide s body_te (ret_name, ret_body) provide_arms =
+  (* Push (op_name, arm_closure) pairs, then PROVIDE installs the marker. *)
+  List.iter
+    (fun (op_name, arg_name, value_expr) ->
+      emit_constant s (Bytecode.VString op_name);
+      compile_provide_arm s arg_name value_expr)
+    provide_arms;
+  emit s (Bytecode.PROVIDE (List.length provide_arms));
+  (* Body inline; leaves its result on the stack. *)
+  compile_expr false s body_te;
+  emit s Bytecode.PROVIDE_END;
+  (* Return arm: bind body result to ret_name, run ret_body. *)
+  let ret_slot = allocate_local s ret_name in
+  emit s (Bytecode.SET_LOCAL ret_slot);
+  compile_expr false s ret_body;
+  free_local s
+
+(* Compile a provide arm as a one-argument closure [fun arg_name -> value_expr].
+   Built directly (not via [compile_function]) so [collect_params] does not absorb a
+   function-valued resume into extra parameters: the VM always calls the arm with
+   exactly one argument. *)
+and compile_provide_arm s arg_name value_expr =
+  let sub =
+    create_state (Some s) 1 s.global_names s.global_index s.mutable_globals
+      s.type_env "__provide"
+  in
+  ignore (allocate_local sub arg_name);
+  (* arg is local 0 *)
+  compile_expr true sub value_expr;
+  emit sub Bytecode.RETURN;
+  let proto = finalize_proto sub in
+  let proto_idx = add_constant s (Bytecode.VProto proto) in
+  let captures = List.map (fun uv -> uv.capture) sub.upvalues in
+  emit s (Bytecode.CLOSURE (proto_idx, captures))
 
 and compile_handle_fiber s body_te (ret_name, ret_body) op_arms =
   (* 1. Compile body as thunk closure (fun _ -> body) *)

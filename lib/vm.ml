@@ -17,6 +17,12 @@ type handler_entry = Bytecode.handler_entry =
       ht_return : Bytecode.return_entry list;
       ht_catch : (string * int) list;
     }
+  | HProvide of {
+      hp_ops : (string * Bytecode.value) list;
+      hp_fiber : Bytecode.fiber;
+      hp_frame_depth : int;
+      hp_stack_depth : int;
+    }
 
 type control_entry = Bytecode.control_entry = {
   ce_break_ip : int;
@@ -35,6 +41,13 @@ type t = {
   mutable handler_stack : handler_entry list;
   mutable control_stack : control_entry list;
   mutable return_stack : return_entry list;
+  (* Pending no-fiber provide resumptions: while a PERFORM-matched HProvide arm runs
+     on a fiber, an entry [(fiber, frame_depth, removed_handlers)] records that the
+     arm was entered at [frame_depth] with [removed_handlers] (the matched HProvide
+     plus inner intermediates) temporarily lifted off the handler stack. When the arm
+     returns to that depth, the handlers are reinstalled and the body continues. *)
+  mutable provide_resumes :
+    (Bytecode.fiber * int * handler_entry list) list;
   globals : (int, Bytecode.value) Hashtbl.t;
   global_names : string array;
 }
@@ -452,22 +465,37 @@ let find_handler_for_fiber vm fiber =
   List.find_opt
     (function
       | HFull { hf_body_fiber; _ } -> hf_body_fiber == fiber
-      | HTry _ -> false)
+      | HTry _ | HProvide _ -> false)
     vm.handler_stack
 
 let remove_handler vm he =
   vm.handler_stack <- List.filter (fun h -> h != he) vm.handler_stack
 
-(* Drop try-markers opened at or above [stack_depth] on [fiber]. Used when a
-   non-local jump (break/continue) leaves a try body without running its TRY_END. *)
+(* Drop inline try/provide markers opened at or above [stack_depth] on [fiber]. Used
+   when a non-local jump (break/continue) leaves an inline handler body without running
+   its TRY_END/PROVIDE_END. The pending provide-resume bookkeeping is cleaned
+   separately by [drop_provide_resumes_above] (keyed on frame depth). *)
 let drop_try_markers_above vm fiber stack_depth =
   vm.handler_stack <-
     List.filter
       (function
         | HTry { ht_fiber; ht_stack_depth; _ } ->
             not (ht_fiber == fiber && ht_stack_depth >= stack_depth)
+        | HProvide { hp_fiber; hp_stack_depth; _ } ->
+            not (hp_fiber == fiber && hp_stack_depth >= stack_depth)
         | HFull _ -> true)
       vm.handler_stack
+
+(* Drop pending provide-resume entries on [fiber] whose recorded frame depth is at or
+   above [frame_depth]. Used when frames are unwound non-locally (a try-discard,
+   break/continue, or return) past a point where a provide arm was mid-flight, so its
+   reinstall would otherwise fire spuriously when the depth is later revisited. *)
+let drop_provide_resumes_above vm fiber frame_depth =
+  if vm.provide_resumes <> [] then
+    vm.provide_resumes <-
+      List.filter
+        (fun (f, d, _) -> not (f == fiber && d >= frame_depth))
+        vm.provide_resumes
 
 type frame_action = FrameLoop | FrameReturn of Bytecode.value
 
@@ -476,6 +504,16 @@ let run vm =
     vm.current_fiber.fiber_sp <- (frame vm).Bytecode.frame_base_sp;
     vm.current_fiber.fiber_frames <- List.tl vm.current_fiber.fiber_frames;
     vm.current_fiber.fiber_frame_depth <- vm.current_fiber.fiber_frame_depth - 1;
+    (* If a provide arm just returned (depth dropped back to where it was entered),
+       reinstall the HProvide marker + intermediates that were lifted off for the arm,
+       so the resumed body sees the handler again. [result] is the resume value, left
+       on the stack below by the normal branches. *)
+    (match vm.provide_resumes with
+    | (f, d, removed) :: rest
+      when f == vm.current_fiber && d = vm.current_fiber.fiber_frame_depth ->
+        vm.handler_stack <- removed @ vm.handler_stack;
+        vm.provide_resumes <- rest
+    | _ -> ());
     if vm.current_fiber.fiber_extra_args <> [] then begin
       let result, entered = process_extra_args vm result in
       if entered then FrameLoop
@@ -486,7 +524,7 @@ let run vm =
             vm.current_fiber <- hf_parent_fiber;
             internal_call vm (as_closure hf_return) result;
             FrameLoop
-        | Some (HTry _) | None -> FrameReturn result
+        | Some (HTry _ | HProvide _) | None -> FrameReturn result
       end
       else begin
         push vm result;
@@ -500,7 +538,7 @@ let run vm =
           vm.current_fiber <- hf_parent_fiber;
           internal_call vm (as_closure hf_return) result;
           FrameLoop
-      | Some (HTry _) | None -> FrameReturn result
+      | Some (HTry _ | HProvide _) | None -> FrameReturn result
     end
     else begin
       push vm result;
@@ -1016,6 +1054,26 @@ let run vm =
             push vm arg;
             (frame vm).frame_ip <- catch_ip;
             loop ()
+        | HProvide { hp_ops; _ } ->
+            (* No-fiber, tail-resumptive handler: call the op's arm closure
+               [fun arg -> value] on the CURRENT fiber and continue the body with its
+               result. Tail-resumption resumes exactly once, immediately, so no
+               continuation is reified and the fiber the perform happened on is
+               irrelevant. The matched handler + inner intermediates are lifted off the
+               stack while the arm runs (deep semantics: the arm executes outside this
+               handler) and reinstalled by [complete_frame] when the arm returns to the
+               recorded depth. *)
+            let arm = List.assoc op_name hp_ops in
+            let removed =
+              List.filteri (fun i _ -> i <= match_idx) vm.handler_stack
+            in
+            vm.handler_stack <-
+              List.filteri (fun i _ -> i > match_idx) vm.handler_stack;
+            vm.provide_resumes <-
+              (vm.current_fiber, vm.current_fiber.fiber_frame_depth, removed)
+              :: vm.provide_resumes;
+            internal_call vm (as_closure arm) arg;
+            loop ()
         | HFull
             { hf_return; hf_ops; hf_body_fiber; hf_parent_fiber } ->
             let handler_fn = List.assoc op_name hf_ops in
@@ -1118,8 +1176,38 @@ let run vm =
         (* Normal completion of a try body: pop the nearest HTry marker. *)
         let rec drop = function
           | HTry _ :: rest -> rest
-          | (HFull _ as h) :: rest -> h :: drop rest
+          | ((HFull _ | HProvide _) as h) :: rest -> h :: drop rest
           | [] -> error "TRY_END: no try marker"
+        in
+        vm.handler_stack <- drop vm.handler_stack;
+        loop ()
+    | Bytecode.PROVIDE n ->
+        (* Install a no-fiber tail-resumptive handler; the body runs inline. Pop the
+           [n] (op_name, arm_closure) pairs pushed by the compiler. *)
+        let fiber = vm.current_fiber in
+        let ops =
+          List.init n (fun _ ->
+              let arm = pop vm in
+              let op_name = as_string (pop vm) in
+              (op_name, arm))
+        in
+        let he =
+          HProvide
+            {
+              hp_ops = ops;
+              hp_fiber = fiber;
+              hp_frame_depth = fiber.fiber_frame_depth;
+              hp_stack_depth = fiber.fiber_sp;
+            }
+        in
+        vm.handler_stack <- he :: vm.handler_stack;
+        loop ()
+    | Bytecode.PROVIDE_END ->
+        (* Normal completion of a provide body: pop the nearest HProvide marker. *)
+        let rec drop = function
+          | HProvide _ :: rest -> rest
+          | ((HFull _ | HTry _) as h) :: rest -> h :: drop rest
+          | [] -> error "PROVIDE_END: no provide marker"
         in
         vm.handler_stack <- drop vm.handler_stack;
         loop ()
@@ -1153,8 +1241,10 @@ let run vm =
               fiber.fiber_frames <- List.tl fiber.fiber_frames;
               fiber.fiber_frame_depth <- fiber.fiber_frame_depth - 1
             done;
-            (* Drop try-markers opened inside the loop body (break skips TRY_END). *)
+            (* Drop inline try/provide markers opened inside the loop body (break skips
+               TRY_END/PROVIDE_END). *)
             drop_try_markers_above vm fiber ce.ce_stack_depth;
+            drop_provide_resumes_above vm fiber ce.ce_frame_depth;
             (* Restore stack pointer and push break value *)
             fiber.fiber_sp <- ce.ce_stack_depth;
             vm.current_fiber <- fiber;
@@ -1201,15 +1291,18 @@ let run vm =
             (fun ce ->
               not (ce.ce_fiber == fiber && ce.ce_frame_depth >= target_depth))
             vm.control_stack;
-        (* Drop try-markers opened inside the returned-from frames (a `return`
-           inside a try body skips its TRY_END). *)
+        (* Drop inline try/provide markers opened inside the returned-from frames (a
+           `return` inside such a body skips its TRY_END/PROVIDE_END). *)
         vm.handler_stack <-
           List.filter
             (function
               | HTry { ht_fiber; ht_frame_depth; _ } ->
                   not (ht_fiber == fiber && ht_frame_depth >= target_depth)
+              | HProvide { hp_fiber; hp_frame_depth; _ } ->
+                  not (hp_fiber == fiber && hp_frame_depth >= target_depth)
               | HFull _ -> true)
             vm.handler_stack;
+        drop_provide_resumes_above vm fiber target_depth;
         (* Restore stack pointer and pop the target function's frame *)
         let base_sp = (frame vm).Bytecode.frame_base_sp in
         fiber.fiber_sp <- base_sp;
@@ -1226,7 +1319,7 @@ let run vm =
               vm.current_fiber <- hf_parent_fiber;
               internal_call vm (as_closure hf_return) result;
               loop ()
-          | Some (HTry _) | None -> result
+          | Some (HTry _ | HProvide _) | None -> result
         end
         else begin
           push vm result;
@@ -1236,8 +1329,10 @@ let run vm =
         match vm.control_stack with
         | ce :: _ ->
             let fiber = ce.ce_fiber in
-            (* Drop try-markers opened in the body (continue skips TRY_END). *)
+            (* Drop inline try/provide markers opened in the body (continue skips
+               TRY_END/PROVIDE_END). *)
             drop_try_markers_above vm fiber ce.ce_stack_depth;
+            drop_provide_resumes_above vm fiber ce.ce_frame_depth;
             fiber.fiber_sp <- ce.ce_stack_depth;
             let f = frame vm in
             f.frame_ip <- target;
@@ -1487,6 +1582,7 @@ let execute_with_globals program (globals : (int, Bytecode.value) Hashtbl.t) =
       handler_stack = [];
       control_stack = [];
       return_stack = [];
+      provide_resumes = [];
       globals;
       global_names = program.global_names;
     }

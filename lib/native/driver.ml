@@ -74,10 +74,12 @@ let run_frontend source =
 let compile_ir (source : string) : string =
   let stdlib_programs, typed_program, type_env = run_frontend source in
   let typed_programs_for_externs = List.map snd stdlib_programs in
-  (* Native has no inline (no-fiber) handler lowering yet, so `return` cannot
-     escape any handler body here — reject it rather than silently miscompile. *)
+  (* Native runs all-THOpTry bodies as setjmp thunks and all-THOpProvide bodies
+     inline, and supports `return` escaping both (the thunk early-return flag +
+     handler-mark restore in codegen). So allow it — `return` crossing a fiber
+     (full/THOp or mixed) handler is still rejected by check_returns. *)
   let typed_program =
-    Typechecker.classify_handlers_with false typed_program
+    Typechecker.classify_handlers_with true typed_program
   in
   let typed_program = Match_tree.lower_program type_env typed_program in
   let typed_program =
@@ -87,7 +89,7 @@ let compile_ir (source : string) : string =
   let stdlib_programs =
     List.map
       (fun (te, p) ->
-        let p = Typechecker.classify_handlers_with false p in
+        let p = Typechecker.classify_handlers_with true p in
         let p = Match_tree.lower_program te p in
         let p = Texpr_opt.optimize_program p in
         (te, p))

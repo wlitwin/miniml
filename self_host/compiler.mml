@@ -1518,19 +1518,24 @@ module Compiler =
     let return_arm = Ref.create None in
     let general_arms = Ref.create [] in
     let try_arms = Ref.create [] in
-    let all_try = Ref.create true in
+    let provide_arms = Ref.create [] in
+    let saw_general = Ref.create false in
+    let saw_try = Ref.create false in
+    let saw_provide = Ref.create false in
     List.iter (fn
       | Typechecker.THReturn ((name, handler_body)) -> Ref.set return_arm (Some (name, handler_body))
       | Typechecker.THOp {op_name; arg = arg_name; k = k_name; body = handler_body} -> 
-        Ref.set all_try false;
+        Ref.set saw_general true;
         Ref.set general_arms ((op_name, arg_name, k_name, handler_body) :: Ref.get general_arms)
       | Typechecker.THOpProvide ((op_name, arg_name, value_expr)) -> 
-        Ref.set all_try false;
+        Ref.set saw_provide true;
+        Ref.set provide_arms ((op_name, arg_name, value_expr) :: Ref.get provide_arms);
         let k_name = "__k_provide" in
         let k_var = {value_expr with expr = Typechecker.TEVar k_name; ty = Types.TUnit} in
         let resume_expr = {value_expr with expr = Typechecker.TEResume (k_var, value_expr)} in
         Ref.set general_arms ((op_name, arg_name, k_name, resume_expr) :: Ref.get general_arms)
       | Typechecker.THOpTry ((op_name, arg_name, fallback_expr)) -> 
+        Ref.set saw_try true;
         Ref.set try_arms ((op_name, arg_name, fallback_expr) :: Ref.get try_arms);
         Ref.set general_arms ((op_name, arg_name, "__k_try", fallback_expr) :: Ref.get general_arms)
     ) arms;
@@ -1539,8 +1544,10 @@ module Compiler =
       | Some arm -> arm
       | None -> error "handle expression missing return arm"
      in
-    if (Ref.get all_try) && ((Ref.get try_arms) <> []) do
+    if (not (Ref.get saw_general)) && ((Ref.get saw_try) && (not (Ref.get saw_provide))) do
       compile_handle_try s body_te ret_arm (List.rev (Ref.get try_arms))
+    else if (not (Ref.get saw_general)) && ((Ref.get saw_provide) && (not (Ref.get saw_try))) do
+      compile_handle_provide s body_te ret_arm (List.rev (Ref.get provide_arms))
     else
       compile_handle_fiber s body_te ret_arm (List.rev (Ref.get general_arms))
   and compile_handle_try s body_te (ret_name, ret_body) try_arms =
@@ -1562,6 +1569,25 @@ module Compiler =
     let end_target = current_offset s in
     List.iter (fn idx -> patch s idx (Bytecode.JUMP end_target)) (Ref.get end_jumps);
     patch s try_begin_idx (Bytecode.TRY_BEGIN catch_targets)
+  and compile_handle_provide s body_te (ret_name, ret_body) provide_arms =
+    List.iter (fn (op_name, arg_name, value_expr) -> emit_constant s (Bytecode.VString op_name);
+    compile_provide_arm s arg_name value_expr) provide_arms;
+    emit s (Bytecode.PROVIDE (List.length provide_arms));
+    compile_expr false s body_te;
+    emit s Bytecode.PROVIDE_END;
+    let ret_slot = allocate_local s ret_name in
+    emit s (Bytecode.SET_LOCAL ret_slot);
+    compile_expr false s ret_body;
+    free_local s
+  and compile_provide_arm s arg_name value_expr =
+    let sub = create_state (Some s) 1 s.global_names s.global_index s.mutable_globals s.type_env "__provide" in
+    (allocate_local sub arg_name; ());
+    compile_expr true sub value_expr;
+    emit sub Bytecode.RETURN;
+    let proto = finalize_proto sub in
+    let proto_idx = add_constant s (Bytecode.VProto proto) in
+    let captures = List.map (fn uv -> uv.capture) sub.upvalues in
+    emit s (Bytecode.CLOSURE (proto_idx, captures))
   and compile_handle_fiber s body_te (ret_name, ret_body) op_arms =
     compile_function false s "_" body_te (Types.TArrow (Types.TUnit, Types.EffEmpty, Types.TUnit));
     compile_function false s ret_name ret_body (Types.TArrow (Types.TUnit, Types.EffEmpty, Types.TUnit));

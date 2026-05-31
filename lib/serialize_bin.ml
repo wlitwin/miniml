@@ -311,6 +311,10 @@ let write_opcode buf st = function
           write_u32 buf ip)
         catch
   | Bytecode.TRY_END -> write_u8 buf 84
+  | Bytecode.PROVIDE n ->
+      write_u8 buf 85;
+      write_u32 buf n
+  | Bytecode.PROVIDE_END -> write_u8 buf 86
 
 let rec write_value buf st = function
   | Bytecode.VInt n ->

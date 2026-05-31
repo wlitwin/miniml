@@ -2286,6 +2286,13 @@ int64_t mml_run_try_handler(int64_t handler_i64,
         /* Normal path: run body */
         int64_t body_result = body_fn(body_env);
         mml_pop_handler();
+        /* A `return` inside the body early-exits the enclosing function: it sets the
+         * early-return flag and unwinds out of the body thunk. In that case the
+         * handler's return arm must be BYPASSED and the value propagated upward (the
+         * handle-site codegen checks the flag and re-raises). */
+        if (mml_check_early_return()) {
+            return body_result;
+        }
         if (return_fn) {
             return return_fn(return_env, body_result);
         }
@@ -2294,6 +2301,17 @@ int64_t mml_run_try_handler(int64_t handler_i64,
         /* Caught path: a try arm fired longjmp */
         return h->try_result;
     }
+}
+
+/* Handler-stack mark/restore: snapshot the current handler at a function's entry and
+ * restore it when a `return` unwinds out of an inline (provide) handler body, so the
+ * handler installed for that body is popped rather than leaked. */
+int64_t mml_handler_mark(void) {
+    return (int64_t)(intptr_t)mml_current_handler;
+}
+
+void mml_handler_restore(int64_t mark) {
+    mml_current_handler = (mml_handler*)(intptr_t)mark;
 }
 
 int64_t mml_perform_op(const char* op_name, int64_t arg) {

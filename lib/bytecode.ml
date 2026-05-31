@@ -95,6 +95,16 @@ type opcode =
      to the op's catch block. Appended at the end so existing opcode tags are stable. *)
   | TRY_BEGIN of (string * int) list
   | TRY_END
+  (* No-fiber lowering of tail-resumptive (THOpProvide) handlers. PROVIDE n installs
+     a lightweight handler marker carrying [n] op-name -> arm-closure pairs (each arm
+     is [fun arg -> value], the resume value with the trailing [resume k] stripped);
+     the handled body runs inline (no thunk, no fiber). A matching PERFORM calls the
+     arm on the current fiber and continues the body with its result (tail-resumption
+     is fiber-agnostic: we resume exactly once, immediately, so no continuation is
+     reified). PROVIDE_END pops the marker on normal completion. Appended at the end
+     so existing opcode tags are stable. *)
+  | PROVIDE of int
+  | PROVIDE_END
 
 type record_shape = {
   rs_fields : string array;
@@ -179,6 +189,22 @@ and handler_entry =
       ht_control : control_entry list;
       ht_return : return_entry list;
       ht_catch : (string * int) list;
+    }
+  (* No-fiber lowering of a tail-resumptive (THOpProvide) handler. The body runs
+     inline on [hp_fiber] (the fiber current when PROVIDE ran). A matching PERFORM
+     calls the op's arm closure on the current fiber and continues with its result
+     (see the PROVIDE opcode comment). Carries only the op -> arm-closure table; the
+     return arm runs inline via PROVIDE_END, so — unlike HFull — there is no body
+     fiber and no fiber-drain return path. *)
+  | HProvide of {
+      hp_ops : (string * value) list;
+      hp_fiber : fiber;
+      (* Frame/stack depth on [hp_fiber] when PROVIDE ran. A break/continue/return
+         that leaves the inline body skips PROVIDE_END, so the marker is dropped by
+         depth like a try-marker. (No control/return snapshots: a provide resumes the
+         body rather than discarding it, so those stacks stay valid.) *)
+      hp_frame_depth : int;
+      hp_stack_depth : int;
     }
 
 (* A loop control marker (pushed by ENTER_LOOP, popped by EXIT_LOOP/LOOP_BREAK). *)
@@ -381,11 +407,14 @@ let pp_opcode = function
         (String.concat ", "
            (List.map (fun (op, ip) -> Printf.sprintf "%s->%d" op ip) catch))
   | TRY_END -> "TRY_END"
+  | PROVIDE n -> Printf.sprintf "PROVIDE %d" n
+  | PROVIDE_END -> "PROVIDE_END"
 
 (* Op names a handler entry covers, used by PERFORM to find the nearest match. *)
 let he_op_names = function
   | HFull { hf_ops; _ } -> List.map fst hf_ops
   | HTry { ht_catch; _ } -> List.map fst ht_catch
+  | HProvide { hp_ops; _ } -> List.map fst hp_ops
 
 let disassemble proto =
   let buf = Buffer.create 256 in

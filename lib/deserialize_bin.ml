@@ -191,6 +191,8 @@ let read_opcode r strs =
       in
       Bytecode.TRY_BEGIN catch
   | 84 -> Bytecode.TRY_END
+  | 85 -> Bytecode.PROVIDE (read_u32 r)
+  | 86 -> Bytecode.PROVIDE_END
   | n -> failwith (Printf.sprintf "unknown opcode tag: %d" n)
 
 let rec read_value r strs =

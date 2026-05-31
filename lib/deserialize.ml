@@ -352,6 +352,8 @@ let deserialize_opcode json =
                  | _ -> failwith "invalid TRY_BEGIN entry")
                entries)
       | "TRY_END", [] -> TRY_END
+      | "PROVIDE", [ JInt n ] -> PROVIDE n
+      | "PROVIDE_END", [] -> PROVIDE_END
       | _ -> failwith (Printf.sprintf "unknown opcode: %s" op))
   | _ -> failwith "invalid opcode format"
 

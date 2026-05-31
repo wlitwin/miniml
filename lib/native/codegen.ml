@@ -81,6 +81,16 @@ type codegen_ctx = {
   generated_wrappers : (string, unit) Hashtbl.t;
   mutable fold_break_depth : int;
       (* >0 when inside fold callback, persists across function boundaries *)
+  mutable in_handler_thunk : bool;
+      (* true while emitting the body thunk of a try/full handler. A `return` here
+         must early-exit the enclosing function, so it sets the early-return flag and
+         unwinds out of the thunk (the handle site re-raises). Reset to false at every
+         separately-emitted function boundary (with_fresh_ir) so a `return` inside a
+         user lambda nested in the body targets the lambda, not the enclosing fn. *)
+  mutable handler_mark_ptr : string option;
+      (* Some alloca holding mml_handler_mark() snapshot at the current function's
+         entry, when its body installs an inline (provide) handler. A `return` unwinding
+         out restores it so the inline handler is popped rather than leaked. *)
   mutable or_pattern_allocas : (string * string) list;
       (* shared allocas for or-pattern bindings: (name, alloca_ptr) *)
   mutable current_dict_name : string option;
@@ -137,6 +147,8 @@ let create_ctx type_env =
     type_env;
     generated_wrappers = Hashtbl.create 16;
     fold_break_depth = 0;
+    in_handler_thunk = false;
+    handler_mark_ptr = None;
     or_pattern_allocas = [];
     current_dict_name = None;
     result_ptr = "";
@@ -623,6 +635,14 @@ let with_fresh_ir ctx f =
   let saved_label = ctx.current_label in
   let saved_scopes = ctx.scopes in
   let saved_loop_stack = ctx.loop_stack in
+  (* Per-function control-flow state: a separately-emitted function is a fresh
+     `return` target, so reset the handler-thunk flag and handler mark. (fold_break_depth
+     is intentionally NOT reset — it stays high for the fold-callback lambda, which is a
+     crossing boundary; see emit_for_loop_app.) *)
+  let saved_in_handler_thunk = ctx.in_handler_thunk in
+  let saved_handler_mark_ptr = ctx.handler_mark_ptr in
+  ctx.in_handler_thunk <- false;
+  ctx.handler_mark_ptr <- None;
   let fn_ir = Ir_emit.create () in
   ctx.ir <- fn_ir;
   let result = f fn_ir in
@@ -632,7 +652,60 @@ let with_fresh_ir ctx f =
   ctx.current_label <- saved_label;
   ctx.scopes <- saved_scopes;
   ctx.loop_stack <- saved_loop_stack;
+  ctx.in_handler_thunk <- saved_in_handler_thunk;
+  ctx.handler_mark_ptr <- saved_handler_mark_ptr;
   result
+
+(* Does [e] install an inline (provide/return-only) handler in the CURRENT function's
+   frame? Such a handler is pushed on the runtime stack and popped inline on normal
+   completion, but a `return` unwinding out of its body would skip the pop and leak it,
+   so the enclosing function needs an entry handler-mark to restore. Try/full handlers
+   don't leak (their runtime runner pops them even on early return) and their bodies
+   are separate thunks, so we don't descend into them; nested user lambdas (TEFun) are
+   separate functions with their own marks. *)
+let rec body_installs_inline_handler (e : Typechecker.texpr) =
+  match e.Typechecker.expr with
+  | Typechecker.TEFun _ -> false
+  | Typechecker.TEHandle (_, arms) ->
+      not
+        (List.exists
+           (function
+             | Typechecker.THOpTry _ | Typechecker.THOp _ -> true | _ -> false)
+           arms)
+  | _ ->
+      let found = ref false in
+      ignore
+        (Typechecker.map_texpr_children
+           (fun c ->
+             if body_installs_inline_handler c then found := true;
+             c)
+           e);
+      !found
+
+(* Snapshot the current handler at function entry into an alloca, if [body] installs
+   an inline handler that a `return` could leak. Sets ctx.handler_mark_ptr. *)
+let setup_handler_mark ctx body =
+  if body_installs_inline_handler body then begin
+    add_extern ctx "mml_handler_mark" "i64" [];
+    let mark =
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_handler_mark" ~args:[]
+    in
+    let ptr = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
+    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:mark ~ptr;
+    ctx.handler_mark_ptr <- Some ptr
+  end
+
+(* Restore the entry handler mark, popping any inline handler installed in this
+   function. Emitted right before a `return`/propagation [ret] that exits the
+   function, so the handler is not leaked. No-op if the function set up no mark. *)
+let emit_handler_mark_restore ctx =
+  match ctx.handler_mark_ptr with
+  | None -> ()
+  | Some ptr ->
+      add_extern ctx "mml_handler_restore" "void" [ "i64" ];
+      let m = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr in
+      Ir_emit.emit_call_void ctx.ir ~name:"mml_handler_restore"
+        ~args:[ ("i64", m) ]
 
 (* ---- Expression codegen ---- *)
 
@@ -802,8 +875,13 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
   | TEFun _ -> emit_lambda_as_closure ctx expr
   | TEReturn e ->
       let v = emit_expr ctx e in
-      if ctx.fold_break_depth > 0 then begin
-        (* Inside a fold callback: use early return mechanism *)
+      (* Pop any inline (provide) handler installed in this function before exiting,
+         so a `return` escaping its body doesn't leak it on the runtime handler stack. *)
+      emit_handler_mark_restore ctx;
+      if ctx.fold_break_depth > 0 || ctx.in_handler_thunk then begin
+        (* Crossing a fold callback or a handler body thunk (a separate LLVM
+           function): flag the early return so the fold runner / mml_run_try_handler
+           stops and the enclosing loop/handle site re-raises it. *)
         add_extern ctx "mml_set_early_return" "void" [ "i64" ];
         Ir_emit.emit_call_void ctx.ir ~name:"mml_set_early_return"
           ~args:[ ("i64", v) ];
@@ -3900,6 +3978,7 @@ and emit_closure_function ctx fn_name params body free_with_info =
             bind_var ctx p (Local ptr))
           unique_params;
 
+      setup_handler_mark ctx body;
       let body_result = emit_expr ctx body in
       Ir_emit.emit_ret fn_ir "i64" body_result;
       Ir_emit.emit_define_end fn_ir)
@@ -5191,6 +5270,10 @@ and emit_named_function ctx llvm_name params body =
           bind_var ctx p (Local ptr))
         unique_params;
 
+      (* Snapshot the handler stack if the body installs an inline handler that a
+         `return` could leak. *)
+      setup_handler_mark ctx body;
+
       (* Compile body *)
       let body_result = emit_expr ctx body in
       Ir_emit.emit_ret fn_ir "i64" body_result;
@@ -5309,6 +5392,7 @@ and emit_named_function_with_captures ctx llvm_name params body self_name
           unique_params;
 
       (* Compile body *)
+      setup_handler_mark ctx body;
       let body_result = emit_expr ctx body in
       Ir_emit.emit_ret fn_ir "i64" body_result;
       Ir_emit.emit_define_end fn_ir)
@@ -5414,6 +5498,7 @@ and emit_handler_arm_fn ctx arg_name body free_with_info =
       bind_var ctx arg_name (Local arg_ptr);
 
       (* Compile body *)
+      setup_handler_mark ctx body;
       let body_result = emit_expr ctx body in
       Ir_emit.emit_ret fn_ir "i64" body_result;
       Ir_emit.emit_define_end fn_ir);
@@ -5474,6 +5559,7 @@ and emit_full_handler_arm_fn ctx arg_name k_name body free_with_info =
       Ir_emit.emit_store fn_ir ~ty:"i64" ~value:"%k" ~ptr:k_ptr;
       bind_var ctx k_name (Local k_ptr);
 
+      setup_handler_mark ctx body;
       let body_result = emit_expr ctx body in
       Ir_emit.emit_ret fn_ir "i64" body_result;
       Ir_emit.emit_define_end fn_ir);
@@ -5524,6 +5610,11 @@ and emit_handler_body_thunk ctx body free_with_info =
               bind_var ctx name (Local ptr))
         free_with_info;
 
+      setup_handler_mark ctx body;
+      (* Mark that we are in a handler body thunk: a `return` directly here must
+         early-exit the enclosing function (the handle site re-raises). Nested user
+         lambdas reset this via with_fresh_ir, so their returns target the lambda. *)
+      ctx.in_handler_thunk <- true;
       let body_result = emit_expr ctx body in
       Ir_emit.emit_ret fn_ir "i64" body_result;
       Ir_emit.emit_define_end fn_ir);
@@ -5692,15 +5783,55 @@ and emit_handle ctx body_expr arms =
       if has_full_arms then "mml_run_full_handler" else "mml_run_try_handler"
     in
     add_extern ctx runtime_fn "i64" [ "i64"; "i64"; "i64"; "i64"; "i64" ];
-    Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:runtime_fn
-      ~args:
-        [
-          ("i64", handler_val);
-          ("i64", body_fn_ptr);
-          ("i64", body_env_val);
-          ("i64", return_fn_name);
-          ("i64", return_env_val);
-        ]
+    let hv =
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:runtime_fn
+        ~args:
+          [
+            ("i64", handler_val);
+            ("i64", body_fn_ptr);
+            ("i64", body_env_val);
+            ("i64", return_fn_name);
+            ("i64", return_env_val);
+          ]
+    in
+    (* A `return` inside an all-THOpTry body unwinds out via the early-return flag
+       (mml_run_try_handler bypasses the return arm and propagates the value). Re-raise
+       it here: if we are still inside another crossing boundary (a fold callback or an
+       outer handler thunk), keep the flag set and ret so that boundary re-raises too;
+       otherwise we are at the function that owns the `return`, so consume the flag and
+       ret its value. Full handlers can't be escaped by `return` (rejected by the
+       typechecker), so only do this for the try-only runner. *)
+    if not has_full_arms then begin
+      add_extern ctx "mml_check_early_return" "i64" [];
+      let flag =
+        Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_check_early_return"
+          ~args:[]
+      in
+      let has_ret =
+        Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:flag ~rhs:"0"
+      in
+      let early = fresh_label ctx "h_early_ret" in
+      let cont = fresh_label ctx "h_no_ret" in
+      Ir_emit.emit_condbr ctx.ir ~cond:has_ret ~if_true:early ~if_false:cont;
+      Ir_emit.emit_label ctx.ir early;
+      ctx.current_label <- early;
+      emit_handler_mark_restore ctx;
+      if ctx.fold_break_depth > 0 || ctx.in_handler_thunk then
+        (* More crossing boundaries above: leave the flag set, propagate the value. *)
+        Ir_emit.emit_ret ctx.ir "i64" hv
+      else begin
+        (* Owning function: clear the flag and return its value. *)
+        add_extern ctx "mml_get_early_return" "i64" [];
+        let rv =
+          Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_get_early_return"
+            ~args:[]
+        in
+        Ir_emit.emit_ret ctx.ir "i64" rv
+      end;
+      Ir_emit.emit_label ctx.ir cont;
+      ctx.current_label <- cont
+    end;
+    hv
   end
 
 (* ---- Declaration codegen ---- *)

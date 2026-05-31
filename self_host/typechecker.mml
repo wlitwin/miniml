@@ -6539,7 +6539,7 @@ module Typechecker =
     match te.expr with
     | TEReturn e -> 
       if barrier do
-        error_at te.loc "return cannot escape this effect handler: its body runs on a separate fiber. Only non-resumptive (try-style) handlers — whose ops never resume — run the body inline and support early `return` (and only on the bytecode backends, not native). Refactor to return via the handler's return arm, or move the `return` outside the handler."
+        error_at te.loc "return cannot escape this effect handler: its body runs on a separate fiber. Only handlers whose ops are all non-resumptive (try-style) or all tail-resumptive run the body inline and support early `return` (and only on the bytecode backends, not native). Refactor to return via the handler's return arm, or move the `return` outside the handler."
       end;
       recur barrier e
     | TEFun ((_, body, _)) -> recur false body
@@ -6554,10 +6554,13 @@ module Typechecker =
         | THReturn _ -> false
         | _ -> true
       ) arms in
-      let inline = inline_handlers && ((op_arms <> []) && (List.forall (fn
+      let inline = inline_handlers && ((op_arms <> []) && ((List.forall (fn
         | THOpTry _ -> true
         | _ -> false
-      ) op_arms)) in
+      ) op_arms) || (List.forall (fn
+        | THOpProvide _ -> true
+        | _ -> false
+      ) op_arms))) in
       recur (barrier || (not inline)) body;
       List.iter (fn
         | (((THReturn ((_, e)) | THOp {body = e; _}) | THOpProvide ((_, _, e))) | THOpTry ((_, _, e))) -> recur barrier e

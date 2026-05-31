@@ -330,6 +330,8 @@ extern mml_handler* mml_current_handler;
 mml_handler* mml_alloc_handler(int64_t num_ops);
 void mml_push_handler(mml_handler* h);
 void mml_pop_handler(void);
+int64_t mml_handler_mark(void);
+void mml_handler_restore(int64_t mark);
 void mml_handler_set_op(mml_handler* h, int64_t index, const char* name,
                         int64_t kind, int64_t fn_ptr, int64_t env_ptr);
 void mml_handler_set_return(mml_handler* h, int64_t fn_ptr, int64_t env_ptr);

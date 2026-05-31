@@ -47,6 +47,7 @@ const OPCODE_NAMES = [
   "CALL_N", "TAIL_CALL_N",
   "UPDATE_REC",
   "TRY_BEGIN", "TRY_END",
+  "PROVIDE", "PROVIDE_END",
 ];
 
 // Map string opcode names to numeric tags for the VM switch
@@ -162,6 +163,7 @@ const U32_OPCODES = new Set([
   73, // RECORD_UPDATE_DYN
   80, // CALL_N
   81, // TAIL_CALL_N
+  85, // PROVIDE
 ]);
 
 function loadBundleBinary(arrayBuffer) {
@@ -275,6 +277,7 @@ function loadBundleBinary(arrayBuffer) {
       case 52: case 53: case 55: case 56: case 57: case 58:
       case 59: case 63: case 65: case 66: case 70: case 71:
       case 84: // TRY_END
+      case 86: // PROVIDE_END
         return [tag];
 
       case 38: { // CLOSURE

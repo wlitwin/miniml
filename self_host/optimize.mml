@@ -392,8 +392,8 @@ module Optimize =
       for i <= len - 1 do
         do Array.set control_depth i (Ref.get depth);
         match Array.get code i with
-        | (Bytecode.ENTER_LOOP _ | Bytecode.TRY_BEGIN _) -> Ref.set depth (Ref.get depth + 1)
-        | (Bytecode.EXIT_LOOP | Bytecode.TRY_END) -> 
+        | ((Bytecode.ENTER_LOOP _ | Bytecode.TRY_BEGIN _) | Bytecode.PROVIDE _) -> Ref.set depth (Ref.get depth + 1)
+        | ((Bytecode.EXIT_LOOP | Bytecode.TRY_END) | Bytecode.PROVIDE_END) -> 
           if (Ref.get depth) > 0 do
             Ref.set depth (Ref.get depth - 1)
           end

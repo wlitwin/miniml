@@ -449,16 +449,19 @@ let thread_jumps code =
       done;
       !t
     in
-    (* Compute control depth for JUMP→RETURN safety. ENTER_LOOP/EXIT_LOOP and
-       TRY_BEGIN/TRY_END bracket regions where a JUMP must not be turned into a
-       bare RETURN (the loop/try marker still needs popping). *)
+    (* Compute control depth for JUMP→RETURN safety. ENTER_LOOP/EXIT_LOOP,
+       TRY_BEGIN/TRY_END and PROVIDE/PROVIDE_END bracket regions where a JUMP must
+       not be turned into a bare RETURN (the loop/try/provide marker still needs
+       popping by EXIT_LOOP/TRY_END/PROVIDE_END). *)
     let control_depth = Array.make len 0 in
     let depth = ref 0 in
     for i = 0 to len - 1 do
       control_depth.(i) <- !depth;
       match code.(i) with
-      | Bytecode.ENTER_LOOP _ | Bytecode.TRY_BEGIN _ -> incr depth
-      | Bytecode.EXIT_LOOP | Bytecode.TRY_END -> if !depth > 0 then decr depth
+      | Bytecode.ENTER_LOOP _ | Bytecode.TRY_BEGIN _ | Bytecode.PROVIDE _ ->
+          incr depth
+      | Bytecode.EXIT_LOOP | Bytecode.TRY_END | Bytecode.PROVIDE_END ->
+          if !depth > 0 then decr depth
       | _ -> ()
     done;
     (* Thread all jump instructions *)

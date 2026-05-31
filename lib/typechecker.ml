@@ -8617,11 +8617,11 @@ let rec check_returns inline_handlers barrier (te : texpr) =
       if barrier then
         error_at te.loc
           "return cannot escape this effect handler: its body runs on a \
-           separate fiber. Only non-resumptive (try-style) handlers — whose \
-           ops never resume — run the body inline and support early `return` \
-           (and only on the bytecode backends, not native). Refactor to return \
-           via the handler's return arm, or move the `return` outside the \
-           handler.";
+           separate fiber. Only handlers whose ops are all non-resumptive \
+           (try-style) or all tail-resumptive run the body inline and support \
+           early `return` (and only on the bytecode backends, not native). \
+           Refactor to return via the handler's return arm, or move the \
+           `return` outside the handler.";
       recur barrier e
   | TEFun (_, body, _) -> recur false body
   | TELetRec (_, _, fn, e2) ->
@@ -8634,9 +8634,14 @@ let rec check_returns inline_handlers barrier (te : texpr) =
       let op_arms =
         List.filter (function THReturn _ -> false | _ -> true) arms
       in
+      (* A handler runs its body inline (no fiber barrier) when every op arm is
+         THOpTry (Compiler.compile_handle_try) or every op arm is THOpProvide
+         (Compiler.compile_handle_provide). A general (THOp) arm, a try/provide mix,
+         or a no-op handle all take the fiber path and form a barrier. *)
       let inline =
         inline_handlers && op_arms <> []
-        && List.for_all (function THOpTry _ -> true | _ -> false) op_arms
+        && (List.for_all (function THOpTry _ -> true | _ -> false) op_arms
+           || List.for_all (function THOpProvide _ -> true | _ -> false) op_arms)
       in
       recur (barrier || not inline) body;
       List.iter

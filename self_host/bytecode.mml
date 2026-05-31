@@ -90,6 +90,8 @@ module Bytecode =
     | UPDATE_REC
     | TRY_BEGIN of (string * int) list
     | TRY_END
+    | PROVIDE of int
+    | PROVIDE_END
 
 
   pub type record_shape = {
@@ -150,6 +152,7 @@ module Bytecode =
   and handler_entry =
     | HFull of { hf_return: value; hf_ops: (string * value) list; hf_body_fiber: fiber; hf_parent_fiber: fiber }
     | HTry of { ht_fiber: fiber; ht_frame_depth: int; ht_stack_depth: int; ht_control: control_entry list; ht_return: return_entry list; ht_catch: (string * int) list }
+    | HProvide of { hp_ops: (string * value) list; hp_fiber: fiber; hp_frame_depth: int; hp_stack_depth: int }
 
   and control_entry = {
     ce_break_ip: int;
@@ -335,12 +338,15 @@ module Bytecode =
       | UPDATE_REC -> "UPDATE_REC"
       | TRY_BEGIN catch -> $"TRY_BEGIN [{String.concat ", " (List.map (fn (op, ip) -> $"{op}->{ip}") catch)}]"
       | TRY_END -> "TRY_END"
+      | PROVIDE n -> $"PROVIDE {n}"
+      | PROVIDE_END -> "PROVIDE_END"
 
 
   pub let he_op_names =
     fn
       | HFull {hf_ops; _} -> List.map fst hf_ops
       | HTry {ht_catch; _} -> List.map fst ht_catch
+      | HProvide {hp_ops; _} -> List.map fst hp_ops
 
 
   pub let disassemble proto =

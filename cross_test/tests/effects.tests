@@ -2237,7 +2237,6 @@ a + b
 --- expect: 33
 
 --- test: return escapes an all-THOpTry handle body
---- skip-native: native has no inline handler lowering yet, so `return` cannot escape a handler body there (Increment 3 / tracked)
 effect PingE =
   pingr : int -> int
 end
@@ -2252,7 +2251,6 @@ f 5
 --- expect: 60
 
 --- test: return inside a try body early-exits the function
---- skip-native: native has no inline handler lowering yet, so `return` cannot escape a try body there (Increment 3 / tracked)
 effect Stop2 =
   stop2 : int -> int
 end
@@ -2264,7 +2262,6 @@ g 7
 --- expect: 42
 
 --- test: return escapes nested all-THOpTry handles
---- skip-native: native has no inline handler lowering yet, so `return` cannot escape a handler body there (Increment 3 / tracked)
 effect AA = aaa : int -> int end
 effect BB = bbb : int -> int end
 let f x =
@@ -2295,10 +2292,22 @@ end
 let f x =
   handle (return (perform askr x)) with
   | return v -> v + 1
-  | askr n k -> resume k (n + 1)
+  | askr n k -> (resume k (n + 1)) + (resume k (n + 2))
 ;;
 f 5
 --- expect-type-error: return cannot escape
+
+--- test: return escapes a tail-resumptive (provide) handler body
+effect AskR =
+  askr : int -> int
+end
+let f x =
+  handle (return (perform askr x)) with
+  | return v -> v + 100
+  | askr n k -> resume k (n + 1)
+;;
+f 5
+--- expect: 6
 
 --- test: escaping continuation captures a local mutable
 effect Esc2 =
@@ -2318,3 +2327,103 @@ in
 let _ = run () in
 saved ()
 --- expect: 15
+
+--- test: inline provide performed from inside a multishot fiber (cross-fiber)
+effect St = get : unit -> int end
+effect Ch = choose : unit -> bool end
+handle
+  handle
+    let b = perform choose () in
+    let g = perform get () in
+    if b do g else g * 10
+  with
+  | return v -> v
+  | choose () k -> let k2 = copy_continuation k in (resume k true) + (resume k2 false)
+with
+| return v -> v
+| get () k -> resume k 7
+--- expect: 77
+
+--- test: nested inline provide handlers
+effect Outer = oget : unit -> int end
+effect Inner = iget : unit -> int end
+handle
+  handle
+    perform oget () + perform iget ()
+  with
+  | return v -> v
+  | iget () k -> resume k 5
+with
+| return v -> v
+| oget () k -> resume k 100
+--- expect: 105
+
+--- test: inline provide arm performs an outer effect
+effect Base = bget : unit -> int end
+effect Mid = mget : unit -> int end
+handle
+  handle
+    perform mget ()
+  with
+  | return v -> v
+  | mget () k -> resume k (perform bget () + 1)
+with
+| return v -> v
+| bget () k -> resume k 41
+--- expect: 42
+
+--- test: inline provide with stateful (mutable) arm across performs
+effect Counter = next : unit -> int end
+let mut n = 0
+let r =
+  handle
+    let a = perform next () in
+    let b = perform next () in
+    let c = perform next () in
+    a * 100 + b * 10 + c
+  with
+  | return v -> v
+  | next () k -> (n := n + 1; resume k n)
+in r
+--- expect: 123
+
+--- test: break out of loop from inside an inline provide body
+--- skip-native: native cannot break/return out of a loop from inside a handler body (tracked #21)
+effect Inc = inc : int -> int end
+let mut total = 0
+let go () =
+  for i in [1; 2; 3; 4; 5] do
+    handle
+      (let x = perform inc i in
+       if x > 4 do break else total := total + x)
+    with
+    | return v -> v
+    | inc m k -> resume k (m + 1)
+  end
+in
+let _ = go () in
+total
+--- expect: 9
+
+--- test: return bypasses the try handler return arm
+effect Stp = stp : int -> int end
+let f x =
+  handle (return (x * 2)) with
+  | return v -> v + 1000
+  | stp n k -> n
+;;
+f 5
+--- expect: 10
+
+--- test: return from provide body pops the handler (no leak)
+effect Rd = rd : unit -> int end
+let f x =
+  let y = handle (if x > 0 do return 7 else perform rd ()) with
+          | return v -> v
+          | rd () k -> resume k 0
+  in y + 1
+;;
+let a = f 5 in
+let b = handle (perform rd ()) with | return v -> v | rd () k -> resume k 100 in
+a + b
+--- expect: 107

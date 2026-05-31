@@ -138,6 +138,8 @@ let serialize_opcode = function
                 Printf.sprintf "[%s,%d]" (json_escape_string op) ip)
               catch))
   | TRY_END -> "[\"TRY_END\"]"
+  | PROVIDE n -> Printf.sprintf "[\"PROVIDE\",%d]" n
+  | PROVIDE_END -> "[\"PROVIDE_END\"]"
 
 let rec serialize_value = function
   | Bytecode.VInt n -> Printf.sprintf "{\"t\":\"i\",\"v\":%d}" n

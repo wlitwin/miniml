@@ -292,9 +292,13 @@ function copyFiber(f) {
 }
 
 // --- Top-level helper functions ---
-// A handler entry is either {kind:"full", returnHandler, ops, bodyFiber, parentFiber}
-// (fiber-based, see HANDLE) or {kind:"try", fiber, frameDepth, stackDepth, control,
-// ret, catch} (no-fiber lowering of non-resumptive handlers, see TRY_BEGIN).
+// A handler entry is one of:
+//   {kind:"full", returnHandler, ops, bodyFiber, parentFiber} — fiber-based, HANDLE
+//   {kind:"try", fiber, frameDepth, stackDepth, control, ret, catch} — no-fiber
+//     lowering of non-resumptive handlers, TRY_BEGIN
+//   {kind:"provide", ops, fiber, frameDepth, stackDepth} — no-fiber lowering of
+//     tail-resumptive handlers, PROVIDE (body inline; PERFORM calls the arm on the
+//     current fiber and continues, reinstalling the marker when the arm returns).
 function heOpNames(he) {
   return he.kind === "try"
     ? he.catch.map(([name]) => name)
@@ -302,9 +306,9 @@ function heOpNames(he) {
 }
 
 function findHandlerForFiber(vm, f) {
-  // Only full handlers own a body fiber; try-markers complete inline via TRY_END.
+  // Only full handlers own a body fiber; try/provide markers complete inline.
   for (const he of vm.handlerStack) {
-    if (he.kind !== "try" && he.bodyFiber === f) return he;
+    if (he.kind === "full" && he.bodyFiber === f) return he;
   }
   return null;
 }
@@ -313,12 +317,36 @@ function removeHandler(vm, he) {
   vm.handlerStack = vm.handlerStack.filter(h => h !== he);
 }
 
-// Drop try-markers opened at or above stackDepth on f (a non-local jump leaving a
-// try body without running its TRY_END).
+// Drop inline try/provide markers opened at or above stackDepth on f (a non-local
+// jump leaving an inline body without running its TRY_END/PROVIDE_END).
 function dropTryMarkersAbove(vm, f, stackDepth) {
   vm.handlerStack = vm.handlerStack.filter(h =>
-    !(h.kind === "try" && h.fiber === f && h.stackDepth >= stackDepth)
+    !((h.kind === "try" || h.kind === "provide") &&
+      h.fiber === f && h.stackDepth >= stackDepth)
   );
+}
+
+// Drop pending provide-resume entries on f whose recorded frame depth is at or above
+// frameDepth (frames unwound non-locally past a mid-flight provide arm).
+function dropProvideResumesAbove(vm, f, frameDepth) {
+  if (vm.provideResumes.length > 0) {
+    vm.provideResumes = vm.provideResumes.filter(
+      ([rf, rd]) => !(rf === f && rd >= frameDepth)
+    );
+  }
+}
+
+// When a provide arm just returned (the current fiber's frame depth dropped back to
+// where the arm was entered), reinstall the HProvide marker + intermediates that were
+// lifted off for the arm, so the resumed body sees the handler again.
+function reinstallProvideOnReturn(vm, fiber) {
+  if (vm.provideResumes.length > 0) {
+    const top = vm.provideResumes[vm.provideResumes.length - 1];
+    if (top[0] === fiber && top[1] === fiber.frames.length) {
+      vm.handlerStack = vm.handlerStack.concat(top[2]);
+      vm.provideResumes.pop();
+    }
+  }
 }
 
 function internalCall(fiber, cls, arg) {
@@ -763,6 +791,7 @@ function run(vm) {
         if (!tailEntered) {
           fiber.sp = f.baseSp;
           fiber.frames.pop();
+          reinstallProvideOnReturn(vm, fiber);
           let result2 = tailResult;
           if (fiber.extraArgs.length > 0) {
             const [res, entered2] = processExtraArgs(vm, fiber, tailResult);
@@ -789,6 +818,7 @@ function run(vm) {
         let result = fiber.stack[--fiber.sp];
         fiber.sp = fiber.frames[fiber.frames.length - 1].baseSp;
         fiber.frames.pop();
+        reinstallProvideOnReturn(vm, fiber);
         if (fiber.extraArgs.length > 0) {
           const [res, entered] = processExtraArgs(vm, fiber, result);
           result = res;
@@ -872,6 +902,7 @@ function run(vm) {
         if (!tcnEntered) {
           fiber.sp = f.baseSp;
           fiber.frames.pop();
+          reinstallProvideOnReturn(vm, fiber);
           let result2 = tcnResult;
           if (fiber.extraArgs.length > 0) {
             const [res, entered2] = processExtraArgs(vm, fiber, tcnResult);
@@ -1052,6 +1083,18 @@ function run(vm) {
           vm.currentFiber = tf;
           tf.stack[tf.sp++] = arg;
           tf.frames[tf.frames.length - 1].ip = catchIp;
+        } else if (he.kind === "provide") {
+          // No-fiber, tail-resumptive handler: call the op's arm closure
+          // (fun arg -> value) on the CURRENT fiber and continue the body with its
+          // result. Tail-resumption resumes exactly once, immediately, so no
+          // continuation is reified and the fiber is irrelevant. Lift the matched
+          // handler + inner intermediates off the stack while the arm runs; they are
+          // reinstalled by reinstallProvideOnReturn when the arm returns.
+          const arm = he.ops.find(([name]) => name === opNameStr)[1];
+          const removed = vm.handlerStack.slice(matchIdx);
+          vm.handlerStack = vm.handlerStack.slice(0, matchIdx);
+          vm.provideResumes.push([fiber, fiber.frames.length, removed]);
+          internalCall(fiber, asClosure(arm), arg);
         } else {
           const handlerFn = he.ops.find(([name]) => name === opNameStr)[1];
           // Collect intermediate handlers (pushed after matched = more inner)
@@ -1133,8 +1176,10 @@ function run(vm) {
         const ce = vm.controlStack.pop();
         const cf = ce.fiber;
         while (cf.frames.length > ce.frameDepth) cf.frames.pop();
-        // Drop try-markers opened inside the loop body (break skips TRY_END).
+        // Drop inline try/provide markers opened inside the loop body (break skips
+        // TRY_END/PROVIDE_END).
         dropTryMarkersAbove(vm, cf, ce.stackDepth);
+        dropProvideResumesAbove(vm, cf, ce.frameDepth);
         cf.sp = ce.stackDepth;
         vm.currentFiber = cf;
         fiber = cf;
@@ -1146,8 +1191,10 @@ function run(vm) {
         const target = op[1];
         if (vm.controlStack.length === 0) error("LOOP_CONTINUE: no control entry");
         const ce = vm.controlStack[vm.controlStack.length - 1];
-        // Drop try-markers opened in the body (continue skips TRY_END).
+        // Drop inline try/provide markers opened in the body (continue skips
+        // TRY_END/PROVIDE_END).
         dropTryMarkersAbove(vm, ce.fiber, ce.stackDepth);
+        dropProvideResumesAbove(vm, ce.fiber, ce.frameDepth);
         ce.fiber.sp = ce.stackDepth;
         f.ip = target;
         break;
@@ -1184,6 +1231,35 @@ function run(vm) {
         }
         break;
       }
+      case 85: { // PROVIDE
+        // Install a no-fiber tail-resumptive handler; the body runs inline. Pop the
+        // n (opName, armClosure) pairs pushed by the compiler.
+        const nOps85 = op[1];
+        const ops85 = [];
+        for (let i = 0; i < nOps85; i++) {
+          const arm = fiber.stack[--fiber.sp];
+          const opStr = asString(fiber.stack[--fiber.sp]);
+          ops85.push([opStr, arm]);
+        }
+        vm.handlerStack.push({
+          kind: "provide",
+          ops: ops85,
+          fiber: fiber,
+          frameDepth: fiber.frames.length,
+          stackDepth: fiber.sp,
+        });
+        break;
+      }
+      case 86: { // PROVIDE_END
+        // Normal completion of a provide body: pop the nearest provide-marker.
+        for (let i = vm.handlerStack.length - 1; i >= 0; i--) {
+          if (vm.handlerStack[i].kind === "provide") {
+            vm.handlerStack.splice(i, 1);
+            break;
+          }
+        }
+        break;
+      }
       case 44: { // ENTER_FUNC
         vm.returnStack.push({
           fiber: fiber,
@@ -1213,11 +1289,13 @@ function run(vm) {
         vm.controlStack = vm.controlStack.filter(ce =>
           !(ce.fiber === fiber && ce.frameDepth >= targetDepth)
         );
-        // Drop try-markers opened inside the returned-from frames (a `return`
-        // inside a try body skips its TRY_END).
+        // Drop inline try/provide markers opened inside the returned-from frames (a
+        // `return` inside such a body skips its TRY_END/PROVIDE_END).
         vm.handlerStack = vm.handlerStack.filter(h =>
-          !(h.kind === "try" && h.fiber === fiber && h.frameDepth >= targetDepth)
+          !((h.kind === "try" || h.kind === "provide") &&
+            h.fiber === fiber && h.frameDepth >= targetDepth)
         );
+        dropProvideResumesAbove(vm, fiber, targetDepth);
         // Restore stack pointer and pop the target function's frame
         const baseSp = fiber.frames[fiber.frames.length - 1].baseSp;
         fiber.sp = baseSp;
@@ -1468,6 +1546,7 @@ function createVM(globalNames) {
     handlerStack: [],
     controlStack: [],
     returnStack: [],
+    provideResumes: [],
     globals: new Map(),
     globalNames,
   };
@@ -1485,6 +1564,7 @@ function callClosure(vmInst, closure, arg) {
   vmInst.handlerStack = [];
   vmInst.controlStack = [];
   vmInst.returnStack = [];
+  vmInst.provideResumes = [];
   return run(vmInst);
 }
 
