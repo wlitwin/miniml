@@ -88,6 +88,13 @@ type opcode =
   | CALL_N of int
   | TAIL_CALL_N of int
   | UPDATE_REC
+  (* No-fiber lowering of non-resumptive (THOpTry) handlers. TRY_BEGIN installs a
+     lightweight handler marker on the current fiber carrying an op-name -> catch_ip
+     table; the handled body runs inline (no thunk, no fiber). TRY_END pops the
+     marker on normal completion. A matching PERFORM unwinds to the marker and jumps
+     to the op's catch block. Appended at the end so existing opcode tags are stable. *)
+  | TRY_BEGIN of (string * int) list
+  | TRY_END
 
 type record_shape = {
   rs_fields : string array;
@@ -139,19 +146,51 @@ and call_frame = {
 }
 
 and fiber = {
-  fiber_stack : value array;
+  mutable fiber_stack : value array;  (* grows on demand; see Vm.ensure_fiber_capacity *)
   mutable fiber_sp : int;
   mutable fiber_frames : call_frame list;
   mutable fiber_frame_depth : int;
   mutable fiber_extra_args : value list list;
 }
 
-and handler_entry = {
-  he_return : value;
-  he_ops : (string * value) list;
-  he_body_fiber : fiber;
-  he_parent_fiber : fiber;
+(* A handler installed on the handler stack. [HFull] is the general fiber-based
+   handler (multi-shot / tail-resumptive): the body runs on its own [hf_body_fiber]
+   and PERFORM builds a continuation. [HTry] is the no-fiber lowering of a
+   non-resumptive (THOpTry) handler: the body runs inline on [ht_fiber] (the fiber
+   current when TRY_BEGIN ran) and a matching PERFORM unwinds to [ht_frame_depth]/
+   [ht_stack_depth] and jumps to the op's catch ip. Both kinds live on the same
+   handler stack so PERFORM resolves the nearest match in correct nesting order and
+   try-markers are captured/reinstalled as continuation intermediates for free. *)
+and handler_entry =
+  | HFull of {
+      hf_return : value;
+      hf_ops : (string * value) list;
+      hf_body_fiber : fiber;
+      hf_parent_fiber : fiber;
+    }
+  | HTry of {
+      ht_fiber : fiber;
+      ht_frame_depth : int;
+      ht_stack_depth : int;
+      (* Loop-control and return stacks as they were when TRY_BEGIN ran. A
+         non-resumptive op discards the entire handled body, so restoring these
+         snapshots exactly drops every loop/function-return marker opened inside the
+         body (correct for same-fiber, cross-fiber, and resumed-intermediate cases). *)
+      ht_control : control_entry list;
+      ht_return : return_entry list;
+      ht_catch : (string * int) list;
+    }
+
+(* A loop control marker (pushed by ENTER_LOOP, popped by EXIT_LOOP/LOOP_BREAK). *)
+and control_entry = {
+  ce_break_ip : int;
+  ce_fiber : fiber;
+  ce_frame_depth : int;
+  ce_stack_depth : int;
 }
+
+(* A function-return marker (pushed by ENTER_FUNC for functions that use `return`). *)
+and return_entry = { ret_fiber : fiber; ret_frame_depth : int }
 
 and continuation_data = {
   cd_fiber : fiber;
@@ -337,6 +376,16 @@ let pp_opcode = function
   | CALL_N n -> Printf.sprintf "CALL_N %d" n
   | TAIL_CALL_N n -> Printf.sprintf "TAIL_CALL_N %d" n
   | UPDATE_REC -> "UPDATE_REC"
+  | TRY_BEGIN catch ->
+      Printf.sprintf "TRY_BEGIN [%s]"
+        (String.concat ", "
+           (List.map (fun (op, ip) -> Printf.sprintf "%s->%d" op ip) catch))
+  | TRY_END -> "TRY_END"
+
+(* Op names a handler entry covers, used by PERFORM to find the nearest match. *)
+let he_op_names = function
+  | HFull { hf_ops; _ } -> List.map fst hf_ops
+  | HTry { ht_catch; _ } -> List.map fst ht_catch
 
 let disassemble proto =
   let buf = Buffer.create 256 in

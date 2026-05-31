@@ -344,6 +344,14 @@ let deserialize_opcode json =
       | "CALL_N", [ JInt n ] -> CALL_N n
       | "TAIL_CALL_N", [ JInt n ] -> TAIL_CALL_N n
       | "UPDATE_REC", [] -> UPDATE_REC
+      | "TRY_BEGIN", [ JArray entries ] ->
+          TRY_BEGIN
+            (List.map
+               (function
+                 | JArray [ JString op; JInt ip ] -> (op, ip)
+                 | _ -> failwith "invalid TRY_BEGIN entry")
+               entries)
+      | "TRY_END", [] -> TRY_END
       | _ -> failwith (Printf.sprintf "unknown opcode: %s" op))
   | _ -> failwith "invalid opcode format"
 

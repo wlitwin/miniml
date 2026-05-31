@@ -86,6 +86,8 @@ function parseTestFile(filename) {
     } else if (state) {
       // Skip section headers, collect source lines
       if (trimmed.startsWith("===") && trimmed.endsWith("===")) continue;
+      // Skip backend-specific directives (e.g. --- skip-native:) meant for other runners
+      if (trimmed.startsWith("--- ")) continue;
       if (state.sourceLines.length > 0 || trimmed !== "") {
         state.sourceLines.push(line);
       }

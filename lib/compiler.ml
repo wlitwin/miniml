@@ -1692,15 +1692,22 @@ and emit_bindings s scrut_slot (bindings : Match_tree_types.binding list) =
 
 and compile_handle s body_te arms =
   let return_arm = ref None in
-  let op_arms = ref [] in
+  let general_arms = ref [] in
+  (* THOpTry arms (op_name, arg_name, arm_body). When ALL op arms are THOpTry the
+     handler never resumes, so it needs no fiber: lower it inline (see
+     [compile_handle_try]). Otherwise fall back to the fiber-based path. *)
+  let try_arms = ref [] in
+  let all_try = ref true in
   List.iter
     (function
       | Typechecker.THReturn (name, handler_body) ->
           return_arm := Some (name, handler_body)
       | Typechecker.THOp
           { op_name; arg = arg_name; k = k_name; body = handler_body } ->
-          op_arms := (op_name, arg_name, k_name, handler_body) :: !op_arms
+          all_try := false;
+          general_arms := (op_name, arg_name, k_name, handler_body) :: !general_arms
       | Typechecker.THOpProvide (op_name, arg_name, value_expr) ->
+          all_try := false;
           (* Reconstruct TEResume for bytecode: handler evaluates value and resumes k *)
           let k_name = "__k_provide" in
           let k_var =
@@ -1713,17 +1720,60 @@ and compile_handle s body_te arms =
           let resume_expr =
             { value_expr with expr = Typechecker.TEResume (k_var, value_expr) }
           in
-          op_arms := (op_name, arg_name, k_name, resume_expr) :: !op_arms
+          general_arms := (op_name, arg_name, k_name, resume_expr) :: !general_arms
       | Typechecker.THOpTry (op_name, arg_name, fallback_expr) ->
           (* Handler receives (arg, k) but never calls k *)
-          op_arms := (op_name, arg_name, "__k_try", fallback_expr) :: !op_arms)
+          try_arms := (op_name, arg_name, fallback_expr) :: !try_arms;
+          general_arms := (op_name, arg_name, "__k_try", fallback_expr) :: !general_arms)
     arms;
-  let op_arms = List.rev !op_arms in
-  let ret_name, ret_body =
+  let ret_arm =
     match !return_arm with
     | Some arm -> arm
     | None -> error "handle expression missing return arm"
   in
+  if !all_try && !try_arms <> [] then
+    compile_handle_try s body_te ret_arm (List.rev !try_arms)
+  else compile_handle_fiber s body_te ret_arm (List.rev !general_arms)
+
+(* No-fiber lowering for all-THOpTry handlers. The handled body runs INLINE in the
+   enclosing function's frame (no thunk), bracketed by TRY_BEGIN/TRY_END, so `return`
+   inside the body reaches the enclosing function. Normal completion binds the body
+   result to the return arm's variable and runs the return arm; a performed op unwinds
+   (in the VM) to the TRY_BEGIN marker and jumps to that op's catch block. *)
+and compile_handle_try s body_te (ret_name, ret_body) try_arms =
+  let try_begin_idx =
+    emit_idx s (Bytecode.TRY_BEGIN (List.map (fun (op, _, _) -> (op, 0)) try_arms))
+  in
+  (* Body inline; leaves its result on the stack. *)
+  compile_expr false s body_te;
+  emit s Bytecode.TRY_END;
+  (* Return arm: bind body result to ret_name, run ret_body. *)
+  let ret_slot = allocate_local s ret_name in
+  emit s (Bytecode.SET_LOCAL ret_slot);
+  compile_expr false s ret_body;
+  free_local s;
+  let end_jumps = ref [ emit_idx s (Bytecode.JUMP 0) ] in
+  (* One catch block per op. PERFORM pushes the op argument then jumps here.
+     fold_left (not List.map) so blocks emit strictly left-to-right — the recorded
+     catch ip must match the actual emission position. *)
+  let catch_targets =
+    List.rev
+      (List.fold_left
+         (fun acc (op_name, arg_name, arm_body) ->
+           let catch_ip = current_offset s in
+           let arg_slot = allocate_local s arg_name in
+           emit s (Bytecode.SET_LOCAL arg_slot);
+           compile_expr false s arm_body;
+           free_local s;
+           end_jumps := emit_idx s (Bytecode.JUMP 0) :: !end_jumps;
+           (op_name, catch_ip) :: acc)
+         [] try_arms)
+  in
+  let end_target = current_offset s in
+  List.iter (fun idx -> patch s idx (Bytecode.JUMP end_target)) !end_jumps;
+  patch s try_begin_idx (Bytecode.TRY_BEGIN catch_targets)
+
+and compile_handle_fiber s body_te (ret_name, ret_body) op_arms =
   (* 1. Compile body as thunk closure (fun _ -> body) *)
   compile_function false s "_" body_te
     (Types.TArrow (Types.TUnit, Types.EffEmpty, Types.TUnit));

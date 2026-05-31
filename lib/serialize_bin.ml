@@ -62,6 +62,8 @@ let collect_opcode_strings st = function
       ignore (strtab_intern st name)
   | Bytecode.MAKE_VARIANT (_, name, _) -> ignore (strtab_intern st name)
   | Bytecode.GET_LOCAL_FIELD (_, name) -> ignore (strtab_intern st name)
+  | Bytecode.TRY_BEGIN catch ->
+      List.iter (fun (op, _) -> ignore (strtab_intern st op)) catch
   | _ -> ()
 
 let rec collect_value_strings st = function
@@ -300,6 +302,15 @@ let write_opcode buf st = function
       write_u8 buf 81;
       write_u32 buf n
   | Bytecode.UPDATE_REC -> write_u8 buf 82
+  | Bytecode.TRY_BEGIN catch ->
+      write_u8 buf 83;
+      write_u32 buf (List.length catch);
+      List.iter
+        (fun (op, ip) ->
+          write_u32 buf (strtab_intern st op);
+          write_u32 buf ip)
+        catch
+  | Bytecode.TRY_END -> write_u8 buf 84
 
 let rec write_value buf st = function
   | Bytecode.VInt n ->

@@ -18,6 +18,8 @@ let collect_jump_targets code =
       | Bytecode.JUMP_TABLE (_, table, default) ->
           Array.iter (fun t -> Hashtbl.replace targets t ()) table;
           Hashtbl.replace targets default ()
+      | Bytecode.TRY_BEGIN catch ->
+          List.iter (fun (_, ip) -> Hashtbl.replace targets ip ()) catch
       | _ -> ())
     code;
   targets
@@ -418,6 +420,8 @@ let fixup_jumps code offset_map =
             let new_targets = Array.map (fun t -> remap t) targets in
             let new_default = remap default in
             Bytecode.JUMP_TABLE (min_tag, new_targets, new_default)
+        | Bytecode.TRY_BEGIN catch ->
+            Bytecode.TRY_BEGIN (List.map (fun (op, ip) -> (op, remap ip)) catch)
         | other -> other
       in
       code.(i) <- remapped)
@@ -445,15 +449,16 @@ let thread_jumps code =
       done;
       !t
     in
-    (* Compute control depth for JUMP→RETURN safety.
-       Only ENTER_LOOP/EXIT_LOOP affect the control_stack. *)
+    (* Compute control depth for JUMP→RETURN safety. ENTER_LOOP/EXIT_LOOP and
+       TRY_BEGIN/TRY_END bracket regions where a JUMP must not be turned into a
+       bare RETURN (the loop/try marker still needs popping). *)
     let control_depth = Array.make len 0 in
     let depth = ref 0 in
     for i = 0 to len - 1 do
       control_depth.(i) <- !depth;
       match code.(i) with
-      | Bytecode.ENTER_LOOP _ -> incr depth
-      | Bytecode.EXIT_LOOP -> if !depth > 0 then decr depth
+      | Bytecode.ENTER_LOOP _ | Bytecode.TRY_BEGIN _ -> incr depth
+      | Bytecode.EXIT_LOOP | Bytecode.TRY_END -> if !depth > 0 then decr depth
       | _ -> ()
     done;
     (* Thread all jump instructions *)

@@ -271,25 +271,33 @@ function copyFiber(f) {
 }
 
 // --- Top-level helper functions ---
-function findHandler(vm, opName) {
-  for (let i = vm.handlerStack.length - 1; i >= 0; i--) {
-    const he = vm.handlerStack[i];
-    for (const [name] of he.ops) {
-      if (name === opName) return he;
-    }
-  }
-  return null;
+// A handler entry is either {kind:"full", returnHandler, ops, bodyFiber, parentFiber}
+// (fiber-based, see HANDLE) or {kind:"try", fiber, frameDepth, stackDepth, control,
+// ret, catch} (no-fiber lowering of non-resumptive handlers, see TRY_BEGIN).
+function heOpNames(he) {
+  return he.kind === "try"
+    ? he.catch.map(([name]) => name)
+    : he.ops.map(([name]) => name);
 }
 
 function findHandlerForFiber(vm, f) {
+  // Only full handlers own a body fiber; try-markers complete inline via TRY_END.
   for (const he of vm.handlerStack) {
-    if (he.bodyFiber === f) return he;
+    if (he.kind !== "try" && he.bodyFiber === f) return he;
   }
   return null;
 }
 
 function removeHandler(vm, he) {
   vm.handlerStack = vm.handlerStack.filter(h => h !== he);
+}
+
+// Drop try-markers opened at or above stackDepth on f (a non-local jump leaving a
+// try body without running its TRY_END).
+function dropTryMarkersAbove(vm, f, stackDepth) {
+  vm.handlerStack = vm.handlerStack.filter(h =>
+    !(h.kind === "try" && h.fiber === f && h.stackDepth >= stackDepth)
+  );
 }
 
 function internalCall(fiber, cls, arg) {
@@ -999,27 +1007,42 @@ function run(vm) {
       case 61: { // PERFORM
         const opNameStr = op[1];
         const arg = fiber.stack[--fiber.sp];
-        // Find matching handler and its index
+        // Find the nearest handler (full or try) covering this op.
         let matchIdx = -1;
         let he = null;
         for (let i = vm.handlerStack.length - 1; i >= 0; i--) {
           const h = vm.handlerStack[i];
-          for (const [name] of h.ops) {
-            if (name === opNameStr) { matchIdx = i; he = h; break; }
-          }
-          if (he) break;
+          if (heOpNames(h).includes(opNameStr)) { matchIdx = i; he = h; break; }
         }
         if (!he) error(`unhandled effect operation: ${opNameStr}`);
-        const handlerFn = he.ops.find(([name]) => name === opNameStr)[1];
-        // Collect intermediate handlers (pushed after matched = more inner)
-        const intermediates = vm.handlerStack.slice(matchIdx + 1);
-        const cont = vcontinuation(fiber, he.returnHandler, he.ops, he.bodyFiber, intermediates);
-        const pair = vtuple([arg, cont]);
-        // Remove matched handler and all intermediates
-        vm.handlerStack = vm.handlerStack.slice(0, matchIdx);
-        fiber = he.parentFiber;
-        vm.currentFiber = fiber;
-        internalCall(fiber, asClosure(handlerFn), pair);
+        if (he.kind === "try") {
+          // No-fiber, non-resumptive handler: unwind to the TRY_BEGIN marker (on
+          // he.fiber, current or an enclosing fiber) and jump to the op's catch.
+          // The whole body is discarded, so restore the control/return snapshots.
+          const catchIp = he.catch.find(([name]) => name === opNameStr)[1];
+          vm.handlerStack = vm.handlerStack.slice(0, matchIdx);
+          const tf = he.fiber;
+          while (tf.frames.length > he.frameDepth) tf.frames.pop();
+          tf.sp = he.stackDepth;
+          tf.extraArgs = [];
+          vm.controlStack = he.control.slice();
+          vm.returnStack = he.ret.slice();
+          fiber = tf;
+          vm.currentFiber = tf;
+          tf.stack[tf.sp++] = arg;
+          tf.frames[tf.frames.length - 1].ip = catchIp;
+        } else {
+          const handlerFn = he.ops.find(([name]) => name === opNameStr)[1];
+          // Collect intermediate handlers (pushed after matched = more inner)
+          const intermediates = vm.handlerStack.slice(matchIdx + 1);
+          const cont = vcontinuation(fiber, he.returnHandler, he.ops, he.bodyFiber, intermediates);
+          const pair = vtuple([arg, cont]);
+          // Remove matched handler and all intermediates
+          vm.handlerStack = vm.handlerStack.slice(0, matchIdx);
+          fiber = he.parentFiber;
+          vm.currentFiber = fiber;
+          internalCall(fiber, asClosure(handlerFn), pair);
+        }
         break;
       }
       case 62: { // HANDLE
@@ -1034,6 +1057,7 @@ function run(vm) {
         const bodyThunk = fiber.stack[--fiber.sp];
         const bodyFiber = makeFiber();
         const he = {
+          kind: "full",
           returnHandler,
           ops,
           bodyFiber,
@@ -1054,6 +1078,7 @@ function run(vm) {
         bodyFiber.stack[bodyFiber.sp++] = v;
         // Reinstall caught handler with original body fiber
         const he = {
+          kind: "full",
           returnHandler: cont.returnHandler,
           ops: cont.opHandlers,
           bodyFiber: cont.bodyFiber,
@@ -1086,6 +1111,8 @@ function run(vm) {
         const ce = vm.controlStack.pop();
         const cf = ce.fiber;
         while (cf.frames.length > ce.frameDepth) cf.frames.pop();
+        // Drop try-markers opened inside the loop body (break skips TRY_END).
+        dropTryMarkersAbove(vm, cf, ce.stackDepth);
         cf.sp = ce.stackDepth;
         vm.currentFiber = cf;
         fiber = cf;
@@ -1097,6 +1124,8 @@ function run(vm) {
         const target = op[1];
         if (vm.controlStack.length === 0) error("LOOP_CONTINUE: no control entry");
         const ce = vm.controlStack[vm.controlStack.length - 1];
+        // Drop try-markers opened in the body (continue skips TRY_END).
+        dropTryMarkersAbove(vm, ce.fiber, ce.stackDepth);
         ce.fiber.sp = ce.stackDepth;
         f.ip = target;
         break;
@@ -1109,6 +1138,28 @@ function run(vm) {
         if (fiber.frames.length <= 1) error("FOLD_CONTINUE: no frame to return from");
         fiber.frames.pop();
         fiber.stack[fiber.sp++] = continueValue;
+        break;
+      }
+      case 83: { // TRY_BEGIN
+        vm.handlerStack.push({
+          kind: "try",
+          fiber: fiber,
+          frameDepth: fiber.frames.length,
+          stackDepth: fiber.sp,
+          control: vm.controlStack.slice(),
+          ret: vm.returnStack.slice(),
+          catch: op[1],
+        });
+        break;
+      }
+      case 84: { // TRY_END
+        // Normal completion of a try body: pop the nearest try-marker.
+        for (let i = vm.handlerStack.length - 1; i >= 0; i--) {
+          if (vm.handlerStack[i].kind === "try") {
+            vm.handlerStack.splice(i, 1);
+            break;
+          }
+        }
         break;
       }
       case 44: { // ENTER_FUNC
@@ -1139,6 +1190,11 @@ function run(vm) {
         // Clean up control_stack entries above target depth
         vm.controlStack = vm.controlStack.filter(ce =>
           !(ce.fiber === fiber && ce.frameDepth >= targetDepth)
+        );
+        // Drop try-markers opened inside the returned-from frames (a `return`
+        // inside a try body skips its TRY_END).
+        vm.handlerStack = vm.handlerStack.filter(h =>
+          !(h.kind === "try" && h.fiber === fiber && h.frameDepth >= targetDepth)
         );
         // Restore stack pointer and pop the target function's frame
         const baseSp = fiber.frames[fiber.frames.length - 1].baseSp;

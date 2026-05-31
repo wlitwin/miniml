@@ -46,6 +46,7 @@ const OPCODE_NAMES = [
   "GET_GLOBAL_CALL", "GET_GLOBAL_FIELD",
   "CALL_N", "TAIL_CALL_N",
   "UPDATE_REC",
+  "TRY_BEGIN", "TRY_END",
 ];
 
 // Map string opcode names to numeric tags for the VM switch
@@ -273,6 +274,7 @@ function loadBundleBinary(arrayBuffer) {
       case 42: case 43: case 44: case 45:
       case 52: case 53: case 55: case 56: case 57: case 58:
       case 59: case 63: case 65: case 66: case 70: case 71:
+      case 84: // TRY_END
         return [tag];
 
       case 38: { // CLOSURE
@@ -344,6 +346,16 @@ function loadBundleBinary(arrayBuffer) {
         const idx = readU32();
         const name = strs[readU32()];
         return [79, idx, name];
+      }
+      case 83: { // TRY_BEGIN
+        const count = readU32();
+        const catchTable = new Array(count);
+        for (let i = 0; i < count; i++) {
+          const op = strs[readU32()];
+          const ip = readU32();
+          catchTable[i] = [op, ip];
+        }
+        return [83, catchTable];
       }
       default:
         throw new Error(`unknown opcode tag: ${tag}`);

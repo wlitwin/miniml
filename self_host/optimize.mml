@@ -14,6 +14,7 @@ module Optimize =
         | Bytecode.JUMP_TABLE ((_, table, default)) -> 
           Array.iter (fn t -> Hashtbl.set targets t ()) table;
           Hashtbl.set targets default ()
+        | Bytecode.TRY_BEGIN catch -> List.iter (fn (_, ip) -> Hashtbl.set targets ip ()) catch
         | _ -> ()
 
       end) code;
@@ -359,6 +360,7 @@ module Optimize =
         let new_targets = Array.map (fn t -> remap t) targets in
         let new_default = remap default in
         Bytecode.JUMP_TABLE (min_tag, new_targets, new_default)
+      | Bytecode.TRY_BEGIN catch -> Bytecode.TRY_BEGIN (List.map (fn (op, ip) -> (op, remap ip)) catch)
       | other -> other
      in
     Array.set code i remapped) code
@@ -390,8 +392,8 @@ module Optimize =
       for i <= len - 1 do
         do Array.set control_depth i (Ref.get depth);
         match Array.get code i with
-        | Bytecode.ENTER_LOOP _ -> Ref.set depth (Ref.get depth + 1)
-        | Bytecode.EXIT_LOOP -> 
+        | (Bytecode.ENTER_LOOP _ | Bytecode.TRY_BEGIN _) -> Ref.set depth (Ref.get depth + 1)
+        | (Bytecode.EXIT_LOOP | Bytecode.TRY_END) -> 
           if (Ref.get depth) > 0 do
             Ref.set depth (Ref.get depth - 1)
           end

@@ -90,6 +90,9 @@ let parse_test_file filename =
              if Buffer.length source_buf > 0 || trimmed <> "" then begin
                if String.length trimmed > 3 && String.sub trimmed 0 3 = "==="
                then () (* skip section headers *)
+               else if
+                 String.length trimmed > 4 && String.sub trimmed 0 4 = "--- "
+               then () (* skip backend-specific directives (e.g. skip-native) *)
                else begin
                  if Buffer.length source_buf > 0 then
                    Buffer.add_char source_buf '\n';

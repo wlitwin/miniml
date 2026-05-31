@@ -130,6 +130,14 @@ let serialize_opcode = function
   | CALL_N n -> Printf.sprintf "[\"CALL_N\",%d]" n
   | TAIL_CALL_N n -> Printf.sprintf "[\"TAIL_CALL_N\",%d]" n
   | UPDATE_REC -> "[\"UPDATE_REC\"]"
+  | TRY_BEGIN catch ->
+      Printf.sprintf "[\"TRY_BEGIN\",[%s]]"
+        (String.concat ","
+           (List.map
+              (fun (op, ip) ->
+                Printf.sprintf "[%s,%d]" (json_escape_string op) ip)
+              catch))
+  | TRY_END -> "[\"TRY_END\"]"
 
 let rec serialize_value = function
   | Bytecode.VInt n -> Printf.sprintf "{\"t\":\"i\",\"v\":%d}" n

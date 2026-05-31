@@ -2140,3 +2140,99 @@ let final = result
 ;;
 final
 --- expect: a1b2c3d4e5f6g7h8i9j10k11l12
+
+--- test: try multi-op last arm fires (catch-ip ordering)
+effect Multi3 =
+  ma : int -> int
+  mb : int -> int
+  mc : int -> int
+end
+try perform mc 5 with
+| ma x -> x + 1
+| mb x -> x + 2
+| mc x -> x + 3
+--- expect: 8
+
+--- test: try multi-op middle arm fires
+effect Multi3b =
+  na : int -> int
+  nb : int -> int
+  nc : int -> int
+end
+try perform nb 10 with
+| na x -> x + 1
+| nb x -> x + 2
+| nc x -> x + 3
+--- expect: 12
+
+--- test: try value passes through return arm
+effect Oops =
+  oops : unit -> int
+end
+try (40 + 2) with
+| oops () -> 0
+--- expect: 42
+
+--- test: nested try in catch handler body
+effect OuterE =
+  oo : int -> int
+end
+effect InnerE =
+  ii : int -> int
+end
+try perform oo 5 with
+| oo x -> (try perform ii x with | ii y -> y + 1) + 1000
+--- expect: 1006
+
+--- test: try installed each loop iteration
+--- skip-native: native segfaults on an effect handler inside a for-loop (pre-existing native bug, tracked)
+effect SigV =
+  sig_v : int -> int
+end
+let mut total = 0
+let _ = for n = 1; n <= 3; n + 1 do
+  let r = try perform sig_v n with | sig_v x -> x * 10 in
+  total := total + r
+end
+;;
+total
+--- expect: 60
+
+--- test: break inside try body skips TRY_END
+--- skip-native: native codegen rejects `break` inside a handler body ("break outside loop"); pre-existing native limitation, tracked
+effect Halt =
+  halt : int -> unit
+end
+let mut sum = 0
+let _ = for n = 1; n <= 100; n + 1 do
+  sum := sum + n;
+  try ((if n >= 3 do break else ()); perform halt n) with
+  | halt x -> ()
+end
+;;
+sum
+--- expect: 6
+
+--- test: try catches op escaping an inner full handle (cross-fiber)
+effect Esc =
+  escape : int -> int
+end
+effect GenOp =
+  gen : unit -> int
+end
+try (
+  handle perform escape 7 with
+  | return x -> x
+  | gen () k -> resume k 1
+) with
+| escape v -> v + 100
+--- expect: 107
+
+--- test: sequential trys reuse local slots
+effect E2 =
+  e2 : int -> int
+end
+let a = try perform e2 1 with | e2 x -> x + 10 in
+let b = try perform e2 2 with | e2 x -> x + 20 in
+a + b
+--- expect: 33

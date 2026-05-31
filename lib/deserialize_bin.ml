@@ -181,6 +181,16 @@ let read_opcode r strs =
   | 80 -> Bytecode.CALL_N (read_u32 r)
   | 81 -> Bytecode.TAIL_CALL_N (read_u32 r)
   | 82 -> Bytecode.UPDATE_REC
+  | 83 ->
+      let count = read_u32 r in
+      let catch =
+        List.init count (fun _ ->
+            let op = strs.(read_u32 r) in
+            let ip = read_u32 r in
+            (op, ip))
+      in
+      Bytecode.TRY_BEGIN catch
+  | 84 -> Bytecode.TRY_END
   | n -> failwith (Printf.sprintf "unknown opcode tag: %d" n)
 
 let rec read_value r strs =

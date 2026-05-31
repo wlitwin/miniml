@@ -111,6 +111,8 @@ module Serialize =
       | CALL_N n -> $"[\"CALL_N\",{n}]"
       | TAIL_CALL_N n -> $"[\"TAIL_CALL_N\",{n}]"
       | UPDATE_REC -> "[\"UPDATE_REC\"]"
+      | TRY_BEGIN catch -> $"[\"TRY_BEGIN\",[{String.concat "," (List.map (fn (op, ip) -> $"[{json_escape_string op},{ip}]") catch)}]]"
+      | TRY_END -> "[\"TRY_END\"]"
 
 
   pub let rec serialize_value =

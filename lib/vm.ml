@@ -2,21 +2,33 @@ exception Runtime_error of string
 
 let error msg = raise (Runtime_error msg)
 
-type handler_entry = Bytecode.handler_entry = {
-  he_return : Bytecode.value;
-  he_ops : (string * Bytecode.value) list;
-  he_body_fiber : Bytecode.fiber;
-  he_parent_fiber : Bytecode.fiber;
-}
+type handler_entry = Bytecode.handler_entry =
+  | HFull of {
+      hf_return : Bytecode.value;
+      hf_ops : (string * Bytecode.value) list;
+      hf_body_fiber : Bytecode.fiber;
+      hf_parent_fiber : Bytecode.fiber;
+    }
+  | HTry of {
+      ht_fiber : Bytecode.fiber;
+      ht_frame_depth : int;
+      ht_stack_depth : int;
+      ht_control : Bytecode.control_entry list;
+      ht_return : Bytecode.return_entry list;
+      ht_catch : (string * int) list;
+    }
 
-type control_entry = {
+type control_entry = Bytecode.control_entry = {
   ce_break_ip : int;
   ce_fiber : Bytecode.fiber;
   ce_frame_depth : int;
   ce_stack_depth : int;
 }
 
-type return_entry = { ret_fiber : Bytecode.fiber; ret_frame_depth : int }
+type return_entry = Bytecode.return_entry = {
+  ret_fiber : Bytecode.fiber;
+  ret_frame_depth : int;
+}
 
 type t = {
   mutable current_fiber : Bytecode.fiber;
@@ -27,20 +39,42 @@ type t = {
   global_names : string array;
 }
 
-let fiber_stack_size = 65536
+(* Fiber stacks grow on demand. Each [handle]/[try] allocates a fresh fiber, so
+   starting small (instead of the old fixed 64K-slot array = ~512KB) makes
+   handler installation dramatically cheaper; deep recursion grows the array by
+   doubling. A generous cap turns runaway non-tail recursion into a clean
+   "stack overflow" instead of an OOM. *)
+let fiber_stack_init = 1024
+let fiber_stack_max = 16 * 1024 * 1024
 
 let make_fiber () : Bytecode.fiber =
   {
-    fiber_stack = Array.make fiber_stack_size Bytecode.VUnit;
+    fiber_stack = Array.make fiber_stack_init Bytecode.VUnit;
     fiber_sp = 0;
     fiber_frames = [];
     fiber_frame_depth = 0;
     fiber_extra_args = [];
   }
 
+(* Ensure [f.fiber_stack] can hold at least [needed] slots, growing (doubling)
+   if necessary. Safe because every fiber-stack access reads [f.fiber_stack]
+   through the record field, so callers see the reallocated array. *)
+let ensure_fiber_capacity (f : Bytecode.fiber) needed =
+  let cap = Array.length f.fiber_stack in
+  if needed > cap then begin
+    if needed > fiber_stack_max then error "stack overflow";
+    let new_cap = ref cap in
+    while !new_cap < needed do
+      new_cap := min (!new_cap * 2) fiber_stack_max
+    done;
+    let grown = Array.make !new_cap Bytecode.VUnit in
+    Array.blit f.fiber_stack 0 grown 0 f.fiber_sp;
+    f.fiber_stack <- grown
+  end
+
 let push vm v =
   let f = vm.current_fiber in
-  if f.fiber_sp >= fiber_stack_size then error "stack overflow";
+  ensure_fiber_capacity f (f.fiber_sp + 1);
   f.fiber_stack.(f.fiber_sp) <- v;
   f.fiber_sp <- f.fiber_sp + 1
 
@@ -281,6 +315,7 @@ let enter_frame vm (cls : Bytecode.closure) arg is_tail =
     if is_tail then (frame vm).Bytecode.frame_base_sp else fiber.fiber_sp
   in
   let num_locals = cls.fn_proto.num_locals in
+  ensure_fiber_capacity fiber (base + num_locals);
   Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
   fiber.fiber_stack.(base) <- arg;
   fiber.fiber_sp <- base + num_locals;
@@ -299,6 +334,7 @@ let enter_frame_args vm (cls : Bytecode.closure) args is_tail =
     if is_tail then (frame vm).Bytecode.frame_base_sp else fiber.fiber_sp
   in
   let num_locals = cls.fn_proto.num_locals in
+  ensure_fiber_capacity fiber (base + num_locals);
   Array.fill fiber.fiber_stack base num_locals Bytecode.VUnit;
   List.iteri (fun i a -> fiber.fiber_stack.(base + i) <- a) args;
   fiber.fiber_sp <- base + num_locals;
@@ -409,12 +445,29 @@ let rec process_extra_args vm result =
             (Printf.sprintf "expected function in over-application, got %s"
                (Bytecode.pp_value result)))
 
-(* Find a handler entry whose body fiber matches the given fiber *)
+(* Find a full handler entry whose body fiber matches the given fiber. Only
+   fiber-based handlers reach this (when a body fiber's frames drain); try-markers
+   complete inline via TRY_END and never own a body fiber. *)
 let find_handler_for_fiber vm fiber =
-  List.find_opt (fun he -> he.he_body_fiber == fiber) vm.handler_stack
+  List.find_opt
+    (function
+      | HFull { hf_body_fiber; _ } -> hf_body_fiber == fiber
+      | HTry _ -> false)
+    vm.handler_stack
 
 let remove_handler vm he =
   vm.handler_stack <- List.filter (fun h -> h != he) vm.handler_stack
+
+(* Drop try-markers opened at or above [stack_depth] on [fiber]. Used when a
+   non-local jump (break/continue) leaves a try body without running its TRY_END. *)
+let drop_try_markers_above vm fiber stack_depth =
+  vm.handler_stack <-
+    List.filter
+      (function
+        | HTry { ht_fiber; ht_stack_depth; _ } ->
+            not (ht_fiber == fiber && ht_stack_depth >= stack_depth)
+        | HFull _ -> true)
+      vm.handler_stack
 
 type frame_action = FrameLoop | FrameReturn of Bytecode.value
 
@@ -428,12 +481,12 @@ let run vm =
       if entered then FrameLoop
       else if vm.current_fiber.fiber_frames = [] then begin
         match find_handler_for_fiber vm vm.current_fiber with
-        | Some he ->
+        | Some (HFull { hf_parent_fiber; hf_return; _ } as he) ->
             remove_handler vm he;
-            vm.current_fiber <- he.he_parent_fiber;
-            internal_call vm (as_closure he.he_return) result;
+            vm.current_fiber <- hf_parent_fiber;
+            internal_call vm (as_closure hf_return) result;
             FrameLoop
-        | None -> FrameReturn result
+        | Some (HTry _) | None -> FrameReturn result
       end
       else begin
         push vm result;
@@ -442,12 +495,12 @@ let run vm =
     end
     else if vm.current_fiber.fiber_frames = [] then begin
       match find_handler_for_fiber vm vm.current_fiber with
-      | Some he ->
+      | Some (HFull { hf_parent_fiber; hf_return; _ } as he) ->
           remove_handler vm he;
-          vm.current_fiber <- he.he_parent_fiber;
-          internal_call vm (as_closure he.he_return) result;
+          vm.current_fiber <- hf_parent_fiber;
+          internal_call vm (as_closure hf_return) result;
           FrameLoop
-      | None -> FrameReturn result
+      | Some (HTry _) | None -> FrameReturn result
     end
     else begin
       push vm result;
@@ -922,45 +975,75 @@ let run vm =
     (* --- Effects --- *)
     | Bytecode.PERFORM op_name ->
         let arg = pop vm in
-        (* Find matching handler and its index *)
+        (* Find the nearest handler (full or try) covering this op. *)
         let rec find_idx i = function
           | [] ->
               error (Printf.sprintf "unhandled effect operation: %s" op_name)
           | he :: rest ->
-              if
-                List.exists
-                  (fun (name, _) -> String.equal name op_name)
-                  he.he_ops
-              then (i, he)
+              if List.mem op_name (Bytecode.he_op_names he) then (i, he)
               else find_idx (i + 1) rest
         in
         let match_idx, he = find_idx 0 vm.handler_stack in
-        let handler_fn = List.assoc op_name he.he_ops in
-        (* Collect intermediate handlers (between stack top and matched handler) *)
-        let intermediates =
-          List.filteri (fun i _ -> i < match_idx) vm.handler_stack
-        in
-        (* Create continuation from current fiber *)
-        let cont =
-          Bytecode.
+        (match he with
+        | HTry
             {
-              cd_fiber = vm.current_fiber;
-              cd_return_handler = he.he_return;
-              cd_op_handlers = he.he_ops;
-              cd_body_fiber = he.he_body_fiber;
-              cd_intermediate_handlers = intermediates;
-              cd_used = false;
-            }
-        in
-        (* Build (arg, k) tuple *)
-        let pair = Bytecode.VTuple [| arg; VContinuation cont |] in
-        (* Remove matched handler AND all intermediates *)
-        vm.handler_stack <-
-          List.filteri (fun i _ -> i > match_idx) vm.handler_stack;
-        (* Switch to parent fiber and call handler *)
-        vm.current_fiber <- he.he_parent_fiber;
-        internal_call vm (as_closure handler_fn) pair;
-        loop ()
+              ht_fiber;
+              ht_frame_depth;
+              ht_stack_depth;
+              ht_control;
+              ht_return;
+              ht_catch;
+            } ->
+            (* No-fiber, non-resumptive handler: unwind to the TRY_BEGIN marker
+               (on [ht_fiber] — the current fiber, or an enclosing one if a full
+               handle is nested between) and jump to the op's catch block. The whole
+               handled body is discarded, so restore the control/return stacks to
+               their TRY_BEGIN snapshots and drop the matched marker + everything
+               above it from the handler stack. *)
+            let catch_ip = List.assoc op_name ht_catch in
+            vm.handler_stack <-
+              List.filteri (fun i _ -> i > match_idx) vm.handler_stack;
+            let fiber = ht_fiber in
+            while fiber.fiber_frame_depth > ht_frame_depth do
+              fiber.fiber_frames <- List.tl fiber.fiber_frames;
+              fiber.fiber_frame_depth <- fiber.fiber_frame_depth - 1
+            done;
+            fiber.fiber_sp <- ht_stack_depth;
+            fiber.fiber_extra_args <- [];
+            vm.control_stack <- ht_control;
+            vm.return_stack <- ht_return;
+            vm.current_fiber <- fiber;
+            push vm arg;
+            (frame vm).frame_ip <- catch_ip;
+            loop ()
+        | HFull
+            { hf_return; hf_ops; hf_body_fiber; hf_parent_fiber } ->
+            let handler_fn = List.assoc op_name hf_ops in
+            (* Collect intermediate handlers (between stack top and matched handler) *)
+            let intermediates =
+              List.filteri (fun i _ -> i < match_idx) vm.handler_stack
+            in
+            (* Create continuation from current fiber *)
+            let cont =
+              Bytecode.
+                {
+                  cd_fiber = vm.current_fiber;
+                  cd_return_handler = hf_return;
+                  cd_op_handlers = hf_ops;
+                  cd_body_fiber = hf_body_fiber;
+                  cd_intermediate_handlers = intermediates;
+                  cd_used = false;
+                }
+            in
+            (* Build (arg, k) tuple *)
+            let pair = Bytecode.VTuple [| arg; VContinuation cont |] in
+            (* Remove matched handler AND all intermediates *)
+            vm.handler_stack <-
+              List.filteri (fun i _ -> i > match_idx) vm.handler_stack;
+            (* Switch to parent fiber and call handler *)
+            vm.current_fiber <- hf_parent_fiber;
+            internal_call vm (as_closure handler_fn) pair;
+            loop ())
     | Bytecode.HANDLE n_ops ->
         (* Stack layout: body_thunk, return_handler, (handler1, name1), (handler2, name2), ... *)
         (* Pop op handlers in reverse order *)
@@ -976,12 +1059,13 @@ let run vm =
         let body_fiber = make_fiber () in
         (* Install handler *)
         let he =
-          {
-            he_return = return_handler;
-            he_ops = ops;
-            he_body_fiber = body_fiber;
-            he_parent_fiber = vm.current_fiber;
-          }
+          HFull
+            {
+              hf_return = return_handler;
+              hf_ops = ops;
+              hf_body_fiber = body_fiber;
+              hf_parent_fiber = vm.current_fiber;
+            }
         in
         vm.handler_stack <- he :: vm.handler_stack;
         (* Switch to body fiber and call thunk *)
@@ -995,22 +1079,49 @@ let run vm =
         cont.cd_used <- true;
         (* Push value onto body fiber's stack (result of perform) *)
         let body_fiber = cont.cd_fiber in
+        ensure_fiber_capacity body_fiber (body_fiber.fiber_sp + 1);
         body_fiber.fiber_stack.(body_fiber.fiber_sp) <- v;
         body_fiber.fiber_sp <- body_fiber.fiber_sp + 1;
         (* Reinstall caught handler with original body fiber *)
         let he =
-          {
-            he_return = cont.cd_return_handler;
-            he_ops = cont.cd_op_handlers;
-            he_body_fiber = cont.cd_body_fiber;
-            he_parent_fiber = vm.current_fiber;
-          }
+          HFull
+            {
+              hf_return = cont.cd_return_handler;
+              hf_ops = cont.cd_op_handlers;
+              hf_body_fiber = cont.cd_body_fiber;
+              hf_parent_fiber = vm.current_fiber;
+            }
         in
         (* Reinstall intermediates (innermost first) then caught handler *)
         vm.handler_stack <-
           cont.cd_intermediate_handlers @ (he :: vm.handler_stack);
         (* Switch to body fiber *)
         vm.current_fiber <- body_fiber;
+        loop ()
+    (* --- No-fiber (try) handlers --- *)
+    | Bytecode.TRY_BEGIN catch ->
+        let fiber = vm.current_fiber in
+        let he =
+          HTry
+            {
+              ht_fiber = fiber;
+              ht_frame_depth = fiber.fiber_frame_depth;
+              ht_stack_depth = fiber.fiber_sp;
+              ht_control = vm.control_stack;
+              ht_return = vm.return_stack;
+              ht_catch = catch;
+            }
+        in
+        vm.handler_stack <- he :: vm.handler_stack;
+        loop ()
+    | Bytecode.TRY_END ->
+        (* Normal completion of a try body: pop the nearest HTry marker. *)
+        let rec drop = function
+          | HTry _ :: rest -> rest
+          | (HFull _ as h) :: rest -> h :: drop rest
+          | [] -> error "TRY_END: no try marker"
+        in
+        vm.handler_stack <- drop vm.handler_stack;
         loop ()
     (* --- Loop and return control --- *)
     | Bytecode.ENTER_LOOP break_target ->
@@ -1042,6 +1153,8 @@ let run vm =
               fiber.fiber_frames <- List.tl fiber.fiber_frames;
               fiber.fiber_frame_depth <- fiber.fiber_frame_depth - 1
             done;
+            (* Drop try-markers opened inside the loop body (break skips TRY_END). *)
+            drop_try_markers_above vm fiber ce.ce_stack_depth;
             (* Restore stack pointer and push break value *)
             fiber.fiber_sp <- ce.ce_stack_depth;
             vm.current_fiber <- fiber;
@@ -1088,6 +1201,15 @@ let run vm =
             (fun ce ->
               not (ce.ce_fiber == fiber && ce.ce_frame_depth >= target_depth))
             vm.control_stack;
+        (* Drop try-markers opened inside the returned-from frames (a `return`
+           inside a try body skips its TRY_END). *)
+        vm.handler_stack <-
+          List.filter
+            (function
+              | HTry { ht_fiber; ht_frame_depth; _ } ->
+                  not (ht_fiber == fiber && ht_frame_depth >= target_depth)
+              | HFull _ -> true)
+            vm.handler_stack;
         (* Restore stack pointer and pop the target function's frame *)
         let base_sp = (frame vm).Bytecode.frame_base_sp in
         fiber.fiber_sp <- base_sp;
@@ -1099,12 +1221,12 @@ let run vm =
         if entered then loop ()
         else if fiber.fiber_frames = [] then begin
           match find_handler_for_fiber vm fiber with
-          | Some he ->
+          | Some (HFull { hf_parent_fiber; hf_return; _ } as he) ->
               remove_handler vm he;
-              vm.current_fiber <- he.he_parent_fiber;
-              internal_call vm (as_closure he.he_return) result;
+              vm.current_fiber <- hf_parent_fiber;
+              internal_call vm (as_closure hf_return) result;
               loop ()
-          | None -> result
+          | Some (HTry _) | None -> result
         end
         else begin
           push vm result;
@@ -1114,6 +1236,8 @@ let run vm =
         match vm.control_stack with
         | ce :: _ ->
             let fiber = ce.ce_fiber in
+            (* Drop try-markers opened in the body (continue skips TRY_END). *)
+            drop_try_markers_above vm fiber ce.ce_stack_depth;
             fiber.fiber_sp <- ce.ce_stack_depth;
             let f = frame vm in
             f.frame_ip <- target;
@@ -1349,6 +1473,7 @@ let execute_with_globals program (globals : (int, Bytecode.value) Hashtbl.t) =
     Bytecode.{ fn_proto = program.Bytecode.main; upvalues = [||] }
   in
   let num_locals = program.main.num_locals in
+  ensure_fiber_capacity main_fiber num_locals;
   Array.fill main_fiber.fiber_stack 0 num_locals Bytecode.VUnit;
   main_fiber.fiber_sp <- num_locals;
   let main_frame =

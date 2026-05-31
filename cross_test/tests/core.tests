@@ -278,6 +278,26 @@ let f = (not) in f true
 
 --- expect: 0
 
+--- test: deep non-tail recursion grows fiber stack
+
+      let rec sum (n: int) : int = if n = 0 do 0 else n + sum (n - 1)
+      in sum 3000
+
+--- expect: 4501500
+
+--- test: deep non-tail recursion inside a handler body
+
+      effect E =
+        op : unit -> int
+      end
+      let rec sum (n: int) : int = if n = 0 do 0 else n + sum (n - 1)
+      in
+      handle (let x = perform op () in sum (3000 + x)) with
+      | return v -> v
+      | op () k -> resume k 0
+
+--- expect: 4501500
+
 --- test: tail call in match arm
 
       let rec count_down (n: int) : int =
