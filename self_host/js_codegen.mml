@@ -6,7 +6,7 @@ module Js_codegen =
 
   pub let error msg = perform codegen_error msg
 
-  pub let js_runtime = "\"use strict\";\nfunction _call(f, args) {\n  while (args.length > 0) {\n    const a = f._arity !== undefined ? f._arity : f.length;\n    if (a === 0) { f = f(); continue; }\n    if (args.length < a) return _partial(f, a, args);\n    const taken = args.splice(0, a);\n    f = f.apply(null, taken);\n  }\n  return f;\n}\nfunction _partial(fn, arity, args) {\n  const p = function() {\n    return _call(fn, args.concat(Array.from(arguments)));\n  };\n  p._arity = arity - args.length;\n  return p;\n}\nfunction _eq(a, b) {\n  if (a === b) return true;\n  if (a == null || b == null) return a === b;\n  if (typeof a !== \"object\") return false;\n  if (Array.isArray(a)) {\n    if (!Array.isArray(b) || a.length !== b.length) return false;\n    for (let i = 0; i < a.length; i++) if (!_eq(a[i], b[i])) return false;\n    return true;\n  }\n  if (\"_arr\" in a && \"_arr\" in b) {\n    if (a._arr.length !== b._arr.length) return false;\n    for (let i = 0; i < a._arr.length; i++) if (!_eq(a._arr[i], b._arr[i])) return false;\n    return true;\n  }\n  if (\"_hd\" in a && \"_hd\" in b) {\n    let ca = a, cb = b;\n    while (ca !== null && cb !== null) {\n      if (!(\"_hd\" in ca) || !(\"_hd\" in cb)) return ca === cb;\n      if (!_eq(ca._hd, cb._hd)) return false;\n      ca = ca._tl; cb = cb._tl;\n    }\n    return ca === cb;\n  }\n  if (\"_tag\" in a) return a._tag === b._tag && _eq(a._val, b._val);\n  if (\"_ref\" in a) return _eq(a._ref, b._ref);\n  const ka = Object.keys(a), kb = Object.keys(b);\n  if (ka.length !== kb.length) return false;\n  for (const k of ka) if (!_eq(a[k], b[k])) return false;\n  return true;\n}\nfunction _compare(a, b) {\n  if (a < b) return -1;\n  if (a > b) return 1;\n  return 0;\n}\nfunction _match_fail(loc) { throw new Error(\"Match failure at \" + loc); }\nfunction _pp(v) {\n  if (v === undefined) return \"()\";\n  if (v === null) return \"[]\";\n  if (typeof v === \"number\") {\n    if (!Number.isInteger(v)) {\n      const s = String(v);\n      return s.includes(\".\") || s.includes(\"e\") ? s : s + \".\";\n    }\n    return String(v);\n  }\n  if (typeof v === \"boolean\") return String(v);\n  if (typeof v === \"string\") return v;\n  if (Array.isArray(v)) return \"(\" + v.map(_pp).join(\", \") + \")\";\n  if (v !== null && typeof v === \"object\") {\n    if (\"_arr\" in v) return \"#[\" + v._arr.map(_pp).join(\"; \") + \"]\";\n    if (\"_hd\" in v) {\n      const r = [];\n      let c = v;\n      while (c !== null && typeof c === \"object\" && \"_hd\" in c) { r.push(_pp(c._hd)); c = c._tl; }\n      return \"[\" + r.join(\"; \") + \"]\";\n    }\n    if (\"_tag\" in v) {\n      if (v._val !== undefined) {\n        const pv = _pp(v._val);\n        if (Array.isArray(v._val) || (typeof v._val === \"object\" && v._val !== null && \"_tag\" in v._val && v._val._val !== undefined))\n          return v._name + \" (\" + pv + \")\";\n        return v._name + \" \" + pv;\n      }\n      return v._name;\n    }\n    if (\"_ref\" in v) return \"ref(\" + _pp(v._ref) + \")\";\n    return \"{ \" + Object.entries(v).map(([k,val]) => k + \" = \" + _pp(val)).join(\"; \") + \" }\";\n  }\n  return String(v);\n}\nfunction _throw_break(v) { throw {_tag: \"_break\", _val: v}; }\nfunction _throw_fold_cont(v) { throw {_tag: \"_fold_cont\", _val: v}; }\nfunction _throw_return(v) { throw {_tag: \"_return\", _val: v}; }\nlet _h = {};\nfunction _bounce(fn) { fn._tramp = true; return fn; }\nconst _trampolining = new Set();\nfunction _trampoline(fn, tag) {\n  if (tag !== undefined && _trampolining.has(tag)) return fn();\n  if (tag !== undefined) _trampolining.add(tag);\n  try {\n    let result = fn();\n    while (typeof result === 'function' && result._tramp) {\n      result = result();\n    }\n    return result;\n  } finally { if (tag !== undefined) _trampolining.delete(tag); }\n}\nfunction _resolve(v) { while (typeof v === 'function' && v._tramp) v = v(); return v; }\n"
+  pub let js_runtime = "\"use strict\";\nfunction _call(f, args) {\n  while (args.length > 0) {\n    const a = f._arity !== undefined ? f._arity : f.length;\n    if (a === 0) { f = f(); continue; }\n    if (args.length < a) return _partial(f, a, args);\n    const taken = args.splice(0, a);\n    f = f.apply(null, taken);\n  }\n  return f;\n}\nfunction _partial(fn, arity, args) {\n  const p = function() {\n    return _call(fn, args.concat(Array.from(arguments)));\n  };\n  p._arity = arity - args.length;\n  return p;\n}\nfunction _eq(a, b) {\n  if (a === b) return true;\n  if (a == null || b == null) return a === b;\n  if (typeof a !== \"object\") return false;\n  if (Array.isArray(a)) {\n    if (!Array.isArray(b) || a.length !== b.length) return false;\n    for (let i = 0; i < a.length; i++) if (!_eq(a[i], b[i])) return false;\n    return true;\n  }\n  if (\"_arr\" in a && \"_arr\" in b) {\n    if (a._arr.length !== b._arr.length) return false;\n    for (let i = 0; i < a._arr.length; i++) if (!_eq(a._arr[i], b._arr[i])) return false;\n    return true;\n  }\n  if (\"_hd\" in a && \"_hd\" in b) {\n    let ca = a, cb = b;\n    while (ca !== null && cb !== null) {\n      if (!(\"_hd\" in ca) || !(\"_hd\" in cb)) return ca === cb;\n      if (!_eq(ca._hd, cb._hd)) return false;\n      ca = ca._tl; cb = cb._tl;\n    }\n    return ca === cb;\n  }\n  if (\"_tag\" in a) return a._tag === b._tag && _eq(a._val, b._val);\n  if (\"_ref\" in a) return _eq(a._ref, b._ref);\n  const ka = Object.keys(a), kb = Object.keys(b);\n  if (ka.length !== kb.length) return false;\n  for (const k of ka) if (!_eq(a[k], b[k])) return false;\n  return true;\n}\nfunction _compare(a, b) {\n  if (a < b) return -1;\n  if (a > b) return 1;\n  return 0;\n}\nfunction _match_fail(loc) { throw new Error(\"Match failure at \" + loc); }\nfunction _pp(v) {\n  if (v === undefined) return \"()\";\n  if (v === null) return \"[]\";\n  if (typeof v === \"number\") {\n    if (!Number.isInteger(v)) {\n      const s = String(v);\n      return s.includes(\".\") || s.includes(\"e\") ? s : s + \".\";\n    }\n    return String(v);\n  }\n  if (typeof v === \"boolean\") return String(v);\n  if (typeof v === \"string\") return v;\n  if (Array.isArray(v)) return \"(\" + v.map(_pp).join(\", \") + \")\";\n  if (v !== null && typeof v === \"object\") {\n    if (\"_arr\" in v) return \"#[\" + v._arr.map(_pp).join(\"; \") + \"]\";\n    if (\"_hd\" in v) {\n      const r = [];\n      let c = v;\n      while (c !== null && typeof c === \"object\" && \"_hd\" in c) { r.push(_pp(c._hd)); c = c._tl; }\n      return \"[\" + r.join(\"; \") + \"]\";\n    }\n    if (\"_tag\" in v) {\n      if (v._val !== undefined) {\n        const pv = _pp(v._val);\n        if (Array.isArray(v._val) || (typeof v._val === \"object\" && v._val !== null && \"_tag\" in v._val && v._val._val !== undefined))\n          return v._name + \" (\" + pv + \")\";\n        return v._name + \" \" + pv;\n      }\n      return v._name;\n    }\n    if (\"_ref\" in v) return \"ref(\" + _pp(v._ref) + \")\";\n    return \"{ \" + Object.entries(v).map(([k,val]) => k + \" = \" + _pp(val)).join(\"; \") + \" }\";\n  }\n  return String(v);\n}\nfunction _throw_break(v) { throw {_tag: \"_break\", _val: v}; }\nfunction _throw_continue() { throw {_tag: \"_continue\"}; }\nfunction _throw_fold_cont(v) { throw {_tag: \"_fold_cont\", _val: v}; }\nfunction _throw_return(v) { throw {_tag: \"_return\", _val: v}; }\nlet _h = {};\nfunction _bounce(fn) { fn._tramp = true; return fn; }\nconst _trampolining = new Set();\nfunction _trampoline(fn, tag) {\n  if (tag !== undefined && _trampolining.has(tag)) return fn();\n  if (tag !== undefined) _trampolining.add(tag);\n  try {\n    let result = fn();\n    while (typeof result === 'function' && result._tramp) {\n      result = result();\n    }\n    return result;\n  } finally { if (tag !== undefined) _trampolining.delete(tag); }\n}\nfunction _resolve(v) { while (typeof v === 'function' && v._tramp) v = v(); return v; }\n"
 
   pub let js_reserved = "abstract" :: "arguments" :: "await" :: "boolean" :: "break" :: "byte" :: "case" :: "catch" :: "char" :: "class" :: "const" :: "continue" :: "debugger" :: "default" :: "delete" :: "do" :: "double" :: "else" :: "enum" :: "eval" :: "export" :: "extends" :: "false" :: "final" :: "finally" :: "float" :: "for" :: "function" :: "goto" :: "if" :: "implements" :: "import" :: "in" :: "instanceof" :: "int" :: "interface" :: "let" :: "long" :: "native" :: "new" :: "null" :: "package" :: "private" :: "protected" :: "public" :: "return" :: "short" :: "static" :: "super" :: "switch" :: "synchronized" :: "this" :: "throw" :: "throws" :: "transient" :: "true" :: "try" :: "typeof" :: "undefined" :: "var" :: "void" :: "volatile" :: "while" :: "with" :: "yield" :: "of" :: "process" :: "console" :: "require" :: "module" :: "exports" :: "globalThis" :: "global" :: "window" :: "document" :: []
 
@@ -59,6 +59,7 @@ module Js_codegen =
     mut break_val_name: string;
     mut cont_flag_name: string;
     mut in_fold_loop: bool;
+    mut loop_via_throw: bool;
     mut fold_cont_pending: bool;
     mut top_level_exports: (string * string) list;
     function_arities: (string, int) Hashtbl.t
@@ -66,7 +67,7 @@ module Js_codegen =
 
   pub let create_ctx type_env =
     let tbl = Hashtbl.create 16 in
-    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64}
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64}
 
   pub let with_in_cps ctx value f =
     let saved = ctx.in_cps in
@@ -80,28 +81,34 @@ module Js_codegen =
     let saved_ddo = ctx.direct_dispatch_ops in
     let saved_two = ctx.trywith_ops in
     let saved_in_fold = ctx.in_fold_loop in
+    let saved_via_throw = ctx.loop_via_throw in
     ctx.current_fn_name := fn_name;
     ctx.current_fn_params := fn_params;
     ctx.tco_used := false;
     ctx.direct_dispatch_ops := ddo;
     ctx.trywith_ops := two;
     ctx.in_fold_loop := in_fold;
+    ctx.loop_via_throw := false;
     (let _protect_result = (f) () in (fn () -> ctx.current_fn_name := saved_fn;
     ctx.current_fn_params := saved_params;
     ctx.tco_used := saved_tco;
     ctx.direct_dispatch_ops := saved_ddo;
     ctx.trywith_ops := saved_two;
-    ctx.in_fold_loop := saved_in_fold) (); _protect_result)
+    ctx.in_fold_loop := saved_in_fold;
+    ctx.loop_via_throw := saved_via_throw) (); _protect_result)
 
-  pub let with_loop_ctx ctx break_flag break_val f =
+  pub let with_loop_ctx ctx break_flag break_val via_throw f =
     let saved_break_flag = ctx.break_flag_name in
     let saved_break_val = ctx.break_val_name in
     let saved_in_fold = ctx.in_fold_loop in
+    let saved_via_throw = ctx.loop_via_throw in
     ctx.break_flag_name := break_flag;
     ctx.break_val_name := break_val;
     ctx.in_fold_loop := false;
+    ctx.loop_via_throw := via_throw;
     (let _protect_result = (f) () in (fn () -> ctx.break_flag_name := saved_break_flag;
     ctx.break_val_name := saved_break_val;
+    ctx.loop_via_throw := saved_via_throw;
     ctx.in_fold_loop := saved_in_fold) (); _protect_result)
 
   pub let with_current_module ctx mod_name f =
@@ -284,6 +291,43 @@ module Js_codegen =
 
   pub let expr_has_unhandled_perform handled_ops te = expr_has_perform_with (fn op -> not (List.mem op handled_ops)) te
 
+  pub let rec loop_ctl_escapes_handler in_handler (te : Typechecker.texpr) =
+    let go = loop_ctl_escapes_handler in_handler in
+    match te.expr with
+    | (Typechecker.TEBreak _ | Typechecker.TEContinueLoop) -> in_handler
+    | ((Typechecker.TEFun _ | Typechecker.TEWhile _) | Typechecker.TEForLoop _) -> false
+    | Typechecker.TEHandle ((body, arms)) -> 
+      let g = loop_ctl_escapes_handler true in
+      (g body) || (List.exists (fn arm ->
+        do
+          match arm with
+          | (((Typechecker.THReturn ((_, e)) | Typechecker.THOp {body = e; _}) | Typechecker.THOpProvide ((_, _, e))) | Typechecker.THOpTry ((_, _, e))) -> g e
+
+        end) arms)
+    | (Typechecker.TELet ((_, _, e1, e2)) | Typechecker.TESeq ((e1, e2))) -> (go e1) || (go e2)
+    | Typechecker.TEIf ((cond, e1, e2)) -> (go cond) || ((go e1) || (go e2))
+    | Typechecker.TEMatch ((scrut, arms, _)) -> (go scrut) || (List.exists (fn (_, g, body) -> (go body) || (match g with
+    | Some g -> go g
+    | None -> false
+    )) arms)
+    | Typechecker.TEMatchTree cm -> (go cm.scrutinee) || ((Array.exists (fn arm -> go arm.arm_body) cm.match_arms) || (let rec check_tree =
+      fn
+        | Match_tree_types.DGuard {guard; on_true; on_false; _} -> (go guard) || ((check_tree on_true) || (check_tree on_false))
+        | Match_tree_types.DSwitch {cases; default; _} -> (List.exists (fn (_, _, sub) -> check_tree sub) cases) || (match default with
+        | Some d -> check_tree d
+        | None -> false
+        )
+        | (Match_tree_types.DLeaf _ | Match_tree_types.DFail _) -> false
+     in
+    check_tree cm.tree))
+    | Typechecker.TELetMut ((_, e1, e2)) -> (go e1) || (go e2)
+    | Typechecker.TELetRec ((_, _, _, body)) -> go body
+    | Typechecker.TELetRecAnd ((_, body)) -> go body
+    | _ -> false
+
+
+  pub let loop_body_escapes_loop_ctl te = loop_ctl_escapes_handler false te
+
   pub let rec decision_guards_have_perform =
     fn
       | Match_tree_types.DGuard {guard; on_true; on_false; _} -> (expr_has_perform guard) || ((decision_guards_have_perform on_true) || (decision_guards_have_perform on_false))
@@ -435,7 +479,7 @@ module Js_codegen =
     | Typechecker.TEWhile {tw_cond; tw_body; tw_step} -> compile_while ctx tw_cond tw_body tw_step
     | Typechecker.TEBreak value_te -> 
       let v = compile_non_tail ctx value_te in
-      if ctx.in_fold_loop do
+      if ctx.in_fold_loop || ctx.loop_via_throw do
         "_throw_break(" ^ (v ^ ")")
       else do
         emit_line ctx ($"{ctx.break_val_name} = {v};");
@@ -444,8 +488,12 @@ module Js_codegen =
         "undefined"
       end
     | Typechecker.TEContinueLoop -> 
-      emit_line ctx "continue;";
-      "undefined"
+      if ctx.loop_via_throw do
+        "_throw_continue()"
+      else do
+        emit_line ctx "continue;";
+        "undefined"
+      end
     | Typechecker.TEFoldContinue value_te -> 
       let v = compile_non_tail ctx value_te in
       "_throw_fold_cont(" ^ (v ^ ")")
@@ -736,11 +784,24 @@ module Js_codegen =
       ctx.in_tail_position := true;
       let body_code_start = Buffer.length ctx.buf in
       let tco_was_used = with_handler_tail_resume ctx false (fn () -> with_function_ctx ctx (Some js_name) js_params [] [] false (fn () -> if expr_has_perform final_body do
-        with_in_cps ctx true (fn () -> emit_line ctx ($"return _trampoline(function() \{");
+        with_in_cps ctx true (fn () -> if has_return do
+          emit_line ctx "try {";
+          ctx.indent := ctx.indent + 1
+        end;
+        emit_line ctx ($"return _trampoline(function() \{");
         ctx.indent := ctx.indent + 1;
         compile_cps ctx final_body (fn v -> emit_line ctx ($"return {v};"));
         ctx.indent := ctx.indent - 1;
-        emit_line ctx ($"\}, {js_name});"))
+        emit_line ctx ($"\}, {js_name});");
+        if has_return do
+          ctx.indent := ctx.indent - 1;
+          emit_line ctx "} catch(_e) {";
+          ctx.indent := ctx.indent + 1;
+          emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
+          emit_line ctx "throw _e;";
+          ctx.indent := ctx.indent - 1;
+          emit_line ctx "}"
+        end)
       else if has_return do
         emit_line ctx "try {";
         ctx.indent := ctx.indent + 1;
@@ -1185,8 +1246,27 @@ module Js_codegen =
     let result = fresh_tmp ctx in
     let break_flag = fresh_tmp ctx in
     let break_val = fresh_tmp ctx in
-    with_loop_ctx ctx break_flag break_val (fn () -> emit_line ctx ($"let {result} = undefined;");
+    let via_throw = loop_body_escapes_loop_ctl body in
+    with_loop_ctx ctx break_flag break_val via_throw (fn () -> emit_line ctx ($"let {result} = undefined;");
     emit_line ctx ($"let {break_flag} = false, {break_val};");
+    let emit_body () =
+      if via_throw do
+        emit_line ctx "try {";
+        ctx.indent := ctx.indent + 1;
+        let v_body = compile_expr ctx body in
+        emit_line ctx (v_body ^ ";");
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "} catch (_e) {";
+        ctx.indent := ctx.indent + 1;
+        emit_line ctx ($"if (_e && _e._tag === \"_break\") \{ {break_val} = _e._val; {break_flag} = true; break; \}");
+        emit_line ctx "else if (_e && _e._tag === \"_continue\") { continue; }";
+        emit_line ctx "else throw _e;";
+        ctx.indent := ctx.indent - 1;
+        emit_line ctx "}"
+      else do
+        let v_body = compile_expr ctx body in
+        emit_line ctx (v_body ^ ";")
+      end in
     do
       match step with
       | Some step_te -> 
@@ -1198,15 +1278,13 @@ module Js_codegen =
         emit_line ctx ($"{step_flag} = true;");
         let c = compile_expr ctx cond in
         emit_line ctx ($"if (!({c})) break;");
-        let v_body = compile_expr ctx body in
-        emit_line ctx (v_body ^ ";")
+        emit_body ()
       | None -> 
         emit_line ctx "while (true) {";
         ctx.indent := ctx.indent + 1;
         let c = compile_expr ctx cond in
         emit_line ctx ($"if (!({c})) break;");
-        let v_body = compile_expr ctx body in
-        emit_line ctx (v_body ^ ";")
+        emit_body ()
 
     end;
     ctx.indent := ctx.indent - 1;
@@ -1859,7 +1937,7 @@ module Js_codegen =
     let loop_fn = fresh_tmp ctx in
     let break_flag = fresh_tmp ctx in
     let break_val = fresh_tmp ctx in
-    with_loop_ctx ctx break_flag break_val (fn () -> emit_line ctx ($"let {break_flag} = false, {break_val};");
+    with_loop_ctx ctx break_flag break_val false (fn () -> emit_line ctx ($"let {break_flag} = false, {break_val};");
     let step_flag =
       match step with
       | Some _ -> 

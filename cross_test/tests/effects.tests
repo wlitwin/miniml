@@ -2198,7 +2198,6 @@ total
 --- expect: 60
 
 --- test: break inside try body skips TRY_END
---- skip-emit-js: JS backend does not support `break` escaping a handler body to an enclosing loop (tracked emit-js gap)
 effect Halt =
   halt : int -> unit
 end
@@ -2251,7 +2250,6 @@ f 5
 --- expect: 60
 
 --- test: return inside a try body early-exits the function
---- skip-emit-js: JS backend does not support `return` escaping a handler body (tracked emit-js gap)
 effect Stop2 =
   stop2 : int -> int
 end
@@ -2417,7 +2415,6 @@ f 5
 --- expect: 10
 
 --- test: return from provide body pops the handler (no leak)
---- skip-emit-js: JS backend does not support `return` escaping a handler body (tracked emit-js gap)
 effect Rd = rd : unit -> int end
 let f x =
   let y = handle (if x > 0 do return 7 else perform rd ()) with
@@ -2457,7 +2454,6 @@ sum
 --- expect: 12
 
 --- test: continue out of a while-loop from inside a try body
---- skip-emit-js: JS backend does not support `continue` escaping a handler body (tracked emit-js gap)
 effect Hd = hd : int -> unit end
 let mut sum = 0
 let _ = for n = 1; n <= 5; n + 1 do

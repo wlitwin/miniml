@@ -100,6 +100,7 @@ function _pp(v) {
   return String(v);
 }
 function _throw_break(v) { throw {_tag: "_break", _val: v}; }
+function _throw_continue() { throw {_tag: "_continue"}; }
 function _throw_fold_cont(v) { throw {_tag: "_fold_cont", _val: v}; }
 function _throw_return(v) { throw {_tag: "_return", _val: v}; }
 let _h = {};
@@ -251,6 +252,10 @@ type ctx = {
   mutable cont_flag_name : string; (* current while loop's continue flag *)
   mutable in_fold_loop : bool;
       (* inside fold callback body — break/return throw *)
+  mutable loop_via_throw : bool;
+      (* nearest enclosing native loop uses throw-based break/continue (because
+         its body has break/continue escaping a handler-body IIFE); the loop
+         catches _break/_continue *)
   mutable fold_cont_pending : bool;
       (* next compile_fun is fold callback — wrap in try/catch *)
   mutable top_level_exports : (string * string) list;
@@ -280,6 +285,7 @@ let create_ctx type_env =
     break_val_name = "_break_val";
     cont_flag_name = "_cont_flag";
     in_fold_loop = false;
+    loop_via_throw = false;
     fold_cont_pending = false;
     top_level_exports = [];
     function_arities = Hashtbl.create 64;
@@ -299,12 +305,16 @@ let with_function_ctx ctx ~fn_name ~fn_params ~ddo ~two ~in_fold f =
   let saved_ddo = ctx.direct_dispatch_ops in
   let saved_two = ctx.trywith_ops in
   let saved_in_fold = ctx.in_fold_loop in
+  let saved_via_throw = ctx.loop_via_throw in
   ctx.current_fn_name <- fn_name;
   ctx.current_fn_params <- fn_params;
   ctx.tco_used <- false;
   ctx.direct_dispatch_ops <- ddo;
   ctx.trywith_ops <- two;
   ctx.in_fold_loop <- in_fold;
+  (* A function boundary: break/continue inside cannot target a loop outside
+     the function, so the enclosing loop's throw-mode does not apply here. *)
+  ctx.loop_via_throw <- false;
   Fun.protect
     ~finally:(fun () ->
       ctx.current_fn_name <- saved_fn;
@@ -312,20 +322,24 @@ let with_function_ctx ctx ~fn_name ~fn_params ~ddo ~two ~in_fold f =
       ctx.tco_used <- saved_tco;
       ctx.direct_dispatch_ops <- saved_ddo;
       ctx.trywith_ops <- saved_two;
-      ctx.in_fold_loop <- saved_in_fold)
+      ctx.in_fold_loop <- saved_in_fold;
+      ctx.loop_via_throw <- saved_via_throw)
     f
 
-let with_loop_ctx ctx ~break_flag ~break_val f =
+let with_loop_ctx ctx ~break_flag ~break_val ~via_throw f =
   let saved_break_flag = ctx.break_flag_name in
   let saved_break_val = ctx.break_val_name in
   let saved_in_fold = ctx.in_fold_loop in
+  let saved_via_throw = ctx.loop_via_throw in
   ctx.break_flag_name <- break_flag;
   ctx.break_val_name <- break_val;
   ctx.in_fold_loop <- false;
+  ctx.loop_via_throw <- via_throw;
   Fun.protect
     ~finally:(fun () ->
       ctx.break_flag_name <- saved_break_flag;
       ctx.break_val_name <- saved_break_val;
+      ctx.loop_via_throw <- saved_via_throw;
       ctx.in_fold_loop <- saved_in_fold)
     f
 
@@ -530,6 +544,62 @@ let expr_has_unhandled_perform handled_ops te =
     ~check_perform:(fun op -> not (List.mem op handled_ops))
     te
 
+(* Does this loop body contain a `break`/`continue` targeting THIS loop that sits
+   inside a handler body? A handler body compiles to a separate JS function (the
+   try/with IIFE or a CPS `_trampoline(function(){...})`), so a literal JS
+   `break;`/`continue;` emitted there is illegal ("no surrounding iteration
+   statement"). Such a loop must instead use throw-based break/continue that the
+   loop catches. The scan stops at nested loops/functions, which capture their
+   own break/continue. *)
+let rec loop_ctl_escapes_handler ~in_handler (te : Typechecker.texpr) =
+  let go = loop_ctl_escapes_handler ~in_handler in
+  match te.expr with
+  | Typechecker.TEBreak _ | Typechecker.TEContinueLoop -> in_handler
+  (* Boundaries: a nested loop/function captures its own break/continue. *)
+  | Typechecker.TEFun _ | Typechecker.TEWhile _ | Typechecker.TEForLoop _ ->
+      false
+  | Typechecker.TEHandle (body, arms) ->
+      let g = loop_ctl_escapes_handler ~in_handler:true in
+      g body
+      || List.exists
+           (fun arm ->
+             match arm with
+             | Typechecker.THReturn (_, e)
+             | Typechecker.THOp { body = e; _ }
+             | Typechecker.THOpProvide (_, _, e)
+             | Typechecker.THOpTry (_, _, e) ->
+                 g e)
+           arms
+  | Typechecker.TELet (_, _, e1, e2) | Typechecker.TESeq (e1, e2) ->
+      go e1 || go e2
+  | Typechecker.TEIf (cond, e1, e2) -> go cond || go e1 || go e2
+  | Typechecker.TEMatch (scrut, arms, _) ->
+      go scrut
+      || List.exists
+           (fun (_, g, body) ->
+             go body || match g with Some g -> go g | None -> false)
+           arms
+  | Typechecker.TEMatchTree cm ->
+      go cm.Match_tree_types.scrutinee
+      || Array.exists (fun arm -> go arm.Match_tree_types.arm_body) cm.match_arms
+      ||
+      let rec check_tree = function
+        | Match_tree_types.DGuard { guard; on_true; on_false; _ } ->
+            go guard || check_tree on_true || check_tree on_false
+        | Match_tree_types.DSwitch { cases; default; _ } -> (
+            List.exists (fun (_, _, sub) -> check_tree sub) cases
+            || match default with Some d -> check_tree d | None -> false)
+        | Match_tree_types.DLeaf _ | Match_tree_types.DFail _ -> false
+      in
+      check_tree cm.tree
+  | Typechecker.TELetMut (_, e1, e2) -> go e1 || go e2
+  | Typechecker.TELetRec (_, _, _, body) -> go body
+  | Typechecker.TELetRecAnd (_, body) -> go body
+  | _ -> false
+
+let loop_body_escapes_loop_ctl te =
+  loop_ctl_escapes_handler ~in_handler:false te
+
 (* Do any DGuard guard expressions in a decision tree contain a perform/resume?
    Guards run in non-tail (dispatch) position, so a resume there must be trampolined.
    Leaves are skipped (they reference arm bodies, checked separately as tail). *)
@@ -720,7 +790,10 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
       compile_while ctx tw_cond tw_body tw_step
   | Typechecker.TEBreak value_te ->
       let v = compile_non_tail ctx value_te in
-      if ctx.in_fold_loop then "_throw_break(" ^ v ^ ")"
+      (* A fold loop, or a native loop whose break must cross a handler-body
+         IIFE, uses a thrown _break the loop catches; otherwise a literal JS
+         break with the loop's break flag. *)
+      if ctx.in_fold_loop || ctx.loop_via_throw then "_throw_break(" ^ v ^ ")"
       else begin
         emit_line ctx (Printf.sprintf "%s = %s;" ctx.break_val_name v);
         emit_line ctx (Printf.sprintf "%s = true;" ctx.break_flag_name);
@@ -728,8 +801,14 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
         "undefined"
       end
   | Typechecker.TEContinueLoop ->
-      emit_line ctx "continue;";
-      "undefined"
+      (* When continue must cross a handler-body IIFE, a literal JS `continue;`
+         would be illegal inside that function; throw instead and let the loop
+         catch it. *)
+      if ctx.loop_via_throw then "_throw_continue()"
+      else begin
+        emit_line ctx "continue;";
+        "undefined"
+      end
   | Typechecker.TEFoldContinue value_te ->
       let v = compile_non_tail ctx value_te in
       "_throw_fold_cont(" ^ v ^ ")"
@@ -1112,13 +1191,30 @@ and compile_named_function ctx js_name fn_expr =
            Tag = function name, so recursive calls become pass-throughs (stack-safe).
            Set in_cps so non-tail function calls get _resolve wrapping. *)
               with_in_cps ctx true (fun () ->
+                  (* A `return` inside the body (e.g. inside an inline try-handler)
+                     throws `{_tag:"_return"}`; catch it at this function boundary so
+                     it doesn't escape uncaught. Mirrors compile_fun's CPS path. *)
+                  if has_return then begin
+                    emit_line ctx "try {";
+                    ctx.indent <- ctx.indent + 1
+                  end;
                   emit_line ctx
                     (Printf.sprintf "return _trampoline(function() {");
                   ctx.indent <- ctx.indent + 1;
                   compile_cps ctx final_body (fun v ->
                       emit_line ctx (Printf.sprintf "return %s;" v));
                   ctx.indent <- ctx.indent - 1;
-                  emit_line ctx (Printf.sprintf "}, %s);" js_name))
+                  emit_line ctx (Printf.sprintf "}, %s);" js_name);
+                  if has_return then begin
+                    ctx.indent <- ctx.indent - 1;
+                    emit_line ctx "} catch(_e) {";
+                    ctx.indent <- ctx.indent + 1;
+                    emit_line ctx
+                      "if (_e && _e._tag === \"_return\") return _e._val;";
+                    emit_line ctx "throw _e;";
+                    ctx.indent <- ctx.indent - 1;
+                    emit_line ctx "}"
+                  end)
             end
             else if has_return then begin
               emit_line ctx "try {";
@@ -1636,9 +1732,40 @@ and compile_while ctx cond body step =
   let result = fresh_tmp ctx in
   let break_flag = fresh_tmp ctx in
   let break_val = fresh_tmp ctx in
-  with_loop_ctx ctx ~break_flag ~break_val (fun () ->
+  (* If the body contains a break/continue that escapes a handler-body IIFE, the
+     literal JS break;/continue; would be illegal inside that function. Compile
+     such break/continue as thrown _break/_continue and catch them here. *)
+  let via_throw = loop_body_escapes_loop_ctl body in
+  with_loop_ctx ctx ~break_flag ~break_val ~via_throw (fun () ->
       emit_line ctx (Printf.sprintf "let %s = undefined;" result);
       emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
+      (* Emit the loop body, optionally wrapped in a try/catch that converts a
+         thrown _break/_continue into the loop's break flag / a JS continue. *)
+      let emit_body () =
+        if via_throw then begin
+          emit_line ctx "try {";
+          ctx.indent <- ctx.indent + 1;
+          let v_body = compile_expr ctx body in
+          emit_line ctx (v_body ^ ";");
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "} catch (_e) {";
+          ctx.indent <- ctx.indent + 1;
+          emit_line ctx
+            (Printf.sprintf
+               "if (_e && _e._tag === \"_break\") { %s = _e._val; %s = true; \
+                break; }"
+               break_val break_flag);
+          emit_line ctx
+            "else if (_e && _e._tag === \"_continue\") { continue; }";
+          emit_line ctx "else throw _e;";
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}"
+        end
+        else begin
+          let v_body = compile_expr ctx body in
+          emit_line ctx (v_body ^ ";")
+        end
+      in
       (match step with
       | Some step_te ->
           let step_flag = fresh_tmp ctx in
@@ -1650,15 +1777,13 @@ and compile_while ctx cond body step =
           emit_line ctx (Printf.sprintf "%s = true;" step_flag);
           let c = compile_expr ctx cond in
           emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
-          let v_body = compile_expr ctx body in
-          emit_line ctx (v_body ^ ";")
+          emit_body ()
       | None ->
           emit_line ctx "while (true) {";
           ctx.indent <- ctx.indent + 1;
           let c = compile_expr ctx cond in
           emit_line ctx (Printf.sprintf "if (!(%s)) break;" c);
-          let v_body = compile_expr ctx body in
-          emit_line ctx (v_body ^ ";"));
+          emit_body ());
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}";
       emit_line ctx
@@ -2501,7 +2626,7 @@ and compile_while_cps ctx cond body step cont =
   let loop_fn = fresh_tmp ctx in
   let break_flag = fresh_tmp ctx in
   let break_val = fresh_tmp ctx in
-  with_loop_ctx ctx ~break_flag ~break_val (fun () ->
+  with_loop_ctx ctx ~break_flag ~break_val ~via_throw:false (fun () ->
       emit_line ctx (Printf.sprintf "let %s = false, %s;" break_flag break_val);
       let step_flag =
         match step with
