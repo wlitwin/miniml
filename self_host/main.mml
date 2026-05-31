@@ -185,7 +185,7 @@ module Main =
     let (sch, ctx2) = register_builtin ctx global_names "mod" int2 0 2 in
     ctx := ctx2; stdlib_pub_vars := ("mod", sch) :: stdlib_pub_vars;
     -- print
-    let (sch, ctx2) = register_builtin ctx global_names "print" (arr (TGen 0) TUnit) 1 1 in
+    let (sch, ctx2) = register_builtin ctx global_names "print" (TArrow (TGen 0, EffRow ("IO", [], EffEmpty), TUnit)) 1 1 in
     ctx := ctx2; stdlib_pub_vars := ("print", sch) :: stdlib_pub_vars;
     -- failwith
     let (sch, ctx2) = register_builtin ctx global_names "failwith" (arr TString (TGen 0)) 1 1 in

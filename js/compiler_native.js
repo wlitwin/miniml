@@ -63714,7 +63714,7 @@ function Main$setup_builtins(_) {
     (ctx_15063 = ctx2, undefined);
     (stdlib_pub_vars_15057 = ({_hd: ["mod", sch], _tl: stdlib_pub_vars_15057}), undefined);
     let _t15069;
-    const _t15068 = _call(Main$register_builtin, [__dict_Show_int, ctx_15063, global_names_15053, "print", Main$arr(({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 6, _name: "TUnit"})), 1, 1]);
+    const _t15068 = _call(Main$register_builtin, [__dict_Show_int, ctx_15063, global_names_15053, "print", ({_tag: 7, _name: "TArrow", _val: [({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 2, _name: "EffRow", _val: ["IO", null, ({_tag: 1, _name: "EffEmpty"})]}), ({_tag: 6, _name: "TUnit"})]}), 1, 1]);
     _t15070: {
       const sch = _t15068[0];
       const ctx2 = _t15068[1];
