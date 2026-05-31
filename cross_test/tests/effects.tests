@@ -2198,7 +2198,6 @@ total
 --- expect: 60
 
 --- test: break inside try body skips TRY_END
---- skip-native: native codegen rejects `break` inside a handler body ("break outside loop"); pre-existing native limitation, tracked
 effect Halt =
   halt : int -> unit
 end
@@ -2388,7 +2387,6 @@ in r
 --- expect: 123
 
 --- test: break out of loop from inside an inline provide body
---- skip-native: native cannot break/return out of a loop from inside a handler body (tracked #21)
 effect Inc = inc : int -> int end
 let mut total = 0
 let go () =
@@ -2427,3 +2425,16 @@ let a = f 5 in
 let b = handle (perform rd ()) with | return v -> v | rd () k -> resume k 100 in
 a + b
 --- expect: 107
+
+--- test: break out of a fold-loop from inside a try body
+effect Hh = hh : int -> unit end
+let mut sum = 0
+let go () =
+  for x in [1; 2; 3; 4; 5] do
+    try (if x >= 3 do break else (sum := sum + x; perform hh x)) with
+    | hh n -> ()
+  end
+in
+let _ = go () in
+sum
+--- expect: 3

@@ -1583,6 +1583,27 @@ mml_value mml_get_early_return(void) {
     return mml_early_return_val;
 }
 
+/* break-escape: a `break` inside a handler body must exit an ENCLOSING loop that the
+ * handler body's thunk can't branch to directly. The break sets this flag and unwinds
+ * out of the thunk; mml_run_try_handler bypasses the return arm, and the handle-site
+ * codegen re-raises the break where the loop is in scope. Mirrors early-return. */
+static int mml_break_escape_flag = 0;
+static mml_value mml_break_escape_val = 0;
+
+void mml_set_break_escape(mml_value val) {
+    mml_break_escape_flag = 1;
+    mml_break_escape_val = val;
+}
+
+int64_t mml_check_break_escape(void) {
+    return mml_break_escape_flag;
+}
+
+mml_value mml_get_break_escape(void) {
+    mml_break_escape_flag = 0;
+    return mml_break_escape_val;
+}
+
 /* ---- Index operations ---- */
 
 mml_value mml_list_nth(mml_value idx_tagged, mml_value lst) {
@@ -2290,7 +2311,7 @@ int64_t mml_run_try_handler(int64_t handler_i64,
          * early-return flag and unwinds out of the body thunk. In that case the
          * handler's return arm must be BYPASSED and the value propagated upward (the
          * handle-site codegen checks the flag and re-raises). */
-        if (mml_check_early_return()) {
+        if (mml_check_early_return() || mml_check_break_escape()) {
             return body_result;
         }
         if (return_fn) {

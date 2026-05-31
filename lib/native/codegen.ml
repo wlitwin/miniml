@@ -81,6 +81,13 @@ type codegen_ctx = {
   generated_wrappers : (string, unit) Hashtbl.t;
   mutable fold_break_depth : int;
       (* >0 when inside fold callback, persists across function boundaries *)
+  mutable fold_guard_pending : bool;
+      (* Set just before emitting a for-loop fold over a POLYMORPHIC/unknown
+         collection (the generic Iter-dict fold, which — unlike mml_list/array_fold_breakable
+         — does NOT check the break flag mid-iteration). The next closure emitted (the
+         loop-body callback) injects a guard: once break/return has fired, remaining
+         iterations return the accumulator unchanged, so their side effects are
+         suppressed. Consumed (reset) at that closure's entry. *)
   mutable in_handler_thunk : bool;
       (* true while emitting the body thunk of a try/full handler. A `return` here
          must early-exit the enclosing function, so it sets the early-return flag and
@@ -147,6 +154,7 @@ let create_ctx type_env =
     type_env;
     generated_wrappers = Hashtbl.create 16;
     fold_break_depth = 0;
+    fold_guard_pending = false;
     in_handler_thunk = false;
     handler_mark_ptr = None;
     or_pattern_allocas = [];
@@ -707,6 +715,31 @@ let emit_handler_mark_restore ctx =
       Ir_emit.emit_call_void ctx.ir ~name:"mml_handler_restore"
         ~args:[ ("i64", m) ]
 
+(* Emit the terminator for a `break` carrying value [v], targeting the nearest
+   enclosing loop. Does NOT emit a trailing dead label (callers do, where needed).
+   Cases, innermost-boundary first:
+   - a loop in this LLVM function (loop_stack): branch to its exit;
+   - inside a handler body thunk (in_handler_thunk): the target loop is outside the
+     thunk, so set the break-escape flag and unwind out (mml_run_try_handler bypasses
+     the return arm; the handle site re-raises this break where the loop is in scope);
+   - inside a fold callback (fold_break_depth): set the fold-break flag + return, which
+     stops the breakable C fold. *)
+let emit_break_action ctx v =
+  match ctx.loop_stack with
+  | (_, exit_label) :: _ -> Ir_emit.emit_br ctx.ir ~label:exit_label
+  | [] when ctx.in_handler_thunk ->
+      emit_handler_mark_restore ctx;
+      add_extern ctx "mml_set_break_escape" "void" [ "i64" ];
+      Ir_emit.emit_call_void ctx.ir ~name:"mml_set_break_escape"
+        ~args:[ ("i64", v) ];
+      Ir_emit.emit_ret ctx.ir "i64" v
+  | [] when ctx.fold_break_depth > 0 ->
+      emit_handler_mark_restore ctx;
+      add_extern ctx "mml_fold_break" "void" [ "i64" ];
+      Ir_emit.emit_call_void ctx.ir ~name:"mml_fold_break" ~args:[ ("i64", v) ];
+      Ir_emit.emit_ret ctx.ir "i64" v
+  | [] -> failwith "native codegen: break outside loop"
+
 (* ---- Expression codegen ---- *)
 
 let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
@@ -834,27 +867,13 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
           failwith (Printf.sprintf "native codegen: cannot assign to %s" name))
   | TEIf (cond, then_e, else_e) -> emit_if ctx cond then_e else_e
   | TEWhile { tw_cond; tw_body; tw_step } -> emit_while ctx tw_cond tw_body tw_step
-  | TEBreak value_expr -> (
+  | TEBreak value_expr ->
       let v = emit_expr ctx value_expr in
-      match ctx.loop_stack with
-      | (_, exit_label) :: _ ->
-          (* While loop break *)
-          Ir_emit.emit_br ctx.ir ~label:exit_label;
-          let dead = fresh_label ctx "dead" in
-          Ir_emit.emit_label ctx.ir dead;
-          ctx.current_label <- dead;
-          v (* value doesn't matter, dead code *)
-      | [] when ctx.fold_break_depth > 0 ->
-          (* Fold break: set flag and return from callback *)
-          add_extern ctx "mml_fold_break" "void" [ "i64" ];
-          Ir_emit.emit_call_void ctx.ir ~name:"mml_fold_break"
-            ~args:[ ("i64", v) ];
-          Ir_emit.emit_ret ctx.ir "i64" v;
-          let dead = fresh_label ctx "dead" in
-          Ir_emit.emit_label ctx.ir dead;
-          ctx.current_label <- dead;
-          v
-      | [] -> failwith "native codegen: break outside loop")
+      emit_break_action ctx v;
+      let dead = fresh_label ctx "dead" in
+      Ir_emit.emit_label ctx.ir dead;
+      ctx.current_label <- dead;
+      v
   | TEContinueLoop -> (
       match ctx.loop_stack with
       | (cond_label, _) :: _ ->
@@ -3150,8 +3169,15 @@ and emit_for_loop_app ctx fold_expr =
         Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:fn_name
           ~args:[ ("i64", cb_val); ("i64", init_val); ("i64", coll_val) ]
     | None ->
-        (* Unknown collection type — fall through to normal eval with break check *)
-        emit_fold_with_break_check ctx fold_expr
+        (* Polymorphic/unknown collection: the generic Iter-dict fold runs to
+           completion (it never checks the break flag), so break/return would still
+           execute side effects in later iterations. Request a guard on the loop-body
+           callback (the next closure emitted) so post-break iterations become no-ops;
+           the post-fold check below still supplies the break value / propagates return. *)
+        ctx.fold_guard_pending <- true;
+        let r = emit_fold_with_break_check ctx fold_expr in
+        ctx.fold_guard_pending <- false;
+        r
   end
   else emit_fold_with_break_check ctx fold_expr
 
@@ -3884,6 +3910,11 @@ and emit_capture_value ctx _name info =
 (** Emit a function that takes (ptr %env, params...) and loads captures from env
 *)
 and emit_closure_function ctx fn_name params body free_with_info =
+  (* Consume any pending fold-guard request: it applies to THIS closure (the next one
+     emitted after the for-loop request) only. Reset before emitting the body so nested
+     closures don't inherit it. *)
+  let do_fold_guard = ctx.fold_guard_pending in
+  ctx.fold_guard_pending <- false;
   with_fresh_ir ctx (fun fn_ir ->
       let outer_scopes = ctx.scopes in
       let arity = List.length params in
@@ -3977,6 +4008,37 @@ and emit_closure_function ctx fn_name params body free_with_info =
               ~ptr;
             bind_var ctx p (Local ptr))
           unique_params;
+
+      (* Fold-break guard for polymorphic for-loops (see fold_guard_pending). If
+         break/return already fired, this iteration is a no-op: return the
+         accumulator (first param) unchanged so its side effects are suppressed. *)
+      if do_fold_guard && (not high_arity) && unique_params <> [] then begin
+        let acc_ssa = Printf.sprintf "%%%s" (snd (List.hd unique_params)) in
+        add_extern ctx "mml_check_fold_broken" "i64" [];
+        add_extern ctx "mml_check_early_return" "i64" [];
+        let broken =
+          Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_check_fold_broken"
+            ~args:[]
+        in
+        let b1 = Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:broken ~rhs:"0" in
+        let ret_lbl = fresh_label ctx "fold_guard_ret" in
+        let chk2 = fresh_label ctx "fold_guard_chk2" in
+        let cont = fresh_label ctx "fold_guard_cont" in
+        Ir_emit.emit_condbr ctx.ir ~cond:b1 ~if_true:ret_lbl ~if_false:chk2;
+        Ir_emit.emit_label ctx.ir chk2;
+        ctx.current_label <- chk2;
+        let early =
+          Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_check_early_return"
+            ~args:[]
+        in
+        let b2 = Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:early ~rhs:"0" in
+        Ir_emit.emit_condbr ctx.ir ~cond:b2 ~if_true:ret_lbl ~if_false:cont;
+        Ir_emit.emit_label ctx.ir ret_lbl;
+        ctx.current_label <- ret_lbl;
+        Ir_emit.emit_ret ctx.ir "i64" acc_ssa;
+        Ir_emit.emit_label ctx.ir cont;
+        ctx.current_label <- cont
+      end;
 
       setup_handler_mark ctx body;
       let body_result = emit_expr ctx body in
@@ -5829,7 +5891,40 @@ and emit_handle ctx body_expr arms =
         Ir_emit.emit_ret ctx.ir "i64" rv
       end;
       Ir_emit.emit_label ctx.ir cont;
-      ctx.current_label <- cont
+      ctx.current_label <- cont;
+      (* A `break` inside the body that targets a loop ENCLOSING this handler unwinds
+         out via the break-escape flag (mml_run_try_handler bypasses the return arm).
+         Re-raise it here, where the enclosing loop is in scope: emit_break_action
+         branches to the loop exit / fold-breaks / propagates further as appropriate.
+         Only emit this when an enclosing loop/crossing boundary is actually in scope:
+         a break in the body can only target a loop that lexically encloses this handle,
+         so if none is in scope no break-escape is possible and emit_break_action would
+         (correctly) reject "break outside loop" at compile time. *)
+      if
+        ctx.loop_stack <> [] || ctx.fold_break_depth > 0 || ctx.in_handler_thunk
+      then begin
+        add_extern ctx "mml_check_break_escape" "i64" [];
+        let bflag =
+          Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_check_break_escape"
+            ~args:[]
+        in
+        let has_brk =
+          Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:bflag ~rhs:"0"
+        in
+        let brk = fresh_label ctx "h_break" in
+        let cont2 = fresh_label ctx "h_no_break" in
+        Ir_emit.emit_condbr ctx.ir ~cond:has_brk ~if_true:brk ~if_false:cont2;
+        Ir_emit.emit_label ctx.ir brk;
+        ctx.current_label <- brk;
+        add_extern ctx "mml_get_break_escape" "i64" [];
+        let bv =
+          Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_get_break_escape"
+            ~args:[]
+        in
+        emit_break_action ctx bv;
+        Ir_emit.emit_label ctx.ir cont2;
+        ctx.current_label <- cont2
+      end
     end;
     hv
   end

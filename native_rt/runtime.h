@@ -167,6 +167,9 @@ mml_value mml_consume_fold_break(void);
 void mml_set_early_return(mml_value val);
 int64_t mml_check_early_return(void);
 mml_value mml_get_early_return(void);
+void mml_set_break_escape(mml_value val);
+int64_t mml_check_break_escape(void);
+mml_value mml_get_break_escape(void);
 
 /* Index operations */
 mml_value mml_list_nth(mml_value idx, mml_value lst);

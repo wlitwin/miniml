@@ -883,3 +883,34 @@ for x in [1; 2; 3; 4; 5] do
 end;
 found
 --- expect: 3
+
+--- test: break stops a for-loop over a polymorphic collection
+let count_until xs target =
+  let mut count = 0 in
+  for x in xs do
+    if x = target do break else count := count + 1
+  end;
+  count
+;;
+count_until [10; 20; 30; 40] 30
+--- expect: 2
+
+--- test: return stops a for-loop over a polymorphic collection
+let index_of xs target =
+  let mut i = 0 in
+  for x in xs do
+    if x = target do return i else i := i + 1
+  end;
+  0 - 1
+;;
+index_of ["a"; "b"; "c"; "d"] "c"
+--- expect: 2
+
+--- test: polymorphic for-loop without break sums all
+let sum_via_iter xs =
+  let mut s = 0 in
+  for x in xs do s := s + x end;
+  s
+;;
+sum_via_iter [3; 4; 5]
+--- expect: 12
