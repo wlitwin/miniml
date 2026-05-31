@@ -461,7 +461,20 @@ let rec is_captured_in_closures name (body : Typechecker.texpr) =
           scan k_e;
           scan v_e
       | TEHandle (body_e, arms) ->
-          scan body_e;
+          (* When the handle has try/full arms, the BODY is compiled as a
+             separate thunk (emit_handler_body_thunk runs it on a fiber), so a
+             mutable used in the body is captured like a closure and must be a
+             heap ref cell. (Provide-only/return-only handles run the body
+             inline, so a plain recursive scan is correct there.) *)
+          let body_is_thunk =
+            List.exists
+              (function
+                | Typechecker.THOpTry _ | Typechecker.THOp _ -> true
+                | _ -> false)
+              arms
+          in
+          if body_is_thunk && mentions_var name body_e then found := true
+          else scan body_e;
           (* Handler arms are compiled as separate functions — variables used
          in arm bodies are effectively captured like in closures *)
           List.iter
@@ -3014,12 +3027,14 @@ and emit_for_loop_app ctx fold_expr =
         (base, args @ [ arg ])
     | _ -> (e, [])
   in
-  let base, args = extract_fold_app fold_expr in
-  (* Check if base is a field access on a dict (typeclass fold dispatch) *)
-  let is_fold_field =
-    match base.Typechecker.expr with TEField (_, "fold") -> true | _ -> false
-  in
-  if is_fold_field && List.length args = 3 then begin
+  let _base, args = extract_fold_app fold_expr in
+  (* emit_for_loop_app only ever sees for-loop folds, which always desugar to
+     `fold callback init coll`. Route list/array collections through the
+     breakable C fold regardless of how `fold` resolved (typeclass dict field vs
+     a named instance like List.fold) — otherwise `break`/`return` set the
+     fold-broken flag but the non-breakable fold runs to completion, so they
+     don't stop iteration (issue #12: return/break yielded the last match). *)
+  if List.length args = 3 then begin
     (* args = [callback, init, collection] *)
     let callback = List.nth args 0 in
     let init = List.nth args 1 in

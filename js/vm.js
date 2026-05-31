@@ -254,10 +254,31 @@ function ppValue(v) {
 }
 
 // --- Fiber ---
-const STACK_SIZE = 65536;
+// Fiber stacks grow on demand (mirrors the OCaml VM's growable stacks). Every
+// handle/try allocates a fresh fiber, so starting small instead of eagerly
+// allocating a fixed 64K-slot array (~the old cost) makes handler installation
+// dramatically cheaper; deep recursion grows by doubling. A generous cap turns
+// runaway non-tail recursion into a clean "stack overflow" instead of an OOM.
+const FIBER_STACK_INIT = 1024;
+const FIBER_STACK_MAX = 16 * 1024 * 1024;
 
 function makeFiber() {
-  return { stack: new Array(STACK_SIZE).fill(VUNIT), sp: 0, frames: [], extraArgs: [] };
+  return { stack: new Array(FIBER_STACK_INIT).fill(VUNIT), sp: 0, frames: [], extraArgs: [] };
+}
+
+// Ensure fiber stack holds at least `needed` slots, growing (doubling) and
+// filling new slots with VUNIT. JS arrays auto-grow on indexed write, but
+// frame setup uses Array.fill(start,end) which does NOT extend a short array,
+// so capacity must be ensured before filling a locals region.
+function ensureCap(f, needed) {
+  const cap = f.stack.length;
+  if (needed > cap) {
+    if (needed > FIBER_STACK_MAX) error("stack overflow");
+    let newCap = cap;
+    while (newCap < needed) newCap = Math.min(newCap * 2, FIBER_STACK_MAX);
+    f.stack.length = newCap;
+    f.stack.fill(VUNIT, cap, newCap);
+  }
 }
 
 function copyFiber(f) {
@@ -303,7 +324,7 @@ function dropTryMarkersAbove(vm, f, stackDepth) {
 function internalCall(fiber, cls, arg) {
   const base = fiber.sp;
   const numLocals = cls.proto.num_locals;
-  fiber.stack.fill(VUNIT, base, base + numLocals);
+  ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
   fiber.stack[base] = arg;
   fiber.sp = base + numLocals;
   fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
@@ -338,7 +359,7 @@ function callWithArgs(vm, fiber, fnVal, args) {
     if (n === arity) {
       const base = fiber.sp;
       const numLocals = fnVal.proto.num_locals;
-      fiber.stack.fill(VUNIT, base, base + numLocals);
+      ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
       for (let i = 0; i < n; i++) fiber.stack[base + i] = args[i];
       fiber.sp = base + numLocals;
       fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
@@ -352,7 +373,7 @@ function callWithArgs(vm, fiber, fnVal, args) {
       fiber.extraArgs.push(extra);
       const base = fiber.sp;
       const numLocals = fnVal.proto.num_locals;
-      fiber.stack.fill(VUNIT, base, base + numLocals);
+      ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
       for (let i = 0; i < arity; i++) fiber.stack[base + i] = useArgs[i];
       fiber.sp = base + numLocals;
       fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
@@ -391,7 +412,7 @@ function processExtraArgs(vm, fiber, result) {
         if (remaining.length > 0) fiber.extraArgs.push(remaining);
         const base = fiber.sp;
         const numLocals = result.proto.num_locals;
-        fiber.stack.fill(VUNIT, base, base + numLocals);
+        ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
         for (let i = 0; i < arity; i++) fiber.stack[base + i] = useArgs[i];
         fiber.sp = base + numLocals;
         fiber.frames.push({ closure: result, ip: 0, baseSp: base });
@@ -666,7 +687,7 @@ function run(vm) {
           if (fnVal.proto.arity === 1) {
             const base = fiber.sp;
             const numLocals = fnVal.proto.num_locals;
-            fiber.stack.fill(VUNIT, base, base + numLocals);
+            ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
             fiber.stack[base] = arg;
             fiber.sp = base + numLocals;
             fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
@@ -679,7 +700,7 @@ function run(vm) {
             const cls = fnVal.closure;
             const base = fiber.sp;
             const numLocals = cls.proto.num_locals;
-            fiber.stack.fill(VUNIT, base, base + numLocals);
+            ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
             for (let i = 0; i < newArgs.length; i++) fiber.stack[base + i] = newArgs[i];
             fiber.sp = base + numLocals;
             fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
@@ -707,7 +728,7 @@ function run(vm) {
           if (fnVal.proto.arity === 1) {
             const currentBaseSp = f.baseSp;
             const numLocals = fnVal.proto.num_locals;
-            fiber.stack.fill(VUNIT, currentBaseSp, currentBaseSp + numLocals);
+            ensureCap(fiber, currentBaseSp + numLocals); fiber.stack.fill(VUNIT, currentBaseSp, currentBaseSp + numLocals);
             fiber.stack[currentBaseSp] = arg;
             fiber.sp = currentBaseSp + numLocals;
             fiber.frames[fiber.frames.length - 1] = { closure: fnVal, ip: 0, baseSp: currentBaseSp };
@@ -721,7 +742,7 @@ function run(vm) {
             const cls = fnVal.closure;
             const currentBaseSp = f.baseSp;
             const numLocals = cls.proto.num_locals;
-            fiber.stack.fill(VUNIT, currentBaseSp, currentBaseSp + numLocals);
+            ensureCap(fiber, currentBaseSp + numLocals); fiber.stack.fill(VUNIT, currentBaseSp, currentBaseSp + numLocals);
             for (let i = 0; i < newArgs.length; i++) fiber.stack[currentBaseSp + i] = newArgs[i];
             fiber.sp = currentBaseSp + numLocals;
             fiber.frames[fiber.frames.length - 1] = { closure: cls, ip: 0, baseSp: currentBaseSp };
@@ -811,7 +832,7 @@ function run(vm) {
             if (nArgs === arity) {
               const baseSp = f.baseSp;
               const numLocals = fn.proto.num_locals;
-              fiber.stack.fill(VUNIT, baseSp, baseSp + numLocals);
+              ensureCap(fiber, baseSp + numLocals); fiber.stack.fill(VUNIT, baseSp, baseSp + numLocals);
               for (let i = 0; i < nArgs; i++) fiber.stack[baseSp + i] = remaining[i];
               fiber.sp = baseSp + numLocals;
               fiber.frames[fiber.frames.length - 1] = { closure: fn, ip: 0, baseSp };
@@ -824,7 +845,7 @@ function run(vm) {
               fiber.extraArgs.push(extra);
               const baseSp = f.baseSp;
               const numLocals = fn.proto.num_locals;
-              fiber.stack.fill(VUNIT, baseSp, baseSp + numLocals);
+              ensureCap(fiber, baseSp + numLocals); fiber.stack.fill(VUNIT, baseSp, baseSp + numLocals);
               for (let i = 0; i < arity; i++) fiber.stack[baseSp + i] = useArgs[i];
               fiber.sp = baseSp + numLocals;
               fiber.frames[fiber.frames.length - 1] = { closure: fn, ip: 0, baseSp };
@@ -1075,6 +1096,7 @@ function run(vm) {
         if (cont.used) error("continuation already resumed");
         cont.used = true;
         const bodyFiber = cont.fiber;
+        ensureCap(bodyFiber, bodyFiber.sp + 1);
         bodyFiber.stack[bodyFiber.sp++] = v;
         // Reinstall caught handler with original body fiber
         const he = {
@@ -1253,7 +1275,7 @@ function run(vm) {
           if (fnVal.proto.arity === 1) {
             const base = fiber.sp;
             const numLocals = fnVal.proto.num_locals;
-            fiber.stack.fill(VUNIT, base, base + numLocals);
+            ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
             fiber.stack[base] = arg;
             fiber.sp = base + numLocals;
             fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
@@ -1266,7 +1288,7 @@ function run(vm) {
             const cls = fnVal.closure;
             const base = fiber.sp;
             const numLocals = cls.proto.num_locals;
-            fiber.stack.fill(VUNIT, base, base + numLocals);
+            ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
             for (let i = 0; i < newArgs.length; i++) fiber.stack[base + i] = newArgs[i];
             fiber.sp = base + numLocals;
             fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
@@ -1325,7 +1347,7 @@ function run(vm) {
           if (fnVal.proto.arity === 1) {
             const base = fiber.sp;
             const numLocals = fnVal.proto.num_locals;
-            fiber.stack.fill(VUNIT, base, base + numLocals);
+            ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
             fiber.stack[base] = arg;
             fiber.sp = base + numLocals;
             fiber.frames.push({ closure: fnVal, ip: 0, baseSp: base });
@@ -1338,7 +1360,7 @@ function run(vm) {
             const cls = fnVal.closure;
             const base = fiber.sp;
             const numLocals = cls.proto.num_locals;
-            fiber.stack.fill(VUNIT, base, base + numLocals);
+            ensureCap(fiber, base + numLocals); fiber.stack.fill(VUNIT, base, base + numLocals);
             for (let i = 0; i < newArgs.length; i++) fiber.stack[base + i] = newArgs[i];
             fiber.sp = base + numLocals;
             fiber.frames.push({ closure: cls, ip: 0, baseSp: base });
@@ -1417,6 +1439,7 @@ function executeProto(vm, proto) {
   const fiber = makeFiber();
   const closure = vclosure(proto, []);
   const numLocals = proto.num_locals;
+  ensureCap(fiber, numLocals);
   fiber.stack.fill(VUNIT, 0, numLocals);
   fiber.sp = numLocals;
   fiber.frames.push({ closure, ip: 0, baseSp: 0 });

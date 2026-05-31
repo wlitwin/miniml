@@ -2185,7 +2185,6 @@ try perform oo 5 with
 --- expect: 1006
 
 --- test: try installed each loop iteration
---- skip-native: native segfaults on an effect handler inside a for-loop (pre-existing native bug, tracked)
 effect SigV =
   sig_v : int -> int
 end
@@ -2300,3 +2299,22 @@ let f x =
 ;;
 f 5
 --- expect-type-error: return cannot escape
+
+--- test: escaping continuation captures a local mutable
+effect Esc2 =
+  esc2 : unit -> int
+end
+let mut saved = (fn () -> 0)
+let run () =
+  handle
+    (let mut counter = 10 in
+     let x = perform esc2 () in
+     counter := counter + x;
+     counter)
+  with
+  | return v -> v
+  | esc2 () k -> (saved := (fn () -> resume k 5); 0)
+in
+let _ = run () in
+saved ()
+--- expect: 15

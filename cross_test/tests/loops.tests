@@ -865,3 +865,21 @@ let find_index target xs =
 in
 find_index 30 [10; 20; 30; 40; 50]
 --- expect: 2
+
+--- test: return stops for-in loop at first match (concrete list)
+let first_gt2 () =
+  for x in [1; 2; 3; 4; 5] do
+    if x > 2 do return x end
+  end;
+  0 - 1
+in
+first_gt2 ()
+--- expect: 3
+
+--- test: break stops for-in loop at first match (concrete list)
+let mut found = 0 - 1 in
+for x in [1; 2; 3; 4; 5] do
+  if x > 2 do (found := x; break) else ()
+end;
+found
+--- expect: 3
