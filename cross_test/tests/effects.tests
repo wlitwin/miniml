@@ -2236,3 +2236,67 @@ let a = try perform e2 1 with | e2 x -> x + 10 in
 let b = try perform e2 2 with | e2 x -> x + 20 in
 a + b
 --- expect: 33
+
+--- test: return escapes an all-THOpTry handle body
+--- skip-native: native has no inline handler lowering yet, so `return` cannot escape a handler body there (Increment 3 / tracked)
+effect PingE =
+  pingr : int -> int
+end
+let f x =
+  let y = handle (let z = x + 1 in return (z * 10)) with
+  | return v -> v
+  | pingr n k -> n
+  in
+  y + 999
+;;
+f 5
+--- expect: 60
+
+--- test: return inside a try body early-exits the function
+--- skip-native: native has no inline handler lowering yet, so `return` cannot escape a try body there (Increment 3 / tracked)
+effect Stop2 =
+  stop2 : int -> int
+end
+let g x =
+  let _ = try (if x > 0 do return 42 else perform stop2 x) with | stop2 v -> v in
+  100
+;;
+g 7
+--- expect: 42
+
+--- test: return escapes nested all-THOpTry handles
+--- skip-native: native has no inline handler lowering yet, so `return` cannot escape a handler body there (Increment 3 / tracked)
+effect AA = aaa : int -> int end
+effect BB = bbb : int -> int end
+let f x =
+  let y = handle (handle (return (x + 7)) with | return v -> v | bbb m k -> m)
+          with | return v -> v | aaa n k -> n
+  in
+  y + 999
+;;
+f 1
+--- expect: 8
+
+--- test: return inside a lambda within a handler body targets the lambda
+effect PingL = pingl : int -> int end
+let f x =
+  let y = handle (let h = (fn w -> if w > 0 do return (w * 2) else 99) in h x) with
+  | return v -> v
+  | pingl n k -> n
+  in
+  y + 1000
+;;
+f 3
+--- expect: 1006
+
+--- test: return cannot escape a resuming (fiber) handler body
+effect AskR =
+  askr : int -> int
+end
+let f x =
+  handle (return (perform askr x)) with
+  | return v -> v + 1
+  | askr n k -> resume k (n + 1)
+;;
+f 5
+--- expect-type-error: return cannot escape

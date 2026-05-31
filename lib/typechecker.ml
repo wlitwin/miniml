@@ -2733,14 +2733,10 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
       match ctx.return_type with
       | None -> error ctx "return outside of function"
       | Some ret_ty ->
-          if ctx.inside_handler then
-            error ctx
-              "return is not supported inside an effect handler body \
-               (handle/try/provide). The body is reified as a separate \
-               computation, so `return` cannot jump out of the enclosing \
-               function from here. Refactor to return a value from the handler \
-               normally (e.g. via the return arm), or move the `return` outside \
-               the handler.";
+          (* Whether this `return` can escape any enclosing effect handler is
+             validated later on the classified AST (Typechecker.check_returns),
+             where THOpTry tags are final — an all-THOpTry handler runs its body
+             inline and supports early `return`, a fiber-based one does not. *)
           ctx.return_used := true;
           let e_te = synth ctx level e in
           try_unify ctx e_te.ty ret_ty;
@@ -8595,17 +8591,93 @@ let rec classify_texpr (te : texpr) : texpr =
       { te with expr = TEHandle (body', arms') }
   | _ -> { te with expr = map_texpr_children classify_texpr te }
 
-let rec classify_handlers (program : tprogram) : tprogram =
+(* Validate `return` against effect-handler boundaries, on the CLASSIFIED AST so
+   the THOpTry tags are final and match the compiler's inline-vs-fiber decision.
+
+   `return` compiles to FUNC_RETURN, which targets the enclosing function's frame
+   on the CURRENT fiber. An all-THOpTry handle runs its body INLINE (same frame, no
+   fiber — see Compiler.compile_handle_try), so `return` reaches the function. A
+   fiber-based handle (any THOpProvide/THOp arm, or a no-op handle) reifies its body
+   as a thunk on a separate fiber, so `return` cannot escape it — reject it there.
+
+   [barrier] is true once we are inside a fiber-based handle body since the nearest
+   enclosing function. Crossing a function/closure boundary resets it (a `return`
+   binds to its own nearest enclosing function). Handler arms run at the handle's own
+   level (on the parent fiber), so they inherit the ambient [barrier].
+
+   [inline_handlers] is true for backends that compile all-THOpTry handlers with an
+   inline body (the bytecode VMs — see Compiler.compile_handle_try). The native
+   backend has no such lowering yet, so it passes false: every handler body is a
+   fiber barrier there, and `return` crossing one is rejected (a clean error instead
+   of a silent miscompile). *)
+let rec check_returns inline_handlers barrier (te : texpr) =
+  let recur b e = check_returns inline_handlers b e in
+  match te.expr with
+  | TEReturn e ->
+      if barrier then
+        error_at te.loc
+          "return cannot escape this effect handler: its body runs on a \
+           separate fiber. Only non-resumptive (try-style) handlers — whose \
+           ops never resume — run the body inline and support early `return` \
+           (and only on the bytecode backends, not native). Refactor to return \
+           via the handler's return arm, or move the `return` outside the \
+           handler.";
+      recur barrier e
+  | TEFun (_, body, _) -> recur false body
+  | TELetRec (_, _, fn, e2) ->
+      recur false fn;
+      recur barrier e2
+  | TELetRecAnd (binds, e2) ->
+      List.iter (fun (_, e) -> recur false e) binds;
+      recur barrier e2
+  | TEHandle (body, arms) ->
+      let op_arms =
+        List.filter (function THReturn _ -> false | _ -> true) arms
+      in
+      let inline =
+        inline_handlers && op_arms <> []
+        && List.for_all (function THOpTry _ -> true | _ -> false) op_arms
+      in
+      recur (barrier || not inline) body;
+      List.iter
+        (function
+          | THReturn (_, e)
+          | THOp { body = e; _ }
+          | THOpProvide (_, _, e)
+          | THOpTry (_, _, e) ->
+              recur barrier e)
+        arms
+  | _ ->
+      ignore
+        (map_texpr_children
+           (fun c ->
+             recur barrier c;
+             c)
+           te)
+
+(* [inline_handlers]=false (native) treats every handler body as a fiber barrier;
+   true (bytecode VMs) allows `return` to escape all-THOpTry handler bodies. *)
+let rec classify_handlers_with inline_handlers (program : tprogram) : tprogram =
+  let classify e =
+    let e = classify_texpr e in
+    check_returns inline_handlers false e;
+    e
+  in
   List.map
     (fun decl ->
       match decl with
-      | TDLet (n, e) -> TDLet (n, classify_texpr e)
-      | TDLetMut (n, e) -> TDLetMut (n, classify_texpr e)
-      | TDLetRec (n, e) -> TDLetRec (n, classify_texpr e)
-      | TDExpr e -> TDExpr (classify_texpr e)
+      | TDLet (n, e) -> TDLet (n, classify e)
+      | TDLetMut (n, e) -> TDLetMut (n, classify e)
+      | TDLetRec (n, e) -> TDLetRec (n, classify e)
+      | TDExpr e -> TDExpr (classify e)
       | TDLetRecAnd binds ->
-          TDLetRecAnd (List.map (fun (n, e) -> (n, classify_texpr e)) binds)
+          TDLetRecAnd (List.map (fun (n, e) -> (n, classify e)) binds)
       | TDModule (name, decls, schemes) ->
-          TDModule (name, classify_handlers decls, schemes)
+          TDModule (name, classify_handlers_with inline_handlers decls, schemes)
       | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDOpen _ -> decl)
     program
+
+(* Bytecode backends: handlers may be inline-lowered, so `return` can escape an
+   all-THOpTry handler body. *)
+let classify_handlers (program : tprogram) : tprogram =
+  classify_handlers_with true program

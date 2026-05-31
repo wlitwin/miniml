@@ -142,6 +142,7 @@ let is_selfhost_type_error msg =
      (* covers "type X expects N type argument(s)" and "effect X expects N type parameter(s)" *)
   || contains_substring msg "record update on non-record"
   || contains_substring msg "has unhandled effects"
+  || contains_substring msg "cannot escape this effect handler"
   || contains_substring msg "unknown constructor"
   || contains_substring msg "unknown module"
   || contains_substring msg "break outside"

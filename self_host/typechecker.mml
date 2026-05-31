@@ -2565,9 +2565,6 @@ module Typechecker =
         match ctx.return_type with
         | None -> error ctx "return outside of function"
         | Some ret_ty -> 
-          if ctx.inside_handler do
-            error ctx "return is not supported inside an effect handler body (handle/try/provide). The body is reified as a separate computation, so `return` cannot jump out of the enclosing function from here. Refactor to return a value from the handler normally (e.g. via the return arm), or move the `return` outside the handler."
-          end;
           Ref.set ctx.return_used true;
           let e_te = synth ctx level e in
           try_unify ctx e_te.ty ret_ty;
@@ -6537,17 +6534,56 @@ module Typechecker =
     | _ -> {te with expr = map_texpr_children classify_texpr te}
 
 
-  pub let rec classify_handlers (program : tprogram) : tprogram = List.map (fn decl ->
-    do
-      match decl with
-      | TDLet ((n, e)) -> TDLet (n, classify_texpr e)
-      | TDLetMut ((n, e)) -> TDLetMut (n, classify_texpr e)
-      | TDLetRec ((n, e)) -> TDLetRec (n, classify_texpr e)
-      | TDExpr e -> TDExpr (classify_texpr e)
-      | TDLetRecAnd binds -> TDLetRecAnd (List.map (fn (n, e) -> (n, classify_texpr e)) binds)
-      | TDModule ((name, decls, schemes)) -> TDModule (name, classify_handlers decls, schemes)
-      | ((((TDEffect _ | TDType _) | TDClass _) | TDExtern _) | TDOpen _) -> decl
+  pub let rec check_returns inline_handlers barrier (te : texpr) =
+    let recur b e = check_returns inline_handlers b e in
+    match te.expr with
+    | TEReturn e -> 
+      if barrier do
+        error_at te.loc "return cannot escape this effect handler: its body runs on a separate fiber. Only non-resumptive (try-style) handlers — whose ops never resume — run the body inline and support early `return` (and only on the bytecode backends, not native). Refactor to return via the handler's return arm, or move the `return` outside the handler."
+      end;
+      recur barrier e
+    | TEFun ((_, body, _)) -> recur false body
+    | TELetRec ((_, _, fn_, e2)) -> 
+      recur false fn_;
+      recur barrier e2
+    | TELetRecAnd ((binds, e2)) -> 
+      List.iter (fn (_, e) -> recur false e) binds;
+      recur barrier e2
+    | TEHandle ((body, arms)) -> 
+      let op_arms = List.filter (fn
+        | THReturn _ -> false
+        | _ -> true
+      ) arms in
+      let inline = inline_handlers && ((op_arms <> []) && (List.forall (fn
+        | THOpTry _ -> true
+        | _ -> false
+      ) op_arms)) in
+      recur (barrier || (not inline)) body;
+      List.iter (fn
+        | (((THReturn ((_, e)) | THOp {body = e; _}) | THOpProvide ((_, _, e))) | THOpTry ((_, _, e))) -> recur barrier e
+      ) arms
+    | _ -> (map_texpr_children (fn c -> recur barrier c;
+    c) te; ())
 
-    end) program
+
+  pub let rec classify_handlers_with inline_handlers (program : tprogram) : tprogram =
+    let classify e =
+      let e = classify_texpr e in
+      check_returns inline_handlers false e;
+      e in
+    List.map (fn decl ->
+      do
+        match decl with
+        | TDLet ((n, e)) -> TDLet (n, classify e)
+        | TDLetMut ((n, e)) -> TDLetMut (n, classify e)
+        | TDLetRec ((n, e)) -> TDLetRec (n, classify e)
+        | TDExpr e -> TDExpr (classify e)
+        | TDLetRecAnd binds -> TDLetRecAnd (List.map (fn (n, e) -> (n, classify e)) binds)
+        | TDModule ((name, decls, schemes)) -> TDModule (name, classify_handlers_with inline_handlers decls, schemes)
+        | ((((TDEffect _ | TDType _) | TDClass _) | TDExtern _) | TDOpen _) -> decl
+
+      end) program
+
+  pub let classify_handlers (program : tprogram) : tprogram = classify_handlers_with true program
 
 end
