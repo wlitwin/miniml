@@ -740,6 +740,22 @@ let emit_break_action ctx v =
       Ir_emit.emit_ret ctx.ir "i64" v
   | [] -> failwith "native codegen: break outside loop"
 
+(* Emit the terminator for a `continue` targeting the nearest enclosing loop. The
+   continue-escape mirror of emit_break_action (continue carries no value). *)
+let emit_continue_action ctx =
+  match ctx.loop_stack with
+  | (cond_label, _) :: _ -> Ir_emit.emit_br ctx.ir ~label:cond_label
+  | [] when ctx.in_handler_thunk ->
+      emit_handler_mark_restore ctx;
+      add_extern ctx "mml_set_continue_escape" "void" [];
+      Ir_emit.emit_call_void ctx.ir ~name:"mml_set_continue_escape" ~args:[];
+      Ir_emit.emit_ret ctx.ir "i64" unit_value
+  | [] when ctx.fold_break_depth > 0 ->
+      (* Return unit from the fold callback to continue iteration. *)
+      emit_handler_mark_restore ctx;
+      Ir_emit.emit_ret ctx.ir "i64" unit_value
+  | [] -> failwith "native codegen: continue outside loop"
+
 (* ---- Expression codegen ---- *)
 
 let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
@@ -874,23 +890,12 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
       Ir_emit.emit_label ctx.ir dead;
       ctx.current_label <- dead;
       v
-  | TEContinueLoop -> (
-      match ctx.loop_stack with
-      | (cond_label, _) :: _ ->
-          (* While loop continue *)
-          Ir_emit.emit_br ctx.ir ~label:cond_label;
-          let dead = fresh_label ctx "dead" in
-          Ir_emit.emit_label ctx.ir dead;
-          ctx.current_label <- dead;
-          unit_value
-      | [] when ctx.fold_break_depth > 0 ->
-          (* Fold continue: return unit from callback to continue iteration *)
-          Ir_emit.emit_ret ctx.ir "i64" unit_value;
-          let dead = fresh_label ctx "dead" in
-          Ir_emit.emit_label ctx.ir dead;
-          ctx.current_label <- dead;
-          unit_value
-      | [] -> failwith "native codegen: continue outside loop")
+  | TEContinueLoop ->
+      emit_continue_action ctx;
+      let dead = fresh_label ctx "dead" in
+      Ir_emit.emit_label ctx.ir dead;
+      ctx.current_label <- dead;
+      unit_value
   | TEFun _ -> emit_lambda_as_closure ctx expr
   | TEReturn e ->
       let v = emit_expr ctx e in
@@ -5923,7 +5928,26 @@ and emit_handle ctx body_expr arms =
         in
         emit_break_action ctx bv;
         Ir_emit.emit_label ctx.ir cont2;
-        ctx.current_label <- cont2
+        ctx.current_label <- cont2;
+        (* Likewise re-raise a `continue` that targeted an enclosing loop. *)
+        add_extern ctx "mml_check_continue_escape" "i64" [];
+        let cflag =
+          Ir_emit.emit_call ctx.ir ~ret_ty:"i64"
+            ~name:"mml_check_continue_escape" ~args:[]
+        in
+        let has_cont =
+          Ir_emit.emit_icmp ctx.ir ~cmp:"ne" ~ty:"i64" ~lhs:cflag ~rhs:"0"
+        in
+        let cl = fresh_label ctx "h_continue" in
+        let cont3 = fresh_label ctx "h_no_continue" in
+        Ir_emit.emit_condbr ctx.ir ~cond:has_cont ~if_true:cl ~if_false:cont3;
+        Ir_emit.emit_label ctx.ir cl;
+        ctx.current_label <- cl;
+        add_extern ctx "mml_clear_continue_escape" "void" [];
+        Ir_emit.emit_call_void ctx.ir ~name:"mml_clear_continue_escape" ~args:[];
+        emit_continue_action ctx;
+        Ir_emit.emit_label ctx.ir cont3;
+        ctx.current_label <- cont3
       end
     end;
     hv

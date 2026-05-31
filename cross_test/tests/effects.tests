@@ -2438,3 +2438,27 @@ in
 let _ = go () in
 sum
 --- expect: 3
+
+--- test: continue out of a fold-loop from inside a try body
+effect Hc = hc : int -> unit end
+let mut sum = 0
+let go () =
+  for x in [1; 2; 3; 4; 5] do
+    try (if x = 3 do continue else (sum := sum + x; perform hc x)) with
+    | hc n -> ()
+  end
+in
+let _ = go () in
+sum
+--- expect: 12
+
+--- test: continue out of a while-loop from inside a try body
+effect Hd = hd : int -> unit end
+let mut sum = 0
+let _ = for n = 1; n <= 5; n + 1 do
+  try ((if n = 3 do continue else ()); sum := sum + n; perform hd n) with
+  | hd x -> ()
+end
+;;
+sum
+--- expect: 12

@@ -170,6 +170,9 @@ mml_value mml_get_early_return(void);
 void mml_set_break_escape(mml_value val);
 int64_t mml_check_break_escape(void);
 mml_value mml_get_break_escape(void);
+void mml_set_continue_escape(void);
+int64_t mml_check_continue_escape(void);
+void mml_clear_continue_escape(void);
 
 /* Index operations */
 mml_value mml_list_nth(mml_value idx, mml_value lst);
