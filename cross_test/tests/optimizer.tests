@@ -352,3 +352,24 @@ let make_adder x =
 let f = make_adder 5;;
 f 1 2
 --- expect: 13
+
+--- test: mutable field read not inlined across mutation
+type box = { mut v: int }
+let b = { v = 10 }
+let saved = b.v
+let () = b.v := 99
+;;
+saved
+--- expect: 10
+
+--- test: save-restore of mutable field via let binding
+type cell = { mut flag: bool }
+let c = { flag = false }
+let roundtrip () =
+  let saved = c.flag in
+  c.flag := true;
+  c.flag := saved;
+  c.flag
+;;
+roundtrip ()
+--- expect: false

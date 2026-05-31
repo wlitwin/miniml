@@ -349,6 +349,36 @@ handle body with
 | `provide/with` | Always (once) | Implicit — arm result is resumed | Dependency injection, config, context |
 | `try/with` | Never | None | Exceptions, early return, abort |
 
+### `return` and handler bodies
+
+The `return` keyword (early return from the enclosing function) cannot be used
+*inside* a handler body — i.e. the body of a `handle`/`with`, `try`/`with`, or
+`provide`/`with`. The body is reified as a separate computation that the
+handler runs, so a `return` there has no enclosing function frame to jump out
+of. Doing so is a compile-time error.
+
+To produce a result from a handler, return the value normally — for example
+from the `return` arm of `handle`/`with`, or as the final value of the body —
+or place the `return` outside the handler:
+
+```
+-- Not allowed: `return` inside the handler body
+let f xs =
+  try
+    for x in xs do if x < 0 do return "neg" end end;  -- compile error
+    "ok"
+  with _ -> "err"
+
+-- Instead: let the handler produce the value, then return it
+let f xs =
+  let result =
+    try
+      ...
+    with _ -> "err"
+  in
+  result
+```
+
 ### Nested `provide`
 
 Handlers nest naturally — inner handlers shadow outer ones:

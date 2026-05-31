@@ -838,6 +838,24 @@ end;
 last_i
 --- expect: 2
 
+--- test: indexed for with break on first element
+let mut last_i = -1 in
+for x in [10; 20; 30] with index i do
+  last_i := i;
+  if x = 10 do break end
+end;
+last_i
+--- expect: 0
+
+--- test: indexed for break stops iteration count
+let mut n = 0 in
+for x in [5; 6; 7; 8; 9] with index i do
+  n := n + 1;
+  if i = 1 do break end
+end;
+n
+--- expect: 2
+
 --- test: indexed for replaces manual index pattern
 let find_index target xs =
   for x in xs with index i do

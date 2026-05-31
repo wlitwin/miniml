@@ -359,6 +359,7 @@ typedef struct mml_fiber {
     const char *op_name;      /* pending perform op name */
     int64_t op_arg;           /* pending perform argument */
     int state;                /* MML_FIBER_RUNNING/YIELDED/COMPLETED */
+    int stack_freed;          /* 1 once the guarded stack has been released */
 } mml_fiber;
 
 typedef struct mml_continuation {

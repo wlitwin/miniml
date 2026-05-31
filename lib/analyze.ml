@@ -89,15 +89,10 @@ let rec expr_size te =
   iter_texpr_children (fun child -> n := !n + expr_size child) te;
   !n
 
-(* Count occurrences of a variable name in an expression *)
-let count_var_uses name te =
-  let n = ref 0 in
-  let rec go te =
-    (match te.expr with TEVar v when String.equal v name -> incr n | _ -> ());
-    iter_texpr_children go te
-  in
-  go te;
-  !n
+(* Count free occurrences of a variable name in an expression, correctly
+   handling shadowing (delegates to the optimizer's shadowing-aware counter so
+   statistics match what the optimizer actually sees). *)
+let count_var_uses name te = Texpr_opt.count_free_uses name te
 
 (* Check if something is a literal *)
 let is_literal te =

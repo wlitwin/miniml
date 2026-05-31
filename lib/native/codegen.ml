@@ -1012,7 +1012,7 @@ and emit_let ctx name init body is_mutable =
       else emit_let_value ctx name init body is_mutable
   | _ -> emit_let_value ctx name init body is_mutable
 
-and emit_let_value ctx name init body is_mutable =
+and emit_let_value ?(emit_body = emit_expr) ctx name init body is_mutable =
   let v = emit_expr ctx init in
   if is_mutable && is_captured_in_closures name body then begin
     (* Mutable variable captured by a closure: use heap ref cell *)
@@ -1024,7 +1024,7 @@ and emit_let_value ctx name init body is_mutable =
     Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:cell_i64 ~ptr:alloca_ptr;
     push_scope ctx;
     bind_var ctx name (MutRefCell alloca_ptr);
-    let result = emit_expr ctx body in
+    let result = emit_body ctx body in
     pop_scope ctx;
     result
   end
@@ -1033,7 +1033,7 @@ and emit_let_value ctx name init body is_mutable =
     Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr;
     push_scope ctx;
     bind_var ctx name (if is_mutable then MutLocal ptr else Local ptr);
-    let result = emit_expr ctx body in
+    let result = emit_body ctx body in
     pop_scope ctx;
     result
   end
@@ -2994,6 +2994,18 @@ and emit_fold_with_break_check ctx fold_expr =
     collection types (list, array) and routes to the C runtime breakable fold,
     bypassing the MiniML typeclass fold which doesn't check mml_fold_broken. *)
 and emit_for_loop_expr ctx fold_expr =
+  match fold_expr.Typechecker.expr with
+  | TELetMut (name, init, body) ->
+      (* Indexed for-loops desugar to `let mut __for_index = 0 in fold ...`.
+         Peel the binding and route the inner fold through this function so it
+         still uses the breakable runtime fold (otherwise `break` doesn't stop
+         iteration and the loop index over-counts). *)
+      emit_let_value ~emit_body:emit_for_loop_expr ctx name init body true
+  | TELet (name, _scheme, init, body) ->
+      emit_let_value ~emit_body:emit_for_loop_expr ctx name init body false
+  | _ -> emit_for_loop_app ctx fold_expr
+
+and emit_for_loop_app ctx fold_expr =
   (* Try to extract the fold call pattern: fold callback init collection *)
   let rec extract_fold_app e =
     match e.Typechecker.expr with

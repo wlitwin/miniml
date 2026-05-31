@@ -16,6 +16,7 @@ type test_case = {
   source : string;
   expect : expectation;
   expect_native : expectation option;
+  skip_native : string option;  (* reason; test is skipped on the native backend *)
 }
 
 type parse_state = Idle | CollectingSource of string
@@ -26,11 +27,21 @@ let parse_test_file filename =
   let state = ref Idle in
   let source_buf = Buffer.create 256 in
   let pending_native = ref None in
+  let pending_skip = ref None in
   let flush name expect =
     let source = String.trim (Buffer.contents source_buf) in
-    tests := { name; source; expect; expect_native = !pending_native } :: !tests;
+    tests :=
+      {
+        name;
+        source;
+        expect;
+        expect_native = !pending_native;
+        skip_native = !pending_skip;
+      }
+      :: !tests;
     state := Idle;
     pending_native := None;
+    pending_skip := None;
     Buffer.clear source_buf
   in
   (try
@@ -43,7 +54,18 @@ let parse_test_file filename =
          in
          state := CollectingSource name;
          pending_native := None;
+         pending_skip := None;
          Buffer.clear source_buf
+       end
+       else if
+         String.length line > 17 && String.sub line 0 17 = "--- skip-native: "
+       then begin
+         match !state with
+         | CollectingSource _ ->
+             pending_skip :=
+               Some
+                 (String.trim (String.sub line 17 (String.length line - 17)))
+         | Idle -> ()
        end
        else if
          String.length line > 19 && String.sub line 0 19 = "--- expect-native: "
@@ -176,6 +198,9 @@ let run_tests tests =
   List.iter
     (fun tc ->
       flush stdout;
+      match tc.skip_native with
+      | Some reason -> skip tc.name reason
+      | None ->
       match tc.expect with
       | Value _ -> (
           let expected =

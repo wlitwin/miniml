@@ -839,6 +839,27 @@ apply print 99
 
 --- expect: 42
 
+--- test: do end block as function argument
+let f a = a () in
+f do fn -> "a" end
+--- expect: a
+
+--- test: do end block argument with sequence body
+let call thunk = thunk () in
+let mut x = 0 in
+call do fn -> x := 41; x := x + 1; x end
+--- expect: 42
+
+--- test: do end block argument inside if condition
+let g h = h () + 1 in
+if (g do fn -> 10 end) > 5 do 100 else 0
+--- expect: 100
+
+--- test: do end block argument does not break if/else
+let f a = a () in
+if true do f do fn -> 7 end else 0
+--- expect: 7
+
 === Failwith Tests ===
 
 --- test: failwith raises runtime error
@@ -1109,3 +1130,9 @@ let rec zip xs ys = match (xs, ys) with
 in
 [1; 2; 3] `zip` [4; 5; 6]
 --- expect: [(1, 4); (2, 5); (3, 6)]
+
+--- test: redundant match arm is a warning not an error
+let f x = match x with | 1 -> "one" | 1 -> "again" | _ -> "other"
+;;
+f 1
+--- expect: one

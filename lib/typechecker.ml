@@ -2265,6 +2265,91 @@ let exhaustiveness_check ctx ty arms =
       (Printf.sprintf "non-exhaustive match, missing: %s"
          (String.concat ", " missing))
 
+(* Sound (intentionally incomplete) pattern subsumption: [pat_subsumes p q]
+   returns true only when every value matched by [q] is also matched by [p].
+   Conservative — returns false whenever unsure, so it can never report a
+   reachable arm as redundant. Record/array/map/set/pin patterns are treated
+   opaquely (no subsumption) for safety. *)
+let rec pat_subsumes p q =
+  match (p, q) with
+  | (Ast.PatWild | Ast.PatVar _), _ -> true
+  | Ast.PatAs (p, _), _ -> pat_subsumes p q
+  | _, Ast.PatAs (q, _) -> pat_subsumes p q
+  | Ast.PatAnnot (p, _), _ -> pat_subsumes p q
+  | _, Ast.PatAnnot (q, _) -> pat_subsumes p q
+  | Ast.PatOr (p1, p2), _ -> pat_subsumes p1 q || pat_subsumes p2 q
+  | _, Ast.PatOr (q1, q2) -> pat_subsumes p q1 && pat_subsumes p q2
+  | Ast.PatInt a, Ast.PatInt b -> a = b
+  | Ast.PatFloat a, Ast.PatFloat b -> a = b
+  | Ast.PatBool a, Ast.PatBool b -> a = b
+  | Ast.PatString a, Ast.PatString b -> String.equal a b
+  | Ast.PatUnit, Ast.PatUnit -> true
+  | Ast.PatNil, Ast.PatNil -> true
+  | Ast.PatTuple ps, Ast.PatTuple qs ->
+      List.length ps = List.length qs && List.for_all2 pat_subsumes ps qs
+  | Ast.PatCons (h1, t1), Ast.PatCons (h2, t2) ->
+      pat_subsumes h1 h2 && pat_subsumes t1 t2
+  | Ast.PatConstruct (c1, s1), Ast.PatConstruct (c2, s2) ->
+      String.equal (ctor_short_name c1) (ctor_short_name c2)
+      &&
+      (match (s1, s2) with
+      | None, None -> true
+      | Some a, Some b -> pat_subsumes a b
+      | _ -> false)
+  | Ast.PatPolyVariant (c1, s1), Ast.PatPolyVariant (c2, s2) ->
+      String.equal c1 c2
+      &&
+      (match (s1, s2) with
+      | None, None -> true
+      | Some a, Some b -> pat_subsumes a b
+      | _ -> false)
+  | _ -> false
+
+(* A concrete pattern is anything other than a bare wildcard/variable binding.
+   We only use concrete patterns to prove redundancy so that compiler-generated
+   catch-all arms (e.g. the `| _ -> break` produced by while-let desugaring)
+   never trigger a spurious "unreachable arm" warning. *)
+let rec is_concrete_pat = function
+  | Ast.PatWild | Ast.PatVar _ -> false
+  | Ast.PatAs (p, _) | Ast.PatAnnot (p, _) -> is_concrete_pat p
+  | Ast.PatOr (a, b) -> is_concrete_pat a && is_concrete_pat b
+  | _ -> true
+
+(* Non-fatal compiler warnings are accumulated here (rather than printed
+   directly) so the same code translates cleanly to the self-hosted compiler,
+   which has no stderr primitive. The OCaml driver flushes them after type
+   checking; the self-host simply leaves them unread. *)
+let warnings : string list ref = ref []
+
+let warn_at loc msg =
+  warnings :=
+    Printf.sprintf "Warning at line %d: %s" loc.Token.line msg :: !warnings
+
+let take_warnings () =
+  let w = List.rev !warnings in
+  warnings := [];
+  w
+
+(* Emit a warning for any match arm made unreachable by an earlier, concrete,
+   unguarded arm whose pattern subsumes it. *)
+let redundancy_check ctx arms =
+  let rec go earlier = function
+    | [] -> ()
+    | (pat, guard, _body) :: rest ->
+        if List.exists (fun p -> pat_subsumes p pat) earlier then
+          warn_at ctx.loc
+            "unreachable match arm: this pattern is already covered by an \
+             earlier arm";
+        (* Only unguarded, concrete earlier patterns can prove redundancy. *)
+        let earlier =
+          match guard with
+          | None when is_concrete_pat pat -> pat :: earlier
+          | _ -> earlier
+        in
+        go earlier rest
+  in
+  go [] arms
+
 (* ---- Module lookup (used by ELocalOpen in synth) ---- *)
 
 let find_module_in_env type_env mod_name =
@@ -2649,7 +2734,13 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
       | None -> error ctx "return outside of function"
       | Some ret_ty ->
           if ctx.inside_handler then
-            error ctx "Type error: return inside try/with is not supported";
+            error ctx
+              "return is not supported inside an effect handler body \
+               (handle/try/provide). The body is reified as a separate \
+               computation, so `return` cannot jump out of the enclosing \
+               function from here. Refactor to return a value from the handler \
+               normally (e.g. via the return arm), or move the `return` outside \
+               the handler.";
           ctx.return_used := true;
           let e_te = synth ctx level e in
           try_unify ctx e_te.ty ret_ty;
@@ -3545,6 +3636,7 @@ and synth_match expected_ty ctx level scrut arms partial =
           (* Check exhaustiveness *)
           if partial = Ast.Total then
             exhaustiveness_check ctx (Types.repr scrut_te.ty) all_arms;
+          redundancy_check ctx all_arms;
           mk ctx (TEMatch (scrut_te, all_arms, partial)) result_ty)
   | None -> (
       (* Regular ADT match — original logic *)
@@ -3580,6 +3672,7 @@ and synth_match expected_ty ctx level scrut arms partial =
           (* Check exhaustiveness *)
           if partial = Ast.Total then
             exhaustiveness_check ctx (Types.repr scrut_te.ty) all_arms;
+          redundancy_check ctx all_arms;
           mk ctx (TEMatch (scrut_te, all_arms, partial)) result_ty)
 
 (* ---- Check ---- *)
@@ -3885,6 +3978,26 @@ and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot
 
 let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
   let num_params = List.length type_params in
+  (* A type definition shadows any pre-existing short-name alias of the same
+     name imported from an opened module. For example, opening Result adds the
+     alias `t -> Result.t`; a later `type t = ...` must refer to the new type,
+     not Result.t. (On the module path [type_name] is qualified, e.g.
+     "Result.t", so the module's own short alias `t -> Result.t` is unaffected.) *)
+  let ctx =
+    if List.mem_assoc type_name ctx.type_env.Types.type_aliases then
+      {
+        ctx with
+        type_env =
+          {
+            ctx.type_env with
+            Types.type_aliases =
+              List.filter
+                (fun (n, _) -> not (String.equal n type_name))
+                ctx.type_env.Types.type_aliases;
+          };
+      }
+    else ctx
+  in
   match def with
   | Ast.TDVariant ctors ->
       let pre_ctx =

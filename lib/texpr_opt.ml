@@ -68,7 +68,13 @@ let rec is_pure ~mutables ~pure_fns te =
       is_pure ~mutables ~pure_fns h && is_pure ~mutables ~pure_fns t
   | TEConstruct (_, None) -> true
   | TEConstruct (_, Some e) -> is_pure ~mutables ~pure_fns e
-  | TEField (e, _) -> is_pure ~mutables ~pure_fns e
+  (* A record field read is NOT pure for inlining purposes: the field may be
+     mutable, so its value can change if the record is mutated between the
+     binding site and the use site. Treating it as pure let the single-use-let
+     inliner move the read across a mutation (e.g. `let saved = s.f in s.f := x;
+     ... saved ...`), reading the already-updated value. This mirrors the
+     conservative treatment of function application below. *)
+  | TEField (_, _) -> false
   | TEBinop (op, l, r) -> (
       (* Division/modulo can raise *)
       match op with

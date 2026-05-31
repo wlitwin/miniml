@@ -238,3 +238,24 @@ for x in t with sum = 0 do sum + x end
       ;;
       match w with Wrap r -> r.val_ := 42; r.val_
 --- expect: 42
+
+--- test: top-level type t shadows stdlib Result.t alias
+type t = A | B | C
+let f (x : t) = match x with | A -> 1 | B -> 2 | C -> 3
+let () = ()
+;;
+f B
+--- expect: 2
+
+--- test: top-level type t exhaustiveness witness is correct
+type t = A | B | C
+let f x = match x with | A -> 1 | B -> 2
+;;
+f A
+--- expect-type-error: missing: C
+
+--- test: qualified Result.t still resolves after shadowing fix
+let r : (int, string) Result.t = Ok 7
+;;
+match r with Ok n -> n | Err _ -> 0
+--- expect: 7

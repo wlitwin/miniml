@@ -859,6 +859,9 @@ let eval_setup state source =
   let ctx', typed_program =
     Typechecker.check_program_in_ctx state.ctx program
   in
+  List.iter
+    (fun w -> Printf.eprintf "%s\n%!" w)
+    (Typechecker.take_warnings ());
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
   let typed_program = Typechecker.classify_handlers typed_program in
   let typed_program =
@@ -1125,6 +1128,9 @@ let run_string_in_state state source =
   let ctx', typed_program =
     Typechecker.check_program_in_ctx state.ctx program
   in
+  List.iter
+    (fun w -> Printf.eprintf "%s\n%!" w)
+    (Typechecker.take_warnings ());
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
   let typed_program = Typechecker.classify_handlers typed_program in
   let typed_program =
@@ -1287,6 +1293,9 @@ let typecheck_source state source =
   let ctx', typed_program =
     Typechecker.check_program_in_ctx state.ctx program
   in
+  List.iter
+    (fun w -> Printf.eprintf "%s\n%!" w)
+    (Typechecker.take_warnings ());
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
   let typed_program = Typechecker.classify_handlers typed_program in
   let typed_program =

@@ -1,8 +1,18 @@
 exception Parse_error of string * Token.loc
 
-type t = { tokens : Token.token array; mutable pos : int }
+type t = {
+  tokens : Token.token array;
+  mutable pos : int;
+  (* When true, a `do` token terminates the current (same-nesting-level)
+     expression rather than starting a `do ... end` block atom. Set while
+     parsing the header of an `if`/`for`/`while` so that e.g. `if cond do`
+     stops the condition at `do`. Cleared inside delimited sub-expressions
+     (parens/brackets/blocks) where a `do` is unambiguous. *)
+  mutable suppress_do : bool;
+}
 
-let create tokens = { tokens = Array.of_list tokens; pos = 0 }
+let create tokens =
+  { tokens = Array.of_list tokens; pos = 0; suppress_do = false }
 let peek p = p.tokens.(p.pos)
 let peek_kind p = (peek p).kind
 
@@ -874,9 +884,34 @@ let parse_ret_annot p =
   else None
 
 (* Parse an atom (highest precedence) *)
+(* Parse [f] with `do`-as-block-atom suppressed, then restore the previous
+   setting. Used for `if`/`for`/`while` header expressions so that the header's
+   `do` terminates the condition instead of being read as a block argument. *)
+let with_suppress_do p f =
+  let saved = p.suppress_do in
+  p.suppress_do <- true;
+  let r = f () in
+  p.suppress_do <- saved;
+  r
+
 let rec parse_atom p =
   let loc = (peek p).loc in
+  (* Inside a delimited atom (parens, list/record/map/set brackets, a `do`
+     block, or an interpolated string) a `do` is unambiguous, so clear the
+     header suppression while parsing its contents — this lets e.g.
+     `if (f do x end) do ...` work. For every other atom we must KEEP the
+     suppression: non-delimited keyword expressions (`match`, `if`, `fn`,
+     `let`, ...) extend up to the enclosing header's `do`, and the keyword
+     atoms that parse an optional argument (`perform`, `break`, polyvariant)
+     must not mistake a header `do` for that argument. *)
+  let saved = p.suppress_do in
+  (match peek_kind p with
+  | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.HASH | Token.DO
+  | Token.INTERP_STRING _ ->
+      p.suppress_do <- false
+  | _ -> ());
   let expr = parse_atom_inner p in
+  p.suppress_do <- saved;
   Ast.ELoc (loc, expr)
 
 and parse_atom_inner p =
@@ -1138,6 +1173,9 @@ and at_atom_start p =
   | Token.UIDENT _ | Token.LPAREN | Token.LBRACE | Token.LBRACKET | Token.HASH
   | Token.DOT | Token.POLYTAG _ ->
       true
+  (* `do ... end` is a self-delimiting block, so it can be a function argument
+     (e.g. `f do ... end`) — except where a header `do` is being suppressed. *)
+  | Token.DO -> not p.suppress_do
   | _ -> false
 
 (* Check whether the current token is adjacent to the previous (no whitespace) *)
@@ -1387,7 +1425,7 @@ and parse_param p =
 
 and parse_if p =
   expect p Token.IF;
-  let cond = parse_expr p in
+  let cond = with_suppress_do p (fun () -> parse_expr p) in
   expect p Token.DO;
   let then_e = parse_expr p in
   match peek_kind p with
@@ -1744,7 +1782,7 @@ and parse_for_in_rest p elem_name elem_wrap coll =
       in
       let acc_name, acc_wrap = pat_to_name_and_wrap acc_pat in
       expect p Token.EQ;
-      let init = parse_expr_bp p 0 in
+      let init = with_suppress_do p (fun () -> parse_expr_bp p 0) in
       expect p Token.DO;
       let body = parse_expr p in
       expect p Token.END;
@@ -1784,7 +1822,7 @@ and parse_for_expr p =
       ignore (advance p);
       let pat = parse_pattern p in
       expect p Token.EQ;
-      let scrutinee = parse_expr_bp p 0 in
+      let scrutinee = with_suppress_do p (fun () -> parse_expr_bp p 0) in
       expect p Token.DO;
       let body = parse_expr p in
       expect p Token.END;
@@ -1798,14 +1836,14 @@ and parse_for_expr p =
         else expect_ident p
       in
       expect p Token.IN;
-      let coll = parse_expr_bp p 0 in
+      let coll = with_suppress_do p (fun () -> parse_expr_bp p 0) in
       parse_for_in_rest p var_name (fun body -> body) coll
   | (Token.LPAREN | Token.LBRACE | Token.LBRACKET)
     when lookahead_in_after_balanced p ->
       (* for (pattern) in coll [with acc = init] do body end *)
       let pat = parse_pattern_atom p in
       expect p Token.IN;
-      let coll = parse_expr_bp p 0 in
+      let coll = with_suppress_do p (fun () -> parse_expr_bp p 0) in
       let elem_name, elem_wrap = pat_to_name_and_wrap pat in
       parse_for_in_rest p elem_name elem_wrap coll
   | (Token.IDENT _ | Token.UNDERSCORE) when peek_kind_at p 1 = Token.EQ ->
@@ -1818,12 +1856,12 @@ and parse_for_expr p =
         else expect_ident p
       in
       ignore (advance p); (* consume = *)
-      let init = parse_expr_bp p 0 in
+      let init = with_suppress_do p (fun () -> parse_expr_bp p 0) in
       if peek_kind p = Token.SEMICOLON then begin
         ignore (advance p);
-        let cond = parse_expr_bp p 0 in
+        let cond = with_suppress_do p (fun () -> parse_expr_bp p 0) in
         expect p Token.SEMICOLON;
-        let step = parse_expr_bp p 0 in
+        let step = with_suppress_do p (fun () -> parse_expr_bp p 0) in
         expect p Token.DO;
         let body = parse_expr p in
         expect p Token.END;
@@ -1839,7 +1877,7 @@ and parse_for_expr p =
       else begin
         (* Not a numeric for — restore and fall through to while *)
         p.pos <- saved_pos;
-        let cond = parse_expr_bp p 0 in
+        let cond = with_suppress_do p (fun () -> parse_expr_bp p 0) in
         expect p Token.DO;
         let body = parse_expr p in
         expect p Token.END;
@@ -1847,7 +1885,7 @@ and parse_for_expr p =
       end
   | _ ->
       (* for cond do body end — while loop *)
-      let cond = parse_expr_bp p 0 in
+      let cond = with_suppress_do p (fun () -> parse_expr_bp p 0) in
       expect p Token.DO;
       let body = parse_expr p in
       expect p Token.END;

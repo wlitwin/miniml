@@ -6,10 +6,11 @@ module Parser =
 
   pub type t = {
     tokens: Token.token array;
-    mut pos: int
+    mut pos: int;
+    mut suppress_do: bool
   }
 
-  pub let create tokens = {tokens = Array.of_list tokens; pos = 0}
+  pub let create tokens = {tokens = Array.of_list tokens; pos = 0; suppress_do = false}
 
   pub let peek p = Array.get p.tokens p.pos
 
@@ -879,9 +880,24 @@ module Parser =
     else
       None
 
+  pub let with_suppress_do p f =
+    let saved = p.suppress_do in
+    p.suppress_do := true;
+    let r = f () in
+    p.suppress_do := saved;
+    r
+
   pub let rec parse_atom p =
     let loc = (peek p).loc in
+    let saved = p.suppress_do in
+    do
+      match peek_kind p with
+      | (((((Token.LPAREN | Token.LBRACE) | Token.LBRACKET) | Token.HASH) | Token.DO) | Token.INTERP_STRING _) -> p.suppress_do := false
+      | _ -> ()
+
+    end;
     let expr = parse_atom_inner p in
+    p.suppress_do := saved;
     Ast.ELoc (loc, expr)
   and parse_atom_inner p =
     match peek_kind p with
@@ -1155,6 +1171,7 @@ module Parser =
   and at_atom_start p =
     match peek_kind p with
     | (((((((((((((((Token.INT _ | Token.FLOAT _) | Token.STRING _) | Token.INTERP_STRING _) | Token.BYTE _) | Token.RUNE _) | Token.TRUE) | Token.FALSE) | Token.IDENT _) | Token.UIDENT _) | Token.LPAREN) | Token.LBRACE) | Token.LBRACKET) | Token.HASH) | Token.DOT) | Token.POLYTAG _) -> true
+    | Token.DO -> not p.suppress_do
     | _ -> false
 
   and is_adjacent p = (p.pos > 0) && (let prev = Array.get p.tokens (p.pos - 1) in
@@ -1375,7 +1392,7 @@ module Parser =
   and parse_param p = parse_fun_param p
   and parse_if p =
     expect p Token.IF;
-    let cond = parse_expr p in
+    let cond = with_suppress_do p (fn () -> parse_expr p) in
     expect p Token.DO;
     let then_e = parse_expr p in
     match peek_kind p with
@@ -1733,7 +1750,7 @@ module Parser =
        in
       let (acc_name, acc_wrap) = pat_to_name_and_wrap acc_pat in
       expect p Token.EQ;
-      let init = parse_expr_bp p 0 in
+      let init = with_suppress_do p (fn () -> parse_expr_bp p 0) in
       expect p Token.DO;
       let body = parse_expr p in
       expect p Token.END;
@@ -1757,7 +1774,7 @@ module Parser =
       (advance p; ());
       let pat = parse_pattern p in
       expect p Token.EQ;
-      let scrutinee = parse_expr_bp p 0 in
+      let scrutinee = with_suppress_do p (fn () -> parse_expr_bp p 0) in
       expect p Token.DO;
       let body = parse_expr p in
       expect p Token.END;
@@ -1770,12 +1787,12 @@ module Parser =
         else
           expect_ident p in
       expect p Token.IN;
-      let coll = parse_expr_bp p 0 in
+      let coll = with_suppress_do p (fn () -> parse_expr_bp p 0) in
       parse_for_in_rest p var_name (fn body -> body) coll
     | ((Token.LPAREN | Token.LBRACE) | Token.LBRACKET) when lookahead_in_after_balanced p -> 
       let pat = parse_pattern_atom p in
       expect p Token.IN;
-      let coll = parse_expr_bp p 0 in
+      let coll = with_suppress_do p (fn () -> parse_expr_bp p 0) in
       let (elem_name, elem_wrap) = pat_to_name_and_wrap pat in
       parse_for_in_rest p elem_name elem_wrap coll
     | (Token.IDENT _ | Token.UNDERSCORE) when (peek_kind_at p 1) = Token.EQ -> 
@@ -1787,26 +1804,26 @@ module Parser =
         else
           expect_ident p in
       (advance p; ());
-      let init = parse_expr_bp p 0 in
+      let init = with_suppress_do p (fn () -> parse_expr_bp p 0) in
       if (peek_kind p) = Token.SEMICOLON do
         (advance p; ());
-        let cond = parse_expr_bp p 0 in
+        let cond = with_suppress_do p (fn () -> parse_expr_bp p 0) in
         expect p Token.SEMICOLON;
-        let step = parse_expr_bp p 0 in
+        let step = with_suppress_do p (fn () -> parse_expr_bp p 0) in
         expect p Token.DO;
         let body = parse_expr p in
         expect p Token.END;
         Ast.EForNumeric {fn_var = var_name; fn_init = init; fn_cond = cond; fn_step = step; fn_body = body}
       else do
         p.pos := saved_pos;
-        let cond = parse_expr_bp p 0 in
+        let cond = with_suppress_do p (fn () -> parse_expr_bp p 0) in
         expect p Token.DO;
         let body = parse_expr p in
         expect p Token.END;
         Ast.EWhile {while_cond = cond; while_body = body}
       end
     | _ -> 
-      let cond = parse_expr_bp p 0 in
+      let cond = with_suppress_do p (fn () -> parse_expr_bp p 0) in
       expect p Token.DO;
       let body = parse_expr p in
       expect p Token.END;

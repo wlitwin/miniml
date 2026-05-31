@@ -2367,6 +2367,37 @@ static void free_guarded_stack(void *usable_ptr, size_t usable_size) {
     munmap(base, page_size_cached + usable_size);
 }
 
+/* Register a fiber's usable stack region as a GC root so the conservative
+ * collector scans the suspended (and running) fiber's locals. Without this,
+ * heap objects referenced only from a fiber stack are wrongly collected. The
+ * guard page is excluded (it is PROT_NONE; scanning it would SIGSEGV). */
+static void fiber_register_stack_roots(mml_fiber *f) {
+    GC_add_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
+}
+
+/* Idempotently release a fiber's guarded stack. Safe to call more than once
+ * (e.g. at fiber completion and again from the GC finalizer). Removes the GC
+ * root registration before unmapping so the collector never scans freed pages. */
+static void fiber_free_stack(mml_fiber *f) {
+    if (f && !f->stack_freed && f->stack) {
+        GC_remove_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
+        free_guarded_stack(f->stack, MML_FIBER_STACK_SIZE);
+        f->stack_freed = 1;
+    }
+}
+
+/* GC finalizer: reclaim the mmap'd stack of a fiber that became unreachable
+ * without being resumed to completion — e.g. a continuation that was captured
+ * (escaped its handler) and then never invoked. Fibers resumed to completion
+ * free their stack eagerly; fiber_free_stack is idempotent so this is safe.
+ * NOTE: we must NOT free the stack eagerly when a full-handler arm returns
+ * without resuming, because the continuation may have escaped and still be
+ * resumable later; tying the stack's lifetime to GC reachability is correct. */
+static void fiber_stack_finalizer(void *obj, void *cd) {
+    (void)cd;
+    fiber_free_stack((mml_fiber *)obj);
+}
+
 mml_fiber *mml_current_fiber = NULL;
 
 /* Fiber entry point trampoline — called via mml_make_context */
@@ -2398,6 +2429,10 @@ static mml_fiber *create_fiber(int64_t body_fn_i64, int64_t body_env_i64) {
     f->op_arg = body_fn_i64;   /* stash fn temporarily */
     f->op_name = NULL;
     f->parent_ctx = NULL;
+    f->stack_freed = 0;
+    fiber_register_stack_roots(f);
+    /* Reclaim the mmap'd stack if the fiber is GC'd without completing. */
+    GC_register_finalizer(f, fiber_stack_finalizer, NULL, NULL, NULL);
 
     mml_make_context(&f->ctx, f->stack, MML_FIBER_STACK_SIZE,
                      fiber_entry_trampoline, f);
@@ -2448,7 +2483,7 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
             int64_t result = fn(env, op_arg, 0);
             mml_current_handler = matched_h->parent;
             mml_current_fiber = saved_fiber;
-            free_guarded_stack(fiber->stack, MML_FIBER_STACK_SIZE);
+            fiber_free_stack(fiber);
             return result;
         }
         case MML_HANDLER_FULL: {
@@ -2468,9 +2503,11 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
             int64_t *env = (int64_t*)(intptr_t)entry->env_ptr;
             int64_t arm_result = fn(env, op_arg, (int64_t)(intptr_t)k);
 
-            if (!k->used) {
-                free_guarded_stack(fiber->stack, MML_FIBER_STACK_SIZE);
-            }
+            /* Do NOT free the fiber stack here even when !k->used: the
+             * continuation may have escaped (been stored in a closure/data
+             * structure) and remain resumable after this arm returns. The GC
+             * finalizer reclaims the stack once the fiber is unreachable, and
+             * a resume-to-completion frees it eagerly via fiber_free_stack. */
             return arm_result;
         }
         }
@@ -2479,7 +2516,7 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
     /* Fiber completed */
     mml_current_fiber = saved_fiber;
     int64_t body_result = fiber->result;
-    free_guarded_stack(fiber->stack, MML_FIBER_STACK_SIZE);
+    fiber_free_stack(fiber);
     mml_pop_handler();
 
     ret_fn_t return_fn = return_fn_i64 ? (ret_fn_t)(intptr_t)return_fn_i64 : NULL;
@@ -2550,10 +2587,13 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     if (!new_fiber) { fprintf(stderr, "OOM: fiber copy\n"); exit(1); }
     memcpy(new_fiber, orig_fiber, sizeof(mml_fiber));
 
-    /* Copy the stack */
+    /* Copy the stack (fresh mmap; reset/register its own lifetime tracking) */
     new_fiber->stack = alloc_guarded_stack(MML_FIBER_STACK_SIZE);
     if (!new_fiber->stack) { fprintf(stderr, "OOM: fiber stack copy\n"); exit(1); }
     memcpy(new_fiber->stack, orig_fiber->stack, MML_FIBER_STACK_SIZE);
+    new_fiber->stack_freed = 0;
+    fiber_register_stack_roots(new_fiber);
+    GC_register_finalizer(new_fiber, fiber_stack_finalizer, NULL, NULL, NULL);
 
     /* Compute stack relocation offset */
     ptrdiff_t stack_offset = (char*)new_fiber->stack - (char*)orig_fiber->stack;

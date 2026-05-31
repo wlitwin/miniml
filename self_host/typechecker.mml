@@ -2215,6 +2215,70 @@ module Typechecker =
       error ctx ($"non-exhaustive match, missing: {String.concat ", " missing}")
     end
 
+  pub let rec pat_subsumes p q =
+    match (p, q) with
+    | ((Ast.PatWild | Ast.PatVar _), _) -> true
+    | (Ast.PatAs ((p, _)), _) -> pat_subsumes p q
+    | (_, Ast.PatAs ((q, _))) -> pat_subsumes p q
+    | (Ast.PatAnnot ((p, _)), _) -> pat_subsumes p q
+    | (_, Ast.PatAnnot ((q, _))) -> pat_subsumes p q
+    | (Ast.PatOr ((p1, p2)), _) -> (pat_subsumes p1 q) || (pat_subsumes p2 q)
+    | (_, Ast.PatOr ((q1, q2))) -> (pat_subsumes p q1) && (pat_subsumes p q2)
+    | (Ast.PatInt a, Ast.PatInt b) -> a = b
+    | (Ast.PatFloat a, Ast.PatFloat b) -> a = b
+    | (Ast.PatBool a, Ast.PatBool b) -> a = b
+    | (Ast.PatString a, Ast.PatString b) -> a = b
+    | (Ast.PatUnit, Ast.PatUnit) -> true
+    | (Ast.PatNil, Ast.PatNil) -> true
+    | (Ast.PatTuple ps, Ast.PatTuple qs) -> ((List.length ps) = (List.length qs)) && (List.forall2 pat_subsumes ps qs)
+    | (Ast.PatCons ((h1, t1)), Ast.PatCons ((h2, t2))) -> (pat_subsumes h1 h2) && (pat_subsumes t1 t2)
+    | (Ast.PatConstruct ((c1, s1)), Ast.PatConstruct ((c2, s2))) -> ((ctor_short_name c1) = (ctor_short_name c2)) && (match (s1, s2) with
+    | (None, None) -> true
+    | (Some a, Some b) -> pat_subsumes a b
+    | _ -> false
+    )
+    | (Ast.PatPolyVariant ((c1, s1)), Ast.PatPolyVariant ((c2, s2))) -> (c1 = c2) && (match (s1, s2) with
+    | (None, None) -> true
+    | (Some a, Some b) -> pat_subsumes a b
+    | _ -> false
+    )
+    | _ -> false
+
+
+  pub let rec is_concrete_pat =
+    fn
+      | (Ast.PatWild | Ast.PatVar _) -> false
+      | (Ast.PatAs ((p, _)) | Ast.PatAnnot ((p, _))) -> is_concrete_pat p
+      | Ast.PatOr ((a, b)) -> (is_concrete_pat a) && (is_concrete_pat b)
+      | _ -> true
+
+
+  pub let warnings = Ref.create []
+
+  pub let warn_at loc msg = Ref.set warnings ($"Warning at line {loc.line}: {msg}" :: Ref.get warnings)
+
+  pub let take_warnings () =
+    let w = List.rev (Ref.get warnings) in
+    Ref.set warnings [];
+    w
+
+  pub let redundancy_check ctx arms =
+    let rec go earlier =
+      fn
+        | [] -> ()
+        | (pat, guard, _body) :: rest -> 
+          if List.exists (fn p -> pat_subsumes p pat) earlier do
+            warn_at ctx.loc "unreachable match arm: this pattern is already covered by an earlier arm"
+          end;
+          let earlier =
+            match guard with
+            | None when is_concrete_pat pat -> pat :: earlier
+            | _ -> earlier
+           in
+          go earlier rest
+     in
+    go [] arms
+
   pub let find_module_in_env type_env mod_name =
     match String.split "." mod_name with
     | [] -> None
@@ -2502,7 +2566,7 @@ module Typechecker =
         | None -> error ctx "return outside of function"
         | Some ret_ty -> 
           if ctx.inside_handler do
-            error ctx "Type error: return inside try/with is not supported"
+            error ctx "return is not supported inside an effect handler body (handle/try/provide). The body is reified as a separate computation, so `return` cannot jump out of the enclosing function from here. Refactor to return a value from the handler normally (e.g. via the return arm), or move the `return` outside the handler."
           end;
           Ref.set ctx.return_used true;
           let e_te = synth ctx level e in
@@ -3176,6 +3240,7 @@ module Typechecker =
           if partial = Ast.Total do
             exhaustiveness_check ctx (Types.repr scrut_te.ty) all_arms
           end;
+          redundancy_check ctx all_arms;
           mk ctx (TEMatch (scrut_te, all_arms, partial)) result_ty
 
       end
@@ -3204,6 +3269,7 @@ module Typechecker =
           if partial = Ast.Total do
             exhaustiveness_check ctx (Types.repr scrut_te.ty) all_arms
           end;
+          redundancy_check ctx all_arms;
           mk ctx (TEMatch (scrut_te, all_arms, partial)) result_ty
 
       end
@@ -3434,6 +3500,11 @@ module Typechecker =
 
   pub let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
     let num_params = List.length type_params in
+    let ctx =
+      if List.mem_assoc type_name ctx.type_env.type_aliases do
+        {ctx with type_env = {ctx.type_env with type_aliases = List.filter (fn (n, _) -> not (n = type_name)) ctx.type_env.type_aliases}}
+      else
+        ctx in
     match def with
     | Ast.TDVariant ctors -> 
       let pre_ctx = {ctx with type_env = {ctx.type_env with variants = (type_name, num_params, [], false) :: ctx.type_env.variants}} in

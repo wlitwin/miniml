@@ -2115,3 +2115,28 @@ let _ =
 in
 trace
 --- expect: A1B1A2B2
+
+--- test: gc scans suspended fiber stack
+effect E =
+  ping : unit -> int
+end
+let mut saved = []
+let mut result = ""
+let _ =
+  handle
+    let a = "a" ^ show 1 in let b = "b" ^ show 2 in let c = "c" ^ show 3 in
+    let d = "d" ^ show 4 in let e = "e" ^ show 5 in let f = "f" ^ show 6 in
+    let g = "g" ^ show 7 in let h = "h" ^ show 8 in let i = "i" ^ show 9 in
+    let j = "j" ^ show 10 in let k = "k" ^ show 11 in let l = "l" ^ show 12 in
+    let _ = perform ping () in
+    result := a^b^c^d^e^f^g^h^i^j^k^l
+  with
+  | return x -> x
+  | ping () k -> saved := [(fn () -> resume k 0)]
+let mut junk = []
+let _ = for n = 0; n < 300000; n + 1 do junk := show n :: junk end
+let _ = match saved with [] -> () | t :: _ -> t ()
+let final = result
+;;
+final
+--- expect: a1b2c3d4e5f6g7h8i9j10k11l12
