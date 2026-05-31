@@ -2580,6 +2580,7 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
             if (!k) { fprintf(stderr, "OOM: continuation\n"); exit(1); }
             k->fiber = fiber;
             k->handler = saved_handler;
+            k->resume_base = matched_h->parent;
             k->return_fn = return_fn_i64;
             k->return_env = return_env_i64;
             k->used = 0;
@@ -2648,8 +2649,22 @@ int64_t mml_resume_continuation(int64_t k_i64, int64_t val) {
 
     mml_fiber *fiber = k->fiber;
 
-    /* Reinstall the handler */
-    mml_current_handler = k->handler;
+    /* Reinstall the captured handler chain [k->handler .. matched] ON TOP of the
+     * CURRENT handler stack, rather than replacing it, so handlers installed around
+     * `resume k` (in the handler arm, between capture and resume) stay visible to the
+     * resumed body — deep-handler semantics. We re-point the matched handler's parent
+     * (the boundary recorded as k->resume_base) to the current stack, then set
+     * mml_current_handler to the captured top. (Re-pointing rather than cloning keeps
+     * the original handler nodes — important for FULL handlers, whose fiber pointers
+     * the fiber-drain relies on. Resumes are sequential, so the shared link is set
+     * fresh before each resume runs.) */
+    {
+        mml_handler *matched = k->handler;
+        while (matched && matched->parent != k->resume_base)
+            matched = matched->parent;
+        if (matched) matched->parent = mml_current_handler;
+        mml_current_handler = k->handler;
+    }
 
     /* Set the resumed value */
     fiber->result = val;
@@ -2722,6 +2737,7 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     if (!new_k) { fprintf(stderr, "OOM: continuation copy\n"); exit(1); }
     new_k->fiber = new_fiber;
     new_k->handler = orig->handler;
+    new_k->resume_base = orig->resume_base;
     new_k->return_fn = orig->return_fn;
     new_k->return_env = orig->return_env;
     new_k->used = 0;

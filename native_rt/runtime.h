@@ -372,7 +372,12 @@ typedef struct mml_fiber {
 
 typedef struct mml_continuation {
     mml_fiber *fiber;         /* the suspended fiber */
-    mml_handler *handler;     /* handler to reinstall on resume */
+    mml_handler *handler;     /* captured handler chain top to reinstall on resume */
+    mml_handler *resume_base; /* boundary: matched_handler->parent at capture. On resume
+                                 the captured chain [handler .. matched] is reinstalled
+                                 ON TOP of the CURRENT handler stack (not replacing it),
+                                 so handlers installed around `resume k` stay visible to
+                                 the resumed body (deep-handler semantics). */
     int64_t return_fn;        /* return arm function pointer (or 0 for identity) */
     int64_t return_env;       /* return arm env pointer */
     int used;                 /* one-shot enforcement */
