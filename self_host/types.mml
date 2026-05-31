@@ -403,7 +403,7 @@ module Types =
         | (TArray p1, TArray a1) -> go p1 a1
         | (TTuple ps, TTuple acts) when (List.length ps) = (List.length acts) -> List.forall2 go ps acts
         | (TVariant ((pn, ps)), TVariant ((an, acts))) when (pn = an) && ((List.length ps) = (List.length acts)) -> List.forall2 go ps acts
-        | (TVar r1, TVar r2) when r1 = r2 -> true
+        | (TVar r1, TVar r2) when phys_equal r1 r2 -> true
         | (TGen i, TGen j) when i = j -> true
         | _ -> false
        in
@@ -633,7 +633,7 @@ module Types =
   pub let rec unify_eff e1 e2 =
     let e1 = eff_repr e1 in
     let e2 = eff_repr e2 in
-    if e1 = e2 do
+    if phys_equal e1 e2 do
       ()
     else
       match (e1, e2) with
@@ -649,7 +649,7 @@ module Types =
         let (_, ft2) = collect_eff_row e2 in
         let shared =
           match (ft1, ft2) with
-          | (EffVar r1, EffVar r2) -> r1 = r2
+          | (EffVar r1, EffVar r2) -> phys_equal r1 r2
           | _ -> false
          in
         if shared do
@@ -723,7 +723,7 @@ module Types =
   and subeffect source target =
     let source = eff_repr source in
     let target = eff_repr target in
-    if source = target do
+    if phys_equal source target do
       ()
     else
       match source with
@@ -734,7 +734,7 @@ module Types =
         let (_, ft_target) = collect_eff_row target in
         let shared =
           match (ft_source, ft_target) with
-          | (EffVar r1, EffVar r2) -> r1 = r2
+          | (EffVar r1, EffVar r2) -> phys_equal r1 r2
           | _ -> false
          in
         if shared do
@@ -754,7 +754,7 @@ module Types =
   and unify_pv_row r1 r2 =
     let r1 = pv_repr r1 in
     let r2 = pv_repr r2 in
-    if r1 = r2 do
+    if phys_equal r1 r2 do
       ()
     else
       match (r1, r2) with
@@ -770,7 +770,7 @@ module Types =
         let (_, ft2) = collect_pv_row r2 in
         let shared =
           match (ft1, ft2) with
-          | (PVVar rv1, PVVar rv2) -> rv1 = rv2
+          | (PVVar rv1, PVVar rv2) -> phys_equal rv1 rv2
           | _ -> false
          in
         if shared do
@@ -845,7 +845,7 @@ module Types =
   and unify_record_row r1 r2 =
     let r1 = rrow_repr r1 in
     let r2 = rrow_repr r2 in
-    if r1 = r2 do
+    if phys_equal r1 r2 do
       ()
     else
       match (r1, r2) with
@@ -862,7 +862,7 @@ module Types =
         let (_, ft2) = collect_rrow r2 in
         let shared =
           match (ft1, ft2) with
-          | (RVar rv1, RVar rv2) -> rv1 = rv2
+          | (RVar rv1, RVar rv2) -> phys_equal rv1 rv2
           | _ -> false
          in
         if shared do
@@ -935,7 +935,7 @@ module Types =
   and unify t1 t2 =
     let t1 = repr t1 in
     let t2 = repr t2 in
-    if t1 = t2 do
+    if phys_equal t1 t2 do
       ()
     else
       match (t1, t2) with
@@ -1168,7 +1168,7 @@ module Types =
       let evars = Array.init s.equant (fn _ -> new_effvar level) in
       let pvvars = Array.init s.pvquant (fn _ -> new_pvvar level) in
       let rvars = Array.init s.rquant (fn _ -> new_rvar level) in
-      let shared_eff = (fn () -> new_effvar level) in
+      let shared_eff = (let __lazy_cell = Ref.create None in (fn () -> (match Ref.get __lazy_cell with | Some __lv -> __lv | None -> (let __lv = new_effvar level in (Ref.set __lazy_cell (Some __lv); __lv))))) in
       let mapping = List.init s.quant (fn i -> (i, Array.get vars i)) in
       let rec go =
         fn
@@ -1288,7 +1288,7 @@ module Types =
     | (TList t1', TList t2') -> subtype t1' t2'
     | (TArray t1', TArray t2') -> subtype t1' t2'
     | (TTuple ts1, TTuple ts2) -> ((List.length ts1) = (List.length ts2)) && (List.forall2 subtype ts1 ts2)
-    | (TVar r1, TVar r2) when r1 = r2 -> true
+    | (TVar r1, TVar r2) when phys_equal r1 r2 -> true
     | _ -> false
 
 
@@ -1306,7 +1306,7 @@ module Types =
     | (TList t1', TList t2') -> equal_ty t1' t2'
     | (TArray t1', TArray t2') -> equal_ty t1' t2'
     | (TTuple ts1, TTuple ts2) -> ((List.length ts1) = (List.length ts2)) && (List.forall2 equal_ty ts1 ts2)
-    | (TVar r1, TVar r2) -> r1 = r2
+    | (TVar r1, TVar r2) -> phys_equal r1 r2
     | _ -> false
 
 

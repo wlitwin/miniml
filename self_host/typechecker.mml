@@ -3123,7 +3123,7 @@ module Typechecker =
     let rec collect_tvar_refs acc ty =
       match Types.repr ty with
       | Types.TVar ({contents = Types.Unbound _} as r) -> 
-        if List.exists (fn x -> x = r) acc do
+        if List.exists (fn x -> phys_equal x r) acc do
           acc
         else
           r :: acc
@@ -3147,10 +3147,10 @@ module Typechecker =
     let has_escape = List.exists (fn exist_ref ->
       do
         match Types.repr (Types.TVar exist_ref) with
-        | Types.TVar ({contents = Types.Unbound _} as resolved_ref) -> List.exists (fn r -> r = resolved_ref) result_refs
+        | Types.TVar ({contents = Types.Unbound _} as resolved_ref) -> List.exists (fn r -> phys_equal r resolved_ref) result_refs
         | resolved -> 
           let exist_refs = collect_tvar_refs [] resolved in
-          List.exists (fn er -> List.exists (fn rr -> er = rr) result_refs) exist_refs
+          List.exists (fn er -> List.exists (fn rr -> phys_equal er rr) result_refs) exist_refs
 
       end) existential_refs in
     if has_escape do
@@ -3962,7 +3962,7 @@ module Typechecker =
                         do
                           let tvname = List.nth tyvar_names fi in
                           match Hashtbl.get shared_tvars tvname with
-                          | Some constraint_tv -> (Types.repr body_tv) = (Types.repr constraint_tv)
+                          | Some constraint_tv -> phys_equal (Types.repr body_tv) (Types.repr constraint_tv)
                           | None -> true
 
                         end
@@ -5479,7 +5479,7 @@ module Typechecker =
     match te.expr with
     | TEVar name -> 
       let te' = xform_class_method xctx name te in
-      if te' <> te do
+      if not (phys_equal te' te) do
         te'
       else
         xform_constrained_ref xctx name te

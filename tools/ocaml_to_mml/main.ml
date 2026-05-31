@@ -725,10 +725,17 @@ and emit_expr e (expr : expression) =
   | Pexp_pack _ -> emit e "(* TODO: pack *)"
   | Pexp_newtype _ -> emit e "(* TODO: newtype *)"
   | Pexp_lazy inner ->
-      (* lazy e → fn () -> e (thunk) *)
-      emit e "(fn () -> ";
+      (* lazy e → a MEMOIZING thunk (compute once, cache the result), paired with
+         `Lazy.force x` -> `x ()`. A plain `fn () -> e` would RECOMPUTE on every force,
+         breaking lazy semantics — e.g. Types.instantiate's `shared_eff` must return the
+         SAME fresh effect var at every EffEmpty position, else effect-row unification
+         builds a spurious cycle (occurs check). NB: uses a fixed cell name, so this does
+         not support a `lazy` nested directly inside another `lazy`'s body (none exist). *)
+      emit e
+        "(let __lazy_cell = Ref.create None in (fn () -> (match Ref.get \
+         __lazy_cell with | Some __lv -> __lv | None -> (let __lv = ";
       emit_expr e inner;
-      emit e ")"
+      emit e " in (Ref.set __lazy_cell (Some __lv); __lv)))))"
   | Pexp_object _ -> emit e "(* TODO: object *)"
   | Pexp_poly _ -> emit e "(* TODO: poly *)"
   | Pexp_send _ -> emit e "(* TODO: send *)"
@@ -1117,6 +1124,22 @@ and emit_apply e fn args =
       if needs_parens_subexpr rhs then emit e "(";
       emit_expr e rhs;
       if needs_parens_subexpr rhs then emit e ")"
+  (* Physical (in)equality → phys_equal builtin. MiniML has no `==` operator, and
+     structural `=` is WRONG for repr/identity checks on shared mutable or cyclic
+     structures (e.g. effect-row unification's `e1 == e2` / shared-tail `r1 == r2`).
+     phys_equal is the faithful translation of OCaml `==` (and never less correct:
+     code after a `==`-false branch must already handle the general case). *)
+  | Pexp_ident { txt = Lident (("==" | "!=") as op); _ }, [ (_, lhs); (_, rhs) ] ->
+      if op = "!=" then emit e "not (";
+      emit e "phys_equal ";
+      if needs_parens_subexpr lhs then emit e "(";
+      emit_expr e lhs;
+      if needs_parens_subexpr lhs then emit e ")";
+      emit e " ";
+      if needs_parens_subexpr rhs then emit e "(";
+      emit_expr e rhs;
+      if needs_parens_subexpr rhs then emit e ")";
+      if op = "!=" then emit e ")"
   (* Binary operators *)
   | Pexp_ident { txt = Lident op; _ }, [ (_, lhs); (_, rhs) ]
     when (not (is_prefix_op op))
