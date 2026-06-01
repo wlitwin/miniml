@@ -46,7 +46,9 @@ type value =
   | VTuple of value list
   | VList of value list
   | VRecord of (string * value ref) list (* field order preserved *)
-  | VVariant of string * value option
+  | VVariant of string * int * value option
+      (* name, constructor tag (declaration index — used by tag-based hashing
+         and VM conversion), payload *)
   | VArray of value array
   | VClosure of closure
   | VBuiltin of builtin
@@ -58,6 +60,16 @@ and closure = {
   c_param : string;
   c_body : Typechecker.texpr;
   (* Recursive closures see themselves via env entries added at TELetRec. *)
+  c_has_return : bool;
+      (* from the TEFun flag: this function lexically contains `return`, so
+         its application catches CReturn. Functions WITHOUT the flag let
+         CReturn pass through — that is how `return` inside a for-in body
+         (a generated fold callback) returns from the enclosing user function,
+         passing through stdlib fold frames. Mirrors the backends'
+         needs_return_catch = has_return && not is_fold_cb. *)
+  c_is_fold_cb : bool;
+      (* fold callbacks (for-loop bodies desugared to folds) catch
+         CFoldContinue: `continue` ends the current iteration with its value. *)
 }
 
 (* Continuations are ONE-SHOT, like every backend: resuming twice is an error
@@ -197,11 +209,14 @@ let rec to_vm (v : value) : Bytecode.value =
       Bytecode.VRecord
         ( { Bytecode.rs_fields = names; rs_index = index },
           Array.of_list (List.map (fun (_, r) -> to_vm !r) fields) )
-  | VVariant (name, payload) ->
-      (* Tag numbers are not semantically meaningful for printing/equality at
-         the oracle level; use 0. (The VM uses tags for dispatch, which the
-         oracle does structurally by name.) *)
-      Bytecode.VVariant (0, name, Option.map to_vm payload)
+  | VVariant (name, tag, payload) ->
+      (* Display names are unqualified: Result.Ok prints as `Ok`. *)
+      let display =
+        match String.rindex_opt name '.' with
+        | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+        | None -> name
+      in
+      Bytecode.VVariant (tag, display, Option.map to_vm payload)
   | VClosure _ | VBuiltin _ | VContinuation _ ->
       (* Closures crossing into builtins: represent as an opaque external so
          pp_value prints something function-like. Builtins that CALL their
@@ -229,7 +244,8 @@ let rec from_vm (v : Bytecode.value) : value =
            (Array.mapi
               (fun i name -> (name, ref (from_vm values.(i))))
               shape.Bytecode.rs_fields))
-  | Bytecode.VVariant (_, name, payload) -> VVariant (name, Option.map from_vm payload)
+  | Bytecode.VVariant (tag, name, payload) ->
+      VVariant (name, tag, Option.map from_vm payload)
   | Bytecode.VExternal ext ->
       VBuiltin
         {
@@ -267,7 +283,7 @@ let rec equal (a : value) (b : value) : bool =
   | VRecord a, VRecord b ->
       List.length a = List.length b
       && List.for_all2 (fun (n1, r1) (n2, r2) -> n1 = n2 && equal !r1 !r2) a b
-  | VVariant (n1, p1), VVariant (n2, p2) -> (
+  | VVariant (n1, _, p1), VVariant (n2, _, p2) -> (
       n1 = n2
       && match (p1, p2) with
          | None, None -> true
@@ -300,7 +316,7 @@ let rec compare_values (a : value) (b : value) : int =
       go a b
   | VArray a, VArray b ->
       compare_values (VList (Array.to_list a)) (VList (Array.to_list b))
-  | VVariant (n1, p1), VVariant (n2, p2) -> (
+  | VVariant (n1, _, p1), VVariant (n2, _, p2) -> (
       (* Order by constructor name then payload; matches structural compare *)
       let c = compare n1 n2 in
       if c <> 0 then c
@@ -348,7 +364,7 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
       Option.bind (match_pattern env h hp) (fun b1 ->
           Option.map (fun b2 -> b1 @ b2) (match_pattern env (VList t) tp))
   | Ast.PatCons _, VList [] -> None
-  | Ast.PatConstruct (cname, payload_pat), VVariant (vname, payload) -> (
+  | Ast.PatConstruct (cname, payload_pat), VVariant (vname, _, payload) -> (
       (* Constructor names in patterns may be qualified (Mod.Ctor); variant
          values store the bare or qualified name as constructed. Compare the
          final segments. *)
@@ -357,7 +373,20 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
         | Some i -> String.sub s (i + 1) (String.length s - i - 1)
         | None -> s
       in
-      if last_seg cname <> last_seg vname then None
+      if last_seg cname <> last_seg vname then
+        (* The pattern's constructor may be an erased NEWTYPE wrapper around a
+           variant value (e.g. `Wrap (Some x)` matching the value `Some 42`):
+           unwrap the pattern and match its payload against the same value. *)
+        match
+          List.assoc_opt cname env.globals.type_env.Types.constructors
+        with
+        | Some info
+          when List.mem info.Types.ctor_type_name
+                 env.globals.type_env.Types.newtypes -> (
+            match payload_pat with
+            | Some p -> match_pattern env v p
+            | None -> None)
+        | _ -> None
       else
         match (payload_pat, payload) with
         | None, None -> Some []
@@ -403,8 +432,14 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
       | Some pinned -> if equal v pinned then Some [] else None
       | None -> err "oracle: unbound variable in pin pattern: %s" name)
   | Ast.PatAnnot (p, _), _ -> match_pattern env v p
-  | Ast.PatPolyVariant (tag, payload_pat), VVariant (vtag, payload) -> (
-      if tag <> vtag then None
+  | Ast.PatPolyVariant (tag, payload_pat), VVariant (vtag, _, payload) -> (
+      (* Poly variant values carry the backtick (`A); patterns don't. *)
+      let strip_tick s =
+        if String.length s > 0 && s.[0] = '`' then
+          String.sub s 1 (String.length s - 1)
+        else s
+      in
+      if strip_tick tag <> strip_tick vtag then None
       else
         match (payload_pat, payload) with
         | None, None -> Some []
@@ -470,6 +505,34 @@ let eval_unop (op : Ast.unop) (a : value) : value =
 
 (* ---- The evaluator ----------------------------------------------------- *)
 
+(* Constructor tag = position of the constructor within its variant type's
+   declaration. Matches the VM compiler's tag assignment. Polyvariants and
+   unknown constructors get 0. *)
+let constructor_tag env name ctor_info =
+  match ctor_info with
+  | None -> 0
+  | Some info -> (
+      let last_seg s =
+        match String.rindex_opt s '.' with
+        | Some i -> String.sub s (i + 1) (String.length s - i - 1)
+        | None -> s
+      in
+      (* variants : (type_name, num_params, variant_def, is_gadt) list where
+         variant_def = (ctor_name, arg_ty option) list in declaration order *)
+      match
+        List.find_opt
+          (fun (n, _, _, _) -> String.equal n info.Types.ctor_type_name)
+          env.globals.type_env.Types.variants
+      with
+      | Some (_, _, ctors, _) ->
+          let rec idx i = function
+            | [] -> 0
+            | (cname, _) :: rest ->
+                if last_seg cname = last_seg name then i else idx (i + 1) rest
+          in
+          idx 0 ctors
+      | None -> 0)
+
 let rec eval (env : env) (te : Typechecker.texpr) : outcome =
   match te.Typechecker.expr with
   (* -- Literals -- *)
@@ -507,8 +570,16 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
         (fun fvs ->
           List.iter2 (fun (_, cell) fv -> cell := fv) cells fvs;
           eval env' e2)
-  | Typechecker.TEFun (param, body, _) ->
-      Done (VClosure { c_env = env; c_param = param; c_body = body })
+  | Typechecker.TEFun (param, body, has_return) ->
+      Done
+        (VClosure
+           {
+             c_env = env;
+             c_param = param;
+             c_body = body;
+             c_has_return = has_return;
+             c_is_fold_cb = false;
+           })
   | Typechecker.TEApp (fn, arg) ->
       bind (eval env fn) (fun fv ->
           bind (eval env arg) (fun av -> apply fv av))
@@ -559,8 +630,10 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
   | Typechecker.TEForLoop fold_expr ->
       (* For-loops over collections desugar to a fold application whose
          callback may raise CBreak (caught here) / CFoldContinue (caught at
-         the callback boundary in [apply]). *)
-      let o = eval env fold_expr in
+         the callback boundary in [apply]). The callback closures are marked so
+         apply gives them fold-callback control-flow semantics. This mirrors
+         the backends' fold_cont_pending mechanism. *)
+      let o = eval_marking_fold_callbacks env fold_expr in
       catch_break o
   (* -- Data construction -- *)
   | Typechecker.TETuple es ->
@@ -622,21 +695,25 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
           in
           go pairs bv)
   | Typechecker.TEConstruct (name, payload) -> (
+      let ctor_info =
+        List.assoc_opt name env.globals.type_env.Types.constructors
+      in
       let is_newtype =
-        match
-          List.assoc_opt name env.globals.type_env.Types.constructors
-        with
+        match ctor_info with
         | Some info ->
             List.mem info.Types.ctor_type_name
               env.globals.type_env.Types.newtypes
         | None -> false
       in
+      (* Constructor tag = declaration index within its variant type (matches
+         the VM's tag assignment; used by tag-based hashing). *)
+      let tag = constructor_tag env name ctor_info in
       match payload with
-      | None -> Done (VVariant (name, None))
+      | None -> Done (VVariant (name, tag, None))
       | Some e ->
           bind (eval env e) (fun v ->
               if is_newtype then Done v (* newtype ctors are erased *)
-              else Done (VVariant (name, Some v))))
+              else Done (VVariant (name, tag, Some v))))
   (* -- Data access -- *)
   | Typechecker.TEField (e, fname) ->
       bind (eval env e) (fun v ->
@@ -679,11 +756,26 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
           | VBool true -> Done (VBool true)
           | VBool false -> eval env rhs
           | v -> err "oracle: || on non-bool: %s" (pp v))
-  | Typechecker.TEBinop (op, lhs, rhs) ->
-      bind (eval env lhs) (fun lv ->
-          bind (eval env rhs) (fun rv -> Done (eval_binop op lv rv)))
-  | Typechecker.TEUnop (op, e) ->
-      bind (eval env e) (fun v -> Done (eval_unop op v))
+  | Typechecker.TEBinop (op, lhs, rhs) -> (
+      (* Type-directed dispatch, mirroring Compiler.compile_binop: primitive
+         types use primitive operations; other types dispatch through their
+         typeclass instance (Num/Eq/Ord/Bitwise). *)
+      match class_dispatch_for_binop env op lhs.Typechecker.ty with
+      | None ->
+          bind (eval env lhs) (fun lv ->
+              bind (eval env rhs) (fun rv -> Done (eval_binop op lv rv)))
+      | Some (class_name, method_name) ->
+          bind (resolve_class_method env class_name method_name lhs.Typechecker.ty)
+            (fun m ->
+              bind (eval env lhs) (fun lv ->
+                  bind (apply m lv) (fun partial ->
+                      bind (eval env rhs) (fun rv -> apply partial rv)))))
+  | Typechecker.TEUnop (op, e) -> (
+      match class_dispatch_for_unop env op e.Typechecker.ty with
+      | None -> bind (eval env e) (fun v -> Done (eval_unop op v))
+      | Some (class_name, method_name) ->
+          bind (resolve_class_method env class_name method_name e.Typechecker.ty)
+            (fun m -> bind (eval env e) (fun v -> apply m v)))
   (* -- Mutation -- *)
   | Typechecker.TEAssign (name, e) ->
       bind (eval env e) (fun v ->
@@ -752,6 +844,29 @@ and catch_break (o : outcome) : outcome =
   | Perform p -> Perform { p with p_resume = (fun v -> catch_break (p.p_resume v)) }
   | other -> other
 
+(* Evaluate a for-loop's fold expression: any TEFun appearing as a direct
+   argument in the application chain is the loop-body callback and is created
+   with c_is_fold_cb = true. *)
+and eval_marking_fold_callbacks env (te : Typechecker.texpr) : outcome =
+  match te.Typechecker.expr with
+  | Typechecker.TEApp (fn, arg) ->
+      bind (eval_marking_fold_callbacks env fn) (fun fv ->
+          bind
+            (match arg.Typechecker.expr with
+            | Typechecker.TEFun (param, body, has_return) ->
+                Done
+                  (VClosure
+                     {
+                       c_env = env;
+                       c_param = param;
+                       c_body = body;
+                       c_has_return = has_return;
+                       c_is_fold_cb = true;
+                     })
+            | _ -> eval env arg)
+            (fun av -> apply fv av))
+  | _ -> eval env te
+
 (* Function application. Catches CReturn (early return) and CFoldContinue
    (fold-callback continue) at the function boundary; everything else
    (Perform, CBreak escaping a fold callback) propagates to the caller. *)
@@ -760,7 +875,17 @@ and apply (fn : value) (arg : value) : outcome =
   | VClosure c ->
       let env' = bind_var c.c_env c.c_param arg in
       let o = eval env' c.c_body in
-      catch_function_ctl o
+      (* Curried fold callbacks: applying the outer parameter yields the inner
+         closure, which is also a fold callback. *)
+      let o =
+        if c.c_is_fold_cb then
+          match o with
+          | Done (VClosure inner) ->
+              Done (VClosure { inner with c_is_fold_cb = true })
+          | other -> other
+        else o
+      in
+      catch_closure_ctl ~has_return:c.c_has_return ~is_fold_cb:c.c_is_fold_cb o
   | VContinuation k -> resume_continuation k arg
   | VBuiltin b ->
       let args = b.b_args @ [ arg ] in
@@ -786,13 +911,134 @@ and resume_continuation (k : continuation) (v : value) : outcome =
     k.k_resume v
   end
 
-and catch_function_ctl (o : outcome) : outcome =
+(* Control-flow catching at a closure boundary, governed by the closure's
+   flags (see the closure type for the semantics). Everything not caught
+   passes through to the caller. *)
+and catch_closure_ctl ~has_return ~is_fold_cb (o : outcome) : outcome =
   match o with
-  | Ctl (CReturn v) -> Done v
-  | Ctl (CFoldContinue v) -> Done v
+  | Ctl (CReturn v) when has_return -> Done v
+  | Ctl (CFoldContinue v) when is_fold_cb -> Done v
   | Perform p ->
-      Perform { p with p_resume = (fun v -> catch_function_ctl (p.p_resume v)) }
+      Perform
+        {
+          p with
+          p_resume =
+            (fun v -> catch_closure_ctl ~has_return ~is_fold_cb (p.p_resume v));
+        }
   | other -> other
+
+(* ---- Typeclass dispatch (mirrors Compiler.compile_binop) -------------- *)
+
+(* Which (class, method) a binop dispatches to for a non-primitive operand
+   type, or None for primitive/structural handling. *)
+and class_dispatch_for_binop env (op : Ast.binop) (operand_ty : Types.ty) :
+    (string * string) option =
+  let resolved = Types.repr operand_ty in
+  let has_instance class_name =
+    List.exists
+      (fun (inst : Types.instance_def) ->
+        String.equal inst.Types.inst_class class_name
+        && List.length inst.Types.inst_tys = 1
+        && Types.match_partial_inst inst.Types.inst_tys [ Some resolved ])
+      env.globals.type_env.Types.instances
+  in
+  match op with
+  | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> (
+      match resolved with
+      | Types.TInt | Types.TFloat -> None
+      | _ ->
+          let m =
+            match op with
+            | Ast.Add -> "+"
+            | Ast.Sub -> "-"
+            | Ast.Mul -> "*"
+            | _ -> "/"
+          in
+          Some ("Num", m))
+  | Ast.Eq | Ast.Neq -> (
+      (* Structural equality except for records with a custom Eq instance. *)
+      match resolved with
+      | Types.TRecord _ when has_instance "Eq" ->
+          Some ("Eq", if op = Ast.Eq then "=" else "<>")
+      | _ -> None)
+  | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> (
+      match resolved with
+      | Types.TInt | Types.TFloat | Types.TString | Types.TByte | Types.TRune
+        ->
+          None
+      | Types.TRecord _ | Types.TVariant _ when has_instance "Ord" ->
+          let m =
+            match op with
+            | Ast.Lt -> "<"
+            | Ast.Gt -> ">"
+            | Ast.Le -> "<="
+            | _ -> ">="
+          in
+          Some ("Ord", m)
+      | _ ->
+          (* Containers (lists/tuples/...) use stdlib Ord instances which are
+             structural by definition; the oracle compares structurally. *)
+          None)
+  | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> (
+      match resolved with
+      | Types.TInt -> None
+      | _ ->
+          let m =
+            match op with
+            | Ast.Land -> "land"
+            | Ast.Lor -> "lor"
+            | Ast.Lxor -> "lxor"
+            | Ast.Lsl -> "lsl"
+            | _ -> "lsr"
+          in
+          Some ("Bitwise", m))
+  | _ -> None
+
+and class_dispatch_for_unop env (op : Ast.unop) (operand_ty : Types.ty) :
+    (string * string) option =
+  ignore env;
+  let resolved = Types.repr operand_ty in
+  match (op, resolved) with
+  | Ast.Neg, (Types.TInt | Types.TFloat) -> None
+  | Ast.Neg, _ -> Some ("Num", "neg")
+  | Ast.Lnot, Types.TInt -> None
+  | Ast.Lnot, _ -> Some ("Bitwise", "lnot")
+  | Ast.Not, _ -> None
+
+(* Find the instance dictionary for (class, operand type) in the oracle env and
+   return its method. Instance dictionaries are TDLet-bound records named
+   inst_dict_name whose fields are the methods. *)
+and resolve_class_method env class_name method_name operand_ty : outcome =
+  let resolved = Types.repr operand_ty in
+  let matching =
+    List.filter
+      (fun (inst : Types.instance_def) ->
+        String.equal inst.Types.inst_class class_name
+        && List.length inst.Types.inst_tys = 1
+        && Types.match_partial_inst inst.Types.inst_tys [ Some resolved ])
+      env.globals.type_env.Types.instances
+  in
+  match matching with
+  | [] ->
+      err "oracle: no %s instance for this type (method %s)" class_name
+        method_name
+  | inst :: _ -> (
+      if inst.Types.inst_constraints <> [] then
+        unsupported
+          (Printf.sprintf "constrained %s instance dispatch" class_name);
+      match List.assoc_opt inst.Types.inst_dict_name env.vars with
+      | Some dict_ref -> (
+          match !dict_ref with
+          | VRecord fields -> (
+              match List.assoc_opt method_name fields with
+              | Some m -> Done !m
+              | None ->
+                  err "oracle: instance dict %s has no method %s"
+                    inst.Types.inst_dict_name method_name)
+          | v -> err "oracle: instance dict is not a record: %s" (pp v))
+      | None ->
+          err "oracle: instance dict %s not found in environment"
+            inst.Types.inst_dict_name)
 
 (* ---- Native oracle builtins ------------------------------------------- *)
 (* Implementations for the identity / mutation / continuation builtins that
@@ -816,7 +1062,7 @@ and native_impl (name : string) (args : value list) : outcome =
         | VArray a, VArray b -> a == b
         | VList a, VList b -> a == b
         | VTuple a, VTuple b -> a == b
-        | VVariant (n1, p1), VVariant (n2, p2) -> (
+        | VVariant (n1, _, p1), VVariant (n2, _, p2) -> (
             n1 = n2
             &&
             match (p1, p2) with
@@ -964,15 +1210,27 @@ let rec eval_decl (env : env) (decl : Typechecker.tdecl) : env * value =
       in
       (env', VUnit)
   | Typechecker.TDExtern (name, _) ->
-      (* Bind the extern to its bridged VM implementation now (fail at use
-         time, not declaration time, if it has no implementation). *)
-      (match env.globals.lookup_external name with
-      | Some _ -> () (* will be found via lookup fallback *)
-      | None -> ());
+      (* Externs resolve through the lookup fallback to bridged VM impls. *)
       ignore name;
       (env, VUnit)
-  | Typechecker.TDEffect _ | Typechecker.TDType _ | Typechecker.TDClass _
-  | Typechecker.TDOpen _ ->
+  | Typechecker.TDOpen alias_pairs ->
+      (* `open M`: the typechecker resolved which names to alias. Bind each
+         short name to the value of its qualified name. The alias shares the
+         SAME ref cell, so mutable module bindings stay aliased. *)
+      let env' =
+        List.fold_left
+          (fun e (short, qualified) ->
+            match List.assoc_opt qualified e.vars with
+            | Some r -> bind_ref e short r
+            | None -> (
+                (* Qualified name may be a bridged external (native module fn) *)
+                match lookup e qualified with
+                | Some v -> bind_var e short v
+                | None -> e (* type-only/class member: nothing to alias *)))
+          env alias_pairs
+      in
+      (env', VUnit)
+  | Typechecker.TDEffect _ | Typechecker.TDType _ | Typechecker.TDClass _ ->
       (env, VUnit)
 
 let eval_program (env : env) (program : Typechecker.tprogram) : env * value =
