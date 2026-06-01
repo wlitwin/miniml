@@ -645,7 +645,11 @@ let rec all_resumes_are_tail (te : Typechecker.texpr) =
       && Array.for_all
            (fun arm -> all_resumes_are_tail arm.Match_tree_types.arm_body)
            cm.match_arms
-  | _ -> true (* No resume — safe *)
+  | _ ->
+      (* Any other node (binop/app/tuple/cons/record/unop/...) computes a value
+         from its sub-expressions, so any resume inside it is in NON-tail
+         position and must be trampolined. Safe (true) iff it contains none. *)
+      not (expr_has_perform te)
 
 (* ---- Expression compilation ---- *)
 

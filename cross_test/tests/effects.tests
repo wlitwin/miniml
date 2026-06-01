@@ -2328,7 +2328,6 @@ saved ()
 --- expect: 15
 
 --- test: inline provide performed from inside a multishot fiber (cross-fiber)
---- skip-emit-js: JS backend (CPS) does not support cross-fiber multishot continuations (tracked emit-js gap)
 effect St = get : unit -> int end
 effect Ch = choose : unit -> bool end
 handle

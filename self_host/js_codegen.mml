@@ -351,7 +351,7 @@ module Js_codegen =
     | None -> true
     ) && (all_resumes_are_tail body)) arms)
     | Typechecker.TEMatchTree cm -> (not (expr_has_perform cm.scrutinee)) && ((not (decision_guards_have_perform cm.tree)) && (Array.forall (fn arm -> all_resumes_are_tail arm.arm_body) cm.match_arms))
-    | _ -> true
+    | _ -> not (expr_has_perform te)
 
 
   pub let is_exportable_name name = not (((String.length name) >= 2) && (((String.get name 0) = #5f) && ((String.get name 1) = #5f)))

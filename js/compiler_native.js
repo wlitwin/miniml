@@ -57720,7 +57720,7 @@ function Js_codegen$all_resumes_are_tail(te) {
         _t13260 = ((!Js_codegen$expr_has_perform(e1)) && Js_codegen$all_resumes_are_tail(e2));
         break _t13261;
       }
-      _t13260 = true;
+      _t13260 = (!Js_codegen$expr_has_perform(te));
       break _t13261;
     }
     return _t13260;
