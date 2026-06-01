@@ -24,7 +24,9 @@
 
    What the oracle rejects (raises Oracle_error / Unsupported):
    - TEMatchTree (post-lowering form — the oracle never sees lowered IR)
-   - PatMap / PatSet patterns (not yet supported; tracked)
+   - constrained-instance evidence dictionaries (factory dicts; tracked)
+   Known gap: cyclic values (`let rec xs = 1 :: xs`) — VList cannot represent
+   cycles; needs a mutable-cons representation (tracked).
 *)
 
 exception Oracle_error of string
@@ -445,8 +447,44 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
         | None, None -> Some []
         | Some p, Some pv -> match_pattern env pv p
         | _ -> None)
-  | Ast.PatMap _, _ -> unsupported "map pattern (PatMap)"
-  | Ast.PatSet _, _ -> unsupported "set pattern (PatSet)"
+  | Ast.PatMap entries, VList pairs ->
+      (* Map values are erased-newtype assoc lists of (key, value) tuples.
+         Every listed key must be present (keys are literals or pins); its
+         value pattern matches the associated value. Extra keys are allowed. *)
+      let find_value kpat =
+        List.find_map
+          (fun pair ->
+            match pair with
+            | VTuple [ k; v ] -> (
+                match match_pattern env k kpat with
+                | Some _ -> Some v
+                | None -> None)
+            | _ -> None)
+          pairs
+      in
+      let rec go bindings = function
+        | [] -> Some bindings
+        | (kpat, vpat) :: rest -> (
+            match find_value kpat with
+            | None -> None
+            | Some v ->
+                Option.bind (match_pattern env v vpat) (fun bs ->
+                    go (bindings @ bs) rest))
+      in
+      go [] entries
+  | Ast.PatSet elem_pats, VList items ->
+      (* Set values are erased-newtype element lists. Every element pattern
+         must match some item; extra items are allowed. *)
+      let rec go bindings = function
+        | [] -> Some bindings
+        | epat :: rest -> (
+            match
+              List.find_map (fun item -> match_pattern env item epat) items
+            with
+            | None -> None
+            | Some bs -> go (bindings @ bs) rest)
+      in
+      go [] elem_pats
   | _ -> None
 
 and match_all env vs pats =
@@ -674,8 +712,10 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
                           fields)))
           | v -> err "oracle: record update on non-record: %s" (pp v))
   | Typechecker.TERecordUpdateIdx (base, pairs) ->
-      (* Indexed update: { base with [k] = v } for arrays/maps. Evaluate base,
-         indexes, values; for arrays produce an updated copy. *)
+      (* Polymorphic record update by FIELD INDEX: { r with [i] = v } where i
+         is a field index computed by the typechecker's record-evidence
+         machinery. Non-destructive: produces an updated copy (mirrors the
+         VM's RECORD_UPDATE_DYN). Also supports arrays. *)
       bind (eval env base) (fun bv ->
           let rec go pairs (acc : value) =
             match pairs with
@@ -684,6 +724,28 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
                 bind (eval env idx_e) (fun idx ->
                     bind (eval env val_e) (fun v ->
                         match (acc, idx) with
+                        | VRecord fields, VInt i ->
+                            (* Evidence indexes are into the SORTED field names
+                               — the cross-backend contract (see js_codegen's
+                               Object.keys(...).sort()[idx]). *)
+                            let sorted_names =
+                              List.sort compare (List.map fst fields)
+                            in
+                            if i < 0 || i >= List.length sorted_names then
+                              err
+                                "record field index %d out of bounds (%d \
+                                 fields)"
+                                i (List.length fields)
+                            else
+                              let target = List.nth sorted_names i in
+                              let updated =
+                                List.map
+                                  (fun (n, r) ->
+                                    if String.equal n target then (n, ref v)
+                                    else (n, ref !r))
+                                  fields
+                              in
+                              go rest (VRecord updated)
                         | VArray arr, VInt i ->
                             let copy = Array.copy arr in
                             if i < 0 || i >= Array.length copy then
