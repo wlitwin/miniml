@@ -109,6 +109,7 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 #   test-emit-js     ocaml-ref   cross tests via --emit-js + node
 #   test-playground  self-host   cross tests via compiler_native.js + node (the web playground path)
 #   test-native      ocaml-ref   cross tests as LLVM native binaries
+#   test-oracle      —           cross tests on the reference interpreter (the executable spec, lib/oracle.ml)
 #   test-parity      self-host   cross tests as bytecode on the OCaml VM
 
 check: ## Full pre-merge gate: all suites x all backends x both compilers
@@ -119,6 +120,7 @@ check: ## Full pre-merge gate: all suites x all backends x both compilers
 	$(MAKE) test-emit-js
 	$(MAKE) test-playground
 	$(MAKE) test-native
+	$(MAKE) test-oracle
 	$(MAKE) test-parity
 	@echo ""
 	@echo "=============================="
