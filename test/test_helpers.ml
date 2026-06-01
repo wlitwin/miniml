@@ -114,6 +114,22 @@ let expect_stdlib_value source expected =
          (Interpreter.Bytecode.pp_value expected)
          (Interpreter.Bytecode.pp_value result))
 
+(* Like expect_type_error_msg, but with the stdlib loaded — needed for errors
+   that only surface after stdlib typeclass instances resolve (e.g. map
+   pattern exhaustiveness, which requires the Map instance). wrap_errors
+   converts raw Typechecker/Compiler/Vm exceptions into Interp.Error. *)
+let expect_stdlib_type_error_msg source expected_substr =
+  try
+    let _ = Interpreter.Interp.wrap_errors (fun () -> run_stdlib source) in
+    failwith "expected type error, but succeeded"
+  with Interpreter.Interp.Error msg ->
+    if not (String.starts_with ~prefix:"Type error" msg) then
+      failwith (Printf.sprintf "expected type error, got: %s" msg);
+    if not (contains_substring msg expected_substr) then
+      failwith
+        (Printf.sprintf "expected message containing %S, got: %s"
+           expected_substr msg)
+
 let print_summary () =
   Printf.printf "\n==============================\n";
   Printf.printf "%d/%d tests passed" !tests_passed !tests_run;

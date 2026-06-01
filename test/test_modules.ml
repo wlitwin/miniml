@@ -267,7 +267,7 @@ let () =
       expect_int
         {|
       module Pt =
-        type t = { x: int; y: int }
+        pub type t = { x: int; y: int }
         pub let make (x: int) (y: int) : t = { x = x; y = y }
       end
       let get_y (p: Pt.t) : int = p.y in
@@ -281,7 +281,7 @@ let () =
       expect_int
         {|
       module Wrap =
-        type 'a t = Val of 'a | Empty
+        pub type 'a t = Val of 'a | Empty
         pub let make (x: 'a) : 'a t = Val x
         pub let get (w: 'a t) : int =
           match w with
@@ -297,7 +297,7 @@ let () =
       expect_int
         {|
       module Pair =
-        type ('a, 'b) t = P of 'a * 'b | None
+        pub type ('a, 'b) t = P of 'a * 'b | None
         pub let make (x: 'a) (y: 'b) : ('a, 'b) t = P (x, y)
         pub let fst (p: ('a, 'b) t) : 'a =
           match p with

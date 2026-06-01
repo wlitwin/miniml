@@ -182,7 +182,7 @@ pub let f () = for true do
 end
 --- end
 
-=== Ref to Mut ===
+=== Refs (translate to Ref module — first-class, unlike mut locals) ===
 
 --- test: ref binding
 let f () =
@@ -190,20 +190,20 @@ let f () =
   x := 1
 --- expect:
 pub let f () =
-  let mut x = 0 in
-  x := 1
+  let x = Ref.create 0 in
+  Ref.set x 1
 --- end
 
 --- test: incr
 let f x = incr x
 --- expect:
-pub let f x = x := x + 1
+pub let f x = Ref.set x (Ref.get x + 1)
 --- end
 
 --- test: decr
 let f x = decr x
 --- expect:
-pub let f x = x := x - 1
+pub let f x = Ref.set x (Ref.get x - 1)
 --- end
 
 === Pattern Matching ===
@@ -380,7 +380,7 @@ pub let f = List.fold2 (fn acc a b -> (acc + a) + b) 0
 --- test: lazy expression
 let x = lazy (1 + 2)
 --- expect:
-pub let x = (fn () -> 1 + 2)
+pub let x = (let __lazy_cell = Ref.create None in (fn () -> (match Ref.get __lazy_cell with | Some __lv -> __lv | None -> (let __lv = 1 + 2 in (Ref.set __lazy_cell (Some __lv); __lv)))))
 --- end
 
 --- test: Lazy.force
@@ -457,18 +457,18 @@ let f a b = a @ b
 pub let f a b = List.concat a b
 --- end
 
-=== Physical Equality ===
+=== Physical Equality (== stays physical: phys_equal, NOT structural =) ===
 
---- test: == to =
+--- test: == is phys_equal
 let f a b = a == b
 --- expect:
-pub let f a b = a = b
+pub let f a b = phys_equal a b
 --- end
 
---- test: != to <>
+--- test: != is not phys_equal
 let f a b = a != b
 --- expect:
-pub let f a b = a <> b
+pub let f a b = not (phys_equal a b)
 --- end
 
 === Rune Patterns ===
