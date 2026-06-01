@@ -3061,7 +3061,7 @@ function string_concat(sep, parts) {
   return arr.join(sep);
 }
 function array_length(a) { return a._arr.length; }
-function array_get(a, i) { const ar = a._arr; if (i < 0 || i >= ar.length) throw new Error("array index out of bounds: " + i + " (length " + ar.length + ")"); return ar[i]; }
+function array_get(a, i) { const ar = a._arr; if (!Number.isInteger(i) || i < 0 || i >= ar.length) throw new Error("array index out of bounds: " + i + " (length " + ar.length + ")"); return ar[i]; }
 function array_set(a, i, v) { a._arr[i] = v; return undefined; }
 function array_make(n, v) { return {_arr: new Array(n).fill(v)}; }
 function array_of_list(lst) {
@@ -3422,7 +3422,7 @@ function __structural_lt(a, b) { return __compare(a, b) < 0; }
 function __structural_gt(a, b) { return __compare(a, b) > 0; }
 function __structural_le(a, b) { return __compare(a, b) <= 0; }
 function __structural_ge(a, b) { return __compare(a, b) >= 0; }
-function __index_at_array(i, arr) { const a = arr._arr; if (i < 0 || i >= a.length) throw new Error("array index out of bounds: " + i + " (length " + a.length + ")"); return a[i]; }
+function __index_at_array(i, arr) { const a = arr._arr; if (!Number.isInteger(i) || i < 0 || i >= a.length) throw new Error("array index out of bounds: " + i + " (length " + a.length + ")"); return a[i]; }
 function __index_at_string(i, s) { if (i < 0 || i >= s.length) throw new Error("string index out of bounds: " + i + " (length " + s.length + ")"); return s.charCodeAt(i); }
 // --- Canvas builtins (browser only) ---
 function Canvas$init(w, h) {

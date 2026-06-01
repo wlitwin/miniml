@@ -6,9 +6,15 @@ instance Hash int =
   let hash n = n
 end
 instance Hash string =
+  -- The accumulator is masked to 30 bits each step so the hash is identical on
+  -- every backend: OCaml's 63-bit wrapping ints, JS float64 numbers (which
+  -- otherwise overflow to Infinity for long strings -> NaN bucket indexes),
+  -- and native 64-bit ints. The intermediate h*31+b stays under 2^35, well
+  -- inside JS's exact-integer range (2^53), so `land` sees the same value
+  -- everywhere.
   let hash s =
     let bytes = String.to_byte_array s in
-    fold (fn h b -> h * 31 + Byte.to_int b) 5381 bytes
+    fold (fn h b -> ((h * 31) + Byte.to_int b) land 0x3FFFFFFF) 5381 bytes
 end
 instance Hash bool =
   let hash b = if b do 1 else 0

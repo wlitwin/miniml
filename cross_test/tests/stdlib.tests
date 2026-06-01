@@ -1048,3 +1048,43 @@ Seq.to_list (Seq.chunk 2 (Seq.range 1 6))
       int_of_string_opt "0xFF"
 
 --- expect: Some 255
+
+=== Hashtbl with long keys — hash must be bounded and backend-identical ===
+=== (regression: JS float64 hash overflowed to Infinity -> NaN bucket index) ===
+
+--- test: hash of long string is bounded and identical across backends
+
+      hash "Typechecker$instantiate$with$a$very$long$monomorphization$key$that$encodes$types$int$expr$list$fold$eval$IntLit$something$even$longer$to$be$sure$and$then$some$more$padding$to$exceed$two$hundred$and$six$characters$for$the$infinity$overflow$case$yes"
+
+--- expect: 482494906
+
+--- test: hash of empty string
+
+      hash ""
+
+--- expect: 5381
+
+--- test: Hashtbl with very long string keys
+
+      let h = Hashtbl.create 4 in
+      let k1 = String.make 250 (Byte.of_int 97) in
+      let k2 = String.concat "" [k1; "x"] in
+      let k3 = String.concat "" [k1; "yz"] in
+      Hashtbl.set h k1 1;
+      Hashtbl.set h k2 2;
+      Hashtbl.set h k3 3;
+      (Hashtbl.get h k1, Hashtbl.get h k2, Hashtbl.get h k3)
+
+--- expect: (Some 1, Some 2, Some 3)
+
+--- test: Hashtbl long-key update and remove
+
+      let h = Hashtbl.create 4 in
+      let k = String.make 300 (Byte.of_int 122) in
+      Hashtbl.set h k 1;
+      Hashtbl.set h k 42;
+      let v = Hashtbl.get h k in
+      Hashtbl.remove h k;
+      (v, Hashtbl.get h k)
+
+--- expect: (Some 42, None)

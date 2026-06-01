@@ -140,7 +140,6 @@ a + b
 === Merge pattern: fold + insert + to_list ===
 
 --- test: merge function monomorphizes on second call
---- skip-playground: self-host compiler crashes on emit-js runtime compiling polymorphic-recursion/GADT monomorphization ("Cannot read properties of undefined (reading '_hd')") — tracked as roadmap #2c
 class Collection 'c 'e where 'c -> 'e =
   empty : 'c
   insert : 'e -> 'c -> 'c
@@ -431,7 +430,6 @@ a + b
 --- expect: 4
 
 --- test: let-bound merge in expression context
---- skip-playground: self-host compiler crashes on emit-js runtime compiling polymorphic-recursion/GADT monomorphization ("Cannot read properties of undefined (reading '_hd')") — tracked as roadmap #2c
 class Collection 'c 'e where 'c -> 'e =
   empty : 'c
   insert : 'e -> 'c -> 'c

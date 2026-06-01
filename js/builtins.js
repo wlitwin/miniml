@@ -95,7 +95,7 @@ reg("string_of_bool", 1, (args) =>
 reg("array_get", 2, (args) => {
   const arr = vm.asArray(args[0]);
   const idx = vm.asInt(args[1]);
-  if (idx < 0 || idx >= arr.length)
+  if (!Number.isInteger(idx) || idx < 0 || idx >= arr.length)
     vm.error(`array index ${idx} out of bounds (length ${arr.length})`);
   return arr[idx];
 });
@@ -213,7 +213,7 @@ reg("__show_value", 1, (args) => vm.vstring(vm.ppValue(args[0])));
 reg("__index_at_array", 2, (args) => {
   const idx = vm.asInt(args[0]);
   const arr = vm.asArray(args[1]);
-  if (idx < 0 || idx >= arr.length)
+  if (!Number.isInteger(idx) || idx < 0 || idx >= arr.length)
     vm.error(`array index out of bounds: ${idx} (length ${arr.length})`);
   return arr[idx];
 });
@@ -539,7 +539,7 @@ reg("Array.make", 2, (args) => {
 reg("Array.get", 2, (args) => {
   const arr = vm.asArray(args[0]);
   const idx = vm.asInt(args[1]);
-  if (idx < 0 || idx >= arr.length)
+  if (!Number.isInteger(idx) || idx < 0 || idx >= arr.length)
     vm.error(`array index ${idx} out of bounds (length ${arr.length})`);
   return arr[idx];
 });
