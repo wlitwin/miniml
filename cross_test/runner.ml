@@ -2,123 +2,7 @@
    Parses .t test files and runs each test case through the OCaml interpreter,
    comparing pp_value output against expected results. *)
 
-type expectation =
-  | Value of string
-  | TypeError
-  | TypeErrorMsg of string
-  | RuntimeError of string
-
-type test_case = { name : string; source : string; expect : expectation }
-
-(* --- Parsing ------------------------------------------------------------ *)
-
-type parse_state = Idle | CollectingSource of string (* test name *)
-
-let parse_test_file filename =
-  let ic = open_in filename in
-  let tests = ref [] in
-  let state = ref Idle in
-  let source_buf = Buffer.create 256 in
-  let flush name expect =
-    let source = String.trim (Buffer.contents source_buf) in
-    tests := { name; source; expect } :: !tests;
-    state := Idle;
-    Buffer.clear source_buf
-  in
-  (try
-     while true do
-       let line = input_line ic in
-       let trimmed = String.trim line in
-       (* --- test: <name> *)
-       if String.length trimmed > 9 && String.sub trimmed 0 9 = "--- test:" then begin
-         let name =
-           String.trim (String.sub trimmed 9 (String.length trimmed - 9))
-         in
-         state := CollectingSource name;
-         Buffer.clear source_buf
-       end
-         (* --- expect: <pp_value output> — supports "quoted" values for whitespace *)
-       else if String.length line > 12 && String.sub line 0 12 = "--- expect: "
-       then begin
-         match !state with
-         | CollectingSource name ->
-             let raw = String.sub line 12 (String.length line - 12) in
-             let expected =
-               let len = String.length raw in
-               if len >= 2 && raw.[0] = '"' && raw.[len - 1] = '"' then
-                 String.sub raw 1 (len - 2)
-               else raw
-             in
-             flush name (Value expected)
-         | Idle -> ()
-       end (* --- expect-type-error: <substring> *)
-       else if
-         String.length trimmed >= 22
-         && String.sub trimmed 0 22 = "--- expect-type-error:"
-       then begin
-         match !state with
-         | CollectingSource name ->
-             let substr =
-               String.trim (String.sub trimmed 22 (String.length trimmed - 22))
-             in
-             if substr = "" then flush name TypeError
-             else flush name (TypeErrorMsg substr)
-         | Idle -> ()
-       end (* --- expect-type-error *)
-       else if trimmed = "--- expect-type-error" then begin
-         match !state with
-         | CollectingSource name -> flush name TypeError
-         | Idle -> ()
-       end (* --- expect-runtime-error: <substring> *)
-       else if
-         String.length trimmed >= 25
-         && String.sub trimmed 0 25 = "--- expect-runtime-error:"
-       then begin
-         match !state with
-         | CollectingSource name ->
-             let substr =
-               String.trim (String.sub trimmed 25 (String.length trimmed - 25))
-             in
-             flush name (RuntimeError substr)
-         | Idle -> ()
-       end
-       (* Source line or ignored line *)
-         else begin
-         match !state with
-         | CollectingSource _ ->
-             (* Skip section headers and blank lines before first source line *)
-             if Buffer.length source_buf > 0 || trimmed <> "" then begin
-               if String.length trimmed > 3 && String.sub trimmed 0 3 = "==="
-               then () (* skip section headers *)
-               else if
-                 String.length trimmed > 4 && String.sub trimmed 0 4 = "--- "
-               then () (* skip backend-specific directives (e.g. skip-native) *)
-               else begin
-                 if Buffer.length source_buf > 0 then
-                   Buffer.add_char source_buf '\n';
-                 Buffer.add_string source_buf line
-               end
-             end
-         | Idle -> () (* skip blank lines, section headers outside tests *)
-       end
-     done
-   with End_of_file -> ());
-  close_in ic;
-  List.rev !tests
-
-(* --- Helpers ------------------------------------------------------------- *)
-
-let contains_substring haystack needle =
-  let nlen = String.length needle in
-  let hlen = String.length haystack in
-  if nlen > hlen then false
-  else begin
-    let found = ref false in
-    for i = 0 to hlen - nlen do
-      if String.sub haystack i nlen = needle then found := true
-    done;
-    !found
-  end
+open Test_format
 
 (* --- Running ------------------------------------------------------------- *)
 
@@ -259,21 +143,6 @@ let run_tests _state tests =
   Printf.printf "\n";
   (!passed, !failed, !skipped, !failures)
 
-(* --- Directory scanning -------------------------------------------------- *)
-
-let find_test_files dir =
-  let files = ref [] in
-  let handle = Unix.opendir dir in
-  (try
-     while true do
-       let entry = Unix.readdir handle in
-       if Filename.check_suffix entry ".tests" then
-         files := Filename.concat dir entry :: !files
-     done
-   with End_of_file -> ());
-  Unix.closedir handle;
-  List.sort String.compare !files
-
 (* --- Argument parsing ----------------------------------------------------- *)
 
 let parse_args argv =
@@ -297,16 +166,6 @@ let parse_args argv =
     end
   done;
   (List.rev !files, List.rev !filters)
-
-let filter_tests filters tests =
-  match filters with
-  | [] -> tests
-  | _ ->
-      List.filter
-        (fun tc ->
-          let name_lower = String.lowercase_ascii tc.name in
-          List.exists (fun f -> contains_substring name_lower f) filters)
-        tests
 
 (* --- Main ---------------------------------------------------------------- *)
 

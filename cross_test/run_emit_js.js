@@ -6,7 +6,7 @@
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { parseTestFile, parseArgs, makeFilter } = require("./test_parser");
+const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
 
 const INTERPRETER = path.resolve(
   __dirname,
@@ -211,8 +211,9 @@ for (const file of files) {
     continue;
   }
   for (const tc of tests) {
-    if (tc.skipEmitJs) {
-      console.log(`  SKIP: ${tc.name} (${tc.skipEmitJs})`);
+    const skip = skipReason(tc, "emit-js");
+    if (skip) {
+      console.log(`  SKIP: ${tc.name} (${skip})`);
       skipped++;
       continue;
     }

@@ -3,164 +3,11 @@
    through the native compiler (LLVM IR -> clang -> binary), comparing
    stdout output against expected results. *)
 
-(* --- Test file parsing (reused from cross_test/runner.ml) --- *)
+(* The .tests format parser lives in Test_format (cross_test/test_format.ml)
+   — the single OCaml implementation shared by all runners. This runner asks
+   it for native-specific directives: --- skip-native: and --- expect-native:. *)
 
-type expectation =
-  | Value of string
-  | TypeError
-  | TypeErrorMsg of string
-  | RuntimeError of string
-
-type test_case = {
-  name : string;
-  source : string;
-  expect : expectation;
-  expect_native : expectation option;
-  skip_native : string option;  (* reason; test is skipped on the native backend *)
-}
-
-type parse_state = Idle | CollectingSource of string
-
-let parse_test_file filename =
-  let ic = open_in filename in
-  let tests = ref [] in
-  let state = ref Idle in
-  let source_buf = Buffer.create 256 in
-  let pending_native = ref None in
-  let pending_skip = ref None in
-  let flush name expect =
-    let source = String.trim (Buffer.contents source_buf) in
-    tests :=
-      {
-        name;
-        source;
-        expect;
-        expect_native = !pending_native;
-        skip_native = !pending_skip;
-      }
-      :: !tests;
-    state := Idle;
-    pending_native := None;
-    pending_skip := None;
-    Buffer.clear source_buf
-  in
-  (try
-     while true do
-       let line = input_line ic in
-       let trimmed = String.trim line in
-       if String.length trimmed > 9 && String.sub trimmed 0 9 = "--- test:" then begin
-         let name =
-           String.trim (String.sub trimmed 9 (String.length trimmed - 9))
-         in
-         state := CollectingSource name;
-         pending_native := None;
-         pending_skip := None;
-         Buffer.clear source_buf
-       end
-       else if
-         String.length line > 17 && String.sub line 0 17 = "--- skip-native: "
-       then begin
-         match !state with
-         | CollectingSource _ ->
-             pending_skip :=
-               Some
-                 (String.trim (String.sub line 17 (String.length line - 17)))
-         | Idle -> ()
-       end
-       else if
-         String.length line > 19 && String.sub line 0 19 = "--- expect-native: "
-       then begin
-         match !state with
-         | CollectingSource _ ->
-             let raw = String.sub line 19 (String.length line - 19) in
-             let expected =
-               let len = String.length raw in
-               if len >= 2 && raw.[0] = '"' && raw.[len - 1] = '"' then
-                 String.sub raw 1 (len - 2)
-               else raw
-             in
-             pending_native := Some (Value expected)
-         | Idle -> ()
-       end
-       else if String.length line > 12 && String.sub line 0 12 = "--- expect: "
-       then begin
-         match !state with
-         | CollectingSource name ->
-             let raw = String.sub line 12 (String.length line - 12) in
-             let expected =
-               let len = String.length raw in
-               if len >= 2 && raw.[0] = '"' && raw.[len - 1] = '"' then
-                 String.sub raw 1 (len - 2)
-               else raw
-             in
-             flush name (Value expected)
-         | Idle -> ()
-       end
-       else if
-         String.length trimmed >= 22
-         && String.sub trimmed 0 22 = "--- expect-type-error:"
-       then begin
-         match !state with
-         | CollectingSource name ->
-             let substr =
-               String.trim (String.sub trimmed 22 (String.length trimmed - 22))
-             in
-             if substr = "" then flush name TypeError
-             else flush name (TypeErrorMsg substr)
-         | Idle -> ()
-       end
-       else if trimmed = "--- expect-type-error" then begin
-         match !state with
-         | CollectingSource name -> flush name TypeError
-         | Idle -> ()
-       end
-       else if
-         String.length trimmed >= 25
-         && String.sub trimmed 0 25 = "--- expect-runtime-error:"
-       then begin
-         match !state with
-         | CollectingSource name ->
-             let substr =
-               String.trim (String.sub trimmed 25 (String.length trimmed - 25))
-             in
-             flush name (RuntimeError substr)
-         | Idle -> ()
-       end
-       else begin
-         match !state with
-         | CollectingSource _ ->
-             if Buffer.length source_buf > 0 || trimmed <> "" then begin
-               if
-                 (String.length trimmed > 3 && String.sub trimmed 0 3 = "===")
-                 || (String.length trimmed > 4 && String.sub trimmed 0 4 = "--- ")
-               then () (* skip section banners and directives meant for other backends
-                          (e.g. --- skip-emit-js:) — don't absorb them into the source *)
-               else begin
-                 if Buffer.length source_buf > 0 then
-                   Buffer.add_char source_buf '\n';
-                 Buffer.add_string source_buf line
-               end
-             end
-         | Idle -> ()
-       end
-     done
-   with End_of_file -> ());
-  close_in ic;
-  List.rev !tests
-
-(* --- Helpers --- *)
-
-let contains_substring haystack needle =
-  let nlen = String.length needle in
-  let hlen = String.length haystack in
-  if nlen > hlen then false
-  else begin
-    let found = ref false in
-    for i = 0 to hlen - nlen do
-      if String.sub haystack i nlen = needle then found := true
-    done;
-    !found
-  end
+open Test_format
 
 (* Run a command and capture stdout+stderr *)
 let run_command cmd =
@@ -186,15 +33,15 @@ type result = RPass | RFail of string | RSkip of string
 (* Run one test through the native pipeline using the given (worker-local) temp
    files. Pure w.r.t. shared state — returns the outcome instead of printing. *)
 let run_one ~tmp_src ~tmp_bin tc : result =
-  match tc.skip_native with
+  match skip_reason tc ~backend:"native" with
   | Some reason -> RSkip reason
   | None -> (
       match tc.expect with
       | Value _ -> (
           let expected =
-            match tc.expect_native with
-            | Some (Value v) -> v
-            | _ -> ( match tc.expect with Value v -> v | _ -> "")
+            match expected_for tc ~backend:"native" with
+            | Value v -> v
+            | _ -> ""
           in
           let oc = open_out tmp_src in
           output_string oc tc.source;
@@ -388,18 +235,6 @@ let parse_args argv =
     end
   done;
   (List.rev !files, List.rev !filters)
-
-let filter_tests filters tests =
-  match filters with
-  | [] -> tests
-  | _ ->
-      List.filter
-        (fun tc ->
-          let name_lower = String.lowercase_ascii tc.name in
-          List.exists (fun f -> contains_substring name_lower f) filters)
-        tests
-
-(* --- Main --- *)
 
 let () =
   let arg_files, filters = parse_args Sys.argv in

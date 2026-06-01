@@ -1,6 +1,11 @@
+(library
+ (name test_format)
+ (modules test_format)
+ (libraries unix))
+
 (test
  (name runner)
- (libraries interpreter unix)
  (modules runner)
+ (libraries interpreter test_format unix)
  (deps
   (source_tree tests)))

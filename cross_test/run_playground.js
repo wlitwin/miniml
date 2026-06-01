@@ -15,7 +15,7 @@
 const { execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const { parseTestFile, parseArgs, makeFilter } = require("./test_parser");
+const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPILER_NATIVE = path.join(ROOT, "js", "compiler_native.js");
@@ -201,9 +201,9 @@ for (const file of files) {
     continue;
   }
   for (const tc of tests) {
-    const skipReason = tc.skipEmitJs || tc.skipPlayground;
-    if (skipReason) {
-      console.log(`  SKIP: ${tc.name} (${skipReason})`);
+    const skip = skipReason(tc, "emit-js") || skipReason(tc, "playground");
+    if (skip) {
+      console.log(`  SKIP: ${tc.name} (${skip})`);
       skipped++;
       continue;
     }

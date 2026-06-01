@@ -19,83 +19,9 @@ const INTERPRETER = path.resolve(
 );
 
 // --- Parsing -------------------------------------------------------------
+// The .tests parser is shared across all node runners: see test_parser.js.
 
-function parseTestFile(filename) {
-  const content = fs.readFileSync(filename, "utf-8");
-  const lines = content.split("\n");
-  const tests = [];
-  let state = null; // null | { name, sourceLines }
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("--- test:")) {
-      const name = trimmed.slice(9).trim();
-      state = { name, sourceLines: [] };
-    } else if (line.startsWith("--- expect: ")) {
-      if (state) {
-        let expected = line.slice(12); // preserve trailing whitespace
-        // Strip outer quotes if present (for whitespace-sensitive values)
-        if (expected.length >= 2 && expected[0] === '"' && expected[expected.length - 1] === '"') {
-          expected = expected.slice(1, -1);
-        }
-        tests.push({
-          name: state.name,
-          source: state.sourceLines.join("\n").trim(),
-          expect: { type: "value", value: expected },
-        });
-        state = null;
-      }
-    } else if (trimmed.startsWith("--- expect-type-error:")) {
-      if (state) {
-        const substr = trimmed.slice(22).trim();
-        if (substr === "") {
-          tests.push({
-            name: state.name,
-            source: state.sourceLines.join("\n").trim(),
-            expect: { type: "type-error" },
-          });
-        } else {
-          tests.push({
-            name: state.name,
-            source: state.sourceLines.join("\n").trim(),
-            expect: { type: "type-error-msg", substring: substr },
-          });
-        }
-        state = null;
-      }
-    } else if (trimmed === "--- expect-type-error") {
-      if (state) {
-        tests.push({
-          name: state.name,
-          source: state.sourceLines.join("\n").trim(),
-          expect: { type: "type-error" },
-        });
-        state = null;
-      }
-    } else if (trimmed.startsWith("--- expect-runtime-error:")) {
-      if (state) {
-        const substr = trimmed.slice(25).trim();
-        tests.push({
-          name: state.name,
-          source: state.sourceLines.join("\n").trim(),
-          expect: { type: "runtime-error", substring: substr },
-        });
-        state = null;
-      }
-    } else if (state) {
-      // Skip section headers, collect source lines
-      if (trimmed.startsWith("===") && trimmed.endsWith("===")) continue;
-      // Skip backend-specific directives (e.g. --- skip-native:) meant for other runners
-      if (trimmed.startsWith("--- ")) continue;
-      if (state.sourceLines.length > 0 || trimmed !== "") {
-        state.sourceLines.push(line);
-      }
-    }
-  }
-
-  return tests;
-}
+const { parseTestFile } = require("./test_parser");
 
 // --- Running -------------------------------------------------------------
 
