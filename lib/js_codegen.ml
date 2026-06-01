@@ -2987,11 +2987,15 @@ and compile_decl ctx (decl : Typechecker.tdecl) =
 let js_builtins =
   {|// --- Builtins ---
 let _output_count = 0;
+// `print v` outputs pp(v) followed by a newline (the spec: OCaml print_endline;
+// native printf "%s\n"; JS VM console.log). The _jsOutput callback contract is
+// "one call per print, string WITHOUT the newline — the sink adds framing"
+// (same as the VM's output_fn), so only the stdout path appends it here.
 function print(v) {
   _output_count++;
   const s = (typeof v === "string") ? v : _pp(v);
   if (typeof globalThis._jsOutput === "function") globalThis._jsOutput(s);
-  else if (typeof process !== "undefined") process.stdout.write(s);
+  else if (typeof process !== "undefined") process.stdout.write(s + "\n");
   return undefined;
 }
 function println(v) {

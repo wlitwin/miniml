@@ -184,6 +184,23 @@ let p = (10, 20) in match p with (a, b) -> a + b
 print 42
 --- expect: 42
 
+--- test: consecutive prints are separate lines
+print "a";;
+print "b";;
+print "c"
+--- expect: "a\nb\nc"
+
+--- test: print output then non-unit final value on its own line
+print "result is";;
+42
+--- expect: "result is\n42"
+
+--- test: print values then computed final value
+print 1;;
+print [2; 3];;
+1 + 1
+--- expect: "1\n[2; 3]\n2"
+
 === Type Error Tests ===
 
 --- test: add int to bool
