@@ -18,11 +18,17 @@ let wrap_errors f =
       raise (Error (Printf.sprintf "Runtime error: %s" msg))
 
 (* ---- Built-in definitions ---- *)
+(* Core builtin IMPLEMENTATIONS, registered by name. Their type signatures live
+   in stdlib/builtins.mml — the single source of truth shared with the
+   self-hosted compiler (self_host/main.mml). At startup, setup_default_classes
+   typechecks stdlib/builtins.mml (via Stdlib_sources.builtins) and cross-checks
+   that every extern there has an implementation here and vice versa.
+
+   Operator builtins (mod, ^, &&, ||, not) are declared there with the
+   parenthesized form: `extern ( ^ ) : string -> string -> string`. *)
 
 type builtin_def = {
   name : string;
-  ty : Types.ty;
-  quant : int;
   arity : int;
   impl : Bytecode.value list -> Bytecode.value;
 }
@@ -58,31 +64,11 @@ let as_array = function
   | Bytecode.VArray a -> a
   | _ -> raise (Vm.Runtime_error "expected array")
 
-let int2 =
-  Types.TArrow
-    ( Types.TInt,
-      Types.EffEmpty,
-      Types.TArrow (Types.TInt, Types.EffEmpty, Types.TInt) )
-
-let float2 =
-  Types.TArrow
-    ( Types.TFloat,
-      Types.EffEmpty,
-      Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TFloat) )
-
-let bool2 =
-  Types.TArrow
-    ( Types.TBool,
-      Types.EffEmpty,
-      Types.TArrow (Types.TBool, Types.EffEmpty, Types.TBool) )
-
 let builtins output_fn : builtin_def list =
   [
     (* Int modulo (stays as builtin, not in Num class) *)
     {
       name = "mod";
-      ty = int2;
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -93,10 +79,6 @@ let builtins output_fn : builtin_def list =
     (* Print *)
     {
       name = "print";
-      ty =
-        Types.TArrow
-          (Types.TGen 0, Types.EffRow ("IO", [], Types.EffEmpty), Types.TUnit);
-      quant = 1;
       arity = 1;
       impl =
         (fun args ->
@@ -106,8 +88,6 @@ let builtins output_fn : builtin_def list =
     (* Failwith *)
     {
       name = "failwith";
-      ty = Types.TArrow (Types.TString, Types.EffEmpty, Types.TGen 0);
-      quant = 1;
       arity = 1;
       impl =
         (fun args -> raise (Vm.Runtime_error (as_string (List.nth args 0))));
@@ -115,12 +95,6 @@ let builtins output_fn : builtin_def list =
     (* String *)
     {
       name = "^";
-      ty =
-        Types.TArrow
-          ( Types.TString,
-            Types.EffEmpty,
-            Types.TArrow (Types.TString, Types.EffEmpty, Types.TString) );
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -129,8 +103,6 @@ let builtins output_fn : builtin_def list =
     (* Boolean *)
     {
       name = "&&";
-      ty = bool2;
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -138,8 +110,6 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "||";
-      ty = bool2;
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -147,58 +117,40 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "not";
-      ty = Types.TArrow (Types.TBool, Types.EffEmpty, Types.TBool);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VBool (not (as_bool (List.nth args 0))));
     };
     (* Physical equality *)
     {
       name = "phys_equal";
-      ty =
-        Types.TArrow
-          ( Types.TGen 0,
-            Types.EffEmpty,
-            Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TBool) );
-      quant = 1;
       arity = 2;
       impl = (fun args -> VBool (List.nth args 0 == List.nth args 1));
     };
     (* Conversions *)
     {
       name = "float_of_int";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TFloat);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VFloat (Float.of_int (as_int (List.nth args 0))));
     };
     {
       name = "int_of_float";
-      ty = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TInt);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VInt (Float.to_int (as_float (List.nth args 0))));
     };
     (* String conversions *)
     {
       name = "string_of_int";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VString (string_of_int (as_int (List.nth args 0))));
     };
     {
       name = "string_of_float";
-      ty = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args -> VString (Printf.sprintf "%g" (as_float (List.nth args 0))));
     };
     {
       name = "string_of_bool";
-      ty = Types.TArrow (Types.TBool, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args ->
@@ -207,12 +159,6 @@ let builtins output_fn : builtin_def list =
     (* Array operations (array_get and array_length kept for internal use by Iter/Show instances) *)
     {
       name = "array_get";
-      ty =
-        Types.TArrow
-          ( Types.TArray (Types.TGen 0),
-            Types.EffEmpty,
-            Types.TArrow (Types.TInt, Types.EffEmpty, Types.TGen 0) );
-      quant = 1;
       arity = 2;
       impl =
         (fun args ->
@@ -227,8 +173,6 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "array_length";
-      ty = Types.TArrow (Types.TArray (Types.TGen 0), Types.EffEmpty, Types.TInt);
-      quant = 1;
       arity = 1;
       impl =
         (fun args ->
@@ -238,22 +182,16 @@ let builtins output_fn : builtin_def list =
     (* Byte primitives — type conversions need native support *)
     {
       name = "__byte_to_int";
-      ty = Types.TArrow (Types.TByte, Types.EffEmpty, Types.TInt);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VInt (as_byte (List.nth args 0)));
     };
     {
       name = "__byte_of_int";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TByte);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VByte (as_int (List.nth args 0) land 0xFF));
     };
     {
       name = "__byte_to_string";
-      ty = Types.TArrow (Types.TByte, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args ->
@@ -263,22 +201,16 @@ let builtins output_fn : builtin_def list =
     (* Rune primitives — type conversions and UTF-8 encoding need native support *)
     {
       name = "__rune_to_int";
-      ty = Types.TArrow (Types.TRune, Types.EffEmpty, Types.TInt);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VInt (as_rune (List.nth args 0)));
     };
     {
       name = "__rune_of_int";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TRune);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VRune (as_int (List.nth args 0)));
     };
     {
       name = "__rune_to_string";
-      ty = Types.TArrow (Types.TRune, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args ->
@@ -288,12 +220,6 @@ let builtins output_fn : builtin_def list =
     (* Math primitives — float operations need native support *)
     {
       name = "__math_pow";
-      ty =
-        Types.TArrow
-          ( Types.TFloat,
-            Types.EffEmpty,
-            Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TFloat) );
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -304,31 +230,23 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "__math_sqrt";
-      ty = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TFloat);
-      quant = 0;
       arity = 1;
       impl = (fun args -> VFloat (Float.sqrt (as_float (List.nth args 0))));
     };
     {
       name = "__math_floor";
-      ty = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TInt);
-      quant = 0;
       arity = 1;
       impl =
         (fun args -> VInt (int_of_float (floor (as_float (List.nth args 0)))));
     };
     {
       name = "__math_ceil";
-      ty = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TInt);
-      quant = 0;
       arity = 1;
       impl =
         (fun args -> VInt (int_of_float (ceil (as_float (List.nth args 0)))));
     };
     {
       name = "__math_round";
-      ty = Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TInt);
-      quant = 0;
       arity = 1;
       impl =
         (fun args ->
@@ -337,12 +255,6 @@ let builtins output_fn : builtin_def list =
     (* Format specifier builtins *)
     {
       name = "__fmt_float";
-      ty =
-        Types.TArrow
-          ( Types.TInt,
-            Types.EffEmpty,
-            Types.TArrow (Types.TFloat, Types.EffEmpty, Types.TString) );
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -353,32 +265,24 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "__fmt_hex";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args -> VString (Printf.sprintf "%x" (as_int (List.nth args 0))));
     };
     {
       name = "__fmt_hex_upper";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args -> VString (Printf.sprintf "%X" (as_int (List.nth args 0))));
     };
     {
       name = "__fmt_oct";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args -> VString (Printf.sprintf "%o" (as_int (List.nth args 0))));
     };
     {
       name = "__fmt_bin";
-      ty = Types.TArrow (Types.TInt, Types.EffEmpty, Types.TString);
-      quant = 0;
       arity = 1;
       impl =
         (fun args ->
@@ -390,12 +294,6 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "__fmt_zero_pad";
-      ty =
-        Types.TArrow
-          ( Types.TInt,
-            Types.EffEmpty,
-            Types.TArrow (Types.TString, Types.EffEmpty, Types.TString) );
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -406,12 +304,6 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "__fmt_pad_left";
-      ty =
-        Types.TArrow
-          ( Types.TInt,
-            Types.EffEmpty,
-            Types.TArrow (Types.TString, Types.EffEmpty, Types.TString) );
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -422,12 +314,6 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "__fmt_pad_right";
-      ty =
-        Types.TArrow
-          ( Types.TInt,
-            Types.EffEmpty,
-            Types.TArrow (Types.TString, Types.EffEmpty, Types.TString) );
-      quant = 0;
       arity = 2;
       impl =
         (fun args ->
@@ -438,8 +324,6 @@ let builtins output_fn : builtin_def list =
     };
     {
       name = "__show_value";
-      ty = Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TString);
-      quant = 1;
       arity = 1;
       impl =
         (fun args -> Bytecode.VString (Bytecode.pp_value (List.nth args 0)));
@@ -537,70 +421,34 @@ let setup_builtins () =
   let argv = ref Sys.argv in
   let global_names = Dynarray.create () in
   let globals = Hashtbl.create 64 in
-  let stdlib_pub_vars = ref [] in
-  let vars =
-    List.concat_map
-      (fun (b : builtin_def) ->
-        let idx = Dynarray.length global_names in
-        Dynarray.add_last global_names b.name;
-        Hashtbl.replace globals idx (make_external b);
-        (* Also register under Stdlib. prefix *)
-        let stdlib_name = "Stdlib." ^ b.name in
-        let sidx = Dynarray.length global_names in
-        Dynarray.add_last global_names stdlib_name;
-        Hashtbl.replace globals sidx (make_external b);
-        let scheme =
-          {
-            Types.quant = b.quant;
-            equant = 0;
-            pvquant = 0;
-            rquant = 0;
-            constraints = [];
-            record_evidences = [];
-            body = b.ty;
-          }
-        in
-        stdlib_pub_vars := (b.name, scheme) :: !stdlib_pub_vars;
-        [ (b.name, scheme); (stdlib_name, scheme) ])
-      (builtins output_fn)
+  (* Register builtin IMPLEMENTATIONS by name (and under the Stdlib. prefix).
+     Types are bound later, when setup_default_classes typechecks
+     stdlib/builtins.mml (the single source of truth for builtin signatures)
+     and cross-checks it against these registrations. *)
+  let register_impl name arity impl =
+    let ext =
+      Bytecode.VExternal
+        { ext_name = name; ext_arity = arity; ext_fn = impl; ext_args = [] }
+    in
+    let idx = Dynarray.length global_names in
+    Dynarray.add_last global_names name;
+    Hashtbl.replace globals idx ext;
+    (* Also register under Stdlib. prefix *)
+    let sidx = Dynarray.length global_names in
+    Dynarray.add_last global_names ("Stdlib." ^ name);
+    Hashtbl.replace globals sidx ext
   in
-  (* Register polymorphic copy_continuation builtin: 'a -> 'a *)
-  let copy_idx = Dynarray.length global_names in
-  Dynarray.add_last global_names "copy_continuation";
-  let copy_ext =
-    Bytecode.VExternal
-      {
-        ext_name = "copy_continuation";
-        ext_arity = 1;
-        ext_fn = (fun args -> copy_continuation (List.nth args 0));
-        ext_args = [];
-      }
-  in
-  Hashtbl.replace globals copy_idx copy_ext;
-  let copy_sidx = Dynarray.length global_names in
-  Dynarray.add_last global_names "Stdlib.copy_continuation";
-  Hashtbl.replace globals copy_sidx copy_ext;
-  let copy_scheme =
-    {
-      Types.quant = 1;
-      equant = 0;
-      pvquant = 0;
-      rquant = 0;
-      constraints = [];
-      record_evidences = [];
-      body =
-        Types.TArrow
-          (Types.TGen 0, Types.EffRow ("IO", [], Types.EffEmpty), Types.TGen 0);
-    }
-  in
-  stdlib_pub_vars := ("copy_continuation", copy_scheme) :: !stdlib_pub_vars;
-  let vars =
-    ("copy_continuation", copy_scheme)
-    :: ("Stdlib.copy_continuation", copy_scheme)
-    :: vars
-  in
+  List.iter
+    (fun (b : builtin_def) -> register_impl b.name b.arity b.impl)
+    (builtins output_fn);
+  (* copy_continuation's impl closes over the copy_continuation function above,
+     so it can't live in the builtins list (defined before it). *)
+  register_impl "copy_continuation" 1 (fun args ->
+      copy_continuation (List.nth args 0));
   (* No-op cache functions — used by the self-hosted compiler's extern declarations.
-     In the bytecode VM, caching is not needed (setup runs once per process). *)
+     In the bytecode VM, caching is not needed (setup runs once per process).
+     The self-host declares their types itself (`extern __cache_has : ...`), so
+     only impls are registered here. *)
   let cache_fns =
     [
       ("__cache_has", 1, fun _args -> Bytecode.VBool false);
@@ -608,46 +456,18 @@ let setup_builtins () =
       ("__cache_set", 2, fun _args -> Bytecode.VUnit);
     ]
   in
-  let vars =
-    List.fold_left
-      (fun vs (name, arity, impl) ->
-        let idx = Dynarray.length global_names in
-        Dynarray.add_last global_names name;
-        Hashtbl.replace globals idx
-          (Bytecode.VExternal
-             {
-               ext_name = name;
-               ext_arity = arity;
-               ext_fn = impl;
-               ext_args = [];
-             });
-        let ty =
-          match arity with
-          | 1 -> Types.TArrow (Types.TGen 0, Types.EffEmpty, Types.TGen 1)
-          | _ ->
-              Types.TArrow
-                ( Types.TGen 0,
-                  Types.EffEmpty,
-                  Types.TArrow (Types.TGen 1, Types.EffEmpty, Types.TUnit) )
-        in
-        let scheme =
-          {
-            Types.quant = 2;
-            equant = 0;
-            pvquant = 0;
-            rquant = 0;
-            constraints = [];
-            record_evidences = [];
-            body = ty;
-          }
-        in
-        (name, scheme) :: vs)
-      vars cache_fns
-  in
+  List.iter
+    (fun (name, arity, impl) ->
+      let idx = Dynarray.length global_names in
+      Dynarray.add_last global_names name;
+      Hashtbl.replace globals idx
+        (Bytecode.VExternal
+           { ext_name = name; ext_arity = arity; ext_fn = impl; ext_args = [] }))
+    cache_fns;
   let ctx =
     Typechecker.
       {
-        vars;
+        vars = [];
         mutable_vars = [];
         type_env = Types.empty_type_env;
         loop_info = None;
@@ -660,7 +480,7 @@ let setup_builtins () =
         loc = Token.{ line = 0; col = 0; offset = 0 };
       }
   in
-  (ctx, global_names, globals, !stdlib_pub_vars, output_fn, argv)
+  (ctx, global_names, globals, output_fn, argv)
 
 (* ---- Embedding API: register custom external functions ---- *)
 
@@ -881,7 +701,70 @@ let eval_setup state source =
       state.setup_typed @ [ (ctx'.Typechecker.type_env, typed_program) ];
   }
 
-let setup_default_classes state stdlib_pub_vars =
+(* Load core builtin type signatures from stdlib/builtins.mml — the single
+   source of truth shared with the self-hosted compiler. Implementations were
+   registered by name in setup_builtins; the extern declarations bind their
+   types. Returns the updated state plus the (name, scheme) list of builtins
+   for the Stdlib module. Fails loudly if the signature file and the registered
+   implementations disagree. *)
+let setup_builtin_signatures state =
+  let state = eval_setup state Stdlib_sources.builtins in
+  (* The builtins program is the last setup_typed entry; collect its externs. *)
+  let _, builtins_program = List.nth state.setup_typed (List.length state.setup_typed - 1) in
+  let extern_sigs =
+    List.filter_map
+      (function
+        | Typechecker.TDExtern (name, scheme) -> Some (name, scheme)
+        | _ -> None)
+      builtins_program
+  in
+  (* Cross-check: every extern signature must have a registered implementation. *)
+  let impl_registered name =
+    let found = ref false in
+    Dynarray.iter
+      (fun n -> if String.equal n name then found := true)
+      state.global_names;
+    !found
+  in
+  List.iter
+    (fun (name, _) ->
+      if not (impl_registered name) then
+        raise
+          (Error
+             (Printf.sprintf
+                "builtin '%s' is declared in stdlib/builtins.mml but has no \
+                 registered implementation (lib/interp.ml builtins)"
+                name)))
+    extern_sigs;
+  (* Cross-check: every registered implementation must have a signature. *)
+  let impl_names =
+    List.map (fun (b : builtin_def) -> b.name) (builtins state.output_fn)
+    @ [ "copy_continuation" ]
+  in
+  List.iter
+    (fun name ->
+      if not (List.mem_assoc name extern_sigs) then
+        raise
+          (Error
+             (Printf.sprintf
+                "builtin '%s' has a registered implementation but no \
+                 signature in stdlib/builtins.mml"
+                name)))
+    impl_names;
+  (* Bind Stdlib.-qualified names to the same schemes. *)
+  let stdlib_qualified =
+    List.map (fun (name, scheme) -> ("Stdlib." ^ name, scheme)) extern_sigs
+  in
+  let ctx =
+    Typechecker.
+      { state.ctx with vars = stdlib_qualified @ state.ctx.vars }
+  in
+  ({ state with ctx }, extern_sigs)
+
+let setup_default_classes state =
+  (* Bind core builtin types from stdlib/builtins.mml first — later stdlib
+     sources (classes.mml, list.mml, ...) reference print/failwith/etc. *)
+  let state, stdlib_pub_vars = setup_builtin_signatures state in
   (* Register typeclass primitive extern implementations.
      These are referenced by extern declarations in stdlib/classes.mml *)
   let reg name arity impl =
@@ -1158,9 +1041,7 @@ let run_string_in_state state source =
 
 let run_string source =
   wrap_errors (fun () ->
-      let ctx, global_names, globals, stdlib_pub_vars, output_fn, argv =
-        setup_builtins ()
-      in
+      let ctx, global_names, globals, output_fn, argv = setup_builtins () in
       let mutable_globals = Hashtbl.create 8 in
       let state_ref = ref None in
       let state =
@@ -1176,7 +1057,7 @@ let run_string source =
           state_ref;
         }
       in
-      let state = setup_default_classes state stdlib_pub_vars in
+      let state = setup_default_classes state in
       run_string_in_state state source)
 
 let run_file filename =
@@ -1204,9 +1085,7 @@ let run_file_show filename =
 (* ---- REPL with persistent state ---- *)
 
 let repl_state_init () =
-  let ctx, global_names, globals, stdlib_pub_vars, output_fn, argv =
-    setup_builtins ()
-  in
+  let ctx, global_names, globals, output_fn, argv = setup_builtins () in
   let mutable_globals = Hashtbl.create 8 in
   let state_ref = ref None in
   let state =
@@ -1222,7 +1101,7 @@ let repl_state_init () =
       state_ref;
     }
   in
-  setup_default_classes state stdlib_pub_vars
+  setup_default_classes state
 
 let emit_json_bundle state ?source () =
   let main_proto =

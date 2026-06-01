@@ -4350,14 +4350,14 @@ module Typechecker =
   pub let make_module_acc () = {ma_pub_vars = Ref.create []; ma_pub_mutable_vars = Ref.create []; ma_pub_types = Ref.create []; ma_opaque_types = Ref.create []; ma_newtypes = Ref.create []; ma_pub_constructors = Ref.create []; ma_all_instances = Ref.create []; ma_submodules = Ref.create []; ma_pub_classes = Ref.create []; ma_typed_decls = Ref.create []; ma_all_member_schemes = Ref.create []}
 
   pub let rec default_extern_effects ty =
+    let rec close_eff eff =
+      match Types.eff_repr eff with
+      | Types.EffVar {contents = Types.EffUnbound _} -> Types.EffEmpty
+      | Types.EffRow ((name, params, tail)) -> Types.EffRow (name, params, close_eff tail)
+      | e -> e
+     in
     match ty with
-    | Types.TArrow ((param, eff, ret)) -> 
-      let eff' =
-        match Types.eff_repr eff with
-        | Types.EffVar {contents = Types.EffUnbound _} -> Types.EffEmpty
-        | _ -> eff
-       in
-      Types.TArrow (param, eff', default_extern_effects ret)
+    | Types.TArrow ((param, eff, ret)) -> Types.TArrow (param, close_eff eff, default_extern_effects ret)
     | _ -> ty
 
 

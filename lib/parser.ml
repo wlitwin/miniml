@@ -2594,7 +2594,10 @@ let parse_extern_decl p =
         expect p Token.DOT;
         let field = expect_ident p in
         mod_name ^ "." ^ field
-    | _ -> expect_ident p
+    (* Identifier, or a parenthesized operator like ( ^ ) — same syntax used to
+       reference an operator as a value. Lets stdlib/builtins.mml declare
+       operator builtin signatures. *)
+    | _ -> parse_op_or_ident p
   in
   expect p Token.COLON;
   let ty = parse_ty p in

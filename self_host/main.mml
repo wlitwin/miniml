@@ -53,17 +53,6 @@ module Main =
     Dynarray.push global_names name;
     idx
 
-  let register_builtin (ctx : Typechecker.ctx) global_names name ty quant arity =
-    let scheme = { quant = quant; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty } in
-    let idx = add_global global_names name in
-    register_native_ext idx name arity;
-    -- Also register under Stdlib. prefix
-    let stdlib_name = "Stdlib." ^ name in
-    let sidx = add_global global_names stdlib_name in
-    register_native_ext sidx name arity;
-    let vars = (stdlib_name, scheme) :: (name, scheme) :: ctx.vars in
-    (scheme, { ctx with vars = vars })
-
   let register_module_fn (ctx : Typechecker.ctx) global_names mod_name fn_name ty arity =
     let qualified = mod_name ^ "." ^ fn_name in
     let idx = add_global global_names qualified in
@@ -145,6 +134,9 @@ module Main =
     ) typed_program
 
   -- ---- Compile a setup source string ----
+  -- Returns (ctx, proto, typed_program). The typed program is exposed so
+  -- callers can inspect declarations (e.g. setup_classes collects the extern
+  -- signatures of stdlib/builtins.mml for the Stdlib module).
 
   let compile_setup (ctx : Typechecker.ctx) global_names mutable_globals source =
     let tokens = Lexer.tokenize source in
@@ -157,11 +149,11 @@ module Main =
       captured_typed_setups := List.concat captured_typed_setups [(ctx2.type_env, typed_program2)];
       (ctx2, { name = ""; arity = 0; num_locals = 0;
                code = Array.of_list []; constants = Array.of_list [];
-               line_table = Array.of_list [] })
+               line_table = Array.of_list [] }, typed_program2)
     else
       let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
       register_externs_from_program typed_program2 global_names;
-      (ctx2, compiled.main)
+      (ctx2, compiled.main, typed_program2)
 
   -- ---- Arrow type helpers ----
 
@@ -170,211 +162,49 @@ module Main =
   let arr3 a b c d = arr a (arr b (arr c d))
 
   -- ---- Setup builtins ----
+  -- Core builtin signatures live in stdlib/builtins.mml — the single source of
+  -- truth shared with the OCaml reference compiler (lib/interp.ml). They are
+  -- loaded by setup_classes (below); setup_builtins only creates the empty
+  -- containers, mirroring lib/interp.ml's structure.
 
   let setup_builtins () =
     let global_names = Dynarray.create 256 "" in
     let mutable_globals = Hashtbl.create 8 in
-    let mut stdlib_pub_vars = ([] : (string * scheme) list) in
-
-    let int2 = arr2 TInt TInt TInt in
-    let bool2 = arr2 TBool TBool TBool in
-
-    let mut ctx = Typechecker.empty_ctx in
-
-    -- mod
-    let (sch, ctx2) = register_builtin ctx global_names "mod" int2 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("mod", sch) :: stdlib_pub_vars;
-    -- print
-    let (sch, ctx2) = register_builtin ctx global_names "print" (TArrow (TGen 0, EffRow ("IO", [], EffEmpty), TUnit)) 1 1 in
-    ctx := ctx2; stdlib_pub_vars := ("print", sch) :: stdlib_pub_vars;
-    -- failwith
-    let (sch, ctx2) = register_builtin ctx global_names "failwith" (arr TString (TGen 0)) 1 1 in
-    ctx := ctx2; stdlib_pub_vars := ("failwith", sch) :: stdlib_pub_vars;
-    -- ^
-    let (sch, ctx2) = register_builtin ctx global_names "^" (arr2 TString TString TString) 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("^", sch) :: stdlib_pub_vars;
-    -- &&
-    let (sch, ctx2) = register_builtin ctx global_names "&&" bool2 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("&&", sch) :: stdlib_pub_vars;
-    -- ||
-    let (sch, ctx2) = register_builtin ctx global_names "||" bool2 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("||", sch) :: stdlib_pub_vars;
-    -- not
-    let (sch, ctx2) = register_builtin ctx global_names "not" (arr TBool TBool) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("not", sch) :: stdlib_pub_vars;
-    -- phys_equal
-    let (sch, ctx2) = register_builtin ctx global_names "phys_equal" (arr2 (TGen 0) (TGen 0) TBool) 1 2 in
-    ctx := ctx2; stdlib_pub_vars := ("phys_equal", sch) :: stdlib_pub_vars;
-    -- float_of_int
-    let (sch, ctx2) = register_builtin ctx global_names "float_of_int" (arr TInt TFloat) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("float_of_int", sch) :: stdlib_pub_vars;
-    -- int_of_float
-    let (sch, ctx2) = register_builtin ctx global_names "int_of_float" (arr TFloat TInt) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("int_of_float", sch) :: stdlib_pub_vars;
-    -- string_of_int
-    let (sch, ctx2) = register_builtin ctx global_names "string_of_int" (arr TInt TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("string_of_int", sch) :: stdlib_pub_vars;
-    -- string_of_float
-    let (sch, ctx2) = register_builtin ctx global_names "string_of_float" (arr TFloat TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("string_of_float", sch) :: stdlib_pub_vars;
-    -- string_of_bool
-    let (sch, ctx2) = register_builtin ctx global_names "string_of_bool" (arr TBool TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("string_of_bool", sch) :: stdlib_pub_vars;
-    -- array_get
-    let (sch, ctx2) = register_builtin ctx global_names "array_get" (arr2 (TArray (TGen 0)) TInt (TGen 0)) 1 2 in
-    ctx := ctx2; stdlib_pub_vars := ("array_get", sch) :: stdlib_pub_vars;
-    -- array_length
-    let (sch, ctx2) = register_builtin ctx global_names "array_length" (arr (TArray (TGen 0)) TInt) 1 1 in
-    ctx := ctx2; stdlib_pub_vars := ("array_length", sch) :: stdlib_pub_vars;
-    -- __byte_to_int
-    let (sch, ctx2) = register_builtin ctx global_names "__byte_to_int" (arr TByte TInt) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__byte_to_int", sch) :: stdlib_pub_vars;
-    -- __byte_of_int
-    let (sch, ctx2) = register_builtin ctx global_names "__byte_of_int" (arr TInt TByte) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__byte_of_int", sch) :: stdlib_pub_vars;
-    -- __byte_to_string
-    let (sch, ctx2) = register_builtin ctx global_names "__byte_to_string" (arr TByte TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__byte_to_string", sch) :: stdlib_pub_vars;
-    -- __rune_to_int
-    let (sch, ctx2) = register_builtin ctx global_names "__rune_to_int" (arr TRune TInt) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__rune_to_int", sch) :: stdlib_pub_vars;
-    -- __rune_of_int
-    let (sch, ctx2) = register_builtin ctx global_names "__rune_of_int" (arr TInt TRune) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__rune_of_int", sch) :: stdlib_pub_vars;
-    -- __rune_to_string
-    let (sch, ctx2) = register_builtin ctx global_names "__rune_to_string" (arr TRune TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__rune_to_string", sch) :: stdlib_pub_vars;
-    -- __math_pow
-    let (sch, ctx2) = register_builtin ctx global_names "__math_pow" (arr2 TFloat TFloat TFloat) 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("__math_pow", sch) :: stdlib_pub_vars;
-    -- __math_sqrt
-    let (sch, ctx2) = register_builtin ctx global_names "__math_sqrt" (arr TFloat TFloat) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__math_sqrt", sch) :: stdlib_pub_vars;
-    -- __math_floor
-    let (sch, ctx2) = register_builtin ctx global_names "__math_floor" (arr TFloat TInt) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__math_floor", sch) :: stdlib_pub_vars;
-    -- __math_ceil
-    let (sch, ctx2) = register_builtin ctx global_names "__math_ceil" (arr TFloat TInt) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__math_ceil", sch) :: stdlib_pub_vars;
-    -- __math_round
-    let (sch, ctx2) = register_builtin ctx global_names "__math_round" (arr TFloat TInt) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__math_round", sch) :: stdlib_pub_vars;
-    -- __fmt_float
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_float" (arr2 TInt TFloat TString) 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_float", sch) :: stdlib_pub_vars;
-    -- __fmt_hex
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_hex" (arr TInt TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_hex", sch) :: stdlib_pub_vars;
-    -- __fmt_hex_upper
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_hex_upper" (arr TInt TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_hex_upper", sch) :: stdlib_pub_vars;
-    -- __fmt_oct
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_oct" (arr TInt TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_oct", sch) :: stdlib_pub_vars;
-    -- __fmt_bin
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_bin" (arr TInt TString) 0 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_bin", sch) :: stdlib_pub_vars;
-    -- __fmt_zero_pad
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_zero_pad" (arr2 TInt TString TString) 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_zero_pad", sch) :: stdlib_pub_vars;
-    -- __fmt_pad_left
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_pad_left" (arr2 TInt TString TString) 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_pad_left", sch) :: stdlib_pub_vars;
-    -- __fmt_pad_right
-    let (sch, ctx2) = register_builtin ctx global_names "__fmt_pad_right" (arr2 TInt TString TString) 0 2 in
-    ctx := ctx2; stdlib_pub_vars := ("__fmt_pad_right", sch) :: stdlib_pub_vars;
-    -- __show_value
-    let (sch, ctx2) = register_builtin ctx global_names "__show_value" (arr (TGen 0) TString) 1 1 in
-    ctx := ctx2; stdlib_pub_vars := ("__show_value", sch) :: stdlib_pub_vars;
-
-    -- Typeclass primitive externs (referenced by stdlib/classes.mml)
-    -- Num
-    let (sch, ctx2) = register_builtin ctx global_names "__num_add_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_add_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_sub_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_sub_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_mul_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_mul_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_div_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_div_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_neg_int" (arr TInt TInt) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__num_neg_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_add_float" (arr2 TFloat TFloat TFloat) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_add_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_sub_float" (arr2 TFloat TFloat TFloat) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_sub_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_mul_float" (arr2 TFloat TFloat TFloat) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_mul_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_div_float" (arr2 TFloat TFloat TFloat) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__num_div_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__num_neg_float" (arr TFloat TFloat) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__num_neg_float", sch) :: stdlib_pub_vars;
-    -- Eq
-    let (sch, ctx2) = register_builtin ctx global_names "__eq_int" (arr2 TInt TInt TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__eq_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__neq_int" (arr2 TInt TInt TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__neq_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__eq_float" (arr2 TFloat TFloat TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__eq_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__neq_float" (arr2 TFloat TFloat TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__neq_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__eq_string" (arr2 TString TString TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__eq_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__neq_string" (arr2 TString TString TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__neq_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__eq_bool" (arr2 TBool TBool TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__eq_bool", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__neq_bool" (arr2 TBool TBool TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__neq_bool", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__eq_byte" (arr2 TByte TByte TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__eq_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__neq_byte" (arr2 TByte TByte TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__neq_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__eq_rune" (arr2 TRune TRune TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__eq_rune", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__neq_rune" (arr2 TRune TRune TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__neq_rune", sch) :: stdlib_pub_vars;
-    -- Ord
-    let (sch, ctx2) = register_builtin ctx global_names "__lt_int" (arr2 TInt TInt TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__lt_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__gt_int" (arr2 TInt TInt TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__gt_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__le_int" (arr2 TInt TInt TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__le_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__ge_int" (arr2 TInt TInt TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__ge_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__lt_float" (arr2 TFloat TFloat TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__lt_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__gt_float" (arr2 TFloat TFloat TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__gt_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__le_float" (arr2 TFloat TFloat TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__le_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__ge_float" (arr2 TFloat TFloat TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__ge_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__lt_string" (arr2 TString TString TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__lt_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__gt_string" (arr2 TString TString TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__gt_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__le_string" (arr2 TString TString TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__le_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__ge_string" (arr2 TString TString TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__ge_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__lt_byte" (arr2 TByte TByte TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__lt_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__gt_byte" (arr2 TByte TByte TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__gt_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__le_byte" (arr2 TByte TByte TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__le_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__ge_byte" (arr2 TByte TByte TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__ge_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__lt_rune" (arr2 TRune TRune TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__lt_rune", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__gt_rune" (arr2 TRune TRune TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__gt_rune", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__le_rune" (arr2 TRune TRune TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__le_rune", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__ge_rune" (arr2 TRune TRune TBool) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__ge_rune", sch) :: stdlib_pub_vars;
-    -- Bitwise
-    let (sch, ctx2) = register_builtin ctx global_names "__band_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__band_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__bor_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__bor_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__bxor_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__bxor_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__bshl_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__bshl_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__bshr_int" (arr2 TInt TInt TInt) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__bshr_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__bnot_int" (arr TInt TInt) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__bnot_int", sch) :: stdlib_pub_vars;
-    -- Show
-    let (sch, ctx2) = register_builtin ctx global_names "__show_int" (arr TInt TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_int", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__show_float" (arr TFloat TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_float", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__show_bool" (arr TBool TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_bool", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__show_string" (arr TString TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_string", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__show_unit" (arr TUnit TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_unit", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__show_byte" (arr TByte TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_byte", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__show_rune" (arr TRune TString) 0 1 in ctx := ctx2; stdlib_pub_vars := ("__show_rune", sch) :: stdlib_pub_vars;
-    -- Index
-    let (sch, ctx2) = register_builtin ctx global_names "__index_at_array" (arr2 TInt (TArray (TGen 0)) (TGen 0)) 1 2 in ctx := ctx2; stdlib_pub_vars := ("__index_at_array", sch) :: stdlib_pub_vars;
-    let (sch, ctx2) = register_builtin ctx global_names "__index_at_string" (arr2 TInt TString TByte) 0 2 in ctx := ctx2; stdlib_pub_vars := ("__index_at_string", sch) :: stdlib_pub_vars;
-
-    -- copy_continuation
-    let copy_ty = arr (TGen 0) (TGen 0) in
-    let copy_scheme = { quant = 1; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = copy_ty } in
-    let cidx = add_global global_names "copy_continuation" in
-    register_native_ext cidx "copy_continuation" 1;
-    let csidx = add_global global_names "Stdlib.copy_continuation" in
-    register_native_ext csidx "copy_continuation" 1;
-    stdlib_pub_vars := ("copy_continuation", copy_scheme) :: stdlib_pub_vars;
-    ctx := { ctx with vars = ("Stdlib.copy_continuation", copy_scheme) :: ("copy_continuation", copy_scheme) :: ctx.vars };
-
-    (ctx, global_names, mutable_globals, stdlib_pub_vars)
+    let ctx = Typechecker.empty_ctx in
+    (ctx, global_names, mutable_globals)
 
   -- ---- Setup type classes and instances from stdlib source ----
 
-  let setup_classes (ctx : Typechecker.ctx) global_names mutable_globals stdlib_pub_vars =
+  let setup_classes (ctx : Typechecker.ctx) global_names mutable_globals =
     let mut ctx = ctx in
     let mut setup_protos = ([] : Bytecode.prototype list) in
 
     let load name =
-      let (ctx2, proto) = compile_setup ctx global_names mutable_globals
+      let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals
         (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
       ctx := ctx2; setup_protos := proto :: setup_protos
     in
+
+    -- Load core builtin signatures FIRST (stdlib/builtins.mml — the single
+    -- source of truth shared with lib/interp.ml). compile_setup registers a
+    -- native ext for each extern by name; here we collect the schemes for the
+    -- Stdlib module and bind Stdlib.-qualified aliases.
+    let (ctx2, builtins_proto, builtins_program) = compile_setup ctx global_names mutable_globals
+      (IO.read_file "stdlib/builtins.mml") in
+    ctx := ctx2; setup_protos := builtins_proto :: setup_protos;
+    let stdlib_pub_vars = List.filter_map (fn decl ->
+      match decl with
+      | Typechecker.TDExtern (name, scheme) -> Some (name, scheme)
+      | _ -> None
+    ) builtins_program in
+    -- Bind Stdlib.-qualified aliases (impl registered under the unqualified
+    -- ext name; type bound in ctx.vars)
+    list_iter (fn (name, scheme) ->
+      let stdlib_name = "Stdlib." ^ name in
+      let sidx = add_global global_names stdlib_name in
+      register_native_ext sidx name (arity_of_type scheme.body);
+      ctx := { ctx with vars = (stdlib_name, scheme) :: ctx.vars }
+    ) stdlib_pub_vars;
 
     -- Load class definitions, primitive instances, and stdlib source
     -- (classes.mml defines Num, Eq, Ord, Bitwise, Show, Iter, Index classes
@@ -415,13 +245,13 @@ module Main =
     in
 
     let load name =
-      let (ctx2, proto) = compile_setup ctx global_names mutable_globals
+      let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals
         (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
       ctx := ctx2; setup_protos := proto :: setup_protos
     in
 
     let load_source source =
-      let (ctx2, proto) = compile_setup ctx global_names mutable_globals source in
+      let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals source in
       ctx := ctx2; setup_protos := proto :: setup_protos
     in
 
@@ -551,8 +381,8 @@ module Main =
       let files = List.filter (fn s -> s <> "") (String.split "\n" manifest) in
 
       -- Setup type environment (done once)
-      let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
-      let (ctx, class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+      let (ctx, global_names, mutable_globals) = setup_builtins () in
+      let (ctx, class_protos) = setup_classes ctx global_names mutable_globals in
       let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
       let setup_protos = List.concat class_protos module_protos in
 
@@ -614,8 +444,8 @@ module Main =
           captured_typed_setups := cts;
           (c, gn, mg)
         else
-          let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
-          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+          let (ctx, global_names, mutable_globals) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
           let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
           __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
           (ctx, global_names, mutable_globals)
@@ -678,8 +508,8 @@ module Main =
             if __cache_has "emit_json" do
               __cache_get "emit_json"
             else
-              let (ctx, global_names, mutable_globals, stdlib_pub_vars) = setup_builtins () in
-              let (ctx, class_protos) = setup_classes ctx global_names mutable_globals stdlib_pub_vars in
+              let (ctx, global_names, mutable_globals) = setup_builtins () in
+              let (ctx, class_protos) = setup_classes ctx global_names mutable_globals in
               let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
               let setup_protos = List.concat class_protos module_protos in
               let base_gn_len = Dynarray.length global_names in

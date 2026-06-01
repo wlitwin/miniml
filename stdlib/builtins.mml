@@ -1,0 +1,72 @@
+(* ---- Core builtin primitive signatures ---- *)
+(* THE single source of truth for builtin types, shared by every compiler:
+     - lib/interp.ml (OCaml reference)  — embedded via Stdlib_sources.builtins
+     - self_host/main.mml (self-hosted) — loaded from stdlib/builtins.mml
+   Implementations are registered separately, BY NAME, in each backend
+   (OCaml VM externals, JS prelude functions, native runtime). A signature
+   here with no implementation — or vice versa — is a startup error.
+
+   Operator builtins use the parenthesized form, matching how they are
+   referenced as values: `let f = (^) in ...`. Their infix uses are typechecked
+   structurally (Typechecker.synth_binop / synth_unop); these signatures cover
+   their use as first-class values and as Stdlib module members. *)
+
+(* Operators *)
+extern ( mod ) : int -> int -> int
+extern ( ^ ) : string -> string -> string
+extern ( && ) : bool -> bool -> bool
+extern ( || ) : bool -> bool -> bool
+extern ( not ) : bool -> bool
+
+(* IO *)
+extern print : 'a -> unit / IO
+
+(* Errors *)
+extern failwith : string -> 'a
+
+(* Booleans *)
+extern phys_equal : 'a -> 'a -> bool
+
+(* Numeric conversions *)
+extern float_of_int : int -> float
+extern int_of_float : float -> int
+extern string_of_int : int -> string
+extern string_of_float : float -> string
+extern string_of_bool : bool -> string
+
+(* Arrays *)
+extern array_get : 'a array -> int -> 'a
+extern array_length : 'a array -> int
+
+(* Bytes *)
+extern __byte_to_int : byte -> int
+extern __byte_of_int : int -> byte
+extern __byte_to_string : byte -> string
+
+(* Runes *)
+extern __rune_to_int : rune -> int
+extern __rune_of_int : int -> rune
+extern __rune_to_string : rune -> string
+
+(* Math *)
+extern __math_pow : float -> float -> float
+extern __math_sqrt : float -> float
+extern __math_floor : float -> int
+extern __math_ceil : float -> int
+extern __math_round : float -> int
+
+(* Formatting *)
+extern __fmt_float : int -> float -> string
+extern __fmt_hex : int -> string
+extern __fmt_hex_upper : int -> string
+extern __fmt_oct : int -> string
+extern __fmt_bin : int -> string
+extern __fmt_zero_pad : int -> string -> string
+extern __fmt_pad_left : int -> string -> string
+extern __fmt_pad_right : int -> string -> string
+
+(* Show *)
+extern __show_value : 'a -> string
+
+(* Effects *)
+extern copy_continuation : 'a -> 'a / IO

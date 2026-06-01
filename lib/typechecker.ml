@@ -5391,15 +5391,21 @@ let make_module_acc () =
 
 (* For extern declarations, default unannotated top-level arrows to EffEmpty (pure).
    Only walks the return-type spine — callback parameter arrows keep their fresh variables. *)
+(* Externs declare exact signatures: any effect left unspecified is empty.
+   This closes both fully-unannotated arrows (unbound eff var -> pure) and the
+   open tails of annotated rows (`/ IO` -> exactly IO, not IO + 'e), so an
+   extern's scheme is identical to one written with explicit closed rows. *)
 let rec default_extern_effects ty =
+  let rec close_eff eff =
+    match Types.eff_repr eff with
+    | Types.EffVar { contents = Types.EffUnbound _ } -> Types.EffEmpty
+    | Types.EffRow (name, params, tail) ->
+        Types.EffRow (name, params, close_eff tail)
+    | e -> e
+  in
   match ty with
   | Types.TArrow (param, eff, ret) ->
-      let eff' =
-        match Types.eff_repr eff with
-        | Types.EffVar { contents = Types.EffUnbound _ } -> Types.EffEmpty
-        | _ -> eff
-      in
-      Types.TArrow (param, eff', default_extern_effects ret)
+      Types.TArrow (param, close_eff eff, default_extern_effects ret)
   | _ -> ty
 
 let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =

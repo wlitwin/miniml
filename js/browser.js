@@ -12,7 +12,7 @@ const loaderSrc = fs.readFileSync(path.join(dir, "loader.js"), "utf-8");
 // Embed stdlib sources needed by the self-hosted compiler at runtime
 const stdlibDir = path.join(dir, "..", "stdlib");
 const STDLIB_FILES = [
-  "classes", "option_type", "iter", "map_class", "show",
+  "builtins", "classes", "option_type", "iter", "map_class", "show",
   "byte", "rune", "math", "list", "array_extra", "result", "option",
   "buffer", "hash", "hashtbl", "ref", "dynarray", "map", "set",
   "enum", "seq", "fmt", "compat",

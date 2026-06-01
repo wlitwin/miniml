@@ -6,6 +6,7 @@
  (target stdlib_sources.ml)
  (deps
   ../tools/gen_stdlib_sources.ml
+  ../stdlib/builtins.mml
   ../stdlib/classes.mml
   ../stdlib/option_type.mml
   ../stdlib/eq.mml
@@ -37,6 +38,7 @@
    (run
     ocaml
     ../tools/gen_stdlib_sources.ml
+    ../stdlib/builtins.mml
     ../stdlib/classes.mml
     ../stdlib/option_type.mml
     ../stdlib/eq.mml

@@ -216,6 +216,8 @@ let mangle_name name =
       | '*' -> Buffer.add_string buf "$star"
       | '/' -> Buffer.add_string buf "$slash"
       | '^' -> Buffer.add_string buf "$caret"
+      | '&' -> Buffer.add_string buf "$amp"
+      | '|' -> Buffer.add_string buf "$bar"
       | '=' -> Buffer.add_string buf "$eq"
       | '<' -> Buffer.add_string buf "$lt"
       | '>' -> Buffer.add_string buf "$gt"
@@ -3010,10 +3012,15 @@ function string_of_float(f) {
 }
 function string_of_bool(b) { return String(b); }
 function failwith(msg) { throw new Error(msg); }
-const not = (b) => !b;
+// Operator builtins as first-class values. Declared as function/var (not const)
+// so the extern declarations from stdlib/builtins.mml (`var <name> = ...` guarded
+// by a typeof check) can legally coexist in the same scope.
+function not(b) { return !b; }
 function $caret(a, b) { return a + b; }
 function $mod(a, b) { return a % b; }
-const mod = $mod;
+var mod = $mod;
+function $amp$amp(a, b) { return a && b; }
+function $bar$bar(a, b) { return a || b; }
 function __show_value(v) { return _pp(v); }
 function copy_continuation(k) {
   if (k._k_raw) {
