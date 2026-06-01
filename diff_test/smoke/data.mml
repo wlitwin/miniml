@@ -1,0 +1,44 @@
+-- Differential smoke: variants, typeclass instances, records with mutable
+-- fields, map literals, for-in folds, string building.
+-- All backends must agree on the full observable output.
+
+type shape =
+  | Circle of int
+  | Rect of (int * int)
+
+instance Show shape =
+  let show s = match s with
+    | Circle r -> "circle(" ^ show r ^ ")"
+    | Rect p -> (match p with (w, h) -> "rect(" ^ show w ^ "x" ^ show h ^ ")")
+end
+;;
+
+let shapes = [Circle 1; Rect (2, 3); Circle 5];;
+print (show shapes);;
+
+let area s = match s with
+  | Circle r -> r * r * 3
+  | Rect p -> (match p with (w, h) -> w * h)
+;;
+print (List.map area shapes);;
+
+-- Record with a mutable field
+type counter = { label: string; mut count: int }
+;;
+let c = { label = "hits"; count = 0 };;
+c.count := c.count + 1;;
+c.count := c.count + 1;;
+print c.count;;
+
+-- Map literal + for-in fold over its values
+let m = #{"a": 1; "b": 2; "c": 3};;
+let total = for (_, v) in m with acc = 0 do acc + v end;;
+print total;;
+
+-- Recursive string building
+let rec join sep xs = match xs with
+  | [] -> ""
+  | x :: rest -> if rest = [] do x else x ^ sep ^ join sep rest
+;;
+
+join ", " ["x"; "y"; "z"]

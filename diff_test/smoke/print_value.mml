@@ -1,0 +1,14 @@
+-- Differential smoke: print output framing + final value.
+-- Locks the emit-js print-newline bug found by the differential runner on its
+-- first run (2026-06-01): emit-js's prelude `print` wrote to stdout WITHOUT a
+-- trailing newline, so consecutive prints ran together and the final value
+-- glued onto the last print. The .tests format couldn't express this
+-- (single-line expected values), which is why the cross suite never caught it.
+-- Cross tests now lock it too (core.tests "consecutive prints..."), via the
+-- quoted-expected \n escape.
+
+let rec fib n = if n < 2 do n else fib (n - 1) + fib (n - 2);;
+
+print "computing";;
+print (fib 10);;
+[fib 10; fib 15]

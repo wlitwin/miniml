@@ -1,0 +1,9 @@
+(library
+ (name differential)
+ (modules differential)
+ (libraries interpreter interpreter_native unix))
+
+(executable
+ (name diff_runner)
+ (modules diff_runner)
+ (libraries differential test_format interpreter unix))

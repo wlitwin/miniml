@@ -1,0 +1,5 @@
+-- Differential smoke: DELIBERATE disagreement, used with --expect-disagree to
+-- verify the runner's detection path stays alive. Sys.time() differs on every
+-- run and every backend, so the observable outputs can never agree.
+
+Sys.time ()

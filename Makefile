@@ -3,6 +3,7 @@
 
 .PHONY: all build clean test repl help \
         test-unit test-cross test-js test-emit-js test-parity test-playground test-oracle test-translate test-all check \
+        test-diff diff \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
         bundle self-host-compile \
@@ -83,6 +84,14 @@ test-playground: self-host-compile-native-js  ## Run cross-VM tests via the play
 test-oracle: build  ## Run cross-VM tests with the Oracle reference interpreter: make test-oracle [FILTER="name"]
 	dune exec cross_test/runner.exe -- --oracle cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
+test-diff: build  ## Smoke-test the differential runner: agreement on smoke programs, disagreement detection
+	dune exec diff_test/diff_runner.exe -- diff_test/smoke/effects.mml diff_test/smoke/data.mml diff_test/smoke/print_value.mml
+	dune exec diff_test/diff_runner.exe -- --expect-disagree diff_test/smoke/nondeterministic.mml
+
+diff: build  ## Differential run: do all backends agree on a program? make diff FILE=prog.mml [BACKENDS=oracle,vm,emit-js,native] [TIMEOUT=10]
+	@test -n "$(FILE)" || (echo "Usage: make diff FILE=<prog.mml> [BACKENDS=oracle,vm,emit-js,native]"; exit 1)
+	dune exec diff_test/diff_runner.exe -- $(if $(BACKENDS),--backends $(BACKENDS)) $(if $(TIMEOUT),--timeout $(TIMEOUT)) $(FILE)
+
 test-js-suite: build  ## Run the JS VM test suite (js/test.js)
 	node js/test.js
 
@@ -103,6 +112,7 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 #
 #   Suite            Compiler    Execution
 #   test-unit        ocaml-ref   OCaml unit tests + cross tests on OCaml VM
+#   test-diff        —           differential runner smoke (agreement + detection)
 #   test-js-suite    —           JS VM unit tests
 #   test-translate   —           OCaml→MiniML translator tests
 #   test-js          ocaml-ref   cross tests on JS VM (bytecode)
@@ -114,6 +124,7 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 
 check: ## Full pre-merge gate: all suites x all backends x both compilers
 	$(MAKE) test-unit
+	$(MAKE) test-diff
 	$(MAKE) test-js-suite
 	$(MAKE) test-translate
 	$(MAKE) test-js
