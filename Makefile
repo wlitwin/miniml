@@ -2,7 +2,7 @@
 # Usage: make help
 
 .PHONY: all build clean test repl help \
-        test-unit test-cross test-js test-emit-js test-parity test-playground test-translate test-all check \
+        test-unit test-cross test-js test-emit-js test-parity test-playground test-oracle test-translate test-all check \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
         bundle self-host-compile \
@@ -79,6 +79,9 @@ test-parity: self-host-compile-js ## Run compiler parity tests: make test-parity
 
 test-playground: self-host-compile-native-js  ## Run cross-VM tests via the playground path (self-host emit-js): make test-playground [FILTER="name"]
 	node cross_test/run_playground.js cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
+
+test-oracle: build  ## Run cross-VM tests with the Oracle reference interpreter: make test-oracle [FILTER="name"]
+	dune exec cross_test/runner.exe -- --oracle cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
 test-js-suite: build  ## Run the JS VM test suite (js/test.js)
 	node js/test.js

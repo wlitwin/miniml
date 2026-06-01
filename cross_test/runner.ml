@@ -122,10 +122,25 @@ let contains_substring haystack needle =
 
 (* --- Running ------------------------------------------------------------- *)
 
+(* Set by --oracle: run tests with the Oracle reference interpreter instead of
+   the compile-to-bytecode + VM path. *)
+let use_oracle = ref false
+
 let run_tests _state tests =
   let passed = ref 0 in
   let failed = ref 0 in
+  let skipped = ref 0 in
   let failures = ref [] in
+  (* Backend dispatch: bytecode VM (default) or the Oracle reference
+     interpreter (--oracle). Oracle errors surface as Interp.Error so the
+     existing expectation handling applies. *)
+  let run_source state source =
+    if !use_oracle then
+      try Interpreter.Interp.oracle_run_string_in_state state source
+      with Interpreter.Oracle.Oracle_error msg ->
+        raise (Interpreter.Interp.Error ("Runtime error: " ^ msg))
+    else Interpreter.Interp.run_string_in_state state source
+  in
   let fail name fmt =
     Printf.ksprintf
       (fun msg ->
@@ -147,7 +162,7 @@ let run_tests _state tests =
             (state.Interpreter.Interp.output_fn :=
                fun s -> outputs := s :: !outputs);
             let result =
-              try Interpreter.Interp.run_string_in_state state tc.source
+              try run_source state tc.source
               with e ->
                 state.Interpreter.Interp.output_fn := print_endline;
                 raise e
@@ -167,7 +182,7 @@ let run_tests _state tests =
             else fail tc.name "expected: %s\n    actual:   %s" expected actual
         | TypeError -> (
             try
-              let _ = Interpreter.Interp.run_string_in_state state tc.source in
+              let _ = run_source state tc.source in
               fail tc.name "expected type error, but succeeded"
             with
             | Interpreter.Typechecker.Type_error _ ->
@@ -181,7 +196,7 @@ let run_tests _state tests =
                 else fail tc.name "expected type error, got: %s" msg)
         | TypeErrorMsg substr -> (
             try
-              let _ = Interpreter.Interp.run_string_in_state state tc.source in
+              let _ = run_source state tc.source in
               fail tc.name "expected type error, but succeeded"
             with
             | Interpreter.Typechecker.Type_error (msg, _) ->
@@ -206,7 +221,7 @@ let run_tests _state tests =
         | RuntimeError substr -> (
             (state.Interpreter.Interp.output_fn := fun _ -> ());
             try
-              let _ = Interpreter.Interp.run_string_in_state state tc.source in
+              let _ = run_source state tc.source in
               state.Interpreter.Interp.output_fn := print_endline;
               fail tc.name "expected runtime error, but succeeded"
             with
@@ -231,12 +246,18 @@ let run_tests _state tests =
                 else
                   fail tc.name "expected runtime error containing %S, got: %s"
                     substr msg)
-      with exn ->
-        state.Interpreter.Interp.output_fn := print_endline;
-        fail tc.name "exception: %s" (Printexc.to_string exn))
+      with
+      | Interpreter.Oracle.Unsupported what ->
+          (* Oracle doesn't support this construct yet — tracked, not a failure *)
+          state.Interpreter.Interp.output_fn := print_endline;
+          Printf.printf "  SKIP: %s (%s)\n" tc.name what;
+          incr skipped
+      | exn ->
+          state.Interpreter.Interp.output_fn := print_endline;
+          fail tc.name "exception: %s" (Printexc.to_string exn))
     tests;
   Printf.printf "\n";
-  (!passed, !failed, !failures)
+  (!passed, !failed, !skipped, !failures)
 
 (* --- Directory scanning -------------------------------------------------- *)
 
@@ -263,6 +284,12 @@ let parse_args argv =
     if argv.(!i) = "-t" && !i + 1 < Array.length argv then begin
       filters := String.lowercase_ascii argv.(!i + 1) :: !filters;
       i := !i + 2
+    end
+    else if argv.(!i) = "--oracle" then begin
+      (* Run tests with the Oracle reference interpreter instead of the
+         compile-to-bytecode + VM path. *)
+      use_oracle := true;
+      i := !i + 1
     end
     else begin
       files := argv.(!i) :: !files;
@@ -302,6 +329,7 @@ let () =
   in
   let total_passed = ref 0 in
   let total_failed = ref 0 in
+  let total_skipped = ref 0 in
   let all_failures = ref [] in
   List.iter
     (fun file ->
@@ -310,16 +338,19 @@ let () =
       if tests = [] && filters <> [] then
         Printf.printf "  (no matching tests)\n\n"
       else begin
-        let p, f, failures = run_tests state tests in
+        let p, f, s, failures = run_tests state tests in
         total_passed := !total_passed + p;
         total_failed := !total_failed + f;
+        total_skipped := !total_skipped + s;
         all_failures := !all_failures @ failures
       end)
     files;
   Printf.printf "==============================\n";
-  Printf.printf "%d/%d cross-VM tests passed (ocaml)" !total_passed
-    (!total_passed + !total_failed);
+  Printf.printf "%d/%d cross-VM tests passed (%s)" !total_passed
+    (!total_passed + !total_failed)
+    (if !use_oracle then "oracle" else "ocaml");
   if !total_failed > 0 then Printf.printf " (%d FAILED)" !total_failed;
+  if !total_skipped > 0 then Printf.printf " (%d skipped)" !total_skipped;
   Printf.printf "\n";
   if !total_failed > 0 then begin
     Printf.printf "Failures:\n";

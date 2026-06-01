@@ -390,6 +390,10 @@ type repl_state = {
   argv : string array ref;
   setup_protos : Bytecode.prototype list;
   setup_typed : (Types.type_env * Typechecker.tprogram) list;
+  setup_typed_unlowered : (Types.type_env * Typechecker.tprogram) list;
+      (* pre-lowering (post-transform_constraints) ASTs of the same setup
+         programs — consumed by the Oracle reference interpreter, which is
+         independent of the lowering passes *)
   state_ref : repl_state option ref;
 }
 
@@ -682,9 +686,9 @@ let eval_setup state source =
   List.iter
     (fun w -> Printf.eprintf "%s\n%!" w)
     (Typechecker.take_warnings ());
-  let typed_program = Typechecker.transform_constraints ctx' typed_program in
+  let unlowered = Typechecker.transform_constraints ctx' typed_program in
   let typed_program =
-    Pipeline.lower ctx'.Typechecker.type_env typed_program
+    Pipeline.lower ctx'.Typechecker.type_env unlowered
   in
   let compiled =
     Compiler.compile_program_with_globals ctx'.Typechecker.type_env
@@ -697,6 +701,9 @@ let eval_setup state source =
     setup_protos = state.setup_protos @ [ compiled.main ];
     setup_typed =
       state.setup_typed @ [ (ctx'.Typechecker.type_env, typed_program) ];
+    setup_typed_unlowered =
+      state.setup_typed_unlowered
+      @ [ (ctx'.Typechecker.type_env, unlowered) ];
   }
 
 (* Load core builtin type signatures from stdlib/builtins.mml — the single
@@ -1031,6 +1038,69 @@ let run_string_in_state state source =
   | _ -> ());
   result
 
+(* ---- Oracle (reference interpreter) entry points ----------------------- *)
+
+(* Bridge from a name to the VM external registered under it (builtins and
+   stdlib module functions). The oracle delegates first-order builtins to
+   these implementations. *)
+let oracle_lookup_external state name =
+  let found = ref None in
+  Dynarray.iteri
+    (fun idx n ->
+      if !found = None && String.equal n name then
+        match Hashtbl.find_opt state.globals idx with
+        | Some (Bytecode.VExternal ext) -> found := Some ext
+        | _ -> ())
+    state.global_names;
+  !found
+
+(* Build the oracle's evaluation environment: bridge to VM externals, then
+   evaluate every setup program's UNLOWERED AST with the oracle itself, so
+   stdlib functions and typeclass dictionaries become oracle values. *)
+let oracle_env_of_state state =
+  let env =
+    Oracle.make_env
+      ~lookup_external:(oracle_lookup_external state)
+      ~type_env:state.ctx.Typechecker.type_env
+  in
+  List.fold_left
+    (fun env (_, program) -> fst (Oracle.eval_program env program))
+    env state.setup_typed_unlowered
+
+(* Run a source string with the Oracle reference interpreter. Same frontend as
+   run_string_in_state (parse, typecheck, transform constraints) but NO
+   lowering and NO compilation: the typed AST is evaluated directly. The result
+   is converted to a Bytecode.value so callers can print/compare it uniformly. *)
+let oracle_run_string_in_state state source =
+  let tokens = Lexer.tokenize source in
+  let program = Parser.parse_program tokens in
+  let ctx', typed_program =
+    Typechecker.check_program_in_ctx state.ctx program
+  in
+  List.iter
+    (fun w -> Printf.eprintf "%s
+%!" w)
+    (Typechecker.take_warnings ());
+  let typed_program = Typechecker.transform_constraints ctx' typed_program in
+  (* Enforce language restrictions that are validated on the CLASSIFIED AST
+     (e.g. `return` cannot escape a fiber handler -- Typechecker.check_returns).
+     These are deliberate language rules, not lowering artifacts, so the oracle
+     enforces them too. The classified result is discarded: the oracle
+     interprets the unclassified tree. *)
+  let _ = Typechecker.classify_handlers typed_program in
+  let env = oracle_env_of_state state in
+  (* The user program may declare its own types/newtypes; give the oracle the
+     post-typecheck type_env. *)
+  let env =
+    Oracle.
+      {
+        env with
+        globals = { env.globals with type_env = ctx'.Typechecker.type_env };
+      }
+  in
+  let _, result = Oracle.eval_program env typed_program in
+  Oracle.to_vm result
+
 let run_string source =
   wrap_errors (fun () ->
       let ctx, global_names, globals, output_fn, argv = setup_builtins () in
@@ -1046,6 +1116,7 @@ let run_string source =
           argv;
           setup_protos = [];
           setup_typed = [];
+          setup_typed_unlowered = [];
           state_ref;
         }
       in
@@ -1090,6 +1161,7 @@ let repl_state_init () =
       argv;
       setup_protos = [];
       setup_typed = [];
+      setup_typed_unlowered = [];
       state_ref;
     }
   in
