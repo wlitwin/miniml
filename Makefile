@@ -2,7 +2,7 @@
 # Usage: make help
 
 .PHONY: all build clean test repl help \
-        test-unit test-cross test-js test-emit-js test-parity test-translate test-all \
+        test-unit test-cross test-js test-emit-js test-parity test-playground test-translate test-all check \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
         bundle self-host-compile \
@@ -77,6 +77,9 @@ test-emit-js: build  ## Run cross-VM tests via --emit-js + node: make test-emit-
 test-parity: self-host-compile-js ## Run compiler parity tests: make test-parity [FILTER="name"]
 	dune exec compiler_test/parity_runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
+test-playground: self-host-compile-native-js  ## Run cross-VM tests via the playground path (self-host emit-js): make test-playground [FILTER="name"]
+	node cross_test/run_playground.js cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
+
 test-js-suite: build  ## Run the JS VM test suite (js/test.js)
 	node js/test.js
 
@@ -90,6 +93,34 @@ test-all: test-unit test-cross test-js-suite test-translate  ## Run ALL tests (u
 test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tests on all backends (ocaml, js, emit-js, native)
 	@echo ""
 	@echo "All backends passed."
+
+# ── The Gate ───────────────────────────────────────────────
+# `make check` is THE pre-merge gate: every suite, every backend, both compilers.
+# Ordered fastest-first so failures surface early.
+#
+#   Suite            Compiler    Execution
+#   test-unit        ocaml-ref   OCaml unit tests + cross tests on OCaml VM
+#   test-js-suite    —           JS VM unit tests
+#   test-translate   —           OCaml→MiniML translator tests
+#   test-js          ocaml-ref   cross tests on JS VM (bytecode)
+#   test-emit-js     ocaml-ref   cross tests via --emit-js + node
+#   test-playground  self-host   cross tests via compiler_native.js + node (the web playground path)
+#   test-native      ocaml-ref   cross tests as LLVM native binaries
+#   test-parity      self-host   cross tests as bytecode on the OCaml VM
+
+check: ## Full pre-merge gate: all suites x all backends x both compilers
+	$(MAKE) test-unit
+	$(MAKE) test-js-suite
+	$(MAKE) test-translate
+	$(MAKE) test-js
+	$(MAKE) test-emit-js
+	$(MAKE) test-playground
+	$(MAKE) test-native
+	$(MAKE) test-parity
+	@echo ""
+	@echo "=============================="
+	@echo "  ALL GATES PASSED"
+	@echo "=============================="
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests

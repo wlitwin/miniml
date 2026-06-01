@@ -6,6 +6,7 @@
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { parseTestFile, parseArgs, makeFilter } = require("./test_parser");
 
 const INTERPRETER = path.resolve(
   __dirname,
@@ -15,88 +16,6 @@ const INTERPRETER = path.resolve(
   "bin",
   "main.exe"
 );
-
-// --- Parsing -------------------------------------------------------------
-
-function parseTestFile(filename) {
-  const content = fs.readFileSync(filename, "utf-8");
-  const lines = content.split("\n");
-  const tests = [];
-  let state = null; // null | { name, sourceLines }
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith("--- test:")) {
-      const name = trimmed.slice(9).trim();
-      state = { name, sourceLines: [] };
-    } else if (line.startsWith("--- skip-emit-js:")) {
-      // Mark a test the JS (--emit-js) backend can't yet run (e.g. advanced effect
-      // features it doesn't support). Mirrors --- skip-native for the native runner.
-      if (state) state.skipEmitJs = line.slice(17).trim();
-    } else if (line.startsWith("--- expect: ")) {
-      if (state) {
-        let expected = line.slice(12); // preserve trailing whitespace
-        if (expected.length >= 2 && expected[0] === '"' && expected[expected.length - 1] === '"') {
-          expected = expected.slice(1, -1);
-        }
-        tests.push({
-          name: state.name,
-          source: state.sourceLines.join("\n").trim(),
-          skipEmitJs: state.skipEmitJs,
-          expect: { type: "value", value: expected },
-        });
-        state = null;
-      }
-    } else if (trimmed.startsWith("--- expect-type-error:")) {
-      if (state) {
-        const substr = trimmed.slice(22).trim();
-        if (substr === "") {
-          tests.push({
-            name: state.name,
-            source: state.sourceLines.join("\n").trim(),
-            expect: { type: "type-error" },
-          });
-        } else {
-          tests.push({
-            name: state.name,
-            source: state.sourceLines.join("\n").trim(),
-            expect: { type: "type-error-msg", substring: substr },
-          });
-        }
-        state = null;
-      }
-    } else if (trimmed === "--- expect-type-error") {
-      if (state) {
-        tests.push({
-          name: state.name,
-          source: state.sourceLines.join("\n").trim(),
-          skipEmitJs: state.skipEmitJs,
-          expect: { type: "type-error" },
-        });
-        state = null;
-      }
-    } else if (trimmed.startsWith("--- expect-runtime-error:")) {
-      if (state) {
-        const substr = trimmed.slice(25).trim();
-        tests.push({
-          name: state.name,
-          source: state.sourceLines.join("\n").trim(),
-          skipEmitJs: state.skipEmitJs,
-          expect: { type: "runtime-error", substring: substr },
-        });
-        state = null;
-      }
-    } else if (state) {
-      if (trimmed.startsWith("===") && trimmed.endsWith("===")) continue;
-      if (state.sourceLines.length > 0 || trimmed !== "") {
-        state.sourceLines.push(line);
-      }
-    }
-  }
-
-  return tests;
-}
 
 // --- Running -------------------------------------------------------------
 
@@ -263,17 +182,7 @@ function runTest(tc) {
 
 // --- Main ----------------------------------------------------------------
 
-const args = process.argv.slice(2);
-const fileArgs = [];
-const filters = [];
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === "-t" && i + 1 < args.length) {
-    filters.push(args[i + 1].toLowerCase());
-    i++;
-  } else {
-    fileArgs.push(args[i]);
-  }
-}
+const { fileArgs, filters } = parseArgs(process.argv.slice(2));
 
 let files;
 if (fileArgs.length > 0) {
@@ -292,11 +201,7 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-function matchesFilter(name) {
-  if (filters.length === 0) return true;
-  const lower = name.toLowerCase();
-  return filters.some((f) => lower.includes(f));
-}
+const matchesFilter = makeFilter(filters);
 
 for (const file of files) {
   console.log(`=== ${path.basename(file)} ===`);

@@ -1071,6 +1071,7 @@ r.x + r.y + r.z
 --- expect: 129
 
 --- test: poly update driven by variant list
+--- skip-playground: self-host compiler crashes on emit-js runtime compiling polymorphic-recursion/GADT monomorphization ("Cannot read properties of undefined (reading '_hd')") — tracked as roadmap #2c
 type cmd = SetX of int | SetY of int | AddX of int
 let rec apply_cmds r (cmds: cmd list) =
   match cmds with
