@@ -683,11 +683,9 @@ let eval_setup state source =
     (fun w -> Printf.eprintf "%s\n%!" w)
     (Typechecker.take_warnings ());
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
-  let typed_program = Typechecker.classify_handlers typed_program in
   let typed_program =
-    Match_tree.lower_program ctx'.Typechecker.type_env typed_program
+    Pipeline.lower ctx'.Typechecker.type_env typed_program
   in
-  let typed_program = Texpr_opt.optimize_program typed_program in
   let compiled =
     Compiler.compile_program_with_globals ctx'.Typechecker.type_env
       state.global_names state.mutable_globals typed_program
@@ -995,9 +993,7 @@ let eval_source state_ref source =
       let compiled =
         typed_program
         |> Typechecker.transform_constraints ctx'
-        |> Typechecker.classify_handlers
-        |> Match_tree.lower_program ctx'.Typechecker.type_env
-        |> Texpr_opt.optimize_program ~stdlib_programs
+        |> Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env
         |> Compiler.compile_program_with_globals ctx'.Typechecker.type_env
              state.global_names state.mutable_globals
       in
@@ -1015,13 +1011,9 @@ let run_string_in_state state source =
     (fun w -> Printf.eprintf "%s\n%!" w)
     (Typechecker.take_warnings ());
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
-  let typed_program = Typechecker.classify_handlers typed_program in
-  let typed_program =
-    Match_tree.lower_program ctx'.Typechecker.type_env typed_program
-  in
   let stdlib_programs = List.map snd state.setup_typed in
   let typed_program =
-    Texpr_opt.optimize_program ~stdlib_programs typed_program
+    Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
   in
   let compiled =
     Compiler.compile_program_with_globals ctx'.Typechecker.type_env
@@ -1125,13 +1117,9 @@ let emit_json_bundle state ?source () =
         let typed_program =
           Typechecker.transform_constraints ctx' typed_program
         in
-        let typed_program = Typechecker.classify_handlers typed_program in
-        let typed_program =
-          Match_tree.lower_program ctx'.Typechecker.type_env typed_program
-        in
         let stdlib_programs = List.map snd state.setup_typed in
         let typed_program =
-          Texpr_opt.optimize_program ~stdlib_programs typed_program
+          Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
         in
         let compiled =
           Compiler.compile_program_with_globals ctx'.Typechecker.type_env
@@ -1155,13 +1143,9 @@ let emit_js state ?source () =
       let typed_program =
         Typechecker.transform_constraints ctx' typed_program
       in
-      let typed_program = Typechecker.classify_handlers typed_program in
-      let typed_program =
-        Match_tree.lower_program ctx'.Typechecker.type_env typed_program
-      in
       let stdlib_programs = List.map snd state.setup_typed in
       let typed_program =
-        Texpr_opt.optimize_program ~stdlib_programs typed_program
+        Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
       in
       Js_codegen.compile_program_with_stdlib ctx'.Typechecker.type_env
         state.setup_typed typed_program
@@ -1176,12 +1160,8 @@ let typecheck_source state source =
     (fun w -> Printf.eprintf "%s\n%!" w)
     (Typechecker.take_warnings ());
   let typed_program = Typechecker.transform_constraints ctx' typed_program in
-  let typed_program = Typechecker.classify_handlers typed_program in
-  let typed_program =
-    Match_tree.lower_program ctx'.Typechecker.type_env typed_program
-  in
   let stdlib_programs = List.map snd state.setup_typed in
-  Texpr_opt.optimize_program ~stdlib_programs typed_program
+  Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
 
 let emit_binary_bundle state ?source () =
   let main_proto =
@@ -1205,13 +1185,9 @@ let emit_binary_bundle state ?source () =
         let typed_program =
           Typechecker.transform_constraints ctx' typed_program
         in
-        let typed_program = Typechecker.classify_handlers typed_program in
-        let typed_program =
-          Match_tree.lower_program ctx'.Typechecker.type_env typed_program
-        in
         let stdlib_programs = List.map snd state.setup_typed in
         let typed_program =
-          Texpr_opt.optimize_program ~stdlib_programs typed_program
+          Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
         in
         let compiled =
           Compiler.compile_program_with_globals ctx'.Typechecker.type_env
@@ -1232,13 +1208,9 @@ let eval_repl state source =
       let typed_program =
         Typechecker.transform_constraints ctx' typed_program
       in
-      let typed_program = Typechecker.classify_handlers typed_program in
-      let typed_program =
-        Match_tree.lower_program ctx'.Typechecker.type_env typed_program
-      in
       let stdlib_programs = List.map snd state.setup_typed in
       let typed_program =
-        Texpr_opt.optimize_program ~stdlib_programs typed_program
+        Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
       in
       let synonyms = ctx'.Typechecker.type_env.Types.type_synonyms in
       let lookup_scheme name =
