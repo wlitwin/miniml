@@ -24,9 +24,6 @@
 
    What the oracle rejects (raises Oracle_error / Unsupported):
    - TEMatchTree (post-lowering form — the oracle never sees lowered IR)
-   - constrained-instance evidence dictionaries (factory dicts; tracked)
-   Known gap: cyclic values (`let rec xs = 1 :: xs`) — VList cannot represent
-   cycles; needs a mutable-cons representation (tracked).
 *)
 
 exception Oracle_error of string
@@ -46,16 +43,31 @@ type value =
   | VRune of int
   | VUnit
   | VTuple of value list
-  | VList of value list
+  | VList of vlist
   | VRecord of (string * value ref) list (* field order preserved *)
-  | VVariant of string * int * value option
-      (* name, constructor tag (declaration index — used by tag-based hashing
-         and VM conversion), payload *)
+  | VVariant of variant
   | VArray of value array
   | VClosure of closure
   | VBuiltin of builtin
   | VContinuation of continuation
   | VRef of value ref
+
+(* Heap values are GRAPHS, not trees: lists are chains of mutable cons cells
+   and variant payloads are mutable, because recursive value bindings
+   (`let rec xs = 1 :: xs`, `let rec t = Node (1, t)`) tie the knot by updating
+   a placeholder cell in place after the body is evaluated — see
+   [rec_placeholder] / [update_rec], the spec for the VM's UPDATE_REC.
+   Ordinary evaluation never mutates these fields. *)
+and vlist = VLNil | VLCons of cons_cell
+and cons_cell = { mutable hd : value; mutable tl : vlist }
+
+and variant = {
+  v_name : string;
+  v_tag : int;
+      (* constructor tag = declaration index within the variant type; used by
+         tag-based hashing and VM conversion *)
+  mutable v_payload : value option;
+}
 
 and closure = {
   c_env : env;
@@ -98,6 +110,14 @@ and builtin_impl =
 and env = { vars : (string * value ref) list; globals : globals }
 
 and globals = {
+  toplevel : (string, value ref) Hashtbl.t;
+      (* The global namespace: top-level bindings, resolved at USE time rather
+         than closure-creation time. This is the spec for every backend's
+         GET_GLOBAL-by-slot semantics: it is what lets an instance
+         dictionary's methods reference the dictionary's own name (recursive
+         class methods), and lets any definition reference a later one as long
+         as the reference is only followed after that definition is evaluated.
+         The table is shared by reference across functional env updates. *)
   (* Name -> VM external lookup, for bridging builtins (print, String.split,
      typeclass primitives, ...). Populated from the interp setup's globals. *)
   lookup_external : string -> Bytecode.external_fn option;
@@ -119,6 +139,19 @@ and ctl =
   | CBreak of value (* `break e`          -> caught at while/for loop *)
   | CContinue (* `continue`               -> caught at while loop *)
   | CFoldContinue of value (* for-loop `continue` -> caught at fold callback *)
+
+(* ---- List cell helpers ------------------------------------------------- *)
+
+let rec vlist_of_list = function
+  | [] -> VLNil
+  | x :: rest -> VLCons { hd = x; tl = vlist_of_list rest }
+
+(* Diverges on cyclic lists — exactly as every backend's structural walk
+   (printing, conversion, equality) does. Callers are boundaries where the
+   spec itself recurses structurally over the whole list. *)
+let rec list_of_vlist = function
+  | VLNil -> []
+  | VLCons { hd; tl } -> hd :: list_of_vlist tl
 
 (* Monadic bind: thread sub-evaluation outcomes. A Perform or Ctl in a
    sub-expression suspends/aborts the whole expression; for Perform the
@@ -156,8 +189,24 @@ let native_builtins : (string * int) list =
 let native_impl_ref : (string -> value list -> outcome) ref =
   ref (fun _ _ -> err "oracle: native builtins not initialized")
 
-let lookup env name =
+(* The ref cell behind a name — locals shadow globals. Used for assignment,
+   open-aliasing, and instance-dictionary lookup. *)
+let lookup_ref env name =
   match List.assoc_opt name env.vars with
+  | Some r -> Some r
+  | None -> Hashtbl.find_opt env.globals.toplevel name
+
+(* Define (or redefine) a name in the global namespace. Always binds a FRESH
+   cell: redefinition replaces the name's binding without mutating the old
+   cell, so an `open` alias that shares the old cell keeps its value
+   (`open M;; let x = 20` must not change `M.x`). Lookups go by name at use
+   time, so closures referencing the name still observe the redefinition —
+   the same observable behavior as the VM's per-name slot + DEF_GLOBAL. *)
+let define_global env name v =
+  Hashtbl.replace env.globals.toplevel name (ref v)
+
+let lookup env name =
+  match lookup_ref env name with
   | Some r -> Some !r
   | None -> (
       match List.assoc_opt name native_builtins with
@@ -201,7 +250,7 @@ let rec to_vm (v : value) : Bytecode.value =
   | VRune r -> Bytecode.VRune r
   | VUnit -> Bytecode.VUnit
   | VTuple vs -> Bytecode.VTuple (Array.of_list (List.map to_vm vs))
-  | VList vs -> Bytecode.VList (List.map to_vm vs)
+  | VList vs -> Bytecode.VList (List.map to_vm (list_of_vlist vs))
   | VArray vs -> Bytecode.VArray (Array.map to_vm vs)
   | VRef r -> Bytecode.VRef (ref (to_vm !r))
   | VRecord fields ->
@@ -211,14 +260,14 @@ let rec to_vm (v : value) : Bytecode.value =
       Bytecode.VRecord
         ( { Bytecode.rs_fields = names; rs_index = index },
           Array.of_list (List.map (fun (_, r) -> to_vm !r) fields) )
-  | VVariant (name, tag, payload) ->
+  | VVariant { v_name; v_tag; v_payload } ->
       (* Display names are unqualified: Result.Ok prints as `Ok`. *)
       let display =
-        match String.rindex_opt name '.' with
-        | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-        | None -> name
+        match String.rindex_opt v_name '.' with
+        | Some i -> String.sub v_name (i + 1) (String.length v_name - i - 1)
+        | None -> v_name
       in
-      Bytecode.VVariant (tag, display, Option.map to_vm payload)
+      Bytecode.VVariant (v_tag, display, Option.map to_vm v_payload)
   | VClosure _ | VBuiltin _ | VContinuation _ ->
       (* Closures crossing into builtins: represent as an opaque external so
          pp_value prints something function-like. Builtins that CALL their
@@ -237,7 +286,7 @@ let rec from_vm (v : Bytecode.value) : value =
   | Bytecode.VRune r -> VRune r
   | Bytecode.VUnit -> VUnit
   | Bytecode.VTuple vs -> VTuple (Array.to_list (Array.map from_vm vs))
-  | Bytecode.VList vs -> VList (List.map from_vm vs)
+  | Bytecode.VList vs -> VList (vlist_of_list (List.map from_vm vs))
   | Bytecode.VArray vs -> VArray (Array.map from_vm vs)
   | Bytecode.VRef r -> VRef (ref (from_vm !r))
   | Bytecode.VRecord (shape, values) ->
@@ -247,7 +296,8 @@ let rec from_vm (v : Bytecode.value) : value =
               (fun i name -> (name, ref (from_vm values.(i))))
               shape.Bytecode.rs_fields))
   | Bytecode.VVariant (tag, name, payload) ->
-      VVariant (name, tag, Option.map from_vm payload)
+      VVariant
+        { v_name = name; v_tag = tag; v_payload = Option.map from_vm payload }
   | Bytecode.VExternal ext ->
       VBuiltin
         {
@@ -278,18 +328,25 @@ let rec equal (a : value) (b : value) : bool =
   | VUnit, VUnit -> true
   | VTuple a, VTuple b ->
       List.length a = List.length b && List.for_all2 equal a b
-  | VList a, VList b -> List.length a = List.length b && List.for_all2 equal a b
+  | VList a, VList b ->
+      let rec go a b =
+        match (a, b) with
+        | VLNil, VLNil -> true
+        | VLCons a, VLCons b -> equal a.hd b.hd && go a.tl b.tl
+        | _ -> false
+      in
+      go a b
   | VArray a, VArray b ->
       Array.length a = Array.length b
       && Array.for_all2 (fun x y -> equal x y) a b
   | VRecord a, VRecord b ->
       List.length a = List.length b
       && List.for_all2 (fun (n1, r1) (n2, r2) -> n1 = n2 && equal !r1 !r2) a b
-  | VVariant (n1, _, p1), VVariant (n2, _, p2) -> (
-      n1 = n2
-      && match (p1, p2) with
+  | VVariant a, VVariant b -> (
+      a.v_name = b.v_name
+      && match (a.v_payload, b.v_payload) with
          | None, None -> true
-         | Some a, Some b -> equal a b
+         | Some x, Some y -> equal x y
          | _ -> false)
   | VRef a, VRef b -> equal !a !b
   | (VClosure _ | VBuiltin _ | VContinuation _), _ -> a == b
@@ -305,7 +362,7 @@ let rec compare_values (a : value) (b : value) : int =
   | VByte a, VByte b -> compare a b
   | VRune a, VRune b -> compare a b
   | VUnit, VUnit -> 0
-  | VTuple a, VTuple b | VList a, VList b ->
+  | VTuple a, VTuple b ->
       let rec go a b =
         match (a, b) with
         | [], [] -> 0
@@ -316,18 +373,29 @@ let rec compare_values (a : value) (b : value) : int =
             if c <> 0 then c else go xs ys
       in
       go a b
+  | VList a, VList b ->
+      let rec go a b =
+        match (a, b) with
+        | VLNil, VLNil -> 0
+        | VLNil, _ -> -1
+        | _, VLNil -> 1
+        | VLCons a, VLCons b ->
+            let c = compare_values a.hd b.hd in
+            if c <> 0 then c else go a.tl b.tl
+      in
+      go a b
   | VArray a, VArray b ->
-      compare_values (VList (Array.to_list a)) (VList (Array.to_list b))
-  | VVariant (n1, _, p1), VVariant (n2, _, p2) -> (
+      compare_values (VTuple (Array.to_list a)) (VTuple (Array.to_list b))
+  | VVariant a, VVariant b -> (
       (* Order by constructor name then payload; matches structural compare *)
-      let c = compare n1 n2 in
+      let c = compare a.v_name b.v_name in
       if c <> 0 then c
       else
-        match (p1, p2) with
+        match (a.v_payload, b.v_payload) with
         | None, None -> 0
         | None, Some _ -> -1
         | Some _, None -> 1
-        | Some a, Some b -> compare_values a b)
+        | Some x, Some y -> compare_values x y)
   | VRecord a, VRecord b ->
       let rec go a b =
         match (a, b) with
@@ -360,13 +428,13 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
   | Ast.PatTuple pats, VTuple vs ->
       if List.length pats <> List.length vs then None
       else match_all env vs pats
-  | Ast.PatNil, VList [] -> Some []
+  | Ast.PatNil, VList VLNil -> Some []
   | Ast.PatNil, VList _ -> None
-  | Ast.PatCons (hp, tp), VList (h :: t) ->
-      Option.bind (match_pattern env h hp) (fun b1 ->
-          Option.map (fun b2 -> b1 @ b2) (match_pattern env (VList t) tp))
-  | Ast.PatCons _, VList [] -> None
-  | Ast.PatConstruct (cname, payload_pat), VVariant (vname, _, payload) -> (
+  | Ast.PatCons (hp, tp), VList (VLCons { hd; tl }) ->
+      Option.bind (match_pattern env hd hp) (fun b1 ->
+          Option.map (fun b2 -> b1 @ b2) (match_pattern env (VList tl) tp))
+  | Ast.PatCons _, VList VLNil -> None
+  | Ast.PatConstruct (cname, payload_pat), VVariant { v_name = vname; v_payload = payload; _ } -> (
       (* Constructor names in patterns may be qualified (Mod.Ctor); variant
          values store the bare or qualified name as constructed. Compare the
          final segments. *)
@@ -434,7 +502,7 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
       | Some pinned -> if equal v pinned then Some [] else None
       | None -> err "oracle: unbound variable in pin pattern: %s" name)
   | Ast.PatAnnot (p, _), _ -> match_pattern env v p
-  | Ast.PatPolyVariant (tag, payload_pat), VVariant (vtag, _, payload) -> (
+  | Ast.PatPolyVariant (tag, payload_pat), VVariant { v_name = vtag; v_payload = payload; _ } -> (
       (* Poly variant values carry the backtick (`A); patterns don't. *)
       let strip_tick s =
         if String.length s > 0 && s.[0] = '`' then
@@ -447,10 +515,11 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
         | None, None -> Some []
         | Some p, Some pv -> match_pattern env pv p
         | _ -> None)
-  | Ast.PatMap entries, VList pairs ->
+  | Ast.PatMap entries, VList pairs_vl ->
       (* Map values are erased-newtype assoc lists of (key, value) tuples.
          Every listed key must be present (keys are literals or pins); its
          value pattern matches the associated value. Extra keys are allowed. *)
+      let pairs = list_of_vlist pairs_vl in
       let find_value kpat =
         List.find_map
           (fun pair ->
@@ -472,9 +541,10 @@ let rec match_pattern env (v : value) (pat : Ast.pattern) :
                     go (bindings @ bs) rest))
       in
       go [] entries
-  | Ast.PatSet elem_pats, VList items ->
+  | Ast.PatSet elem_pats, VList items_vl ->
       (* Set values are erased-newtype element lists. Every element pattern
          must match some item; extra items are allowed. *)
+      let items = list_of_vlist items_vl in
       let rec go bindings = function
         | [] -> Some bindings
         | epat :: rest -> (
@@ -571,6 +641,66 @@ let constructor_tag env name ctor_info =
           idx 0 ctors
       | None -> 0)
 
+(* ---- Recursive value bindings ------------------------------------------ *)
+(* `let rec xs = 1 :: xs` — the spec is placeholder + in-place update:
+   allocate a heap cell of the body's outermost constructor shape, bind the
+   name to it, evaluate the body (whose references to the name see the
+   placeholder), then update the placeholder's fields from the computed
+   value's. The two values share the same outermost shape by construction
+   (the typechecker's constructive-binding check), so the update ties the
+   knot. This is the spec for the VM's emit_rec_placeholder + UPDATE_REC. *)
+
+let rec rec_placeholder env (te : Typechecker.texpr) : value =
+  match te.Typechecker.expr with
+  | Typechecker.TECons _ -> VList (VLCons { hd = VUnit; tl = VLNil })
+  | Typechecker.TETuple es -> VTuple (List.map (fun _ -> VUnit) es)
+  | Typechecker.TERecord fields ->
+      VRecord (List.map (fun (n, _) -> (n, ref VUnit)) fields)
+  | Typechecker.TEArray es -> VArray (Array.make (List.length es) VUnit)
+  | Typechecker.TEConstruct (name, payload) -> (
+      let ctor_info =
+        List.assoc_opt name env.globals.type_env.Types.constructors
+      in
+      let is_newtype =
+        match ctor_info with
+        | Some info ->
+            List.mem info.Types.ctor_type_name
+              env.globals.type_env.Types.newtypes
+        | None -> false
+      in
+      if is_newtype then
+        (* Newtype constructors are erased: the placeholder is the payload's. *)
+        match payload with
+        | Some inner -> rec_placeholder env inner
+        | None ->
+            err "oracle: nullary newtype constructor in recursive value binding"
+      else
+        let tag = constructor_tag env name ctor_info in
+        VVariant
+          {
+            v_name = name;
+            v_tag = tag;
+            v_payload = Option.map (fun _ -> VUnit) payload;
+          })
+  | Typechecker.TELet (_, _, _, body) | Typechecker.TESeq (_, body) ->
+      rec_placeholder env body
+  | _ -> err "oracle: recursive value binding is not constructive"
+
+(* Tie the knot: overwrite the placeholder's fields with the computed value's.
+   Outermost shapes match by construction. Tuples are immutable in the oracle,
+   but recursive tuples are rejected by the typechecker (infinite type), so
+   that case is unreachable. *)
+let update_rec (placeholder : value) (computed : value) : unit =
+  match (placeholder, computed) with
+  | VList (VLCons p), VList (VLCons c) ->
+      p.hd <- c.hd;
+      p.tl <- c.tl
+  | VVariant p, VVariant c -> p.v_payload <- c.v_payload
+  | VRecord pf, VRecord cf ->
+      List.iter2 (fun (_, pr) (_, cr) -> pr := !cr) pf cf
+  | VArray pa, VArray ca -> Array.blit ca 0 pa 0 (Array.length ca)
+  | _ -> err "oracle: recursive value binding shape mismatch"
+
 let rec eval (env : env) (te : Typechecker.texpr) : outcome =
   match te.Typechecker.expr with
   (* -- Literals -- *)
@@ -581,7 +711,7 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
   | Typechecker.TEByte b -> Done (VByte b)
   | Typechecker.TERune r -> Done (VRune r)
   | Typechecker.TEUnit -> Done VUnit
-  | Typechecker.TENil -> Done (VList [])
+  | Typechecker.TENil -> Done (VList VLNil)
   (* -- Variables and binding -- *)
   | Typechecker.TEVar name -> (
       match lookup env name with
@@ -591,22 +721,54 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
       bind (eval env e1) (fun v1 -> eval (bind_var env name v1) e2)
   | Typechecker.TELetMut (name, e1, e2) ->
       bind (eval env e1) (fun v1 -> eval (bind_var env name v1) e2)
-  | Typechecker.TELetRec (name, _, fn, e2) ->
-      let cell = ref VUnit in
-      let env' = bind_ref env name cell in
-      bind (eval env' fn) (fun fv ->
-          cell := fv;
-          eval env' e2)
+  | Typechecker.TELetRec (name, _, fn, e2) -> (
+      match fn.Typechecker.expr with
+      | Typechecker.TEFun _ ->
+          (* Recursive function: the closure captures the cell by reference
+             and sees the final value when called. *)
+          let cell = ref VUnit in
+          let env' = bind_ref env name cell in
+          bind (eval env' fn) (fun fv ->
+              cell := fv;
+              eval env' e2)
+      | _ ->
+          (* Recursive VALUE (`let rec xs = 1 :: xs`): placeholder cell of the
+             body's outermost shape, evaluate against it, tie the knot. *)
+          let placeholder = rec_placeholder env fn in
+          let env' = bind_var env name placeholder in
+          bind (eval env' fn) (fun computed ->
+              update_rec placeholder computed;
+              eval env' e2))
   | Typechecker.TELetRecAnd (binds, e2) ->
-      let cells = List.map (fun (name, _) -> (name, ref VUnit)) binds in
+      (* Mutual recursion: bind every name first (functions to a cell that is
+         filled after evaluation, values to a shape placeholder updated in
+         place), then evaluate each binding left to right. *)
+      let slots =
+        List.map
+          (fun (name, fn) ->
+            match fn.Typechecker.expr with
+            | Typechecker.TEFun _ -> (name, fn, `Cell (ref VUnit))
+            | _ -> (name, fn, `Placeholder (rec_placeholder env fn)))
+          binds
+      in
       let env' =
-        List.fold_left (fun e (name, cell) -> bind_ref e name cell) env cells
+        List.fold_left
+          (fun e (name, _, slot) ->
+            match slot with
+            | `Cell cell -> bind_ref e name cell
+            | `Placeholder p -> bind_var e name p)
+          env slots
       in
       bind_list
-        (List.map (fun (_, fn) () -> eval env' fn) binds)
+        (List.map (fun (_, fn, _) () -> eval env' fn) slots)
         []
         (fun fvs ->
-          List.iter2 (fun (_, cell) fv -> cell := fv) cells fvs;
+          List.iter2
+            (fun (_, _, slot) fv ->
+              match slot with
+              | `Cell cell -> cell := fv
+              | `Placeholder p -> update_rec p fv)
+            slots fvs;
           eval env' e2)
   | Typechecker.TEFun (param, body, has_return) ->
       Done
@@ -684,7 +846,7 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
       bind (eval env h) (fun hv ->
           bind (eval env t) (fun tv ->
               match tv with
-              | VList l -> Done (VList (hv :: l))
+              | VList l -> Done (VList (VLCons { hd = hv; tl = l }))
               | v -> err "oracle: cons onto non-list: %s" (pp v)))
   | Typechecker.TERecord fields ->
       bind_list
@@ -771,11 +933,13 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
          the VM's tag assignment; used by tag-based hashing). *)
       let tag = constructor_tag env name ctor_info in
       match payload with
-      | None -> Done (VVariant (name, tag, None))
+      | None -> Done (VVariant { v_name = name; v_tag = tag; v_payload = None })
       | Some e ->
           bind (eval env e) (fun v ->
               if is_newtype then Done v (* newtype ctors are erased *)
-              else Done (VVariant (name, tag, Some v))))
+              else
+                Done
+                  (VVariant { v_name = name; v_tag = tag; v_payload = Some v })))
   (* -- Data access -- *)
   | Typechecker.TEField (e, fname) ->
       bind (eval env e) (fun v ->
@@ -841,7 +1005,7 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
   (* -- Mutation -- *)
   | Typechecker.TEAssign (name, e) ->
       bind (eval env e) (fun v ->
-          match List.assoc_opt name env.vars with
+          match lookup_ref env name with
           | Some r ->
               r := v;
               Done VUnit
@@ -1088,7 +1252,7 @@ and resolve_class_method env class_name method_name operand_ty : outcome =
       if inst.Types.inst_constraints <> [] then
         unsupported
           (Printf.sprintf "constrained %s instance dispatch" class_name);
-      match List.assoc_opt inst.Types.inst_dict_name env.vars with
+      match lookup_ref env inst.Types.inst_dict_name with
       | Some dict_ref -> (
           match !dict_ref with
           | VRecord fields -> (
@@ -1122,12 +1286,18 @@ and native_impl (name : string) (args : value list) : outcome =
         | VUnit, VUnit -> true
         | VRecord a, VRecord b -> a == b
         | VArray a, VArray b -> a == b
-        | VList a, VList b -> a == b
+        | VList a, VList b -> (
+            (* Identity of the cons CELL (the heap object), like every
+               backend's pointer comparison. *)
+            match (a, b) with
+            | VLNil, VLNil -> true
+            | VLCons x, VLCons y -> x == y
+            | _ -> false)
         | VTuple a, VTuple b -> a == b
-        | VVariant (n1, _, p1), VVariant (n2, _, p2) -> (
-            n1 = n2
+        | VVariant a, VVariant b -> (
+            a.v_name = b.v_name
             &&
-            match (p1, p2) with
+            match (a.v_payload, b.v_payload) with
             | None, None -> true
             | Some x, Some y -> x == y
             | _ -> false)
@@ -1241,26 +1411,58 @@ let run_outcome (what : string) (o : outcome) : value =
   | Ctl CContinue -> err "continue outside of loop (in %s)" what
   | Ctl (CFoldContinue _) -> err "continue outside of loop (in %s)" what
 
+(* Top-level declarations bind into the global namespace (env.globals.toplevel),
+   which is mutable and resolved at use time — see the [globals] type. The env
+   itself is returned unchanged; threading it keeps the call shape uniform. *)
 let rec eval_decl (env : env) (decl : Typechecker.tdecl) : env * value =
   match decl with
   | Typechecker.TDLet (name, e) | Typechecker.TDLetMut (name, e) ->
       let v = run_outcome name (eval env e) in
-      (bind_var env name v, VUnit)
-  | Typechecker.TDLetRec (name, e) ->
-      let cell = ref VUnit in
-      let env' = bind_ref env name cell in
-      let v = run_outcome name (eval env' e) in
-      cell := v;
-      (env', VUnit)
+      define_global env name v;
+      (env, VUnit)
+  | Typechecker.TDLetRec (name, e) -> (
+      match e.Typechecker.expr with
+      | Typechecker.TEFun _ ->
+          (* Top-level recursive function: globals are late-bound, so the
+             recursive reference resolves through the namespace at call time.
+             (Same as the VM: top-level rec functions self-reference via
+             GET_GLOBAL, no special mechanism.) *)
+          let v = run_outcome name (eval env e) in
+          define_global env name v;
+          (env, VUnit)
+      | _ ->
+          (* Recursive VALUE: placeholder + in-place update (UPDATE_REC). *)
+          let placeholder = rec_placeholder env e in
+          define_global env name placeholder;
+          let computed = run_outcome name (eval env e) in
+          update_rec placeholder computed;
+          (env, VUnit))
   | Typechecker.TDLetRecAnd binds ->
-      let cells = List.map (fun (name, _) -> (name, ref VUnit)) binds in
-      let env' =
-        List.fold_left (fun e (name, cell) -> bind_ref e name cell) env cells
+      (* Mutual recursion: define every name first (functions get a unit that
+         is replaced after evaluation — their bodies resolve names at call
+         time; values get a shape placeholder updated in place), then evaluate
+         each binding left to right. *)
+      let slots =
+        List.map
+          (fun (name, e) ->
+            match e.Typechecker.expr with
+            | Typechecker.TEFun _ ->
+                define_global env name VUnit;
+                (name, e, None)
+            | _ ->
+                let p = rec_placeholder env e in
+                define_global env name p;
+                (name, e, Some p))
+          binds
       in
-      List.iter2
-        (fun (_, cell) (name, e) -> cell := run_outcome name (eval env' e))
-        cells binds;
-      (env', VUnit)
+      List.iter
+        (fun (name, e, placeholder) ->
+          let v = run_outcome name (eval env e) in
+          match placeholder with
+          | None -> define_global env name v
+          | Some p -> update_rec p v)
+        slots;
+      (env, VUnit)
   | Typechecker.TDExpr e ->
       let v = run_outcome "<toplevel>" (eval env e) in
       (env, v)
@@ -1277,21 +1479,19 @@ let rec eval_decl (env : env) (decl : Typechecker.tdecl) : env * value =
       (env, VUnit)
   | Typechecker.TDOpen alias_pairs ->
       (* `open M`: the typechecker resolved which names to alias. Bind each
-         short name to the value of its qualified name. The alias shares the
+         short name to its qualified name's binding. The alias shares the
          SAME ref cell, so mutable module bindings stay aliased. *)
-      let env' =
-        List.fold_left
-          (fun e (short, qualified) ->
-            match List.assoc_opt qualified e.vars with
-            | Some r -> bind_ref e short r
-            | None -> (
-                (* Qualified name may be a bridged external (native module fn) *)
-                match lookup e qualified with
-                | Some v -> bind_var e short v
-                | None -> e (* type-only/class member: nothing to alias *)))
-          env alias_pairs
-      in
-      (env', VUnit)
+      List.iter
+        (fun (short, qualified) ->
+          match lookup_ref env qualified with
+          | Some r -> Hashtbl.replace env.globals.toplevel short r
+          | None -> (
+              (* Qualified name may be a bridged external (native module fn) *)
+              match lookup env qualified with
+              | Some v -> define_global env short v
+              | None -> () (* type-only/class member: nothing to alias *)))
+        alias_pairs;
+      (env, VUnit)
   | Typechecker.TDEffect _ | Typechecker.TDType _ | Typechecker.TDClass _ ->
       (env, VUnit)
 
@@ -1304,7 +1504,10 @@ let eval_program (env : env) (program : Typechecker.tprogram) : env * value =
 
 let make_env ~(lookup_external : string -> Bytecode.external_fn option)
     ~(type_env : Types.type_env) : env =
-  { vars = []; globals = { lookup_external; type_env } }
+  {
+    vars = [];
+    globals = { toplevel = Hashtbl.create 512; lookup_external; type_env };
+  }
 
 (* Tie the forward reference for native builtin implementations. *)
 let () = native_impl_ref := native_impl
