@@ -10,6 +10,22 @@ function utf8BytesToString(bytes) {
   return new TextDecoder().decode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
 }
 
+// OCaml int_of_string semantics: optional sign, 0x/0o/0b prefixes, _ separators.
+// All backends must agree (the self-host LEXER parses hex/binary literals with this).
+function parseIntOCaml(s0) {
+  let s = s0.replace(/_/g, "");
+  let sign = 1;
+  if (s[0] === "-") { sign = -1; s = s.slice(1); }
+  else if (s[0] === "+") { s = s.slice(1); }
+  let n;
+  if (/^0[xX][0-9a-fA-F]+$/.test(s)) n = parseInt(s.slice(2), 16);
+  else if (/^0[oO][0-7]+$/.test(s)) n = parseInt(s.slice(2), 8);
+  else if (/^0[bB][01]+$/.test(s)) n = parseInt(s.slice(2), 2);
+  else if (/^[0-9]+$/.test(s)) n = parseInt(s, 10);
+  else return null;
+  return sign * n;
+}
+
 // Build builtins map: ext_name -> { arity, fn }
 const builtins = {};
 
@@ -393,8 +409,8 @@ reg("String.replace", 3, (args) => {
 
 reg("String.to_int", 1, (args) => {
   const s = vm.asString(args[0]);
-  const n = parseInt(s, 10);
-  if (isNaN(n) || String(n) !== s)
+  const n = parseIntOCaml(s);
+  if (n === null)
     return vm.vvariant(0, "None", null);
   return vm.vvariant(1, "Some", vm.vint(n));
 });

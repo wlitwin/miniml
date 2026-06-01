@@ -968,3 +968,83 @@ Seq.to_list (Seq.chunk 2 (Seq.range 1 6))
       String.concat "" ["a"; "b"; "c"]
 
 --- expect: abc
+
+=== String.to_int — OCaml int_of_string semantics (all backends must agree) ===
+
+--- test: String.to_int decimal
+
+      String.to_int "42"
+
+--- expect: Some 42
+
+--- test: String.to_int negative
+
+      String.to_int "-42"
+
+--- expect: Some -42
+
+--- test: String.to_int hex prefix
+
+      String.to_int "0xFF"
+
+--- expect: Some 255
+
+--- test: String.to_int hex prefix uppercase
+
+      String.to_int "0XAB"
+
+--- expect: Some 171
+
+--- test: String.to_int binary prefix
+
+      String.to_int "0b1010"
+
+--- expect: Some 10
+
+--- test: String.to_int octal prefix
+
+      String.to_int "0o17"
+
+--- expect: Some 15
+
+--- test: String.to_int underscore separators
+
+      String.to_int "1_000_000"
+
+--- expect: Some 1000000
+
+--- test: String.to_int hex with underscores
+
+      String.to_int "0xFF_FF"
+
+--- expect: Some 65535
+
+--- test: String.to_int negative hex
+
+      String.to_int "-0x10"
+
+--- expect: Some -16
+
+--- test: String.to_int rejects garbage
+
+      String.to_int "12abc"
+
+--- expect: None
+
+--- test: String.to_int rejects empty
+
+      String.to_int ""
+
+--- expect: None
+
+--- test: String.to_int rejects bare prefix
+
+      String.to_int "0x"
+
+--- expect: None
+
+--- test: int_of_string_opt hex (lexer dependency)
+
+      int_of_string_opt "0xFF"
+
+--- expect: Some 255

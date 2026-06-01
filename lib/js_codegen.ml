@@ -3002,7 +3002,22 @@ function println(v) {
   return undefined;
 }
 function string_of_int(n) { return String(n); }
-function int_of_string(s) { const n = parseInt(s, 10); if (isNaN(n)) throw new Error("int_of_string: " + s); return n; }
+// OCaml int_of_string semantics: optional sign, 0x/0o/0b prefixes, _ separators.
+// All backends must agree (the self-host LEXER parses hex/binary literals with this).
+function __parse_int(s0) {
+  let s = s0.replace(/_/g, "");
+  let sign = 1;
+  if (s[0] === "-") { sign = -1; s = s.slice(1); }
+  else if (s[0] === "+") { s = s.slice(1); }
+  let n;
+  if (/^0[xX][0-9a-fA-F]+$/.test(s)) n = parseInt(s.slice(2), 16);
+  else if (/^0[oO][0-7]+$/.test(s)) n = parseInt(s.slice(2), 8);
+  else if (/^0[bB][01]+$/.test(s)) n = parseInt(s.slice(2), 2);
+  else if (/^[0-9]+$/.test(s)) n = parseInt(s, 10);
+  else return null;
+  return sign * n;
+}
+function int_of_string(s) { const n = __parse_int(s); if (n === null) throw new Error("int_of_string: " + s); return n; }
 function float_of_int(n) { return n; }
 function int_of_float(f) { return Math.trunc(f); }
 function float_of_string(s) { const f = parseFloat(s); if (isNaN(f)) throw new Error("float_of_string: " + s); return f; }
@@ -3127,7 +3142,7 @@ function String$replace(old_s, new_s, input) {
   if (old_s.length === 0) return input;
   return input.split(old_s).join(new_s);
 }
-function String$to_int(s) { const n = parseInt(s,10); return isNaN(n) ? {_tag:0,_name:"None"} : {_tag:1,_name:"Some",_val:n}; }
+function String$to_int(s) { const n = __parse_int(s); return n === null ? {_tag:0,_name:"None"} : {_tag:1,_name:"Some",_val:n}; }
 function String$to_float(s) { const f = parseFloat(s); return isNaN(f) ? {_tag:0,_name:"None"} : {_tag:1,_name:"Some",_val:f}; }
 function String$uppercase(s) { return s.toUpperCase(); }
 function String$lowercase(s) { return s.toLowerCase(); }

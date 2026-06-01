@@ -445,11 +445,40 @@ mml_value mml_string_replace(mml_value str, mml_value old_s, mml_value new_s) {
     return result;
 }
 
+/* OCaml int_of_string semantics: optional sign, 0x/0o/0b prefixes, _ separators.
+   All backends must agree on this — the self-host LEXER parses hex/binary
+   literals with String.to_int when it runs on a non-OCaml runtime.
+   Returns 1 and stores into *out on success, 0 on failure. */
+static int mml_parse_int_ocaml(const char *s0, int64_t *out) {
+    /* Strip underscores into a stack buffer (numeric literals are short). */
+    char buf[128];
+    size_t j = 0;
+    for (size_t i = 0; s0[i] != '\0'; i++) {
+        if (s0[i] == '_') continue;
+        if (j + 1 >= sizeof(buf)) return 0;
+        buf[j++] = s0[i];
+    }
+    buf[j] = '\0';
+    const char *s = buf;
+    int64_t sign = 1;
+    if (*s == '-') { sign = -1; s++; }
+    else if (*s == '+') { s++; }
+    int base = 10;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { base = 16; s += 2; }
+    else if (s[0] == '0' && (s[1] == 'o' || s[1] == 'O')) { base = 8; s += 2; }
+    else if (s[0] == '0' && (s[1] == 'b' || s[1] == 'B')) { base = 2; s += 2; }
+    if (*s == '\0') return 0; /* no digits after sign/prefix */
+    char *end;
+    int64_t val = strtoll(s, &end, base);
+    if (end == s || *end != '\0') return 0;
+    *out = sign * val;
+    return 1;
+}
+
 mml_value mml_string_to_int(mml_value str) {
     const char *s = MML_STR_DATA(str);
-    char *end;
-    int64_t val = strtoll(s, &end, 10);
-    if (end == s || *end != '\0') {
+    int64_t val;
+    if (!mml_parse_int_ocaml(s, &val)) {
         return MML_TAG_INT(0); /* None */
     }
     mml_value *cell = (mml_value *)mml_alloc(16, MML_MAKE_HDR(MML_HDR_VARIANT, 0));
