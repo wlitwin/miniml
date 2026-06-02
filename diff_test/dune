@@ -13,7 +13,17 @@
  (modules diff_runner)
  (libraries differential test_format interpreter unix))
 
+(library
+ (name shrinker)
+ (modules shrinker)
+ (libraries differential interpreter unix))
+
 (executable
  (name fuzz_runner)
  (modules fuzz_runner)
- (libraries differential generator interpreter unix))
+ (libraries differential generator shrinker interpreter unix))
+
+(executable
+ (name shrink_runner)
+ (modules shrink_runner)
+ (libraries differential shrinker interpreter unix))

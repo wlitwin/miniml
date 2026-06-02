@@ -91,9 +91,37 @@ Disagreeing programs are saved to `fuzz_failures/seed_N.mml` with a
 so every disagreement is a new finding; each exclusion references the bug that
 justifies it (see generator.ml comments: BUG-3, BUG-4, BUG-5).
 
-The fuzzer is not in the `make check` gate yet: it found real, still-open bugs
-(BUG-6, BUG-7) within its first 50 programs. Gate integration (a fixed-seed
-regression run) lands with roadmap [#9] once the open-bug backlog is cleared.
+The fuzzer is not in the `make check` gate yet: it finds the still-open BUG-6
+in any sizable run. Gate integration (a fixed-seed regression run) lands once
+BUG-6 is fixed.
+
+## The shrinker
+
+```bash
+# Minimize a disagreeing program; print a ready-to-paste .tests block
+make shrink FILE=fuzz_failures/seed_1014.mml TESTNAME="non-tail perform repro"
+
+# Fuzz with automatic minimization of every finding
+make fuzz COUNT=100 SHRINK=1
+```
+
+`diff_test/shrinker.ml` delta-debugs the source text: removes declarations,
+removes handler/match arms, replaces parenthesized subexpressions with
+literals — keeping any change that preserves the exact DISAGREEMENT SIGNATURE
+(same dissenting backends, same result categories, everyone else still
+agreeing), iterating to a fixpoint. Typical result: a 2.5KB fuzz program
+shrinks to a ~10-line repro in a few seconds (most candidates are ill-typed
+and rejected in-process before any backend runs).
+
+The signature check runs ALL backends of the original run — restricting it to
+the dissenters is unsound (the shrink can drift onto a different bug; this was
+learned the hard way: deleting a return arm turned a BUG-6 repro into a BUG-4
+one).
+
+Harvest workflow: `make shrink FILE=... TESTNAME=...` prints a .tests block
+with the reference's expected value and TODO skip markers for each dissenting
+backend; assign the tracked bug number and paste it into cross_test/tests/.
+Two BUG-6 repros in effects.tests were landed exactly this way.
 
 ## Track record
 

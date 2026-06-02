@@ -11,6 +11,7 @@
        --timeout SEC   per-backend timeout                 (default 10)
        --out DIR       where to save disagreeing programs  (default fuzz_failures)
        --print-programs   dump every generated program (debugging the generator)
+       --shrink        auto-minimize each disagreement (saves seed_N.min.mml too)
 
    Every program is reproducible: `fuzz_runner --seed S --count 1` regenerates
    exactly the program that seed S produced. Disagreements are written to
@@ -33,6 +34,7 @@ let () =
   let timeout = ref 10.0 in
   let out_dir = ref "fuzz_failures" in
   let print_programs = ref false in
+  let auto_shrink = ref false in
   let argv = Sys.argv in
   let i = ref 1 in
   while !i < Array.length argv do
@@ -65,6 +67,7 @@ let () =
         incr i;
         out_dir := argv.(!i)
     | "--print-programs" -> print_programs := true
+    | "--shrink" -> auto_shrink := true
     | _ -> usage ());
     incr i
   done;
@@ -127,6 +130,25 @@ let () =
         let path = save_failure prog_seed program results in
         disagreements := prog_seed :: !disagreements;
         Printf.printf "  seed %d: DISAGREE -> %s\n" prog_seed path;
+        (if !auto_shrink then
+           try
+             let minimized, checks =
+               Shrinker.shrink ~state ~backends:!backends ~timeout:!timeout
+                 ~log:(fun _ -> ())
+                 program
+             in
+             let min_path =
+               Printf.sprintf "%s/seed_%d.min.mml" !out_dir prog_seed
+             in
+             let oc = open_out min_path in
+             output_string oc minimized;
+             close_out oc;
+             Printf.printf "    shrunk %d -> %d chars (%d checks) -> %s\n"
+               (String.length program) (String.length minimized) checks min_path
+           with Invalid_argument _ ->
+             (* Disagreement vanished under the reduced backend set (flaky /
+                timeout-dependent) — keep the unshrunk program. *)
+             ());
         List.iter
           (fun (b, r) ->
             Printf.printf "    %-8s  %s\n"
