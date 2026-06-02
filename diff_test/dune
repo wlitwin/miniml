@@ -3,7 +3,17 @@
  (modules differential)
  (libraries interpreter interpreter_native unix))
 
+(library
+ (name generator)
+ (modules generator)
+ (libraries))
+
 (executable
  (name diff_runner)
  (modules diff_runner)
  (libraries differential test_format interpreter unix))
+
+(executable
+ (name fuzz_runner)
+ (modules fuzz_runner)
+ (libraries differential generator interpreter unix))

@@ -3,7 +3,7 @@
 
 .PHONY: all build clean test repl help \
         test-unit test-cross test-js test-emit-js test-parity test-playground test-oracle test-translate test-all check \
-        test-diff diff \
+        test-diff diff fuzz \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
         bundle self-host-compile \
@@ -87,6 +87,9 @@ test-oracle: build  ## Run cross-VM tests with the Oracle reference interpreter:
 test-diff: build  ## Smoke-test the differential runner: agreement on smoke programs, disagreement detection
 	dune exec diff_test/diff_runner.exe -- diff_test/smoke/effects.mml diff_test/smoke/data.mml diff_test/smoke/print_value.mml
 	dune exec diff_test/diff_runner.exe -- --expect-disagree diff_test/smoke/nondeterministic.mml
+
+fuzz: build  ## Differential fuzzing: make fuzz [COUNT=100] [SEED=n] [SIZE=25] [FULL=1] [TIMEOUT=10]
+	dune exec diff_test/fuzz_runner.exe -- --count $(or $(COUNT),100) $(if $(SEED),--seed $(SEED)) $(if $(SIZE),--size $(SIZE)) $(if $(FULL),--full,--fast) $(if $(TIMEOUT),--timeout $(TIMEOUT))
 
 diff: build  ## Differential run: do all backends agree on a program? make diff FILE=prog.mml [BACKENDS=oracle,vm,emit-js,native] [TIMEOUT=10]
 	@test -n "$(FILE)" || (echo "Usage: make diff FILE=<prog.mml> [BACKENDS=oracle,vm,emit-js,native]"; exit 1)
