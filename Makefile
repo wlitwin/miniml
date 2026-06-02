@@ -3,6 +3,8 @@
 
 .PHONY: all build clean test repl help \
         test-unit test-cross test-js test-emit-js test-parity test-playground test-oracle test-translate test-all check \
+        check-run-unit check-run-diff check-run-js-suite check-run-translate check-run-js \
+        check-run-emit-js check-run-playground check-run-native check-run-oracle check-run-parity \
         test-diff diff fuzz shrink \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
@@ -129,21 +131,98 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 #   test-oracle      —           cross tests on the reference interpreter (the executable spec, lib/oracle.ml)
 #   test-parity      self-host   cross tests as bytecode on the OCaml VM
 
-check: ## Full pre-merge gate: all suites x all backends x both compilers
-	$(MAKE) test-unit
-	$(MAKE) test-diff
-	$(MAKE) test-js-suite
-	$(MAKE) test-translate
-	$(MAKE) test-js
-	$(MAKE) test-emit-js
-	$(MAKE) test-playground
-	$(MAKE) test-native
-	$(MAKE) test-oracle
-	$(MAKE) test-parity
+# The gate runs every suite. Suites run CONCURRENTLY, CHECK_JOBS at a time
+# (default 4, CHECK_JOBS=1 restores fully-sequential behavior), each logging
+# to $(CHECK_LOG_DIR)/<suite>.log. A one-line PASS/FAIL summary with wall time
+# prints as each suite finishes; failing suites' full logs are dumped after
+# the parallel phase so they never interleave.
+#
+# All build artifacts (dune binaries, self-host compiler JS/JSON) are built
+# serially UP FRONT: the per-suite commands below use the built binaries
+# directly, so concurrent suites never contend on the dune lock and never
+# race to regenerate self_host/ or js/ artifacts.
+#
+# Suites are listed slowest-first so the long poles start immediately.
+
+CHECK_LOG_DIR := /tmp/mml-check-logs
+CHECK_SUITES := parity emit-js native js playground oracle unit translate js-suite diff
+CHECK_JOBS ?= 4
+CHECK_BIN := ./_build/default
+
+check: build ## Full pre-merge gate: all suites x all backends x both compilers (parallel: CHECK_JOBS=n)
+	@$(MAKE) --no-print-directory self-host-compile-js self-host-compile-native-js
+	@rm -rf $(CHECK_LOG_DIR) && mkdir -p $(CHECK_LOG_DIR)
 	@echo ""
-	@echo "=============================="
-	@echo "  ALL GATES PASSED"
-	@echo "=============================="
+	@echo "Running $(words $(CHECK_SUITES)) gate suites, $(CHECK_JOBS) at a time (full logs: $(CHECK_LOG_DIR)/)"
+	@echo ""
+	@start=$$(date +%s); \
+	$(MAKE) --no-print-directory -j $(CHECK_JOBS) -k $(addprefix check-suite-,$(CHECK_SUITES)); \
+	status=$$?; \
+	end=$$(date +%s); \
+	elapsed=$$((end-start)); \
+	echo ""; \
+	if [ $$status -eq 0 ]; then \
+	  echo "=============================="; \
+	  echo "  ALL GATES PASSED  ($$((elapsed/60))m$$((elapsed%60))s)"; \
+	  echo "=============================="; \
+	else \
+	  for f in $(CHECK_LOG_DIR)/*.failed; do \
+	    [ -e "$$f" ] || continue; \
+	    suite=$$(basename $$f .failed); \
+	    echo "------------------------------------------------------------------"; \
+	    echo "  FAILED SUITE: $$suite (full log)"; \
+	    echo "------------------------------------------------------------------"; \
+	    cat $(CHECK_LOG_DIR)/$$suite.log; \
+	  done; \
+	  echo ""; \
+	  echo "=============================="; \
+	  echo "  GATE FAILED  ($$((elapsed/60))m$$((elapsed%60))s)"; \
+	  echo "=============================="; \
+	  exit 1; \
+	fi
+
+# One suite of the gate: run its command with output captured to a log file,
+# print a one-line summary with timing. Failures mark a .failed file; the
+# parent check target dumps those logs after the parallel phase.
+check-suite-%:
+	@start=$$(date +%s); \
+	if $(MAKE) --no-print-directory check-run-$* > $(CHECK_LOG_DIR)/$*.log 2>&1; then \
+	  end=$$(date +%s); \
+	  summary=$$(grep -E "passed|agree" $(CHECK_LOG_DIR)/$*.log | tail -1); \
+	  [ -n "$$summary" ] || summary="(no test output — results cached as up-to-date)"; \
+	  printf "  PASS  %-12s %4ds   %s\n" "$*" "$$((end-start))" "$$summary"; \
+	else \
+	  end=$$(date +%s); \
+	  touch $(CHECK_LOG_DIR)/$*.failed; \
+	  printf "  FAIL  %-12s %4ds   (log: $(CHECK_LOG_DIR)/$*.log)\n" "$*" "$$((end-start))"; \
+	  exit 1; \
+	fi
+
+# The suites' raw commands. These assume the artifacts are already built
+# (check builds them up front); they invoke the binaries directly so parallel
+# suites don't contend on the dune build lock. The CROSS_TEST_JOBS /
+# NATIVE_TEST_JOBS caps keep total process count sane when suites overlap.
+check-run-unit:
+	dune test
+check-run-diff:
+	$(CHECK_BIN)/diff_test/diff_runner.exe diff_test/smoke/effects.mml diff_test/smoke/data.mml diff_test/smoke/print_value.mml
+	$(CHECK_BIN)/diff_test/diff_runner.exe --expect-disagree diff_test/smoke/nondeterministic.mml
+check-run-js-suite:
+	node js/test.js
+check-run-translate:
+	$(CHECK_BIN)/translate_test/runner.exe translate_test/tests/*.tests
+check-run-js:
+	CROSS_TEST_JOBS=$(or $(CROSS_TEST_JOBS),4) node cross_test/run_js.js cross_test/tests/*.tests
+check-run-emit-js:
+	CROSS_TEST_JOBS=$(or $(CROSS_TEST_JOBS),4) node cross_test/run_emit_js.js cross_test/tests/*.tests
+check-run-playground:
+	node cross_test/run_playground.js cross_test/tests/*.tests
+check-run-native:
+	NATIVE_TEST_JOBS=$(or $(NATIVE_TEST_JOBS),4) $(CHECK_BIN)/native_test/runner.exe cross_test/tests/*.tests
+check-run-oracle:
+	$(CHECK_BIN)/cross_test/runner.exe --oracle cross_test/tests/*.tests
+check-run-parity:
+	$(CHECK_BIN)/compiler_test/parity_runner.exe cross_test/tests/*.tests
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests
