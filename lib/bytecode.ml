@@ -221,6 +221,13 @@ and control_entry = {
   ce_break_ip : int;
   ce_frame_depth : int;
   ce_stack_depth : int;
+  ce_handler_depth : int;
+      (* Handler-stack length when ENTER_LOOP ran. break/continue drop only the
+         inline try/provide markers pushed AFTER this point (markers opened
+         inside the loop body, whose TRY_END/PROVIDE_END they skip). Stack-depth
+         comparison cannot express this: a handler installed immediately before
+         the loop — its body being the loop — records the same sp as the loop
+         entry, and would be wrongly dropped (BUG-10, BUG-12). *)
 }
 
 (* A function-return marker (pushed by ENTER_FUNC for functions that use `return`).

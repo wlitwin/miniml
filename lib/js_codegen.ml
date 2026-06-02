@@ -516,7 +516,11 @@ let rec expr_has_perform_with ~check_perform ~enter_funs
     (te : Typechecker.texpr) =
   let go = expr_has_perform_with ~check_perform ~enter_funs in
   match te.expr with
-  | Typechecker.TEPerform (op_name, _) -> check_perform op_name
+  (* The perform's ARGUMENT can itself contain performs (of other ops) — it
+     must be visited too. Missing this made `perform simple_op (... perform
+     full_op ...)` invisible to the body-needs-CPS check, so the body compiled
+     direct-style with identity continuations (BUG-14, same disease as BUG-6). *)
+  | Typechecker.TEPerform (op_name, arg) -> check_perform op_name || go arg
   | Typechecker.TEResume _ -> true
   | Typechecker.TELet (_, _, e1, e2) | Typechecker.TESeq (e1, e2) ->
       go e1 || go e2
@@ -866,6 +870,44 @@ let anf_decompose (te : Typechecker.texpr) =
                 in
                 rebuild base_v arg_vs node_tys
             | [] -> arity_error () )
+  | Typechecker.TEForLoop fold_app -> (
+      (* A for-in loop wraps a fold application (fold callback init collection).
+         The non-callback arguments evaluate BEFORE iteration starts, so a
+         perform inside them is a liftable value position (without this it fell
+         through to direct-style identity-continuation compilation). The
+         callback is a lambda — an ANF atom — so it always stays in place, and
+         the rebuilt spine is re-wrapped in TEForLoop to preserve the loop's
+         break/continue catching. *)
+      match fold_app.Typechecker.expr with
+      | Typechecker.TEApp _ ->
+          let rec collect expr args node_tys =
+            match expr.Typechecker.expr with
+            | Typechecker.TEApp (f, a) ->
+                collect f (a :: args) (expr.Typechecker.ty :: node_tys)
+            | _ -> (expr, args, node_tys)
+          in
+          let base_fn, args, node_tys = collect fold_app [] [] in
+          Some
+            ( base_fn :: args,
+              fun parts ->
+                match parts with
+                | base_v :: arg_vs ->
+                    let rec rebuild fn_expr remaining_args remaining_tys =
+                      match (remaining_args, remaining_tys) with
+                      | [], [] -> fn_expr
+                      | a :: rest_a, t :: rest_t ->
+                          rebuild
+                            {
+                              Typechecker.expr = Typechecker.TEApp (fn_expr, a);
+                              ty = t;
+                              loc = a.Typechecker.loc;
+                            }
+                            rest_a rest_t
+                      | _ -> arity_error ()
+                    in
+                    Typechecker.TEForLoop (rebuild base_v arg_vs node_tys)
+                | [] -> arity_error () )
+      | _ -> None)
   | _ -> None
 
 (* Lift the effectful value-position subexpressions of [te] into a let chain,

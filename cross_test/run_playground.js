@@ -11,11 +11,22 @@
 // path on the OCaml VM, not the JS codegen. Run `make self-host-compile-native-js`
 // (or `make test-playground`, which depends on it) to refresh compiler_native.js
 // before running this.
+//
+// Concurrency model (see parallel.js): compilation runs IN-PROCESS and is
+// synchronous JavaScript, so it is naturally serialized by the event loop —
+// the shared globalThis._js* compiler state never interleaves. The compiled
+// tests execute in separate node processes through the worker pool, so
+// executions overlap with each other and with subsequent compiles. This keeps
+// the suite fast and, more importantly, tolerant of CPU contention when other
+// gate suites run concurrently (a serial spawn-per-test runner compounds
+// every scheduling delay across all ~2000 tests).
 
-const { execFileSync } = require("child_process");
+const { execFile } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
+const { runPool } = require("./parallel");
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPILER_NATIVE = path.join(ROOT, "js", "compiler_native.js");
@@ -36,6 +47,8 @@ const compilerJs = fs.readFileSync(COMPILER_NATIVE, "utf-8");
 // exactly how the browser playground keeps repeat compiles fast.
 const compilerFn = new Function(compilerJs);
 
+// Synchronous: callers rely on the event loop to serialize compiles (the
+// globalThis._js* state must never be shared by two in-flight compiles).
 function selfhostCompile(source) {
   const out = [];
   globalThis._jsSysArgs = ["compiler", "--emit-js", "input.mml"];
@@ -56,99 +69,93 @@ function selfhostCompile(source) {
 
 // --- Running ---------------------------------------------------------------
 
-let passed = 0;
-let failed = 0;
-let skipped = 0;
-const failures = [];
-
-function fail(name, msg) {
-  console.log(`  FAIL: ${name}`);
-  console.log(`    ${msg}`);
-  failed++;
-  failures.push(name);
-}
+const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "playground_test_"));
+process.on("exit", () => {
+  try { fs.rmSync(TMP_DIR, { recursive: true, force: true }); } catch (_) {}
+});
 
 function pass(name) {
-  console.log(`  PASS: ${name}`);
-  passed++;
+  return { output: `  PASS: ${name}\n`, status: "pass", name };
 }
 
-const tmpJs = `/tmp/playground_test_${process.pid}.js`;
+function fail(name, msg) {
+  return { output: `  FAIL: ${name}\n    ${msg}\n`, status: "fail", name };
+}
 
 // Run compiled JS in an isolated node process (for timeouts and crash
-// isolation), returning { ok, stdout, stderr, status }.
-function runCompiledJs(jsCode) {
+// isolation), resolving to { ok, stdout, stderr, status }.
+function runCompiledJs(jsCode, idx) {
+  const tmpJs = path.join(TMP_DIR, `test_${idx}.js`);
   fs.writeFileSync(tmpJs, jsCode);
-  try {
-    const stdout = execFileSync("node", [tmpJs], {
-      encoding: "utf-8",
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 15000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return { ok: true, stdout };
-  } catch (e) {
-    return {
-      ok: false,
-      stdout: e.stdout ? e.stdout.toString() : "",
-      stderr: e.stderr ? e.stderr.toString() : e.message,
-      status: e.status,
-    };
-  }
+  return new Promise((resolve) => {
+    execFile(
+      "node",
+      [tmpJs],
+      {
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 15000,
+      },
+      (error, stdout, stderr) => {
+        try { fs.unlinkSync(tmpJs); } catch (_) {}
+        if (!error) resolve({ ok: true, stdout: stdout || "" });
+        else
+          resolve({
+            ok: false,
+            stdout: stdout || "",
+            stderr: stderr || error.message,
+            status: error.code,
+          });
+      }
+    );
+  });
 }
 
-function runTest(tc) {
+async function runTest(tc, idx) {
   switch (tc.expect.type) {
     case "value": {
       let jsCode;
       try {
         jsCode = selfhostCompile(tc.source);
       } catch (e) {
-        fail(tc.name, `compilation failed: ${(e.message || String(e)).split("\n")[0]}`);
-        return;
+        return fail(tc.name, `compilation failed: ${(e.message || String(e)).split("\n")[0]}`);
       }
-      const res = runCompiledJs(jsCode);
+      const res = await runCompiledJs(jsCode, idx);
       if (!res.ok) {
-        fail(
+        return fail(
           tc.name,
           `runtime error (exit ${res.status}):\n    stderr: ${res.stderr.trim()}\n    stdout: ${res.stdout.trim()}`
         );
-        return;
       }
       const actual = res.stdout.replace(/\n$/, "");
-      if (actual === tc.expect.value) pass(tc.name);
-      else
-        fail(
-          tc.name,
-          `expected: ${JSON.stringify(tc.expect.value)}\n    actual:   ${JSON.stringify(actual)}`
-        );
-      break;
+      if (actual === tc.expect.value) return pass(tc.name);
+      return fail(
+        tc.name,
+        `expected: ${JSON.stringify(tc.expect.value)}\n    actual:   ${JSON.stringify(actual)}`
+      );
     }
     case "type-error": {
       // The self-host compiler reports errors by throwing; the message is the
       // raw typechecker/parser message (no "Type error:" prefix).
       try {
         selfhostCompile(tc.source);
-        fail(tc.name, "expected type error, but compilation succeeded");
+        return fail(tc.name, "expected type error, but compilation succeeded");
       } catch (e) {
-        pass(tc.name);
+        return pass(tc.name);
       }
-      break;
     }
     case "type-error-msg": {
       try {
         selfhostCompile(tc.source);
-        fail(tc.name, "expected type error, but compilation succeeded");
+        return fail(tc.name, "expected type error, but compilation succeeded");
       } catch (e) {
         const msg = e.message || String(e);
-        if (msg.includes(tc.expect.substring)) pass(tc.name);
-        else
-          fail(
-            tc.name,
-            `expected error containing ${JSON.stringify(tc.expect.substring)}, got: ${msg.split("\n")[0]}`
-          );
+        if (msg.includes(tc.expect.substring)) return pass(tc.name);
+        return fail(
+          tc.name,
+          `expected error containing ${JSON.stringify(tc.expect.substring)}, got: ${msg.split("\n")[0]}`
+        );
       }
-      break;
     }
     case "runtime-error": {
       let jsCode;
@@ -157,14 +164,14 @@ function runTest(tc) {
       } catch (e) {
         // Compilation failure is acceptable for runtime-error tests if the
         // compiler catches the problem early (matches run_emit_js.js).
-        pass(tc.name);
-        return;
+        return pass(tc.name);
       }
-      const res = runCompiledJs(jsCode);
-      if (res.ok) fail(tc.name, "expected runtime error, but succeeded");
-      else pass(tc.name); // any non-zero exit counts (messages differ across backends)
-      break;
+      const res = await runCompiledJs(jsCode, idx);
+      if (res.ok) return fail(tc.name, "expected runtime error, but succeeded");
+      return pass(tc.name); // any non-zero exit counts (messages differ across backends)
     }
+    default:
+      return fail(tc.name, `unknown expectation type: ${tc.expect.type}`);
   }
 }
 
@@ -192,36 +199,72 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const t0 = Date.now();
+// Flatten every file's tests into one work list (see run_emit_js.js).
+const items = [];
 for (const file of files) {
-  console.log(`=== ${path.basename(file)} ===`);
   const tests = parseTestFile(file).filter((tc) => matchesFilter(tc.name));
-  if (tests.length === 0 && filters.length > 0) {
-    console.log("  (no matching tests)\n");
+  const header = `=== ${path.basename(file)} ===\n`;
+  if (tests.length === 0) {
+    items.push({
+      kind: "empty-file",
+      output:
+        header + (filters.length > 0 ? "  (no matching tests)\n" : "") + "\n",
+    });
     continue;
   }
-  for (const tc of tests) {
-    const skip = skipReason(tc, "emit-js") || skipReason(tc, "playground");
-    if (skip) {
-      console.log(`  SKIP: ${tc.name} (${skip})`);
-      skipped++;
-      continue;
-    }
-    runTest(tc);
-  }
-  console.log();
+  tests.forEach((tc, i) => {
+    items.push({
+      kind: "test",
+      tc,
+      prefix: i === 0 ? header : "",
+      suffix: i === tests.length - 1 ? "\n" : "",
+    });
+  });
 }
-try { fs.unlinkSync(tmpJs); } catch (_) {}
 
-const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-console.log("==============================");
-console.log(
-  `${passed}/${passed + failed} cross-VM tests passed (playground) in ${elapsed}s${failed > 0 ? ` (${failed} FAILED)` : ""}${skipped > 0 ? ` (${skipped} skipped)` : ""}`
-);
-if (failures.length > 0) {
-  console.log("Failures:");
-  for (const name of failures) {
-    console.log(`  - ${name}`);
+async function worker(item, idx) {
+  if (item.kind === "empty-file") {
+    return { output: item.output, status: "skip", name: null };
   }
-  process.exit(1);
+  const tc = item.tc;
+  const skip = skipReason(tc, "emit-js") || skipReason(tc, "playground");
+  let result;
+  if (skip) {
+    result = { output: `  SKIP: ${tc.name} (${skip})\n`, status: "skip", name: tc.name };
+  } else {
+    result = await runTest(tc, idx);
+  }
+  result.output = item.prefix + result.output + item.suffix;
+  return result;
 }
+
+(async () => {
+  const t0 = Date.now();
+  const results = await runPool(items, worker);
+
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  const failures = [];
+  for (const r of results) {
+    if (!r || !r.name) continue;
+    if (r.status === "pass") passed++;
+    else if (r.status === "fail") {
+      failed++;
+      failures.push(r.name);
+    } else if (r.status === "skip") skipped++;
+  }
+
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log("==============================");
+  console.log(
+    `${passed}/${passed + failed} cross-VM tests passed (playground) in ${elapsed}s${failed > 0 ? ` (${failed} FAILED)` : ""}${skipped > 0 ? ` (${skipped} skipped)` : ""}`
+  );
+  if (failures.length > 0) {
+    console.log("Failures:");
+    for (const name of failures) {
+      console.log(`  - ${name}`);
+    }
+    process.exit(1);
+  }
+})();

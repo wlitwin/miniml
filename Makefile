@@ -5,6 +5,7 @@
         test-unit test-cross test-js test-emit-js test-parity test-playground test-oracle test-translate test-all check \
         check-run-unit check-run-diff check-run-js-suite check-run-translate check-run-js \
         check-run-emit-js check-run-playground check-run-native check-run-oracle check-run-parity \
+        check-run-fuzz test-fuzz \
         test-diff diff fuzz shrink \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
@@ -90,6 +91,12 @@ test-diff: build  ## Smoke-test the differential runner: agreement on smoke prog
 	dune exec diff_test/diff_runner.exe -- diff_test/smoke/effects.mml diff_test/smoke/data.mml diff_test/smoke/print_value.mml
 	dune exec diff_test/diff_runner.exe -- --expect-disagree diff_test/smoke/nondeterministic.mml
 
+# Fixed seed + count so the gate is deterministic: a failure here is a real,
+# reproducible divergence (replay any seed with: make fuzz COUNT=1 SEED=n).
+# Random-seed exploration stays a manual / scheduled activity (make fuzz).
+test-fuzz: build  ## Fixed-seed differential fuzz gate: generated programs must agree on oracle/vm/emit-js
+	dune exec diff_test/fuzz_runner.exe -- --count 50 --seed 1 --fast
+
 fuzz: build  ## Differential fuzzing: make fuzz [COUNT=100] [SEED=n] [SIZE=25] [FULL=1] [TIMEOUT=10] [SHRINK=1]
 	dune exec diff_test/fuzz_runner.exe -- --count $(or $(COUNT),100) $(if $(SEED),--seed $(SEED)) $(if $(SIZE),--size $(SIZE)) $(if $(FULL),--full,--fast) $(if $(TIMEOUT),--timeout $(TIMEOUT)) $(if $(SHRINK),--shrink)
 
@@ -145,7 +152,7 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native js playground oracle unit translate js-suite diff
+CHECK_SUITES := parity emit-js native js playground oracle fuzz unit translate js-suite diff
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -216,13 +223,15 @@ check-run-js:
 check-run-emit-js:
 	CROSS_TEST_JOBS=$(or $(CROSS_TEST_JOBS),4) node cross_test/run_emit_js.js cross_test/tests/*.tests
 check-run-playground:
-	node cross_test/run_playground.js cross_test/tests/*.tests
+	CROSS_TEST_JOBS=$(or $(CROSS_TEST_JOBS),4) node cross_test/run_playground.js cross_test/tests/*.tests
 check-run-native:
 	NATIVE_TEST_JOBS=$(or $(NATIVE_TEST_JOBS),4) $(CHECK_BIN)/native_test/runner.exe cross_test/tests/*.tests
 check-run-oracle:
 	$(CHECK_BIN)/cross_test/runner.exe --oracle cross_test/tests/*.tests
 check-run-parity:
 	$(CHECK_BIN)/compiler_test/parity_runner.exe cross_test/tests/*.tests
+check-run-fuzz:
+	$(CHECK_BIN)/diff_test/fuzz_runner.exe --count 50 --seed 1 --fast
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests

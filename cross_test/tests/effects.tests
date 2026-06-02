@@ -426,6 +426,131 @@ with
 --- skip-playground: BUG-11 (same emit-js lowering)
 --- expect: 2100
 
+=== Loop Control Crossing Handler Boundaries (BUG-10/BUG-12 regression suite) ===
+
+--- test: break out of a for-in loop inside a try-classified handler body
+effect E = op : int -> int end
+handle
+  (for i in [1; 2] with acc = 0 do (break 5) end)
+with
+| return x -> x
+| op arg k -> arg
+--- expect: 5
+
+--- test: break after a tail resume inside a provide-classified handler body
+effect Ask = ask : int -> int end
+handle
+  (for i in [1; 2; 3] with acc = 0 do
+    (if ((perform ask i) > 2) do break 99 else (acc + i)) end)
+with
+| return x -> x
+| ask arg k -> resume k arg
+--- expect: 99
+
+--- test: continue inside a while loop wrapped by a try-classified handler
+effect E = op : int -> int end
+let mut total = 0
+;;
+handle
+  (let mut i = 0 in
+   (for i < 5 do
+     i := (i + 1);
+     (if i = 2 do continue else ());
+     total := (total + i)
+   end);
+   total)
+with
+| return x -> x
+| op arg k -> arg
+--- expect: 13
+
+--- test: break out of a handler nested inside a loop drops only that handler marker
+effect E = op : int -> int end
+(for i in [1; 2; 3] with acc = 0 do
+  (acc + (handle (if i = 2 do break 50 else i) with
+          | return x -> x
+          | op arg k -> arg))
+end)
+--- expect: 50
+
+--- test: break inside nested loops each wrapped by try handlers
+effect E =
+  op1 : int -> int
+  op2 : int -> int
+end
+handle
+  (for i in [1; 2] with outer = 0 do
+    (outer + (handle
+      (for j in [10; 20] with inner = 0 do
+        (if j = 20 do break 7 else (inner + j)) end)
+    with
+    | return x -> x
+    | op2 arg k -> arg))
+  end)
+with
+| return x -> x
+| op1 arg k -> arg
+--- expect: 14
+
+=== Mixed Provide/Full Arm and For-In Argument Tests (BUG-14 regression suite) ===
+
+--- test: full-op perform nested inside a provide-op perform argument
+effect E =
+  simple : int -> int
+  full : int -> int
+end
+handle
+  (perform simple (11 + (perform full 0)))
+with
+| return x -> 1
+| simple arg k -> resume k arg
+| full arg k -> let r = resume k 804 in 0
+--- expect: 0
+
+--- test: full-op perform nested in provide-op argument resumes with chained value
+effect E =
+  simple : int -> int
+  full : int -> int
+end
+handle
+  (perform simple (11 + (perform full 100)))
+with
+| return x -> x
+| simple arg k -> resume k arg
+| full arg k -> let r = resume k arg in r
+--- expect: 111
+
+--- test: perform in the accumulator init of a for-in loop
+effect E = op : int -> int end
+handle
+  (for x in [1; 2; 3] with acc = (perform op 10) do (acc + x) end)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg * 2) in r
+--- expect: 26
+
+--- test: aborting arm with perform in for-in accumulator init discards the loop
+effect E = op : int -> int end
+let mut ran = false
+;;
+let r = handle
+  (for x in [1; 2; 3] with acc = (perform op 10) do (ran := true; acc + x) end)
+with
+| return x -> 0 - 1
+| op arg k -> 777
+;;
+(r, ran)
+--- expect: (777, false)
+
+--- test: perform in the collection expression of a for-in loop
+effect E = op : int -> int end
+handle
+  (for x in (List.map (fn i -> i) ((perform op 5) :: [2; 3])) with acc = 0 do (acc + x) end)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg * 100) in r
+--- expect: 505
+
 === Try/With Tests ===
 
 --- test: try/with basic return
