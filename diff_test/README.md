@@ -65,13 +65,55 @@ overflow) is reported as `crash` instead of taking the runner down, and the
 parent's interpreter state stays pristine (stdlib is compiled once and
 inherited copy-on-write — a full 4-backend run costs ~2s, dominated by clang).
 
+## The fuzzer
+
+```bash
+# 100 random programs through the fast tier (oracle, vm, emit-js)
+make fuzz
+
+# Reproducible run / replay a specific finding
+make fuzz COUNT=50 SEED=1000
+make fuzz COUNT=1 SEED=1014        # regenerates exactly that program
+
+# All four backends (native adds ~1s/program)
+make fuzz FULL=1
+```
+
+`diff_test/generator.ml` synthesizes random well-typed MiniML programs:
+type-directed (so they typecheck by construction), terminating by construction
+(bounded recursion/loops only), seeded (same seed → same program, byte for
+byte), and biased toward the historically bug-rich areas — handlers with
+non-tail/multishot resume, control-flow escape, mutable state across resumes,
+numeric formatting, multi-print framing, pattern matching with guards.
+
+Disagreeing programs are saved to `fuzz_failures/seed_N.mml` with a
+`.verdict.txt` report. Known-divergent constructs are excluded from generation
+so every disagreement is a new finding; each exclusion references the bug that
+justifies it (see generator.ml comments: BUG-3, BUG-4, BUG-5).
+
+The fuzzer is not in the `make check` gate yet: it found real, still-open bugs
+(BUG-6, BUG-7) within its first 50 programs. Gate integration (a fixed-seed
+regression run) lands with roadmap [#9] once the open-bug backlog is cleared.
+
 ## Track record
 
-Found in its first hour (2026-06-01), before any fuzzing existed:
+Found by the differential runner in its first hour (2026-06-01), before any
+fuzzing existed:
 
-1. emit-js `print` wrote no trailing newline (fixed; locked by core.tests +
+1. emit-js `print` wrote no trailing newline (FIXED; locked by core.tests +
    smoke/print_value.mml). Invisible to cross tests because the format
    couldn't express multi-line expected output.
-2. Float formatting diverges on JS backends (%g vs toString) — tracked as
-   BUG-1.
+2. Float formatting diverges on JS backends (%g vs toString) — FIXED (BUG-1);
+   locked by float_format.tests.
 3. Native missing `Sys.time` — tracked as BUG-2.
+
+Found by the fuzzer in its first 50 generated programs (2026-06-01):
+
+4. `handle` without a return arm: 3-way divergence — VM rejects it, native and
+   emit-js run it with different semantics (BUG-4).
+5. Typeclass instance resolution fails for multishot `+` when the return arm
+   is a match expression — compilers reject, oracle runs (BUG-5).
+6. emit-js: wrong handle result for non-tail performs / multishot resumes
+   (BUG-6) — the historical CPS-lowering bug class.
+7. VM: "EXIT_LOOP: no control entry" crash — loop-control state not copied
+   with continuations, breaks multishot resume inside for-in loops (BUG-7).

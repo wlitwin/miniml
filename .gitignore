@@ -4,3 +4,4 @@ js/compiler.json
 js/miniml.bundle.js
 **/*.mmlb
 .claude/
+fuzz_failures/
