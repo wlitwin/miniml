@@ -186,6 +186,17 @@ the loop with value `unit`. `break v` ends the loop with value `v`.
 if the loop has one. An effect performed in the body suspends the whole loop;
 resuming continues the iteration and then keeps looping.
 
+The loop is part of the continuation of **every** perform inside it, not just
+the first one: when a resumed iteration performs again (a second perform in
+the same iteration, or a later iteration's), that new perform's continuation
+still includes the rest of the loop. Consequently deep-handler arm-value
+chaining (§11) works across iterations: for a loop that performs once per
+iteration over n iterations with arm `op arg k -> (resume k v) + c`, the
+handle result is `final_body_value + n*c` — each nested arm invocation's
+value becomes the previous `resume`'s value. (BUG-13 regression: the oracle
+used to drop the rest of the loop from the continuation of performs that
+surfaced *during* a resumption.)
+
 ### 6.2 `for x in collection` loops
 
 For-in loops are desugared (by the typechecker) into an application of the
