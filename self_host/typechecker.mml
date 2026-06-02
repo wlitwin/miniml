@@ -3260,6 +3260,12 @@ module Typechecker =
         | first :: rest -> 
           let (fp, fg, fb) = check_arm ctx first in
           let result_ty = fb.ty in
+          do
+            match expected_ty with
+            | Some ty -> try_unify ctx result_ty ty
+            | None -> ()
+
+          end;
           let all_arms = (fp, fg, fb) :: List.map (fn arm -> let (p, g, b) = check_arm ctx arm in
           try_unify ctx b.ty result_ty;
           (p, g, b)) rest in

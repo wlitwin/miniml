@@ -374,6 +374,13 @@ Top-level declarations cannot perform unhandled effects; `return`/`break`/
 - `copy_continuation k` returns a continuation with the **same** resumption
   but a fresh use-flag — the copy can be resumed once more. This is the
   multishot escape hatch.
+- **Copy before resuming.** Copying an *already-resumed* continuation is a
+  runtime error ("cannot copy an already resumed continuation"): its
+  resumption is spent, and a copy would let the same one-shot resumption run
+  twice. Beware of evaluation order here — in
+  `(resume k a) + (resume (copy_continuation k) b)` the copy is evaluated
+  *after* the left operand has consumed `k`, so it is an error; bind the copy
+  first (`let k2 = copy_continuation k in ...`).
 - **Multishot semantics** (resuming a continuation and its copies multiple
   times): control state is **copied** — each resume re-runs the rest of the
   computation independently. The **heap is shared** — refs, mutable record

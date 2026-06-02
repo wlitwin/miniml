@@ -379,8 +379,10 @@ let emit_closure_apply ctx closure_val arg_vals =
       ~args:[ ("i64", closure_val); ("ptr", arr_ptr); ("i64", string_of_int n) ]
   end
 
-(** Check if a variable name is captured by any lambda in the body expression *)
-let rec is_captured_in_closures name (body : Typechecker.texpr) =
+(** Check if a variable name is captured by any lambda in the body expression.
+    (No longer used by emit_let_value — every mutable local is a heap cell now,
+    see BUG-9 — but kept for analysis/debugging.) *)
+let rec _is_captured_in_closures name (body : Typechecker.texpr) =
   let found = ref false in
   let rec scan (e : Typechecker.texpr) =
     if !found then ()
@@ -1129,8 +1131,14 @@ and emit_let ctx name init body is_mutable =
 
 and emit_let_value ?(emit_body = emit_expr) ctx name init body is_mutable =
   let v = emit_expr ctx init in
-  if is_mutable && is_captured_in_closures name body then begin
-    (* Mutable variable captured by a closure: use heap ref cell *)
+  if is_mutable then begin
+    (* Every mutable local is a heap ref cell, matching the VM's MAKE_REF
+       lowering: the binding's CELL is heap state (semantics.md §3), so
+       closures that capture it AND continuation copies (fiber copies, §12)
+       share the same cell — an assignment through any of them is visible to
+       all. A stack alloca would be duplicated by copy_continuation's fiber
+       copy, giving each resume its own diverging copy of the variable
+       (BUG-9: native re-ran loop iterations the spec says are finished). *)
     let cell_ptr = emit_alloc ctx 8 (make_header mml_hdr_ref) in
     Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:cell_ptr;
     (* Store the heap pointer in an alloca *)

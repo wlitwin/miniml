@@ -482,20 +482,26 @@ and gen_arm ctx : string =
 and gen_handle ctx ops : string =
   let body_ctx = { ctx with ops; in_handler = true } in
   let body = gen_int body_ctx in
-  (* Return-arm policy (two known-divergence avoidances):
-     - ALWAYS generated: handlers without one are a 3-way divergence
-       (bugs/BUG-4 — the VM rejects them; native and emit-js run them with
-       different semantics). Make optional again once BUG-4 is fixed.
-     - SIMPLE arithmetic only: a match/for-in return arm makes instance
-       resolution for multishot `+` ambiguous on the compilers but not the
-       oracle (bugs/BUG-5). Allow full expressions once BUG-5 is fixed. *)
+  (* Return-arm policy (one remaining known-divergence avoidance):
+     - OPTIONAL (BUG-4 fixed 2026-06-02: the parser synthesizes the identity
+       return arm, so an omitted one means "produce the body value" on every
+       backend).
+     - Match arms allowed (BUG-5 fixed 2026-06-02: check-mode matches now
+       unify their result with the expected type, so typeclass dispatch on
+       resume results resolves). *)
   let return_arm =
     pick ctx
       [
+        (2, fun () -> "" (* no return arm: defaults to identity *));
         (3, fun () -> "\n| return x -> x");
         ( 2,
           fun () -> Printf.sprintf "\n| return x -> (x + %d)" (rand ctx 10) );
         (1, fun () -> "\n| return x -> (x * 2)");
+        ( 1,
+          fun () ->
+            Printf.sprintf
+              "\n| return x -> (match x with | 0 -> %d | m -> (m + %d))"
+              (rand ctx 20) (rand ctx 5) );
       ]
   in
   let arms =

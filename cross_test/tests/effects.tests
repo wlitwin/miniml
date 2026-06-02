@@ -202,7 +202,6 @@ handle
 with
 | return x -> x
 | tick () k -> let k2 = copy_continuation k in ((resume k 1) + (resume k2 10))
---- skip-native: BUG-9 (native gives 44 — heap/control split wrong for multishot + while + mutable state)
 --- expect: 23
 
 --- test: single-shot resume of continuation captured inside for-in loop
@@ -550,6 +549,129 @@ with
 | return x -> x
 | op arg k -> let r = resume k (arg * 100) in r
 --- expect: 505
+
+=== Optional Return Arm Tests (BUG-4 regression suite) ===
+
+--- test: handle without return arm produces the body value
+effect E = op : int -> int end
+handle
+  42
+with
+| op arg k -> resume k arg
+--- expect: 42
+
+--- test: handle without return arm with tail resume
+effect E = op : int -> int end
+handle
+  perform op 1
+with
+| op arg k -> resume k arg
+--- expect: 1
+
+--- test: handle without return arm with non-tail resume uses arm value
+effect E = op : int -> int end
+handle
+  (perform op 5) + 100
+with
+| op arg k -> let r = resume k arg in arg
+--- expect: 5
+
+--- test: handle without return arm with aborting arm
+effect E = op : int -> int end
+handle
+  (perform op 3) * 2
+with
+| op arg k -> 99
+--- expect: 99
+
+--- test: handle without return arm with multishot resume
+effect E = op : int -> int end
+handle
+  (perform op 10) + 1
+with
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 (arg * 2)))
+--- expect: 32
+
+--- test: nested handles without return arms
+effect E =
+  inner_op : int -> int
+  outer_op : int -> int
+end
+handle
+  (handle (perform inner_op 1) + (perform outer_op 10) with
+   | inner_op arg k -> resume k (arg * 2))
+with
+| outer_op arg k -> resume k (arg * 3)
+--- expect: 32
+
+=== Match Return Arm Type Propagation Tests (BUG-5 regression suite) ===
+
+--- test: match expression as handle return arm with multishot resume
+effect E = op : int -> int end
+handle perform op 1 with
+| return x -> (match x with | 0 -> 0 | n -> n)
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
+--- expect: 2
+
+--- test: constructor match as handle return arm with multishot resume
+effect E = op : int -> int end
+handle perform op 1 with
+| return x -> (match Some x with | Some o -> o | None -> 0)
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
+--- expect: 2
+
+--- test: bool match return arm with multishot resume arithmetic
+effect E = op : int -> int end
+handle
+  (perform op 10) * 3
+with
+| return x -> (match x > 20 with | true -> x | false -> 0)
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 (arg + 1)))
+--- expect: 63
+
+--- test: list match as handle return arm
+effect E = op : int -> int end
+handle
+  [perform op 1; perform op 2]
+with
+| return xs -> (match xs with | [] -> 0 | h :: _ -> h)
+| op arg k -> let r = resume k (arg * 10) in r
+--- expect: 10
+
+=== Copy-Before-Resume Tests (BUG-15 regression suite) ===
+
+--- test: copying an already-resumed continuation is an error
+effect E = op : int -> int end
+handle
+  (perform op 10) * 3
+with
+| return x -> x
+| op arg k -> ((resume k arg) + (resume (copy_continuation k) (arg + 1)))
+--- expect-runtime-error: already resumed
+
+--- test: explicit copy after resume is an error
+effect E = op : int -> int end
+handle
+  perform op 1
+with
+| return x -> x
+| op arg k ->
+  let a = resume k arg in
+  let k2 = copy_continuation k in
+  a + (resume k2 arg)
+--- expect-runtime-error: already resumed
+
+--- test: copy of a copy before any resume is fine
+effect E = op : int -> int end
+handle
+  perform op 5
+with
+| return x -> x
+| op arg k ->
+  let k2 = copy_continuation k in
+  let k3 = copy_continuation k2 in
+  (resume k arg) + (resume k2 (arg * 10)) + (resume k3 (arg * 100))
+--- expect: 555
 
 === Try/With Tests ===
 

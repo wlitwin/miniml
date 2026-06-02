@@ -2798,15 +2798,17 @@ and compile_handle ctx body arms =
             emit_line ctx
               (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_raw);
             ctx.indent <- ctx.indent + 1;
-            (* Wrap continuation with one-shot checking *)
-            let k_used = fresh_tmp ctx in
-            emit_line ctx (Printf.sprintf "let %s = false;" k_used);
+            (* Wrap continuation with one-shot checking. The used flag lives
+               on the wrapper function itself (not a closure variable) so
+               copy_continuation can refuse to copy an already-resumed
+               continuation (semantics.md §12). *)
             emit_line ctx
               (Printf.sprintf
-                 "const %s = function(_v) { if (%s) throw new Error(\"Effect \
-                  continuation already resumed\"); %s = true; return %s(_v); \
-                  };"
-                 k_js k_used k_used k_raw);
+                 "const %s = function(_v) { if (%s._used) throw new \
+                  Error(\"Effect continuation already resumed\"); %s._used = \
+                  true; return %s(_v); };"
+                 k_js k_js k_js k_raw);
+            emit_line ctx (Printf.sprintf "%s._used = false;" k_js);
             emit_line ctx (Printf.sprintf "%s._k_raw = %s;" k_js k_raw);
             push_scope ctx;
             bind_var ctx arg_name arg_js;
@@ -3429,8 +3431,9 @@ function $bar$bar(a, b) { return a || b; }
 function __show_value(v) { return _pp(v); }
 function copy_continuation(k) {
   if (k._k_raw) {
-    let _used = false;
-    const w = function(_v) { if (_used) throw new Error("Effect continuation already resumed"); _used = true; return k._k_raw(_v); };
+    if (k._used) throw new Error("cannot copy an already resumed continuation");
+    const w = function(_v) { if (w._used) throw new Error("Effect continuation already resumed"); w._used = true; return k._k_raw(_v); };
+    w._used = false;
     w._k_raw = k._k_raw;
     return w;
   }

@@ -3656,6 +3656,16 @@ and synth_match expected_ty ctx level scrut arms partial =
       | first :: rest ->
           let fp, fg, fb = check_arm ctx first in
           let result_ty = fb.ty in
+          (* In check mode the caller's expected type must constrain the match
+             result — every other expression form does this via check's
+             synth-then-unify fallback. Skipping it left the expected type
+             unbound, so typeclass dispatch on it downstream (e.g. `+` on a
+             handler's resume results when the return arm is a match) was
+             "ambiguous" at compile time instead of resolved here (BUG-5).
+             The GADT path above already threads expected_ty through. *)
+          (match expected_ty with
+          | Some ty -> try_unify ctx result_ty ty
+          | None -> ());
           let all_arms =
             (fp, fg, fb)
             :: List.map

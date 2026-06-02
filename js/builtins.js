@@ -189,6 +189,9 @@ reg("__fmt_pad_right", 2, (args) => {
 // Copy (continuation)
 reg("copy_continuation", 1, (args) => {
   const cont = vm.asContinuation(args[0]);
+  // Copying an already-resumed continuation is an error (semantics.md §12):
+  // the fiber's stack was consumed by the resume. Copy before resuming.
+  if (cont.used) vm.error("cannot copy an already resumed continuation");
   const newFiber = vm.copyFiber(cont.fiber);
   return {
     tag: "continuation",

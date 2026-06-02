@@ -359,6 +359,12 @@ let copy_fiber (f : Bytecode.fiber) : Bytecode.fiber =
 
 let copy_continuation = function
   | Bytecode.VContinuation cd ->
+      (* Copying an already-resumed continuation is an error (semantics.md
+         §12): the fiber's stack was consumed by the resume, so the "copy"
+         would be a corpse — resuming it crashes. Copy before resuming. *)
+      if cd.cd_used then
+        raise
+          (Vm.Runtime_error "cannot copy an already resumed continuation");
       let new_fiber = copy_fiber cd.cd_fiber in
       let new_body_fiber =
         if cd.cd_body_fiber == cd.cd_fiber then new_fiber
