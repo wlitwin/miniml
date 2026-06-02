@@ -2255,9 +2255,10 @@ mml_value mml_apply6(mml_value cls, mml_value a0, mml_value a1, mml_value a2, mm
 
 /* ---- Entry point ---- */
 
+void mml_sys_store_args(int argc, char **argv);
+
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+    mml_sys_store_args(argc, argv);
     GC_INIT();
     mml_value result = mml_main();
     /*
@@ -2776,4 +2777,125 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     new_k->used = 0;
 
     return (int64_t)(intptr_t)new_k;
+}
+
+/* ---- Sys / IO / Runtime module externs (BUG-2) ----
+ *
+ * The MiniML-level signatures live in lib/std.ml (the VM registry is the
+ * authority); every backend must implement them with the same observable
+ * behavior. Functions whose MiniML type takes unit still take (and ignore)
+ * one mml_value so named calls and first-class closure wrappers share one
+ * calling convention. */
+
+#include <sys/time.h>
+
+/* argv stash for Sys.args (set by main) */
+static int mml_sys_argc = 0;
+static char **mml_sys_argv = NULL;
+
+void mml_sys_store_args(int argc, char **argv) {
+    mml_sys_argc = argc;
+    mml_sys_argv = argv;
+}
+
+mml_value mml_sys_time(mml_value unit_arg) {
+    (void)unit_arg;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return mml_box_float((double)tv.tv_sec + (double)tv.tv_usec / 1e6);
+}
+
+mml_value mml_sys_exit(mml_value code) {
+    exit((int)MML_INT_VAL(code));
+}
+
+mml_value mml_sys_getenv(mml_value name) {
+    const char *v = getenv(MML_STR_DATA(name));
+    if (!v) return MML_TAG_INT(0); /* None */
+    mml_value *cell = (mml_value *)mml_alloc(16, MML_MAKE_HDR(MML_HDR_VARIANT, 0));
+    cell[0] = MML_TAG_INT(1); /* Some */
+    cell[1] = mml_string_from_buf(v, (int64_t)strlen(v));
+    return (mml_value)(intptr_t)cell;
+}
+
+mml_value mml_sys_args(mml_value unit_arg) {
+    (void)unit_arg;
+    /* Matches the VM: the full argv (program name included). */
+    mml_value acc = MML_UNIT; /* nil */
+    for (int i = mml_sys_argc - 1; i >= 0; i--) {
+        mml_value *cell = (mml_value *)mml_alloc(16, MML_MAKE_HDR(MML_HDR_CONS, 0));
+        cell[0] = mml_string_from_buf(mml_sys_argv[i], (int64_t)strlen(mml_sys_argv[i]));
+        cell[1] = acc;
+        acc = (mml_value)(intptr_t)cell;
+    }
+    return acc;
+}
+
+mml_value mml_io_read_file(mml_value path) {
+    FILE *f = fopen(MML_STR_DATA(path), "rb");
+    if (!f) {
+        fprintf(stderr, "IO.read_file: cannot open %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    mml_value v = mml_string_alloc(len);
+    size_t got = fread((char *)MML_STR_DATA(v), 1, (size_t)len, f);
+    fclose(f);
+    if ((long)got != len) {
+        fprintf(stderr, "IO.read_file: short read on %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    return v;
+}
+
+mml_value mml_io_write_file(mml_value path, mml_value data) {
+    FILE *f = fopen(MML_STR_DATA(path), "wb");
+    if (!f) {
+        fprintf(stderr, "IO.write_file: cannot open %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    fwrite(MML_STR_DATA(data), 1, (size_t)MML_STR_LEN(data), f);
+    fclose(f);
+    return MML_UNIT;
+}
+
+mml_value mml_io_append_file(mml_value path, mml_value data) {
+    FILE *f = fopen(MML_STR_DATA(path), "ab");
+    if (!f) {
+        fprintf(stderr, "IO.append_file: cannot open %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    fwrite(MML_STR_DATA(data), 1, (size_t)MML_STR_LEN(data), f);
+    fclose(f);
+    return MML_UNIT;
+}
+
+mml_value mml_io_read_line(mml_value unit_arg) {
+    (void)unit_arg;
+    char buf[65536];
+    if (!fgets(buf, sizeof buf, stdin)) return mml_string_from_buf("", 0);
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len - 1] == '\n') len--;
+    return mml_string_from_buf(buf, (int64_t)len);
+}
+
+mml_value mml_io_file_exists(mml_value path) {
+    return access(MML_STR_DATA(path), F_OK) == 0 ? MML_TRUE : MML_FALSE;
+}
+
+/* Runtime.eval is interpreter-only: compiled native code has no compiler.
+ * The principled behavior is a clear error (matching emit-js's stubs), not
+ * an "unbound function" codegen failure. */
+mml_value mml_runtime_eval(mml_value src) {
+    (void)src;
+    fprintf(stderr, "Runtime.eval: not supported in native code\n");
+    exit(1);
+}
+
+mml_value mml_runtime_eval_file(mml_value path) {
+    (void)path;
+    fprintf(stderr, "Runtime.eval_file: not supported in native code\n");
+    exit(1);
 }
