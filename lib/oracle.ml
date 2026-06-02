@@ -804,23 +804,24 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
         bind (eval env tw_cond) (fun cv ->
             match cv with
             | VBool false -> Done VUnit
-            | VBool true -> (
-                let body_outcome = eval env tw_body in
-                let after_body o =
-                  match o with
-                  | Done _ -> step_then_loop ()
-                  | Ctl (CBreak v) -> Done v
-                  | Ctl CContinue -> step_then_loop ()
-                  | other -> other (* CReturn / Perform propagate *)
-                in
-                match body_outcome with
-                | Perform p ->
-                    (* Effects performed in the loop body suspend the whole
-                       loop; resuming continues the iteration then loops. *)
-                    Perform
-                      { p with p_resume = (fun v -> after_body (bind (p.p_resume v) (fun v -> Done v))) }
-                | o -> after_body o)
+            | VBool true -> after_body (eval env tw_body)
             | v -> err "oracle: while condition is not a bool: %s" (pp v))
+      and after_body o =
+        match o with
+        | Done _ -> step_then_loop ()
+        | Ctl (CBreak v) -> Done v
+        | Ctl CContinue -> step_then_loop ()
+        | Perform p ->
+            (* Effects performed in the loop body suspend the whole loop:
+               the continuation is "the rest of this iteration AND the rest
+               of the loop". after_body must re-wrap itself around the
+               resumption so that a perform surfacing DURING a resumption
+               (e.g. the next perform of the same iteration, or a later
+               iteration's) still carries the rest of the loop — dropping
+               this loses the loop from the continuation and breaks deep
+               handler arm-value chaining (BUG-13). *)
+            Perform { p with p_resume = (fun v -> after_body (p.p_resume v)) }
+        | other -> other (* CReturn propagates *)
       and step_then_loop () =
         match tw_step with
         | None -> loop ()

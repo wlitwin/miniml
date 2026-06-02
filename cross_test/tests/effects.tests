@@ -373,6 +373,59 @@ with
 --- expect: 66
 
 
+=== Deep Handler Arm-Value Chaining Tests (BUG-13 regression suite) ===
+
+--- test: nested performs in a while loop chain arm values across iterations
+effect E =
+  op0 : int -> int
+  op1 : int -> int
+end
+handle
+  (let mut i = 0 in
+   let mut s = 7 in
+   (for i < 3 do
+     i := (i + 1);
+     s := (perform op0 (let v = perform op1 0 in 398))
+   end);
+   s)
+with
+| return x -> x
+| op0 arg k -> ((resume k 2) + arg)
+| op1 arg k -> resume k arg
+--- expect: 1196
+
+--- test: arm value chaining when the while body performs from inside a for-in
+effect E =
+  op0 : int -> int
+  op1 : int -> int
+end
+handle
+  (let mut i = 0 in
+   let mut s = 7 in
+   (for i < 3 do
+     i := (i + 1);
+     s := (for x in [18] with acc = 149 do (perform op0 (let v = perform op1 0 in 398)) end)
+   end);
+   s)
+with
+| return x -> x
+| op0 arg k -> ((resume k 2) + arg)
+| op1 arg k -> resume k arg
+--- skip-emit-js: BUG-11 (continuation capture does not extend through the fold that for-in desugars to)
+--- skip-playground: BUG-11 (same emit-js lowering)
+--- expect: 1196
+
+--- test: arm value chaining across for-in iterations
+effect E = op : int -> int end
+handle
+  (for x in [1; 2] with acc = 0 do (perform op x) end) + 100
+with
+| return x -> x
+| op arg k -> (resume k 0) + 1000
+--- skip-emit-js: BUG-11 (continuation capture does not extend through the fold that for-in desugars to)
+--- skip-playground: BUG-11 (same emit-js lowering)
+--- expect: 2100
+
 === Try/With Tests ===
 
 --- test: try/with basic return
