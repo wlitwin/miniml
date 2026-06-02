@@ -202,7 +202,6 @@ handle
 with
 | return x -> x
 | tick () k -> let k2 = copy_continuation k in ((resume k 1) + (resume k2 10))
---- skip-native: BUG-9 (native gives 44 — heap/control split wrong for multishot + while + mutable state)
 --- expect: 23
 
 --- test: single-shot resume of continuation captured inside for-in loop
