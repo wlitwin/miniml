@@ -245,8 +245,8 @@ module Js_codegen =
     | None -> false
 
 
-  pub let rec expr_has_perform_with check_perform (te : Typechecker.texpr) =
-    let go = expr_has_perform_with check_perform in
+  pub let rec expr_has_perform_with check_perform enter_funs (te : Typechecker.texpr) =
+    let go = expr_has_perform_with check_perform enter_funs in
     match te.expr with
     | Typechecker.TEPerform ((op_name, _)) -> check_perform op_name
     | Typechecker.TEResume _ -> true
@@ -268,7 +268,11 @@ module Js_codegen =
     check_tree cm.tree))
     | Typechecker.TELetRec ((_, _, fn_e, body)) -> (go fn_e) || (go body)
     | Typechecker.TELetRecAnd ((bindings, body)) -> (List.exists (fn (_, e) -> go e) bindings) || (go body)
-    | Typechecker.TEFun ((_, body, _)) -> go body
+    | Typechecker.TEFun ((_, body, _)) -> 
+      if enter_funs do
+        go body
+      else
+        false
     | Typechecker.TEApp ((fn_, arg)) -> (go fn_) || (go arg)
     | Typechecker.TEHandle ((body, arms)) -> (go body) || (List.exists (fn arm ->
       do
@@ -286,12 +290,28 @@ module Js_codegen =
     | Typechecker.TERecord fields -> List.exists (fn (_, e) -> go e) fields
     | Typechecker.TEBinop ((_, e1, e2)) -> (go e1) || (go e2)
     | Typechecker.TEUnop ((_, e)) -> go e
-    | _ -> false
+    | Typechecker.TEAssign ((_, e)) -> go e
+    | Typechecker.TEFieldAssign ((r, _, v)) -> (go r) || (go v)
+    | Typechecker.TEField ((e, _)) -> go e
+    | Typechecker.TEIndex ((b, i)) -> (go b) || (go i)
+    | Typechecker.TEConstruct ((_, Some e)) -> go e
+    | Typechecker.TEConstruct ((_, None)) -> false
+    | Typechecker.TEArray es -> List.exists go es
+    | Typechecker.TERecordUpdate ((base, overrides)) -> (go base) || (List.exists (fn (_, e) -> go e) overrides)
+    | Typechecker.TERecordUpdateIdx ((base, pairs)) -> (go base) || (List.exists (fn (i, v) -> (go i) || (go v)) pairs)
+    | Typechecker.TEBreak e -> go e
+    | Typechecker.TEReturn e -> go e
+    | Typechecker.TEFoldContinue e -> go e
+    | Typechecker.TEForLoop e -> go e
+    | Typechecker.TEContinueLoop -> false
+    | ((((((((Typechecker.TEInt _ | Typechecker.TEFloat _) | Typechecker.TEBool _) | Typechecker.TEString _) | Typechecker.TEByte _) | Typechecker.TERune _) | Typechecker.TEUnit) | Typechecker.TENil) | Typechecker.TEVar _) -> false
 
 
-  pub let expr_has_perform te = expr_has_perform_with (fn _ -> true) te
+  pub let expr_has_perform te = expr_has_perform_with (fn _ -> true) true te
 
-  pub let expr_has_unhandled_perform handled_ops te = expr_has_perform_with (fn op -> not (List.mem op handled_ops)) te
+  pub let expr_has_unhandled_perform handled_ops te = expr_has_perform_with (fn op -> not (List.mem op handled_ops)) true te
+
+  pub let eval_can_perform te = expr_has_perform_with (fn _ -> true) false te
 
   pub let rec loop_ctl_escapes_handler in_handler (te : Typechecker.texpr) =
     let go = loop_ctl_escapes_handler in_handler in
@@ -354,6 +374,128 @@ module Js_codegen =
     ) && (all_resumes_are_tail body)) arms)
     | Typechecker.TEMatchTree cm -> (not (expr_has_perform cm.scrutinee)) && ((not (decision_guards_have_perform cm.tree)) && (Array.forall (fn arm -> all_resumes_are_tail arm.arm_body) cm.match_arms))
     | _ -> not (expr_has_perform te)
+
+
+  pub let is_anf_atom (te : Typechecker.texpr) =
+    match te.expr with
+    | ((((((((Typechecker.TEInt _ | Typechecker.TEFloat _) | Typechecker.TEBool _) | Typechecker.TEString _) | Typechecker.TEByte _) | Typechecker.TERune _) | Typechecker.TEUnit) | Typechecker.TENil) | Typechecker.TEFun _) -> true
+    | _ -> false
+
+
+  pub let anf_decompose (te : Typechecker.texpr) =
+    let arity_error () = error "anf_decompose: rebuild arity mismatch" in
+    let one e rebuild = Some (e :: [], fn parts ->
+      do
+        match parts with
+        | v :: [] -> rebuild v
+        | _ -> arity_error ()
+
+      end) in
+    let two e1 e2 rebuild = Some (e1 :: e2 :: [], fn parts ->
+      do
+        match parts with
+        | v1 :: v2 :: [] -> rebuild v1 v2
+        | _ -> arity_error ()
+
+      end) in
+    match te.expr with
+    | (Typechecker.TEBinop ((Ast.And, _, _)) | Typechecker.TEBinop ((Ast.Or, _, _))) -> None
+    | Typechecker.TEBinop ((op, e1, e2)) -> two e1 e2 (fn v1 v2 -> Typechecker.TEBinop (op, v1, v2))
+    | Typechecker.TEUnop ((op, e)) -> one e (fn v -> Typechecker.TEUnop (op, v))
+    | Typechecker.TECons ((e1, e2)) -> two e1 e2 (fn v1 v2 -> Typechecker.TECons (v1, v2))
+    | Typechecker.TEIndex ((e1, e2)) -> two e1 e2 (fn v1 v2 -> Typechecker.TEIndex (v1, v2))
+    | Typechecker.TEField ((e, fname)) -> one e (fn v -> Typechecker.TEField (v, fname))
+    | Typechecker.TEConstruct ((name, Some e)) -> one e (fn v -> Typechecker.TEConstruct (name, Some v))
+    | Typechecker.TEAssign ((name, e)) -> one e (fn v -> Typechecker.TEAssign (name, v))
+    | Typechecker.TEFieldAssign ((r, fname, e)) -> two r e (fn rv v -> Typechecker.TEFieldAssign (rv, fname, v))
+    | Typechecker.TEReturn e -> one e (fn v -> Typechecker.TEReturn v)
+    | Typechecker.TEBreak e -> one e (fn v -> Typechecker.TEBreak v)
+    | Typechecker.TEFoldContinue e -> one e (fn v -> Typechecker.TEFoldContinue v)
+    | Typechecker.TEPerform ((op_name, arg)) -> one arg (fn v -> Typechecker.TEPerform (op_name, v))
+    | Typechecker.TEResume ((k, e)) -> two k e (fn kv v -> Typechecker.TEResume (kv, v))
+    | Typechecker.TETuple es -> Some (es, fn vs -> Typechecker.TETuple vs)
+    | Typechecker.TEArray es -> Some (es, fn vs -> Typechecker.TEArray vs)
+    | Typechecker.TERecord fields -> Some (List.map (fn (_, e) -> e) fields, fn vs -> Typechecker.TERecord (List.map2 (fn (name, _) v -> (name, v)) fields vs))
+    | Typechecker.TERecordUpdate ((base, overrides)) -> Some (base :: List.map (fn (_, e) -> e) overrides, fn parts ->
+      do
+        match parts with
+        | base_v :: vs -> Typechecker.TERecordUpdate (base_v, List.map2 (fn (name, _) v -> (name, v)) overrides vs)
+        | [] -> arity_error ()
+
+      end)
+    | Typechecker.TERecordUpdateIdx ((base, pairs)) -> Some (base :: List.concat_map (fn (i, v) -> i :: v :: []) pairs, fn parts ->
+      do
+        match parts with
+        | base_v :: rest -> 
+          let rec pair_up xs =
+            match xs with
+            | [] -> []
+            | i :: v :: tl -> (i, v) :: pair_up tl
+            | _ -> arity_error ()
+           in
+          Typechecker.TERecordUpdateIdx (base_v, pair_up rest)
+        | [] -> arity_error ()
+
+      end)
+    | Typechecker.TEApp _ -> 
+      let rec collect expr args node_tys =
+        match expr.expr with
+        | Typechecker.TEApp ((f, a)) -> collect f (a :: args) (expr.ty :: node_tys)
+        | _ -> (expr, args, node_tys)
+       in
+      let (base_fn, args, node_tys) = collect te [] [] in
+      Some (base_fn :: args, fn parts ->
+        do
+          match parts with
+          | base_v :: arg_vs -> 
+            let rec rebuild fn_expr remaining_args remaining_tys =
+              match (remaining_args, remaining_tys) with
+              | (a :: [], _ :: []) -> Typechecker.TEApp (fn_expr, a)
+              | (a :: rest_a, t :: rest_t) -> rebuild {expr = Typechecker.TEApp (fn_expr, a); ty = t; loc = a.loc} rest_a rest_t
+              | _ -> arity_error ()
+             in
+            rebuild base_v arg_vs node_tys
+          | [] -> arity_error ()
+
+        end)
+    | _ -> None
+
+
+  pub let anf_lift_effects ctx (te : Typechecker.texpr) =
+    match te.expr with
+    | Typechecker.TEBinop ((Ast.And, e1, e2)) when (eval_can_perform e1) || (eval_can_perform e2) -> Some {expr = Typechecker.TEIf (e1, e2, {expr = Typechecker.TEBool false; ty = te.ty; loc = te.loc}); ty = te.ty; loc = te.loc}
+    | Typechecker.TEBinop ((Ast.Or, e1, e2)) when (eval_can_perform e1) || (eval_can_perform e2) -> Some {expr = Typechecker.TEIf (e1, {expr = Typechecker.TEBool true; ty = te.ty; loc = te.loc}, e2); ty = te.ty; loc = te.loc}
+    | _ -> 
+      do
+        match anf_decompose te with
+        | None -> None
+        | Some ((subs, rebuild)) -> 
+          do
+            if not (List.exists eval_can_perform subs) do
+              None
+            else do
+              let last_eff = Ref.create (-1) in
+              List.iteri (fn i sub -> if eval_can_perform sub do
+                Ref.set last_eff i
+              end) subs;
+              let bindings = Ref.create [] in
+              let parts = List.mapi (fn i sub -> if (i <= (Ref.get last_eff)) && (not (is_anf_atom sub)) do
+                let name = $"__anf{ctx.tmp_counter}" in
+                ctx.tmp_counter := ctx.tmp_counter + 1;
+                Ref.set bindings ((name, sub) :: Ref.get bindings);
+                {expr = Typechecker.TEVar name; ty = sub.ty; loc = sub.loc}
+              else
+                sub) subs in
+              match Ref.get bindings with
+              | [] -> None
+              | bound -> 
+                let core = {expr = rebuild parts; ty = te.ty; loc = te.loc} in
+                Some (List.fold (fn acc (name, sub) -> {expr = Typechecker.TELet (name, None, sub, acc); ty = te.ty; loc = te.loc}) core bound)
+
+            end
+          end
+
+      end
 
 
   pub let is_exportable_name name = not (((String.length name) >= 2) && (((String.get name 0) = #5f) && ((String.get name 1) = #5f)))
@@ -1599,14 +1741,12 @@ module Js_codegen =
       base in
   bind_var ctx b.var_name js_name;
   emit_line ctx ($"const {js_name} = {js_expr};")) bindings
-  and compile_js_match_tree_cps ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) cont =
-    let scrut_js = compile_non_tail ctx cm.scrutinee in
-    let scrut_tmp = fresh_tmp ctx in
-    emit_line ctx ($"const {scrut_tmp} = {scrut_js};");
-    let matched = fresh_tmp ctx in
-    emit_line ctx ($"let {matched} = false;");
-    emit_dtree_js_cps ctx cm scrut_tmp matched cont cm.tree;
-    emit_line ctx ($"if (!{matched}) _match_fail(\"line {cm.loc.line}\");")
+  and compile_js_match_tree_cps ctx (cm : Typechecker.texpr Match_tree_types.compiled_match) cont = compile_cps ctx cm.scrutinee (fn scrut_js -> let scrut_tmp = fresh_tmp ctx in
+  emit_line ctx ($"const {scrut_tmp} = {scrut_js};");
+  let matched = fresh_tmp ctx in
+  emit_line ctx ($"let {matched} = false;");
+  emit_dtree_js_cps ctx cm scrut_tmp matched cont cm.tree;
+  emit_line ctx ($"if (!{matched}) _match_fail(\"line {cm.loc.line}\");"))
   and emit_dtree_js_cps ctx cm scrut_tmp matched cont tree =
     match tree with
     | Match_tree_types.DLeaf {arm_idx; bindings} -> 
@@ -1866,6 +2006,11 @@ module Js_codegen =
     end;
     result
   and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
+    match anf_lift_effects ctx te with
+    | Some lifted -> compile_cps ctx lifted cont
+    | None -> compile_cps_dispatch ctx te cont
+
+  and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
     match te.expr with
     | Typechecker.TELet ((name, _, e1, e2)) -> compile_let_cps ctx name e1 e2 cont
     | Typechecker.TELetRec ((name, _, fn_expr, body)) -> compile_letrec_cps ctx name fn_expr body cont
@@ -1909,7 +2054,9 @@ module Js_codegen =
     | Typechecker.TEResume ((k_expr, val_expr)) -> 
       let k_js = compile_non_tail ctx k_expr in
       let v_js = compile_non_tail ctx val_expr in
-      emit_line ctx ($"return _bounce(function() \{ return {k_js}({v_js}); \});")
+      let result_var = fresh_tmp ctx in
+      emit_line ctx ($"const {result_var} = _trampoline(function() \{ return {k_js}({v_js}); \});");
+      cont result_var
     | Typechecker.TEApp ((fn_, arg)) -> compile_app_cps ctx te fn_ arg cont
     | _ -> 
       let v = compile_non_tail ctx te in
@@ -1958,8 +2105,7 @@ module Js_codegen =
       | _ -> ()
 
     end;
-    let c = compile_non_tail ctx cond in
-    emit_line ctx ($"if (!({c})) \{");
+    compile_cps ctx cond (fn c -> emit_line ctx ($"if (!({c})) \{");
     ctx.indent := ctx.indent + 1;
     cont "undefined";
     ctx.indent := ctx.indent - 1;
@@ -1970,7 +2116,7 @@ module Js_codegen =
     cont break_val;
     ctx.indent := ctx.indent - 1;
     emit_line ctx "}";
-    emit_line ctx ($"return _bounce({loop_fn});"));
+    emit_line ctx ($"return _bounce({loop_fn});")));
     ctx.indent := ctx.indent - 1;
     emit_line ctx "}";
     emit_line ctx ($"return _bounce({loop_fn});"))
@@ -2049,54 +2195,50 @@ module Js_codegen =
       emit_line ctx ($"_resolve({v1});");
       compile_cps ctx e2 cont
     end
-  and compile_if_cps ctx cond then_e else_e cont =
-    let c = compile_non_tail ctx cond in
-    emit_line ctx ($"if ({c}) \{");
-    ctx.indent := ctx.indent + 1;
-    compile_cps ctx then_e cont;
-    ctx.indent := ctx.indent - 1;
-    emit_line ctx "} else {";
-    ctx.indent := ctx.indent + 1;
-    compile_cps ctx else_e cont;
-    ctx.indent := ctx.indent - 1;
-    emit_line ctx "}"
-  and compile_match_cps ctx scrut arms loc cont =
-    let scrut_js = compile_non_tail ctx scrut in
-    let scrut_tmp = fresh_tmp ctx in
-    emit_line ctx ($"const {scrut_tmp} = {scrut_js};");
-    let matched = fresh_tmp ctx in
-    emit_line ctx ($"let {matched} = false;");
-    List.iter (fn (pat, guard, body) -> let (conds, bindings) = compile_pattern ctx scrut_tmp pat in
-    let cond_str =
-      match conds with
-      | [] -> "true"
-      | _ -> String.concat " && " conds
-     in
-    emit_line ctx ($"if (!{matched} && {cond_str}) \{");
-    ctx.indent := ctx.indent + 1;
-    push_scope ctx;
-    List.iter (fn (mml_name, js_expr) -> let js_nm = mangle_name mml_name in
-    bind_var ctx mml_name js_nm;
-    emit_line ctx ($"const {js_nm} = {js_expr};")) bindings;
-    do
-      match guard with
-      | Some g -> 
-        let guard_js = compile_non_tail ctx g in
-        emit_line ctx ($"if ({guard_js}) \{");
-        ctx.indent := ctx.indent + 1;
-        emit_line ctx ($"{matched} = true;");
-        compile_cps ctx body cont;
-        ctx.indent := ctx.indent - 1;
-        emit_line ctx "}"
-      | None -> 
-        emit_line ctx ($"{matched} = true;");
-        compile_cps ctx body cont
+  and compile_if_cps ctx cond then_e else_e cont = compile_cps ctx cond (fn c -> emit_line ctx ($"if ({c}) \{");
+  ctx.indent := ctx.indent + 1;
+  compile_cps ctx then_e cont;
+  ctx.indent := ctx.indent - 1;
+  emit_line ctx "} else {";
+  ctx.indent := ctx.indent + 1;
+  compile_cps ctx else_e cont;
+  ctx.indent := ctx.indent - 1;
+  emit_line ctx "}")
+  and compile_match_cps ctx scrut arms loc cont = compile_cps ctx scrut (fn scrut_js -> let scrut_tmp = fresh_tmp ctx in
+  emit_line ctx ($"const {scrut_tmp} = {scrut_js};");
+  let matched = fresh_tmp ctx in
+  emit_line ctx ($"let {matched} = false;");
+  List.iter (fn (pat, guard, body) -> let (conds, bindings) = compile_pattern ctx scrut_tmp pat in
+  let cond_str =
+    match conds with
+    | [] -> "true"
+    | _ -> String.concat " && " conds
+   in
+  emit_line ctx ($"if (!{matched} && {cond_str}) \{");
+  ctx.indent := ctx.indent + 1;
+  push_scope ctx;
+  List.iter (fn (mml_name, js_expr) -> let js_nm = mangle_name mml_name in
+  bind_var ctx mml_name js_nm;
+  emit_line ctx ($"const {js_nm} = {js_expr};")) bindings;
+  do
+    match guard with
+    | Some g -> 
+      let guard_js = compile_non_tail ctx g in
+      emit_line ctx ($"if ({guard_js}) \{");
+      ctx.indent := ctx.indent + 1;
+      emit_line ctx ($"{matched} = true;");
+      compile_cps ctx body cont;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "}"
+    | None -> 
+      emit_line ctx ($"{matched} = true;");
+      compile_cps ctx body cont
 
-    end;
-    pop_scope ctx;
-    ctx.indent := ctx.indent - 1;
-    emit_line ctx "}") arms;
-    emit_line ctx ($"if (!{matched}) _match_fail(\"line {loc.line}\");")
+  end;
+  pop_scope ctx;
+  ctx.indent := ctx.indent - 1;
+  emit_line ctx "}") arms;
+  emit_line ctx ($"if (!{matched}) _match_fail(\"line {loc.line}\");"))
   and compile_app_cps ctx _te fn_ arg cont =
     let rec collect_args expr acc =
       match expr.expr with

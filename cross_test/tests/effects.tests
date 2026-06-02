@@ -182,8 +182,8 @@ handle
 with
 | return x -> x
 | step arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
---- skip-emit-js: BUG-6 (emit-js loses a multishot branch — wrong handle result)
---- skip-playground: BUG-6 (same emit-js lowering)
+--- skip-emit-js: BUG-11 (continuation capture does not extend through the fold function call that for-in desugars to)
+--- skip-playground: BUG-11 (same emit-js lowering)
 --- expect: 8
 
 --- test: multishot resume inside while loop with shared mutable state
@@ -202,8 +202,6 @@ handle
 with
 | return x -> x
 | tick () k -> let k2 = copy_continuation k in ((resume k 1) + (resume k2 10))
---- skip-emit-js: BUG-6 (emit-js loses a multishot branch — wrong handle result)
---- skip-playground: BUG-6 (same emit-js lowering)
 --- skip-native: BUG-9 (native gives 44 — heap/control split wrong for multishot + while + mutable state)
 --- expect: 23
 
@@ -227,8 +225,6 @@ handle
 with
 | return x -> x
 | ntp arg k -> let r = resume k arg in arg
---- skip-emit-js: BUG-6 (emit-js feeds the arm value back into the body instead of making it the handle result)
---- skip-playground: BUG-6 (same emit-js lowering)
 --- expect: 0
 
 --- test: non-tail perform with aborting arm discards the body
@@ -242,9 +238,139 @@ handle
 with
 | return x -> 1
 | abort_op arg k -> 7
---- skip-emit-js: BUG-6 (emit-js runs the body to completion even when the arm never resumes)
---- skip-playground: BUG-6 (same emit-js lowering)
 --- expect: 7
+
+=== Non-Tail Perform Lowering Tests (BUG-6 regression suite) ===
+
+--- test: non-tail perform in tuple element
+effect E = op : int -> int end
+handle
+  (1, (perform op 2), 3)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg * 10) in r
+--- expect: (1, 20, 3)
+
+--- test: non-tail perform in constructor payload
+type opt = MyNone | MySome of int
+effect E = op : int -> int end
+handle
+  MySome (perform op 5)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg + 1) in r
+--- expect: MySome 6
+
+--- test: perform as match scrutinee
+effect E = op : int -> int end
+handle
+  (match (perform op 3) with
+   | 0 -> 100
+   | n -> n * 2)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg * 10) in r
+--- expect: 60
+
+--- test: perform as if condition
+effect E = op : bool -> bool end
+handle
+  (if (perform op true) do 111 else 222)
+with
+| return x -> x
+| op arg k -> let r = resume k false in r
+--- expect: 222
+
+--- test: non-tail perform in function arguments
+effect E = op : int -> int end
+let add3 a b c = a + b + c
+;;
+handle
+  (add3 10 (perform op 5) 100)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg * 2) in r
+--- expect: 120
+
+--- test: short-circuit and-operator does not evaluate performing rhs
+effect E = op : bool -> bool end
+let mut performed = false
+;;
+let r = handle
+  (false && (performed := true; perform op true))
+with
+| return x -> x
+| op arg k -> resume k arg
+;;
+(r, performed)
+--- expect: (false, false)
+
+--- test: short-circuit and-operator evaluates performing rhs when lhs true
+effect E = op : bool -> bool end
+handle
+  (true && (perform op false))
+with
+| return x -> x
+| op arg k -> let r = resume k true in r
+--- expect: true
+
+--- test: aborting arm with perform inside binop discards body and return arm
+effect E = op : int -> int end
+handle
+  (1 + (perform op 2))
+with
+| return x -> x + 1000
+| op arg k -> 42
+--- expect: 42
+
+--- test: multishot resume of perform inside binop
+effect E = op : int -> int end
+handle
+  (100 + (perform op 1))
+with
+| return x -> x
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 (arg * 2)))
+--- expect: 203
+
+--- test: mutable read before perform is captured in the continuation
+effect E = op : unit -> int end
+let mut cell = 5
+;;
+handle
+  (cell + (perform op ()))
+with
+| return x -> x
+| op arg k ->
+  let k2 = copy_continuation k in
+  let a = resume k 100 in
+  cell := 1000;
+  let b = resume k2 100 in
+  a + b
+--- expect: 210
+
+--- test: perform whose argument is itself a perform
+effect E =
+  inner : int -> int
+  outer : int -> int
+end
+handle
+  perform outer (perform inner 3)
+with
+| return x -> x
+| inner arg k -> let r = resume k (arg * 10) in r
+| outer arg k -> let r = resume k (arg + 1) in r
+--- expect: 31
+
+--- test: sequential non-tail performs with arm post-processing
+effect E = op : int -> int end
+handle
+  (let a = perform op 10 in
+   let b = perform op 20 in
+   a + b)
+with
+| return x -> x * 2
+| op arg k -> let r = resume k (arg + 1) in r + 1
+--- expect: 66
 
 
 === Try/With Tests ===

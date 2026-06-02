@@ -512,8 +512,9 @@ let is_newtype_ctor type_env name =
 
 (* ---- Effect analysis ---- *)
 
-let rec expr_has_perform_with ~check_perform (te : Typechecker.texpr) =
-  let go = expr_has_perform_with ~check_perform in
+let rec expr_has_perform_with ~check_perform ~enter_funs
+    (te : Typechecker.texpr) =
+  let go = expr_has_perform_with ~check_perform ~enter_funs in
   match te.expr with
   | Typechecker.TEPerform (op_name, _) -> check_perform op_name
   | Typechecker.TEResume _ -> true
@@ -544,7 +545,7 @@ let rec expr_has_perform_with ~check_perform (te : Typechecker.texpr) =
   | Typechecker.TELetRec (_, _, fn_e, body) -> go fn_e || go body
   | Typechecker.TELetRecAnd (bindings, body) ->
       List.exists (fun (_, e) -> go e) bindings || go body
-  | Typechecker.TEFun (_, body, _) -> go body
+  | Typechecker.TEFun (_, body, _) -> if enter_funs then go body else false
   | Typechecker.TEApp (fn, arg) -> go fn || go arg
   | Typechecker.TEHandle (body, arms) ->
       go body
@@ -566,15 +567,45 @@ let rec expr_has_perform_with ~check_perform (te : Typechecker.texpr) =
   | Typechecker.TERecord fields -> List.exists (fun (_, e) -> go e) fields
   | Typechecker.TEBinop (_, e1, e2) -> go e1 || go e2
   | Typechecker.TEUnop (_, e) -> go e
-  | _ -> false
+  (* The match must stay EXHAUSTIVE: a missed form here makes its performs
+     invisible, so the whole handle body silently compiles in direct style
+     with identity continuations (this was half of BUG-6). *)
+  | Typechecker.TEAssign (_, e) -> go e
+  | Typechecker.TEFieldAssign (r, _, v) -> go r || go v
+  | Typechecker.TEField (e, _) -> go e
+  | Typechecker.TEIndex (b, i) -> go b || go i
+  | Typechecker.TEConstruct (_, Some e) -> go e
+  | Typechecker.TEConstruct (_, None) -> false
+  | Typechecker.TEArray es -> List.exists go es
+  | Typechecker.TERecordUpdate (base, overrides) ->
+      go base || List.exists (fun (_, e) -> go e) overrides
+  | Typechecker.TERecordUpdateIdx (base, pairs) ->
+      go base || List.exists (fun (i, v) -> go i || go v) pairs
+  | Typechecker.TEBreak e -> go e
+  | Typechecker.TEReturn e -> go e
+  | Typechecker.TEFoldContinue e -> go e
+  | Typechecker.TEForLoop e -> go e
+  | Typechecker.TEContinueLoop -> false
+  | Typechecker.TEInt _ | Typechecker.TEFloat _ | Typechecker.TEBool _
+  | Typechecker.TEString _ | Typechecker.TEByte _ | Typechecker.TERune _
+  | Typechecker.TEUnit | Typechecker.TENil | Typechecker.TEVar _ ->
+      false
 
 let expr_has_perform te =
-  expr_has_perform_with ~check_perform:(fun _ -> true) te
+  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:true te
 
 let expr_has_unhandled_perform handled_ops te =
   expr_has_perform_with
     ~check_perform:(fun op -> not (List.mem op handled_ops))
-    te
+    ~enter_funs:true te
+
+(* Can *evaluating* this expression perform an effect? Unlike
+   [expr_has_perform] this does not look inside lambdas: evaluating a lambda
+   only builds a closure — its body runs when it is called, not here. Used by
+   the ANF lifting below to decide which subexpressions need to be threaded
+   through real continuations. *)
+let eval_can_perform te =
+  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:false te
 
 (* Does this loop body contain a `break`/`continue` targeting THIS loop that sits
    inside a handler body? A handler body compiles to a separate JS function (the
@@ -682,6 +713,258 @@ let rec all_resumes_are_tail (te : Typechecker.texpr) =
          from its sub-expressions, so any resume inside it is in NON-tail
          position and must be trampolined. Safe (true) iff it contains none. *)
       not (expr_has_perform te)
+
+(* ---- A-normalization of effectful expressions (BUG-6) ----
+
+   compile_cps threads real continuations through statement forms only
+   (let/seq/if/match/while). A perform nested inside an *expression* form — a
+   binop operand, an application argument, a tuple element, a constructor
+   payload — used to fall through to direct-style compilation, which calls the
+   handler with an IDENTITY continuation. That is exception semantics, not
+   effect-handler semantics: the arm's value leaked back into the body as the
+   perform's result instead of becoming the handle result, aborting arms did
+   not abort the body, and multishot resumes lost branches.
+
+   [anf_lift_effects ctx te] rewrites one level of such an expression into a
+   let chain: every direct subexpression up to and including the last one
+   whose evaluation can perform (in the oracle's evaluation order — left to
+   right) is bound to a fresh variable, and the expression is rebuilt over
+   those variables. compile_cps re-enters the result, so the lifted performs
+   reach compile_let_cps / compile_perform_cps, which thread real
+   continuations. Recursion terminates: every lifted subexpression is strictly
+   smaller than the original, and the rebuilt core has no liftable
+   subexpressions left.
+
+   Short-circuit operators (&&, ||) never lift their right operand (it must
+   stay conditionally evaluated); they rewrite into TEIf, whose branches are
+   tail positions compile_cps already handles. While conditions are likewise
+   never lifted (they re-evaluate every iteration); compile_while_cps threads
+   them through compile_cps in place. *)
+
+(* Atoms never need lifting for evaluation-order preservation: evaluating
+   them has no observable effect. Variables are NOT atoms: a mutable
+   variable's read is observable (the continuation must capture the value
+   read *before* the perform, not re-read it on resume — the oracle
+   evaluates operands left to right), and codegen cannot tell mutable and
+   immutable variables apart here. *)
+let is_anf_atom (te : Typechecker.texpr) =
+  match te.expr with
+  | Typechecker.TEInt _ | Typechecker.TEFloat _ | Typechecker.TEBool _
+  | Typechecker.TEString _ | Typechecker.TEByte _ | Typechecker.TERune _
+  | Typechecker.TEUnit | Typechecker.TENil | Typechecker.TEFun _ ->
+      true
+  | _ -> false
+
+(* The direct value-position subexpressions of an expression form, in the
+   oracle's evaluation order, plus a function rebuilding the form over
+   replacement subexpressions. None for forms with no liftable value
+   positions (literals, statement forms, lambdas, handles, loops). *)
+let anf_decompose (te : Typechecker.texpr) =
+  let arity_error () = error "anf_decompose: rebuild arity mismatch" in
+  let one e rebuild =
+    Some
+      ( [ e ],
+        fun parts ->
+          match parts with [ v ] -> rebuild v | _ -> arity_error () )
+  in
+  let two e1 e2 rebuild =
+    Some
+      ( [ e1; e2 ],
+        fun parts ->
+          match parts with [ v1; v2 ] -> rebuild v1 v2 | _ -> arity_error () )
+  in
+  match te.expr with
+  | Typechecker.TEBinop (Ast.And, _, _) | Typechecker.TEBinop (Ast.Or, _, _) ->
+      (* Short-circuit: rewritten to TEIf by anf_lift_effects, never lifted *)
+      None
+  | Typechecker.TEBinop (op, e1, e2) ->
+      two e1 e2 (fun v1 v2 -> Typechecker.TEBinop (op, v1, v2))
+  | Typechecker.TEUnop (op, e) -> one e (fun v -> Typechecker.TEUnop (op, v))
+  | Typechecker.TECons (e1, e2) ->
+      two e1 e2 (fun v1 v2 -> Typechecker.TECons (v1, v2))
+  | Typechecker.TEIndex (e1, e2) ->
+      two e1 e2 (fun v1 v2 -> Typechecker.TEIndex (v1, v2))
+  | Typechecker.TEField (e, fname) ->
+      one e (fun v -> Typechecker.TEField (v, fname))
+  | Typechecker.TEConstruct (name, Some e) ->
+      one e (fun v -> Typechecker.TEConstruct (name, Some v))
+  | Typechecker.TEAssign (name, e) ->
+      one e (fun v -> Typechecker.TEAssign (name, v))
+  | Typechecker.TEFieldAssign (r, fname, e) ->
+      two r e (fun rv v -> Typechecker.TEFieldAssign (rv, fname, v))
+  | Typechecker.TEReturn e -> one e (fun v -> Typechecker.TEReturn v)
+  | Typechecker.TEBreak e -> one e (fun v -> Typechecker.TEBreak v)
+  | Typechecker.TEFoldContinue e ->
+      one e (fun v -> Typechecker.TEFoldContinue v)
+  | Typechecker.TEPerform (op_name, arg) ->
+      one arg (fun v -> Typechecker.TEPerform (op_name, v))
+  | Typechecker.TEResume (k, e) ->
+      two k e (fun kv v -> Typechecker.TEResume (kv, v))
+  | Typechecker.TETuple es -> Some (es, fun vs -> Typechecker.TETuple vs)
+  | Typechecker.TEArray es -> Some (es, fun vs -> Typechecker.TEArray vs)
+  | Typechecker.TERecord fields ->
+      Some
+        ( List.map (fun (_, e) -> e) fields,
+          fun vs ->
+            Typechecker.TERecord
+              (List.map2 (fun (name, _) v -> (name, v)) fields vs) )
+  | Typechecker.TERecordUpdate (base, overrides) ->
+      Some
+        ( base :: List.map (fun (_, e) -> e) overrides,
+          fun parts ->
+            match parts with
+            | base_v :: vs ->
+                Typechecker.TERecordUpdate
+                  ( base_v,
+                    List.map2 (fun (name, _) v -> (name, v)) overrides vs )
+            | [] -> arity_error () )
+  | Typechecker.TERecordUpdateIdx (base, pairs) ->
+      Some
+        ( base :: List.concat_map (fun (i, v) -> [ i; v ]) pairs,
+          fun parts ->
+            match parts with
+            | base_v :: rest ->
+                let rec pair_up xs =
+                  match xs with
+                  | [] -> []
+                  | i :: v :: tl -> (i, v) :: pair_up tl
+                  | _ -> arity_error ()
+                in
+                Typechecker.TERecordUpdateIdx (base_v, pair_up rest)
+            | [] -> arity_error () )
+  | Typechecker.TEApp _ ->
+      (* Decompose the full application spine (fn, arg1, ..., argN) so
+         arity-directed direct calls survive the rebuild. Oracle order:
+         function first, then arguments left to right. *)
+      let rec collect expr args node_tys =
+        match expr.Typechecker.expr with
+        | Typechecker.TEApp (f, a) ->
+            collect f (a :: args) (expr.Typechecker.ty :: node_tys)
+        | _ -> (expr, args, node_tys)
+      in
+      let base_fn, args, node_tys = collect te [] [] in
+      Some
+        ( base_fn :: args,
+          fun parts ->
+            match parts with
+            | base_v :: arg_vs ->
+                (* Rebuild the spine; inner nodes keep their original types.
+                   The outermost node's kind is returned (its type is re-applied
+                   by the caller). *)
+                let rec rebuild fn_expr remaining_args remaining_tys =
+                  match (remaining_args, remaining_tys) with
+                  | [ a ], [ _ ] -> Typechecker.TEApp (fn_expr, a)
+                  | a :: rest_a, t :: rest_t ->
+                      rebuild
+                        {
+                          Typechecker.expr = Typechecker.TEApp (fn_expr, a);
+                          ty = t;
+                          loc = a.Typechecker.loc;
+                        }
+                        rest_a rest_t
+                  | _ -> arity_error ()
+                in
+                rebuild base_v arg_vs node_tys
+            | [] -> arity_error () )
+  | _ -> None
+
+(* Lift the effectful value-position subexpressions of [te] into a let chain,
+   so compile_cps can thread real continuations through them. Returns None
+   when there is nothing to lift (te is then handled by compile_cps's normal
+   dispatch). *)
+let anf_lift_effects ctx (te : Typechecker.texpr) =
+  match te.expr with
+  | Typechecker.TEBinop (Ast.And, e1, e2)
+    when eval_can_perform e1 || eval_can_perform e2 ->
+      (* a && b  ==  if a do b else false end; keeps b conditionally evaluated *)
+      Some
+        {
+          Typechecker.expr =
+            Typechecker.TEIf
+              ( e1,
+                e2,
+                {
+                  Typechecker.expr = Typechecker.TEBool false;
+                  ty = te.ty;
+                  loc = te.loc;
+                } );
+          ty = te.ty;
+          loc = te.loc;
+        }
+  | Typechecker.TEBinop (Ast.Or, e1, e2)
+    when eval_can_perform e1 || eval_can_perform e2 ->
+      (* a || b  ==  if a do true else b end *)
+      Some
+        {
+          Typechecker.expr =
+            Typechecker.TEIf
+              ( e1,
+                {
+                  Typechecker.expr = Typechecker.TEBool true;
+                  ty = te.ty;
+                  loc = te.loc;
+                },
+                e2 );
+          ty = te.ty;
+          loc = te.loc;
+        }
+  | _ -> (
+      match anf_decompose te with
+      | None -> None
+      | Some (subs, rebuild) ->
+          if not (List.exists eval_can_perform subs) then None
+          else begin
+            (* Index of the last subexpression whose evaluation can perform.
+               Everything up to it (atoms excepted) is lifted, preserving the
+               left-to-right evaluation order; everything after it stays in
+               place (it evaluates after the performs either way). *)
+            let last_eff = ref (-1) in
+            List.iteri
+              (fun i sub -> if eval_can_perform sub then last_eff := i)
+              subs;
+            let bindings = ref [] in
+            let parts =
+              List.mapi
+                (fun i sub ->
+                  if i <= !last_eff && not (is_anf_atom sub) then begin
+                    let name =
+                      Printf.sprintf "__anf%d" ctx.tmp_counter
+                    in
+                    ctx.tmp_counter <- ctx.tmp_counter + 1;
+                    bindings := (name, sub) :: !bindings;
+                    {
+                      Typechecker.expr = Typechecker.TEVar name;
+                      ty = sub.Typechecker.ty;
+                      loc = sub.Typechecker.loc;
+                    }
+                  end
+                  else sub)
+                subs
+            in
+            match !bindings with
+            | [] -> None
+            | bound ->
+                let core =
+                  {
+                    Typechecker.expr = rebuild parts;
+                    ty = te.ty;
+                    loc = te.loc;
+                  }
+                in
+                (* [bound] is in reverse evaluation order, so the left fold
+                   wraps the last binding innermost: the first subexpression
+                   ends up evaluated first. *)
+                Some
+                  (List.fold_left
+                     (fun acc (name, sub) ->
+                       {
+                         Typechecker.expr =
+                           Typechecker.TELet (name, None, sub, acc);
+                         ty = te.ty;
+                         loc = te.loc;
+                       })
+                     core bound)
+          end)
 
 (* ---- Expression compilation ---- *)
 
@@ -2176,15 +2459,17 @@ and emit_bindings_js ctx scrut_tmp (bindings : Match_tree_types.binding list) =
 
 and compile_js_match_tree_cps ctx
     (cm : Typechecker.texpr Match_tree_types.compiled_match) cont =
-  let scrut_js = compile_non_tail ctx cm.scrutinee in
-  let scrut_tmp = fresh_tmp ctx in
-  emit_line ctx (Printf.sprintf "const %s = %s;" scrut_tmp scrut_js);
-  let matched = fresh_tmp ctx in
-  emit_line ctx (Printf.sprintf "let %s = false;" matched);
-  emit_dtree_js_cps ctx cm scrut_tmp matched cont cm.tree;
-  emit_line ctx
-    (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched
-       cm.loc.Token.line)
+  (* The scrutinee may itself perform — thread it through compile_cps so the
+     decision tree becomes its continuation. *)
+  compile_cps ctx cm.scrutinee (fun scrut_js ->
+      let scrut_tmp = fresh_tmp ctx in
+      emit_line ctx (Printf.sprintf "const %s = %s;" scrut_tmp scrut_js);
+      let matched = fresh_tmp ctx in
+      emit_line ctx (Printf.sprintf "let %s = false;" matched);
+      emit_dtree_js_cps ctx cm scrut_tmp matched cont cm.tree;
+      emit_line ctx
+        (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched
+           cm.loc.Token.line))
 
 and emit_dtree_js_cps ctx cm scrut_tmp matched cont tree =
   match tree with
@@ -2562,6 +2847,17 @@ and compile_handle ctx body arms =
    Emits JS code as statements. The cont function should emit code that uses the
    result (typically ending with 'return'). *)
 and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
+  (* BUG-6: expressions with performs in value positions (binop operands,
+     application arguments, tuple elements, ...) are first A-normalized so the
+     performs reach compile_perform_cps with real continuations instead of
+     falling through to direct-style compilation with identity continuations
+     (see anf_lift_effects). *)
+  match anf_lift_effects ctx te with
+  | Some lifted -> compile_cps ctx lifted cont
+  | None -> compile_cps_dispatch ctx te cont
+
+and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
+    unit =
   (* Always recurse into compound expressions (TELet, TESeq, TEIf, TEMatch, etc.)
      regardless of expr_has_perform. This ensures that function calls within these
      expressions get _resolve wrapping via compile_let_cps/compile_seq_cps, which is
@@ -2624,11 +2920,19 @@ and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
       let v = compile_non_tail ctx te in
       cont v
   | Typechecker.TEResume (k_expr, val_expr) ->
+      (* compile_cps's contract: compute the value and hand it to [cont]. A
+         resume's value is whatever the resumed continuation chain produces,
+         so resolve it through the trampoline. (The old `return _bounce(...)`
+         form ignored [cont] entirely — correct only in tail position, and
+         silently wrong for resumes in scrutinee/condition/binding positions.) *)
       let k_js = compile_non_tail ctx k_expr in
       let v_js = compile_non_tail ctx val_expr in
+      let result_var = fresh_tmp ctx in
       emit_line ctx
-        (Printf.sprintf "return _bounce(function() { return %s(%s); });" k_js
-           v_js)
+        (Printf.sprintf
+           "const %s = _trampoline(function() { return %s(%s); });" result_var
+           k_js v_js);
+      cont result_var
   | Typechecker.TEApp (fn, arg) -> compile_app_cps ctx te fn arg cont
   | _ ->
       let v = compile_non_tail ctx te in
@@ -2685,20 +2989,23 @@ and compile_while_cps ctx cond body step cont =
             (compile_non_tail ctx step_te));
           emit_line ctx (Printf.sprintf "%s = true;" sf)
       | _ -> ());
-      let c = compile_non_tail ctx cond in
-      emit_line ctx (Printf.sprintf "if (!(%s)) {" c);
-      ctx.indent <- ctx.indent + 1;
-      cont "undefined";
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "}";
-      compile_cps ctx body (fun body_val ->
-          emit_line ctx (Printf.sprintf "%s;" body_val);
-          emit_line ctx (Printf.sprintf "if (%s) {" break_flag);
+      (* The condition re-evaluates every iteration, so it cannot be lifted
+         out; thread it through compile_cps in place so a perform in the
+         condition captures the rest of the loop as its continuation. *)
+      compile_cps ctx cond (fun c ->
+          emit_line ctx (Printf.sprintf "if (!(%s)) {" c);
           ctx.indent <- ctx.indent + 1;
-          cont break_val;
+          cont "undefined";
           ctx.indent <- ctx.indent - 1;
           emit_line ctx "}";
-          emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn));
+          compile_cps ctx body (fun body_val ->
+              emit_line ctx (Printf.sprintf "%s;" body_val);
+              emit_line ctx (Printf.sprintf "if (%s) {" break_flag);
+              ctx.indent <- ctx.indent + 1;
+              cont break_val;
+              ctx.indent <- ctx.indent - 1;
+              emit_line ctx "}";
+              emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn)));
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}";
       emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn))
@@ -2794,58 +3101,63 @@ and compile_seq_cps ctx e1 e2 cont =
   end
 
 and compile_if_cps ctx cond then_e else_e cont =
-  let c = compile_non_tail ctx cond in
-  emit_line ctx (Printf.sprintf "if (%s) {" c);
-  ctx.indent <- ctx.indent + 1;
-  compile_cps ctx then_e cont;
-  ctx.indent <- ctx.indent - 1;
-  emit_line ctx "} else {";
-  ctx.indent <- ctx.indent + 1;
-  compile_cps ctx else_e cont;
-  ctx.indent <- ctx.indent - 1;
-  emit_line ctx "}"
-
-and compile_match_cps ctx scrut arms loc cont =
-  (* Compile scrutinee directly, then CPS each arm body *)
-  let scrut_js = compile_non_tail ctx scrut in
-  let scrut_tmp = fresh_tmp ctx in
-  emit_line ctx (Printf.sprintf "const %s = %s;" scrut_tmp scrut_js);
-  (* Use a done flag to avoid duplicate cont calls in JS *)
-  let matched = fresh_tmp ctx in
-  emit_line ctx (Printf.sprintf "let %s = false;" matched);
-  List.iter
-    (fun (pat, guard, body) ->
-      let conds, bindings = compile_pattern ctx scrut_tmp pat in
-      let cond_str =
-        match conds with [] -> "true" | _ -> String.concat " && " conds
-      in
-      emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched cond_str);
+  (* The condition may itself perform — thread it through compile_cps so the
+     branches become its continuation. Pure conditions compile exactly as
+     before. *)
+  compile_cps ctx cond (fun c ->
+      emit_line ctx (Printf.sprintf "if (%s) {" c);
       ctx.indent <- ctx.indent + 1;
-      push_scope ctx;
-      List.iter
-        (fun (mml_name, js_expr) ->
-          let js_nm = mangle_name mml_name in
-          bind_var ctx mml_name js_nm;
-          emit_line ctx (Printf.sprintf "const %s = %s;" js_nm js_expr))
-        bindings;
-      (match guard with
-      | Some g ->
-          let guard_js = compile_non_tail ctx g in
-          emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
-          ctx.indent <- ctx.indent + 1;
-          emit_line ctx (Printf.sprintf "%s = true;" matched);
-          compile_cps ctx body cont;
-          ctx.indent <- ctx.indent - 1;
-          emit_line ctx "}"
-      | None ->
-          emit_line ctx (Printf.sprintf "%s = true;" matched);
-          compile_cps ctx body cont);
-      pop_scope ctx;
+      compile_cps ctx then_e cont;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "} else {";
+      ctx.indent <- ctx.indent + 1;
+      compile_cps ctx else_e cont;
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}")
-    arms;
-  emit_line ctx
-    (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched loc.Token.line)
+
+and compile_match_cps ctx scrut arms loc cont =
+  (* The scrutinee may itself perform — thread it through compile_cps so the
+     arm dispatch becomes its continuation. Then CPS each arm body. *)
+  compile_cps ctx scrut (fun scrut_js ->
+      let scrut_tmp = fresh_tmp ctx in
+      emit_line ctx (Printf.sprintf "const %s = %s;" scrut_tmp scrut_js);
+      (* Use a done flag to avoid duplicate cont calls in JS *)
+      let matched = fresh_tmp ctx in
+      emit_line ctx (Printf.sprintf "let %s = false;" matched);
+      List.iter
+        (fun (pat, guard, body) ->
+          let conds, bindings = compile_pattern ctx scrut_tmp pat in
+          let cond_str =
+            match conds with [] -> "true" | _ -> String.concat " && " conds
+          in
+          emit_line ctx (Printf.sprintf "if (!%s && %s) {" matched cond_str);
+          ctx.indent <- ctx.indent + 1;
+          push_scope ctx;
+          List.iter
+            (fun (mml_name, js_expr) ->
+              let js_nm = mangle_name mml_name in
+              bind_var ctx mml_name js_nm;
+              emit_line ctx (Printf.sprintf "const %s = %s;" js_nm js_expr))
+            bindings;
+          (match guard with
+          | Some g ->
+              let guard_js = compile_non_tail ctx g in
+              emit_line ctx (Printf.sprintf "if (%s) {" guard_js);
+              ctx.indent <- ctx.indent + 1;
+              emit_line ctx (Printf.sprintf "%s = true;" matched);
+              compile_cps ctx body cont;
+              ctx.indent <- ctx.indent - 1;
+              emit_line ctx "}"
+          | None ->
+              emit_line ctx (Printf.sprintf "%s = true;" matched);
+              compile_cps ctx body cont);
+          pop_scope ctx;
+          ctx.indent <- ctx.indent - 1;
+          emit_line ctx "}")
+        arms;
+      emit_line ctx
+        (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched
+           loc.Token.line))
 
 and compile_app_cps ctx _te fn arg cont =
   (* For function application in CPS context:
