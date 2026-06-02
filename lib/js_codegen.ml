@@ -1478,7 +1478,10 @@ and compile_binop ctx op e1 e2 =
             | _ -> assert false
           in
           if resolved = Types.TInt && op = Ast.Div then
-            "((" ^ a ^ " " ^ js_op ^ " " ^ b ^ ") | 0)" (* integer division *)
+            (* Integer division via the checked prelude fn: division by zero
+               must be a runtime error like every other backend (BUG-8) —
+               raw JS (a / b) | 0 silently gives 0. *)
+            "__num_div_int(" ^ a ^ ", " ^ b ^ ")"
           else "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
       | _ ->
           let method_name =
@@ -1491,9 +1494,11 @@ and compile_binop ctx op e1 e2 =
           in
           compile_class_binop ctx "Num" method_name e1 e2)
   | Ast.Mod ->
+      (* Via the checked prelude fn: modulo by zero must be a runtime error
+         (BUG-8) — raw JS a % b silently gives NaN. *)
       let a = compile_non_tail ctx e1 in
       let b = compile_non_tail ctx e2 in
-      "(" ^ a ^ " % " ^ b ^ ")"
+      "$mod(" ^ a ^ ", " ^ b ^ ")"
   | Ast.Eq | Ast.Neq ->
       let resolved = Types.repr e1.ty in
       let is_primitive =
@@ -3063,7 +3068,7 @@ function failwith(msg) { throw new Error(msg); }
 // by a typeof check) can legally coexist in the same scope.
 function not(b) { return !b; }
 function $caret(a, b) { return a + b; }
-function $mod(a, b) { return a % b; }
+function $mod(a, b) { if (b === 0) throw new Error("modulo by zero"); return a % b; }
 var mod = $mod;
 function $amp$amp(a, b) { return a && b; }
 function $bar$bar(a, b) { return a || b; }
