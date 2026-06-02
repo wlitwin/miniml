@@ -346,13 +346,21 @@ function removeHandler(vm, he) {
   vm.handlerStack = vm.handlerStack.filter(h => h !== he);
 }
 
-// Drop inline try/provide markers opened at or above stackDepth on f (a non-local
-// jump leaving an inline body without running its TRY_END/PROVIDE_END).
-function dropTryMarkersAbove(vm, f, stackDepth) {
-  vm.handlerStack = vm.handlerStack.filter(h =>
-    !((h.kind === "try" || h.kind === "provide") &&
-      h.fiber === f && h.stackDepth >= stackDepth)
+// Drop inline try/provide markers opened inside a loop body — i.e. pushed onto the
+// handler stack after the loop's ENTER_LOOP recorded ce.handlerDepth. Used when
+// break/continue leaves the body without running their TRY_END/PROVIDE_END.
+// Identified by HANDLER-STACK depth, not stack-pointer depth: a handler installed
+// immediately before the loop (its body being the loop) records the same sp as the
+// loop entry, so an sp comparison would also drop the enclosing handler's own marker
+// (BUG-10, BUG-12). handlerStack is oldest-first: the markers opened inside the body
+// are exactly the entries from index ce.handlerDepth on.
+function dropLoopBodyMarkers(vm, f, ce) {
+  if (vm.handlerStack.length <= ce.handlerDepth) return;
+  const below = vm.handlerStack.slice(0, ce.handlerDepth);
+  const inBody = vm.handlerStack.slice(ce.handlerDepth).filter(h =>
+    !((h.kind === "try" || h.kind === "provide") && h.fiber === f)
   );
+  vm.handlerStack = below.concat(inBody);
 }
 
 // Drop pending provide-resume entries on f whose recorded frame depth is at or above
@@ -1190,6 +1198,7 @@ function run(vm) {
           breakIp: breakTarget,
           frameDepth: fiber.frames.length,
           stackDepth: fiber.sp,
+          handlerDepth: vm.handlerStack.length,
         });
         break;
       }
@@ -1206,7 +1215,7 @@ function run(vm) {
         while (cf.frames.length > ce.frameDepth) cf.frames.pop();
         // Drop inline try/provide markers opened inside the loop body (break skips
         // TRY_END/PROVIDE_END).
-        dropTryMarkersAbove(vm, cf, ce.stackDepth);
+        dropLoopBodyMarkers(vm, cf, ce);
         dropProvideResumesAbove(vm, cf, ce.frameDepth);
         cf.sp = ce.stackDepth;
         vm.currentFiber = cf;
@@ -1221,7 +1230,7 @@ function run(vm) {
         const ce = fiber.control[fiber.control.length - 1];
         // Drop inline try/provide markers opened in the body (continue skips
         // TRY_END/PROVIDE_END).
-        dropTryMarkersAbove(vm, fiber, ce.stackDepth);
+        dropLoopBodyMarkers(vm, fiber, ce);
         dropProvideResumesAbove(vm, fiber, ce.frameDepth);
         fiber.sp = ce.stackDepth;
         f.ip = target;

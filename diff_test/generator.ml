@@ -132,7 +132,16 @@ and gen_int_arith ctx =
         (1, fun () -> "mod");
       ]
   in
-  Printf.sprintf "(%s %s %s)" (gen_int ctx) op (gen_int ctx)
+  (* AVOIDANCE (arithmetic envelope, see Phase-0 postmortem): integer overflow
+     is backend-divergent (OCaml wraps at 63 bits, JS float64 loses precision /
+     goes to Infinity, native wraps at 64) — i.e. undefined behavior, not a
+     valid differential-testing input. Products are masked to 20 bits so every
+     intermediate stays far below 2^53 (products of masked values are <= 2^40;
+     budget-bounded sums of those stay < 2^53). *)
+  if op = "*" then
+    Printf.sprintf "(((%s) %s (%s)) land 1048575)" (gen_int ctx) op
+      (gen_int ctx)
+  else Printf.sprintf "(%s %s %s)" (gen_int ctx) op (gen_int ctx)
 
 and gen_int_if ctx =
   Printf.sprintf "(if %s do %s else %s)" (gen_bool ctx) (gen_int ctx)
@@ -195,13 +204,21 @@ and gen_int_call ctx =
       Printf.sprintf "(%s %s)" name (String.concat " " args)
 
 and gen_int_lambda_app ctx =
-  (* Immediately-applied lambda: closure creation + capture *)
+  (* Immediately-applied lambda: closure creation + capture.
+     AVOIDANCE (bugs/BUG-11): no performs inside the lambda body — emit-js
+     compiles every lambda as a JS function with its own trampoline, so a
+     continuation captured inside it does not extend past the call boundary.
+     Re-allow (drop in_handler = false) once BUG-11 is fixed. *)
   let x = fresh ctx "p" in
-  let ctx' = { ctx with vars = (x, TInt) :: ctx.vars } in
+  let ctx' = { ctx with vars = (x, TInt) :: ctx.vars; in_handler = false } in
   Printf.sprintf "((fn %s -> %s) %s)" x (gen_int ctx') (gen_int ctx)
 
 and gen_int_fold ctx =
-  (* for-in fold over a list: exercises fold-callback lowering, continue/break *)
+  (* for-in fold over a list: exercises fold-callback lowering, continue/break.
+     AVOIDANCE (bugs/BUG-11): no performs inside the body — the body compiles
+     to a fold-callback JS function on emit-js, and continuations captured
+     inside it do not extend through the fold call. Re-allow (drop
+     in_handler = false) once BUG-11 is fixed. *)
   let x = fresh ctx "i" in
   let acc = fresh ctx "a" in
   let ctx' =
@@ -209,6 +226,7 @@ and gen_int_fold ctx =
       ctx with
       vars = (x, TInt) :: (acc, TInt) :: ctx.vars;
       loop_depth = ctx.loop_depth + 1;
+      in_handler = false;
     }
   in
   let body =
@@ -254,12 +272,15 @@ and gen_int_list_op ctx =
       (2, fun () -> Printf.sprintf "(String.length %s)" (gen_string ctx));
       ( 2,
         fun () ->
+          (* AVOIDANCE (bugs/BUG-11): no performs inside the List.fold callback
+             (same emit-js lambda-boundary limitation as gen_int_fold). *)
           let x = fresh ctx "e" in
           let ctx' =
             {
               ctx with
               vars = (x, TInt) :: ctx.vars;
               loop_depth = ctx.loop_depth + 1;
+              in_handler = false;
             }
           in
           Printf.sprintf "(List.fold (fn %s %s -> (%s + %s)) %s %s)" "zz" x "zz"
@@ -377,24 +398,28 @@ and gen_int_list ctx : string =
         );
         ( 2,
           fun () ->
+            (* AVOIDANCE (bugs/BUG-11): no performs inside the List.map callback. *)
             let x = fresh ctx "e" in
             let ctx' =
               {
                 ctx with
                 vars = (x, TInt) :: ctx.vars;
                 loop_depth = ctx.loop_depth + 1;
+                in_handler = false;
               }
             in
             Printf.sprintf "(List.map (fn %s -> %s) %s)" x (gen_int ctx')
               (gen_int_list ctx) );
         ( 1,
           fun () ->
+            (* AVOIDANCE (bugs/BUG-11): no performs inside the List.filter callback. *)
             let x = fresh ctx "e" in
             let ctx' =
               {
                 ctx with
                 vars = (x, TInt) :: ctx.vars;
                 loop_depth = ctx.loop_depth + 1;
+                in_handler = false;
               }
             in
             Printf.sprintf "(List.filter (fn %s -> %s) %s)" x (gen_bool ctx')
@@ -496,16 +521,21 @@ let gen_rec_helper ctx name =
       in_function = true;
     }
   in
-  (* The recursive call is hard-wired to (n - 1) so termination is structural. *)
+  (* The recursive call is hard-wired to (n - 1) so termination is structural.
+     The accumulator is masked to 20 bits each step: the step expression can
+     reference acc multiplicatively, and unmasked that compounds exponentially
+     across iterations, blowing past 2^53 where backend integer semantics
+     diverge (the arithmetic-envelope avoidance — see gen_int_arith). *)
   let step =
     pick ctx
       [
         ( 3,
           fun () ->
-            Printf.sprintf "(%s (n - 1) (acc + %s))" name (gen_int ctx') );
+            Printf.sprintf "(%s (n - 1) ((acc + %s) land 1048575))" name
+              (gen_int ctx') );
         ( 2,
           fun () ->
-            Printf.sprintf "(%s (n - 1) (acc + n))" name );
+            Printf.sprintf "(%s (n - 1) ((acc + n) land 1048575))" name );
         ( 1,
           fun () ->
             Printf.sprintf "((%s (n - 1) acc) + %s)" name (gen_int ctx') );

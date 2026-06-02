@@ -248,7 +248,7 @@ module Js_codegen =
   pub let rec expr_has_perform_with check_perform enter_funs (te : Typechecker.texpr) =
     let go = expr_has_perform_with check_perform enter_funs in
     match te.expr with
-    | Typechecker.TEPerform ((op_name, _)) -> check_perform op_name
+    | Typechecker.TEPerform ((op_name, arg)) -> (check_perform op_name) || (go arg)
     | Typechecker.TEResume _ -> true
     | (Typechecker.TELet ((_, _, e1, e2)) | Typechecker.TESeq ((e1, e2))) -> (go e1) || (go e2)
     | Typechecker.TEIf ((cond, e1, e2)) -> (go cond) || ((go e1) || (go e2))
@@ -458,6 +458,33 @@ module Js_codegen =
           | [] -> arity_error ()
 
         end)
+    | Typechecker.TEForLoop fold_app -> 
+      do
+        match fold_app.expr with
+        | Typechecker.TEApp _ -> 
+          let rec collect expr args node_tys =
+            match expr.expr with
+            | Typechecker.TEApp ((f, a)) -> collect f (a :: args) (expr.ty :: node_tys)
+            | _ -> (expr, args, node_tys)
+           in
+          let (base_fn, args, node_tys) = collect fold_app [] [] in
+          Some (base_fn :: args, fn parts ->
+            do
+              match parts with
+              | base_v :: arg_vs -> 
+                let rec rebuild fn_expr remaining_args remaining_tys =
+                  match (remaining_args, remaining_tys) with
+                  | ([], []) -> fn_expr
+                  | (a :: rest_a, t :: rest_t) -> rebuild {expr = Typechecker.TEApp (fn_expr, a); ty = t; loc = a.loc} rest_a rest_t
+                  | _ -> arity_error ()
+                 in
+                Typechecker.TEForLoop (rebuild base_v arg_vs node_tys)
+              | [] -> arity_error ()
+
+            end)
+        | _ -> None
+
+      end
     | _ -> None
 
 

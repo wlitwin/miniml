@@ -159,7 +159,8 @@ module Bytecode =
   and control_entry = {
     ce_break_ip: int;
     ce_frame_depth: int;
-    ce_stack_depth: int
+    ce_stack_depth: int;
+    ce_handler_depth: int
   }
   and return_entry = {
     ret_frame_depth: int

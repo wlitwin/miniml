@@ -28,6 +28,7 @@ type control_entry = Bytecode.control_entry = {
   ce_break_ip : int;
   ce_frame_depth : int;
   ce_stack_depth : int;
+  ce_handler_depth : int;
 }
 
 type return_entry = Bytecode.return_entry = { ret_frame_depth : int }
@@ -467,20 +468,29 @@ let find_handler_for_fiber vm fiber =
 let remove_handler vm he =
   vm.handler_stack <- List.filter (fun h -> h != he) vm.handler_stack
 
-(* Drop inline try/provide markers opened at or above [stack_depth] on [fiber]. Used
-   when a non-local jump (break/continue) leaves an inline handler body without running
-   its TRY_END/PROVIDE_END. The pending provide-resume bookkeeping is cleaned
-   separately by [drop_provide_resumes_above] (keyed on frame depth). *)
-let drop_try_markers_above vm fiber stack_depth =
-  vm.handler_stack <-
-    List.filter
-      (function
-        | HTry { ht_fiber; ht_stack_depth; _ } ->
-            not (ht_fiber == fiber && ht_stack_depth >= stack_depth)
-        | HProvide { hp_fiber; hp_stack_depth; _ } ->
-            not (hp_fiber == fiber && hp_stack_depth >= stack_depth)
-        | HFull _ -> true)
-      vm.handler_stack
+(* Drop inline try/provide markers opened inside a loop body — i.e. pushed onto the
+   handler stack after the loop's ENTER_LOOP recorded [ce_handler_depth]. Used when
+   break/continue leaves the body without running their TRY_END/PROVIDE_END.
+   Identified by HANDLER-STACK depth, not stack-pointer depth: a handler installed
+   immediately before the loop (its body being the loop) records the same sp as the
+   loop entry, so an sp comparison would also drop the enclosing handler's own marker
+   (BUG-10, BUG-12). The handler stack is newest-first, so the markers opened inside
+   the body are exactly the first [length - ce_handler_depth] entries. The pending
+   provide-resume bookkeeping is cleaned separately by [drop_provide_resumes_above]
+   (keyed on frame depth). *)
+let drop_loop_body_markers vm fiber (ce : control_entry) =
+  let excess = List.length vm.handler_stack - ce.ce_handler_depth in
+  if excess > 0 then
+    vm.handler_stack <-
+      List.filteri
+        (fun i h ->
+          i >= excess
+          ||
+          match h with
+          | HTry { ht_fiber; _ } -> not (ht_fiber == fiber)
+          | HProvide { hp_fiber; _ } -> not (hp_fiber == fiber)
+          | HFull _ -> true)
+        vm.handler_stack
 
 (* Drop pending provide-resume entries on [fiber] whose recorded frame depth is at or
    above [frame_depth]. Used when frames are unwound non-locally (a try-discard,
@@ -1215,6 +1225,7 @@ let run vm =
             ce_break_ip = break_target;
             ce_frame_depth = fiber.fiber_frame_depth;
             ce_stack_depth = fiber.fiber_sp;
+            ce_handler_depth = List.length vm.handler_stack;
           }
         in
         fiber.fiber_control <- ce :: fiber.fiber_control;
@@ -1239,7 +1250,7 @@ let run vm =
             done;
             (* Drop inline try/provide markers opened inside the loop body (break skips
                TRY_END/PROVIDE_END). *)
-            drop_try_markers_above vm fiber ce.ce_stack_depth;
+            drop_loop_body_markers vm fiber ce;
             drop_provide_resumes_above vm fiber ce.ce_frame_depth;
             (* Restore stack pointer and push break value *)
             fiber.fiber_sp <- ce.ce_stack_depth;
@@ -1324,7 +1335,7 @@ let run vm =
         | ce :: _ ->
             (* Drop inline try/provide markers opened in the body (continue skips
                TRY_END/PROVIDE_END). *)
-            drop_try_markers_above vm fiber ce.ce_stack_depth;
+            drop_loop_body_markers vm fiber ce;
             drop_provide_resumes_above vm fiber ce.ce_frame_depth;
             fiber.fiber_sp <- ce.ce_stack_depth;
             let f = frame vm in
