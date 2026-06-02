@@ -2,11 +2,17 @@
 // Cross-VM test runner — emit-js backend
 // Parses .tests files and runs each test case through --emit-js + node,
 // comparing printed output against expected results.
+//
+// Tests run concurrently on a worker pool (see parallel.js); each test spawns
+// its own main.exe + node processes, so wall-clock time scales with cores.
+// Output is printed in source order — identical to a sequential run.
 
-const { execSync } = require("child_process");
+const { execFile } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
+const { runPool } = require("./parallel");
 
 const INTERPRETER = path.resolve(
   __dirname,
@@ -17,166 +23,133 @@ const INTERPRETER = path.resolve(
   "main.exe"
 );
 
-// --- Running -------------------------------------------------------------
+const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "emit_js_test_"));
+process.on("exit", () => {
+  try { fs.rmSync(TMP_DIR, { recursive: true, force: true }); } catch (_) {}
+});
 
-let passed = 0;
-let failed = 0;
-let skipped = 0;
-const failures = [];
-
-function fail(name, msg) {
-  console.log(`  FAIL: ${name}`);
-  console.log(`    ${msg}`);
-  failed++;
-  failures.push(name);
+// Promisified execFile that resolves to {ok, stdout, stderr, status} instead
+// of rejecting, so callers can branch on success without try/catch noise.
+function run(cmd, args, opts = {}) {
+  return new Promise((resolve) => {
+    execFile(
+      cmd,
+      args,
+      { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, ...opts },
+      (error, stdout, stderr) => {
+        resolve({
+          ok: !error,
+          stdout: stdout || "",
+          stderr: stderr || "",
+          status: error ? error.code : 0,
+          error,
+        });
+      }
+    );
+  });
 }
 
-function runTest(tc) {
-  const tmpFile = `/tmp/emit_js_test_${process.pid}.mml`;
+// --- Running -------------------------------------------------------------
+
+// Each runner returns {output, status} where status is "pass" | "fail" and
+// output is the exact text a sequential runner would have printed.
+
+function pass(name) {
+  return { output: `  PASS: ${name}\n`, status: "pass", name };
+}
+
+function fail(name, msg) {
+  return { output: `  FAIL: ${name}\n    ${msg}\n`, status: "fail", name };
+}
+
+async function runTest(tc, idx) {
+  const tmpFile = path.join(TMP_DIR, `test_${idx}.mml`);
+  const tmpJs = path.join(TMP_DIR, `test_${idx}.js`);
   fs.writeFileSync(tmpFile, tc.source);
 
   try {
     switch (tc.expect.type) {
       case "value": {
         // Compile to JS
-        let jsCode;
-        try {
-          jsCode = execSync(`${INTERPRETER} --emit-js ${tmpFile}`, {
-            encoding: "utf-8",
-            maxBuffer: 10 * 1024 * 1024,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-        } catch (e) {
-          fail(tc.name, `compilation failed: ${(e.stderr || e.message).toString().trim()}`);
-          return;
+        const compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        if (!compile.ok) {
+          return fail(tc.name, `compilation failed: ${(compile.stderr || compile.error.message).trim()}`);
         }
 
         // Run through node
-        const tmpJs = `/tmp/emit_js_test_${process.pid}.js`;
-        fs.writeFileSync(tmpJs, jsCode);
-        let actual;
-        try {
-          actual = execSync(`node ${tmpJs}`, {
-            encoding: "utf-8",
-            maxBuffer: 10 * 1024 * 1024,
-            timeout: 10000,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-        } catch (e) {
-          const stderr = e.stderr ? e.stderr.toString().trim() : "";
-          const stdout = e.stdout ? e.stdout.toString().trim() : "";
-          fail(tc.name, `runtime error (exit ${e.status}):\n    stderr: ${stderr}\n    stdout: ${stdout}`);
-          try { fs.unlinkSync(tmpJs); } catch (_) {}
-          return;
-        }
-        try { fs.unlinkSync(tmpJs); } catch (_) {}
-
-        // Normalize: trim trailing newline
-        actual = actual.replace(/\n$/, "");
-
-        if (actual === tc.expect.value) {
-          console.log(`  PASS: ${tc.name}`);
-          passed++;
-        } else {
-          fail(
+        fs.writeFileSync(tmpJs, compile.stdout);
+        const exec = await run("node", [tmpJs], { timeout: 10000 });
+        if (!exec.ok) {
+          return fail(
             tc.name,
-            `expected: ${JSON.stringify(tc.expect.value)}\n    actual:   ${JSON.stringify(actual)}`
+            `runtime error (exit ${exec.status}):\n    stderr: ${exec.stderr.trim()}\n    stdout: ${exec.stdout.trim()}`
           );
         }
-        break;
+
+        // Normalize: trim trailing newline
+        const actual = exec.stdout.replace(/\n$/, "");
+
+        if (actual === tc.expect.value) {
+          return pass(tc.name);
+        }
+        return fail(
+          tc.name,
+          `expected: ${JSON.stringify(tc.expect.value)}\n    actual:   ${JSON.stringify(actual)}`
+        );
       }
       case "type-error": {
-        try {
-          execSync(`${INTERPRETER} --emit-js ${tmpFile}`, {
-            encoding: "utf-8",
-            maxBuffer: 10 * 1024 * 1024,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-          fail(tc.name, "expected type error, but compilation succeeded");
-        } catch (e) {
-          const stderr = e.stderr ? e.stderr.toString() : e.message;
-          if (stderr.includes("Type error") || stderr.includes("Type_error")) {
-            console.log(`  PASS: ${tc.name}`);
-            passed++;
-          } else {
-            fail(tc.name, `expected type error, got: ${stderr.trim()}`);
-          }
+        const compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        if (compile.ok) {
+          return fail(tc.name, "expected type error, but compilation succeeded");
         }
-        break;
+        const stderr = compile.stderr || compile.error.message;
+        if (stderr.includes("Type error") || stderr.includes("Type_error")) {
+          return pass(tc.name);
+        }
+        return fail(tc.name, `expected type error, got: ${stderr.trim()}`);
       }
       case "type-error-msg": {
-        try {
-          execSync(`${INTERPRETER} --emit-js ${tmpFile}`, {
-            encoding: "utf-8",
-            maxBuffer: 10 * 1024 * 1024,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-          fail(tc.name, "expected type error, but compilation succeeded");
-        } catch (e) {
-          const stderr = e.stderr ? e.stderr.toString() : e.message;
-          if (
-            (stderr.includes("Type error") || stderr.includes("Type_error")) &&
-            stderr.includes(tc.expect.substring)
-          ) {
-            console.log(`  PASS: ${tc.name}`);
-            passed++;
-          } else {
-            fail(
-              tc.name,
-              `expected type error containing ${JSON.stringify(tc.expect.substring)}, got: ${stderr.trim()}`
-            );
-          }
+        const compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        if (compile.ok) {
+          return fail(tc.name, "expected type error, but compilation succeeded");
         }
-        break;
+        const stderr = compile.stderr || compile.error.message;
+        if (
+          (stderr.includes("Type error") || stderr.includes("Type_error")) &&
+          stderr.includes(tc.expect.substring)
+        ) {
+          return pass(tc.name);
+        }
+        return fail(
+          tc.name,
+          `expected type error containing ${JSON.stringify(tc.expect.substring)}, got: ${stderr.trim()}`
+        );
       }
       case "runtime-error": {
-        let jsCode;
-        try {
-          jsCode = execSync(`${INTERPRETER} --emit-js ${tmpFile}`, {
-            encoding: "utf-8",
-            maxBuffer: 10 * 1024 * 1024,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-        } catch (e) {
+        const compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        if (!compile.ok) {
           // Compilation failure is acceptable for runtime-error tests
           // if the compiler catches it early
-          console.log(`  PASS: ${tc.name}`);
-          passed++;
-          return;
+          return pass(tc.name);
         }
 
-        const tmpJs = `/tmp/emit_js_test_${process.pid}.js`;
-        fs.writeFileSync(tmpJs, jsCode);
-        try {
-          execSync(`node ${tmpJs}`, {
-            encoding: "utf-8",
-            maxBuffer: 10 * 1024 * 1024,
-            timeout: 10000,
-            stdio: ["pipe", "pipe", "pipe"],
-          });
-          fail(tc.name, "expected runtime error, but succeeded");
-        } catch (e) {
-          const stderr = e.stderr ? e.stderr.toString() : e.message;
-          if (stderr.includes(tc.expect.substring)) {
-            console.log(`  PASS: ${tc.name}`);
-            passed++;
-          } else {
-            // Accept any non-zero exit as a runtime error
-            // (error messages may differ between VM and emit-js)
-            console.log(`  PASS: ${tc.name}`);
-            passed++;
-          }
+        fs.writeFileSync(tmpJs, compile.stdout);
+        const exec = await run("node", [tmpJs], { timeout: 10000 });
+        if (exec.ok) {
+          return fail(tc.name, "expected runtime error, but succeeded");
         }
-        try { fs.unlinkSync(tmpJs); } catch (_) {}
-        break;
+        // Accept any non-zero exit as a runtime error
+        // (error messages may differ between VM and emit-js)
+        return pass(tc.name);
       }
+      default:
+        return fail(tc.name, `unknown expectation type: ${tc.expect.type}`);
     }
   } catch (e) {
-    fail(tc.name, `exception: ${e.message}`);
+    return fail(tc.name, `exception: ${e.message}`);
   } finally {
-    try {
-      fs.unlinkSync(tmpFile);
-    } catch (_) {}
+    try { fs.unlinkSync(tmpFile); } catch (_) {}
+    try { fs.unlinkSync(tmpJs); } catch (_) {}
   }
 }
 
@@ -203,33 +176,74 @@ if (files.length === 0) {
 
 const matchesFilter = makeFilter(filters);
 
+// Flatten every file's tests into one work list. Each item knows whether it
+// opens/closes its file's section so headers and spacing print exactly as the
+// sequential runner did.
+const items = [];
 for (const file of files) {
-  console.log(`=== ${path.basename(file)} ===`);
   const tests = parseTestFile(file).filter((tc) => matchesFilter(tc.name));
-  if (tests.length === 0 && filters.length > 0) {
-    console.log("  (no matching tests)\n");
+  const header = `=== ${path.basename(file)} ===\n`;
+  if (tests.length === 0) {
+    items.push({
+      kind: "empty-file",
+      output:
+        header + (filters.length > 0 ? "  (no matching tests)\n" : "") + "\n",
+    });
     continue;
   }
-  for (const tc of tests) {
-    const skip = skipReason(tc, "emit-js");
-    if (skip) {
-      console.log(`  SKIP: ${tc.name} (${skip})`);
-      skipped++;
-      continue;
-    }
-    runTest(tc);
-  }
-  console.log();
+  tests.forEach((tc, i) => {
+    items.push({
+      kind: "test",
+      tc,
+      prefix: i === 0 ? header : "",
+      suffix: i === tests.length - 1 ? "\n" : "",
+    });
+  });
 }
 
-console.log("==============================");
-console.log(
-  `${passed}/${passed + failed} cross-VM tests passed (emit-js)${failed > 0 ? ` (${failed} FAILED)` : ""}${skipped > 0 ? ` (${skipped} skipped)` : ""}`
-);
-if (failures.length > 0) {
-  console.log("Failures:");
-  for (const name of failures) {
-    console.log(`  - ${name}`);
+async function worker(item, idx) {
+  if (item.kind === "empty-file") {
+    return { output: item.output, status: "skip", name: null };
   }
-  process.exit(1);
+  const tc = item.tc;
+  const skip = skipReason(tc, "emit-js");
+  let result;
+  if (skip) {
+    result = { output: `  SKIP: ${tc.name} (${skip})\n`, status: "skip", name: tc.name };
+  } else {
+    result = await runTest(tc, idx);
+  }
+  result.output = item.prefix + result.output + item.suffix;
+  return result;
 }
+
+(async () => {
+  const results = await runPool(items, worker);
+
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  const failures = [];
+  for (const r of results) {
+    if (!r || !r.name) {
+      continue; // empty-file placeholders
+    }
+    if (r.status === "pass") passed++;
+    else if (r.status === "fail") {
+      failed++;
+      failures.push(r.name);
+    } else if (r.status === "skip") skipped++;
+  }
+
+  console.log("==============================");
+  console.log(
+    `${passed}/${passed + failed} cross-VM tests passed (emit-js)${failed > 0 ? ` (${failed} FAILED)` : ""}${skipped > 0 ? ` (${skipped} skipped)` : ""}`
+  );
+  if (failures.length > 0) {
+    console.log("Failures:");
+    for (const name of failures) {
+      console.log(`  - ${name}`);
+    }
+    process.exit(1);
+  }
+})();
