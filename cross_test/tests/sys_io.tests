@@ -1,0 +1,61 @@
+=== Sys Module Tests (BUG-2 regression suite) ===
+
+--- test: Sys.time returns a non-negative float
+Sys.time () >= 0.0
+--- expect: true
+
+--- test: Sys.time advances or stays equal across calls
+let t1 = Sys.time () in
+let t2 = Sys.time () in
+t2 >= t1
+--- expect: true
+
+--- test: Sys.getenv of an unset variable is None
+match Sys.getenv "__MML_DEFINITELY_NOT_SET_XYZ__" with
+| None -> "unset"
+| Some _ -> "set"
+--- expect: unset
+
+--- test: Sys.getenv of PATH is set
+match Sys.getenv "PATH" with
+| None -> "unset"
+| Some _ -> "set"
+--- expect: set
+
+--- test: Sys.time as a first-class function
+let tf = Sys.time in
+tf () >= 0.0
+--- expect: true
+
+=== IO Module Tests (BUG-2 regression suite) ===
+
+--- test: IO write then read round-trips
+let path = "/tmp/mml_io_rt_" ^ string_of_float (Sys.time ()) in
+IO.write_file path "hello from miniml";
+IO.read_file path
+--- expect: hello from miniml
+
+--- test: IO append after write
+let path = "/tmp/mml_io_ap_" ^ string_of_float (Sys.time ()) in
+IO.write_file path "abc";
+IO.append_file path "def";
+IO.read_file path
+--- expect: abcdef
+
+--- test: IO.file_exists is true after write
+let path = "/tmp/mml_io_ex_" ^ string_of_float (Sys.time ()) in
+IO.write_file path "x";
+IO.file_exists path
+--- expect: true
+
+--- test: IO.file_exists is false for a missing path
+IO.file_exists "/definitely/not/a/real/path/mml_xyz"
+--- expect: false
+
+--- test: IO functions as first-class values
+let path = "/tmp/mml_io_fc_" ^ string_of_float (Sys.time ()) in
+let w = IO.write_file in
+let r = IO.read_file in
+w path "first class";
+r path
+--- expect: first class

@@ -3290,6 +3290,25 @@ and emit_named_call ctx name f_expr args =
       add_extern ctx "mml_string_length" "i64" [ "i64" ];
       Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_string_length"
         ~args:[ ("i64", arg_val) ]
+  (* ---- Sys / IO / Runtime module externs (BUG-2). The MiniML-level
+     signatures are declared in lib/std.ml; the C implementations live in
+     native_rt/runtime.c. Every function takes exactly the MiniML arity (unit
+     arguments included), so the argument is always evaluated (for effect
+     ordering) and passed through. *)
+  | "Sys.time" | "Sys.exit" | "Sys.getenv" | "Sys.args" | "IO.read_file"
+  | "IO.read_line" | "IO.file_exists" | "Runtime.eval" | "Runtime.eval_file"
+    ->
+      let c_name = c_name_of_module_extern name in
+      let arg_val = emit_expr ctx (List.hd args) in
+      add_extern ctx c_name "i64" [ "i64" ];
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:c_name
+        ~args:[ ("i64", arg_val) ]
+  | "IO.write_file" | "IO.append_file" ->
+      let c_name = c_name_of_module_extern name in
+      let arg_vals = List.map (emit_expr ctx) args in
+      add_extern ctx c_name "i64" [ "i64"; "i64" ];
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:c_name
+        ~args:(List.map (fun v -> ("i64", v)) arg_vals)
   | "failwith" ->
       let arg_val = emit_expr ctx (List.hd args) in
       add_extern ctx "mml_panic_mml" "void" [ "i64" ];
@@ -4800,6 +4819,29 @@ and emit_operator_wrapper ctx wrapper_name op_name is_float =
 (** Try to emit a builtin name as a closure value *)
 and emit_builtin_as_value ctx name expr_ty =
   match name with
+  (* Sys/IO/Runtime module externs as first-class values (BUG-2): a generic
+     wrapper closure over the C runtime function, arity matching the MiniML
+     signature. *)
+  | "Sys.time" | "Sys.exit" | "Sys.getenv" | "Sys.args" | "IO.read_file"
+  | "IO.read_line" | "IO.file_exists" | "Runtime.eval" | "Runtime.eval_file"
+    ->
+      let c_name = c_name_of_module_extern name in
+      let wrapper_key = "mml_op_" ^ c_name in
+      if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+        Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+        emit_func_wrapper ctx wrapper_key c_name 1
+      end;
+      add_extern ctx c_name "i64" [ "i64" ];
+      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
+  | "IO.write_file" | "IO.append_file" ->
+      let c_name = c_name_of_module_extern name in
+      let wrapper_key = "mml_op_" ^ c_name in
+      if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+        Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+        emit_func_wrapper ctx wrapper_key c_name 2
+      end;
+      add_extern ctx c_name "i64" [ "i64"; "i64" ];
+      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:2 ~captures:[])
   | "not" ->
       let wrapper_key = "mml_op_int_not" in
       if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
@@ -4997,6 +5039,11 @@ and sanitize_name name =
       else '_')
     name
 
+(* C runtime function for a Sys/IO/Runtime module extern: "Sys.time" ->
+   "mml_sys_time", "IO.read_file" -> "mml_io_read_file", etc. *)
+and c_name_of_module_extern name =
+  "mml_" ^ String.lowercase_ascii (sanitize_name name)
+
 and is_builtin_name = function
   | "string_of_float" | "Stdlib.string_of_float" | "string_of_bool"
   | "Stdlib.string_of_bool"
@@ -5025,6 +5072,9 @@ and is_builtin_name = function
   | "__math_ceil" | "__math_round" | "__fmt_float" | "__fmt_hex"
   | "__fmt_hex_upper" | "__fmt_oct" | "__fmt_bin" | "__fmt_zero_pad"
   | "__fmt_pad_left" | "__fmt_pad_right" | "Stdlib.mod" | "failwith"
+  | "Sys.time" | "Sys.exit" | "Sys.getenv" | "Sys.args" | "IO.read_file"
+  | "IO.write_file" | "IO.append_file" | "IO.read_line" | "IO.file_exists"
+  | "Runtime.eval" | "Runtime.eval_file"
   | "phys_equal" | "Stdlib.phys_equal" | "copy_continuation"
   | "Stdlib.copy_continuation" | "print" | "Stdlib.print" | "__show_value"
   | "show" | "size" | "get" | "set" | "has" | "remove" | "keys" | "values"

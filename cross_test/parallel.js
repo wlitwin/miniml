@@ -11,11 +11,49 @@
 // CROSS_TEST_JOBS=1 gives a fully sequential, deterministic-timing run.
 
 const os = require("os");
+const { execFile } = require("child_process");
 
 function defaultJobs() {
   const env = parseInt(process.env.CROSS_TEST_JOBS || "", 10);
   if (Number.isFinite(env) && env > 0) return env;
   return Math.max(1, os.cpus().length - 2);
+}
+
+// execFile wrapper that retries when the child is KILLED BY THE ENVIRONMENT
+// (SIGKILL — e.g. macOS jetsam under memory pressure while the gate shares the
+// machine with other work). Being killed is not a test result; a real test
+// failure (non-zero exit, error output) or a timeout (SIGTERM from the timeout
+// option) is never retried. Resolves to {ok, stdout, stderr, status, error}.
+function execFileRetry(cmd, args, opts = {}, retries = 3) {
+  return new Promise((resolve) => {
+    const attempt = (left) => {
+      execFile(
+        cmd,
+        args,
+        { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, ...opts },
+        (error, stdout, stderr) => {
+          if (
+            error &&
+            error.signal === "SIGKILL" &&
+            !error.killed && // not our own timeout enforcement
+            left > 0
+          ) {
+            // Killed by the environment: back off briefly and retry.
+            setTimeout(() => attempt(left - 1), 500 * (retries - left + 1));
+            return;
+          }
+          resolve({
+            ok: !error,
+            stdout: stdout || "",
+            stderr: stderr || "",
+            status: error ? error.code : 0,
+            error,
+          });
+        }
+      );
+    };
+    attempt(retries);
+  });
 }
 
 // Run `worker(item, index)` over every item with bounded concurrency.
@@ -65,4 +103,4 @@ async function runPool(items, worker, opts = {}) {
   return results;
 }
 
-module.exports = { runPool, defaultJobs };
+module.exports = { runPool, defaultJobs, execFileRetry };

@@ -21,12 +21,11 @@
 // gate suites run concurrently (a serial spawn-per-test runner compounds
 // every scheduling delay across all ~2000 tests).
 
-const { execFile } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
-const { runPool } = require("./parallel");
+const { runPool, execFileRetry } = require("./parallel");
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPILER_NATIVE = path.join(ROOT, "js", "compiler_native.js");
@@ -83,32 +82,20 @@ function fail(name, msg) {
 }
 
 // Run compiled JS in an isolated node process (for timeouts and crash
-// isolation), resolving to { ok, stdout, stderr, status }.
-function runCompiledJs(jsCode, idx) {
+// isolation), resolving to { ok, stdout, stderr, status }. Retries if the
+// node process is killed by the environment (see execFileRetry).
+async function runCompiledJs(jsCode, idx) {
   const tmpJs = path.join(TMP_DIR, `test_${idx}.js`);
   fs.writeFileSync(tmpJs, jsCode);
-  return new Promise((resolve) => {
-    execFile(
-      "node",
-      [tmpJs],
-      {
-        encoding: "utf-8",
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 15000,
-      },
-      (error, stdout, stderr) => {
-        try { fs.unlinkSync(tmpJs); } catch (_) {}
-        if (!error) resolve({ ok: true, stdout: stdout || "" });
-        else
-          resolve({
-            ok: false,
-            stdout: stdout || "",
-            stderr: stderr || error.message,
-            status: error.code,
-          });
-      }
-    );
-  });
+  const res = await execFileRetry("node", [tmpJs], { timeout: 15000 });
+  try { fs.unlinkSync(tmpJs); } catch (_) {}
+  if (res.ok) return { ok: true, stdout: res.stdout };
+  return {
+    ok: false,
+    stdout: res.stdout,
+    stderr: res.stderr || (res.error ? res.error.message : ""),
+    status: res.status,
+  };
 }
 
 async function runTest(tc, idx) {

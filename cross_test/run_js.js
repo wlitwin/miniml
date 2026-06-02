@@ -10,13 +10,12 @@
 // never interleaves. Output is printed in source order — identical to a
 // sequential run.
 
-const { execFile } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { loadBundle } = require("../js/loader");
 const vm = require("../js/vm");
-const { runPool } = require("./parallel");
+const { runPool, execFileRetry } = require("./parallel");
 
 const INTERPRETER = path.resolve(
   __dirname,
@@ -48,17 +47,9 @@ function fail(name, msg) {
 }
 
 // Async compile: spawn main.exe --emit-json; resolves to {ok, stdout, stderr}.
+// Retries if the process is killed by the environment (see execFileRetry).
 function compile(tmpFile) {
-  return new Promise((resolve) => {
-    execFile(
-      INTERPRETER,
-      ["--emit-json", tmpFile],
-      { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        resolve({ ok: !error, stdout: stdout || "", stderr: stderr || "", error });
-      }
-    );
-  });
+  return execFileRetry(INTERPRETER, ["--emit-json", tmpFile]);
 }
 
 // Run a compiled bundle on the in-process JS VM. Synchronous: no other

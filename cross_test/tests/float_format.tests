@@ -90,18 +90,57 @@ string_of_bool true
 --- test: print of float list uses display format
 print [3.0; 100.0];;
 ()
---- skip-emit-js: BUG-3 (nested whole floats indistinguishable from ints in untagged JS numbers)
---- skip-playground: BUG-3 (same emit-js representation limitation)
 --- expect: [3.; 100.]
 
 --- test: whole float nested in tuple display
 (1.5, 2.0)
---- skip-emit-js: BUG-3 (nested whole floats indistinguishable from ints in untagged JS numbers)
---- skip-playground: BUG-3 (same emit-js representation limitation)
 --- expect: (1.5, 2.)
 
 --- test: whole float nested in list display
 [3.0; 100.0]
---- skip-emit-js: BUG-3 (nested whole floats indistinguishable from ints in untagged JS numbers)
---- skip-playground: BUG-3 (same emit-js representation limitation)
 --- expect: [3.; 100.]
+
+=== Nested Float Display Tests (BUG-3 regression suite) ===
+
+--- test: whole float in map value display
+print #{"a": 2.0};;
+()
+--- expect: [(a, 2.)]
+
+--- test: whole float in option payload display
+print (Some 4.0);;
+()
+--- expect: Some 4.
+
+--- test: whole float in array display
+print #[1.0; 2.5];;
+()
+--- expect: #[1.; 2.5]
+
+--- test: whole float in record field display
+print { alpha = 3.0; beta = "p" };;
+()
+--- expect: { alpha = 3.; beta = p }
+
+--- test: whole float in nested list of tuples display
+print [(1.0, 2); (3.5, 4)];;
+()
+--- expect: [(1., 2); (3.5, 4)]
+
+--- test: show of nested whole float stays bare
+show [3.0; 100.0]
+--- expect: [3; 100]
+
+--- test: float list as final value uses display format
+[7.0; 8.25]
+--- expect: [7.; 8.25]
+
+--- test: variant with float payload as final value
+type wrapped = Wrap of float | Empty
+Wrap 5.0
+--- expect: Wrap 5.
+
+--- test: first-class print falls back to heuristic display
+List.iter print [1.5; 2.25];;
+()
+--- expect: "1.5\n2.25"
