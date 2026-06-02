@@ -1319,8 +1319,15 @@ and native_impl (name : string) (args : value list) : outcome =
   | ("copy_continuation" | "Stdlib.copy_continuation"), [ k ] -> (
       match k with
       | VContinuation k ->
-          (* Same resumption, fresh use flag: the copy can be resumed once more. *)
-          Done (VContinuation { k_resume = k.k_resume; k_used = ref false })
+          (* Same resumption, fresh use flag: the copy can be resumed once
+             more. Copying an ALREADY-RESUMED continuation is an error (§12):
+             its resumption is spent, so a copy would let the same one-shot
+             resumption run twice. (The oracle's closure-based resumptions
+             would silently "work", but fiber-based backends cannot — their
+             stacks are consumed by the first resume. Copy before resuming.) *)
+          if !(k.k_used) then
+            err "cannot copy an already resumed continuation"
+          else Done (VContinuation { k_resume = k.k_resume; k_used = ref false })
       | v ->
           (* copy on a non-continuation is identity (matches the VM builtin) *)
           Done v)

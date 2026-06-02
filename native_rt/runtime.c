@@ -2709,6 +2709,15 @@ int64_t mml_resume_continuation(int64_t k_i64, int64_t val) {
 
 int64_t mml_copy_continuation(int64_t k_i64) {
     mml_continuation *orig = (mml_continuation*)(intptr_t)k_i64;
+
+    /* Copying an already-resumed continuation is an error (semantics.md §12):
+       the fiber's stack was consumed by the resume, so the copy would be a
+       corpse. Copy before resuming. */
+    if (orig->used) {
+        fprintf(stderr, "native: cannot copy an already resumed continuation\n");
+        exit(1);
+    }
+
     mml_fiber *orig_fiber = orig->fiber;
 
     /* Deep copy the fiber struct */

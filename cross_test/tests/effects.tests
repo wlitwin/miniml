@@ -639,6 +639,41 @@ with
 | op arg k -> let r = resume k (arg * 10) in r
 --- expect: 10
 
+=== Copy-Before-Resume Tests (BUG-15 regression suite) ===
+
+--- test: copying an already-resumed continuation is an error
+effect E = op : int -> int end
+handle
+  (perform op 10) * 3
+with
+| return x -> x
+| op arg k -> ((resume k arg) + (resume (copy_continuation k) (arg + 1)))
+--- expect-runtime-error: already resumed
+
+--- test: explicit copy after resume is an error
+effect E = op : int -> int end
+handle
+  perform op 1
+with
+| return x -> x
+| op arg k ->
+  let a = resume k arg in
+  let k2 = copy_continuation k in
+  a + (resume k2 arg)
+--- expect-runtime-error: already resumed
+
+--- test: copy of a copy before any resume is fine
+effect E = op : int -> int end
+handle
+  perform op 5
+with
+| return x -> x
+| op arg k ->
+  let k2 = copy_continuation k in
+  let k3 = copy_continuation k2 in
+  (resume k arg) + (resume k2 (arg * 10)) + (resume k3 (arg * 100))
+--- expect: 555
+
 === Try/With Tests ===
 
 --- test: try/with basic return
