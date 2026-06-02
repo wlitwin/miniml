@@ -214,11 +214,12 @@ and gen_int_lambda_app ctx =
   Printf.sprintf "((fn %s -> %s) %s)" x (gen_int ctx') (gen_int ctx)
 
 and gen_int_fold ctx =
-  (* for-in fold over a list: exercises fold-callback lowering, continue/break.
-     AVOIDANCE (bugs/BUG-11): no performs inside the body — the body compiles
-     to a fold-callback JS function on emit-js, and continuations captured
-     inside it do not extend through the fold call. Re-allow (drop
-     in_handler = false) once BUG-11 is fixed. *)
+  (* for-in fold over a list: exercises fold-callback lowering, continue/break,
+     and (when inside a handle body) the for-in CPS loop — performs allowed
+     since the BUG-11 for-in slice was fixed (native CPS lowering of for-in
+     bodies on emit-js). Performs inside OTHER lambdas (List.map/fold
+     callbacks, immediately-applied lambdas) remain avoided — that is the
+     general selective-CPS gap still tracked as BUG-11. *)
   let x = fresh ctx "i" in
   let acc = fresh ctx "a" in
   let ctx' =
@@ -226,7 +227,6 @@ and gen_int_fold ctx =
       ctx with
       vars = (x, TInt) :: (acc, TInt) :: ctx.vars;
       loop_depth = ctx.loop_depth + 1;
-      in_handler = false;
     }
   in
   let body =

@@ -398,7 +398,7 @@ module Js_codegen =
     | Typechecker.TEBreak e -> go e
     | Typechecker.TEReturn e -> go e
     | Typechecker.TEFoldContinue e -> go e
-    | Typechecker.TEForLoop e -> go e
+    | Typechecker.TEForLoop e -> expr_has_perform_with check_perform true e
     | Typechecker.TEContinueLoop -> false
     | ((((((((Typechecker.TEInt _ | Typechecker.TEFloat _) | Typechecker.TEBool _) | Typechecker.TEString _) | Typechecker.TEByte _) | Typechecker.TERune _) | Typechecker.TEUnit) | Typechecker.TENil) | Typechecker.TEVar _) -> false
 
@@ -2173,6 +2173,7 @@ module Js_codegen =
         pop_scope ctx
       end
     | Typechecker.TEWhile {tw_cond; tw_body; tw_step} -> compile_while_cps ctx tw_cond tw_body tw_step cont
+    | Typechecker.TEForLoop fold_app when expr_has_perform te -> compile_forloop_cps ctx te fold_app cont
     | Typechecker.TEApp _ when not (expr_has_perform te) -> 
       let v = with_in_cps ctx false (fn () -> compile_non_tail ctx te) in
       cont v
@@ -2252,6 +2253,136 @@ module Js_codegen =
     ctx.indent := ctx.indent - 1;
     emit_line ctx "}";
     emit_line ctx ($"return _bounce({loop_fn});"))
+  and compile_forloop_cps ctx te fold_app cont =
+    let fallback () =
+      let v = compile_non_tail ctx te in
+      cont v in
+    let rec collect expr acc =
+      match expr.expr with
+      | Typechecker.TEApp ((f, a)) -> collect f (a :: acc)
+      | _ -> (expr, acc)
+     in
+    let (_fold_fn, fold_args) = collect fold_app [] in
+    match fold_args with
+    | callback :: init :: coll :: [] -> 
+      do
+        let coll_kind =
+          match Types.repr coll.ty with
+          | Types.TList _ -> Some "list"
+          | Types.TArray _ -> Some "array"
+          | Types.TVariant ((name, _)) when List.mem name ctx.type_env.newtypes -> 
+            do
+              let ctors = List.filter (fn (_, info) -> info.ctor_type_name = name) ctx.type_env.constructors in
+              match ctors with
+              | (_, {ctor_arg_ty = Some underlying; _}) :: [] -> 
+                do
+                  match Types.repr underlying with
+                  | Types.TList _ -> Some "list"
+                  | _ -> None
+
+                end
+              | _ -> None
+
+            end
+          | _ -> None
+         in
+        let callback_params =
+          match callback.expr with
+          | Typechecker.TEFun ((acc_param, inner, _)) -> 
+            do
+              match inner.expr with
+              | Typechecker.TEFun ((elem_param, body, _)) -> Some (acc_param, elem_param, body)
+              | _ -> None
+
+            end
+          | _ -> None
+         in
+        match (coll_kind, callback_params) with
+        | (Some kind, Some ((acc_param, elem_param, body))) -> emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont
+        | _ -> fallback ()
+
+      end
+    | _ -> fallback ()
+
+  and emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont =
+    let loop_fn = fresh_tmp ctx in
+    let pos_var = fresh_tmp ctx in
+    let acc_var = fresh_tmp ctx in
+    let coll_var = fresh_tmp ctx in
+    let init_js = compile_non_tail ctx init in
+    let coll_js = compile_non_tail ctx coll in
+    emit_line ctx ($"const {coll_var} = {coll_js};");
+    emit_line ctx ($"function {loop_fn}({pos_var}, {acc_var}) \{");
+    ctx.indent := ctx.indent + 1;
+    do
+      match kind with
+      | "list" -> emit_line ctx ($"if ({pos_var} === null || typeof {pos_var} !== \"object\" || !(\"_hd\" in {pos_var})) \{")
+      | _ -> emit_line ctx ($"if ({pos_var} >= {coll_var}._arr.length) \{")
+
+    end;
+    ctx.indent := ctx.indent + 1;
+    cont acc_var;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    push_scope ctx;
+    let acc_js =
+      let n = mangle_name acc_param in
+      if n = "_" do
+        fresh_tmp ctx
+      else do
+        let nm = n ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+        ctx.tmp_counter := ctx.tmp_counter + 1;
+        nm
+      end in
+    let elem_js =
+      let n = mangle_name elem_param in
+      if n = "_" do
+        fresh_tmp ctx
+      else do
+        let nm = n ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
+        ctx.tmp_counter := ctx.tmp_counter + 1;
+        nm
+      end in
+    emit_line ctx ($"const {acc_js} = {acc_var};");
+    do
+      match kind with
+      | "list" -> emit_line ctx ($"const {elem_js} = {pos_var}._hd;")
+      | _ -> emit_line ctx ($"const {elem_js} = {coll_var}._arr[{pos_var}];")
+
+    end;
+    bind_var ctx acc_param acc_js;
+    bind_var ctx elem_param elem_js;
+    let next_pos =
+      match kind with
+      | "list" -> $"{pos_var}._tl"
+      | _ -> $"({pos_var} + 1)"
+     in
+    emit_line ctx "try {";
+    ctx.indent := ctx.indent + 1;
+    let saved_in_fold = ctx.in_fold_loop in
+    ctx.in_fold_loop := true;
+    (let _protect_result = (fn () -> compile_cps ctx body (fn v -> emit_line ctx ($"return _bounce(function() \{ return {loop_fn}({next_pos}, {v}); \});"))) () in (fn () -> ctx.in_fold_loop := saved_in_fold) (); _protect_result);
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "} catch (_e) {";
+    ctx.indent := ctx.indent + 1;
+    emit_line ctx ($"if (_e && _e._tag === \"_fold_cont\") return _bounce(function() \{ return {loop_fn}({next_pos}, _e._val); \});");
+    emit_line ctx "if (_e && _e._tag === \"_break\") {";
+    ctx.indent := ctx.indent + 1;
+    cont "_e._val";
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    emit_line ctx "throw _e;";
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    pop_scope ctx;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
+    let start_pos =
+      match kind with
+      | "list" -> coll_var
+      | _ -> "0"
+     in
+    emit_line ctx ($"return _bounce(function() \{ return {loop_fn}({start_pos}, {init_js}); \});")
   and compile_perform_cps ctx op_name (arg : Typechecker.texpr) cont =
     match List.assoc_opt op_name ctx.direct_dispatch_ops with
     | Some direct_fn -> 

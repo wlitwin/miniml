@@ -714,7 +714,12 @@ let rec expr_has_perform_with ~check_perform ~enter_funs
   | Typechecker.TEBreak e -> go e
   | Typechecker.TEReturn e -> go e
   | Typechecker.TEFoldContinue e -> go e
-  | Typechecker.TEForLoop e -> go e
+  | Typechecker.TEForLoop e ->
+      (* The for-in desugar wraps the loop BODY in a callback lambda, but
+         that lambda always runs as part of evaluating the loop — so performs
+         inside it are evaluation effects even under ~enter_funs:false (where
+         ordinary lambdas are treated as inert values). *)
+      expr_has_perform_with ~check_perform ~enter_funs:true e
   | Typechecker.TEContinueLoop -> false
   | Typechecker.TEInt _ | Typechecker.TEFloat _ | Typechecker.TEBool _
   | Typechecker.TEString _ | Typechecker.TEByte _ | Typechecker.TERune _
@@ -3090,6 +3095,16 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
       end
   | Typechecker.TEWhile { tw_cond; tw_body; tw_step } ->
       compile_while_cps ctx tw_cond tw_body tw_step cont
+  | Typechecker.TEForLoop fold_app when expr_has_perform te ->
+      (* BUG-11 (for-in slice): a for-in loop whose body performs gets a
+         NATIVE CPS loop — the same treatment compile_while_cps gives while
+         loops — instead of a call to the collection's Iter fold. Captured
+         continuations cannot cross a fold call (the callback closure gets
+         its own trampoline), so multishot resumes lose the remaining
+         iterations. Falls back to the fold call when the collection is not
+         a built-in iterable (user Iter instances — the remaining BUG-11
+         gap, which needs selective CPS). *)
+      compile_forloop_cps ctx te fold_app cont
   (* Non-compound expressions: use expr_has_perform guard *)
   | Typechecker.TEApp _ when not (expr_has_perform te) ->
       (* Function call in potential tail position: temporarily clear in_cps
@@ -3195,6 +3210,182 @@ and compile_while_cps ctx cond body step cont =
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}";
       emit_line ctx (Printf.sprintf "return _bounce(%s);" loop_fn))
+
+(* Native CPS lowering of a for-in loop whose body performs (BUG-11 for-in
+   slice). The desugared fold application is decomposed back into
+   (callback, init, collection); the callback body is INLINED into a CPS
+   iteration function, so the continuation of a perform inside the body is
+   "rest of the body + remaining iterations + rest of the handle body" —
+   ordinary re-callable closures, which is what multishot resume needs.
+
+   Iteration order and break/continue semantics follow §6.2: `continue v`
+   produces v for the current iteration; `break v` ends the loop with v.
+   Both are throw-based (the body compiles with in_fold_loop set), caught at
+   the iteration boundary.
+
+   Falls back to the fold-call compilation when the collection's static type
+   is not a built-in iterable or the callback is not a literal two-parameter
+   lambda (user Iter instances / unexpected shapes). Known limitation
+   (pre-existing class): a break/continue executed AFTER a resume point runs
+   inside a continuation closure where the iteration's catch is no longer on
+   the JS stack. *)
+and compile_forloop_cps ctx te fold_app cont =
+  let fallback () =
+    let v = compile_non_tail ctx te in
+    cont v
+  in
+  (* Decompose the fold application spine: (fold_fn, [callback; init; coll]) *)
+  let rec collect expr acc =
+    match expr.Typechecker.expr with
+    | Typechecker.TEApp (f, a) -> collect f (a :: acc)
+    | _ -> (expr, acc)
+  in
+  let _fold_fn, fold_args = collect fold_app [] in
+  match fold_args with
+  | [ callback; init; coll ] -> (
+      (* The collection must be a built-in iterable. Maps/sets are newtypes
+         whose runtime value is the underlying list, so they iterate as
+         lists. *)
+      let coll_kind =
+        match Types.repr coll.Typechecker.ty with
+        | Types.TList _ -> Some "list"
+        | Types.TArray _ -> Some "array"
+        | Types.TVariant (name, _)
+          when List.mem name ctx.type_env.Types.newtypes -> (
+            let ctors =
+              List.filter
+                (fun (_, info) ->
+                  String.equal info.Types.ctor_type_name name)
+                ctx.type_env.Types.constructors
+            in
+            match ctors with
+            | [ (_, { Types.ctor_arg_ty = Some underlying; _ }) ] -> (
+                match Types.repr underlying with
+                | Types.TList _ -> Some "list"
+                | _ -> None)
+            | _ -> None)
+        | _ -> None
+      in
+      let callback_params =
+        match callback.Typechecker.expr with
+        | Typechecker.TEFun (acc_param, inner, _) -> (
+            match inner.Typechecker.expr with
+            | Typechecker.TEFun (elem_param, body, _) ->
+                Some (acc_param, elem_param, body)
+            | _ -> None)
+        | _ -> None
+      in
+      match (coll_kind, callback_params) with
+      | Some kind, Some (acc_param, elem_param, body) ->
+          emit_forloop_cps_native ctx kind acc_param elem_param body init coll
+            cont
+      | _ -> fallback ())
+  | _ -> fallback ()
+
+and emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont =
+  let loop_fn = fresh_tmp ctx in
+  let pos_var = fresh_tmp ctx in
+  let acc_var = fresh_tmp ctx in
+  let coll_var = fresh_tmp ctx in
+  (* init and coll are pure here: anf_lift_effects lifts effectful for-in
+     arguments before dispatch reaches this case. *)
+  let init_js = compile_non_tail ctx init in
+  let coll_js = compile_non_tail ctx coll in
+  emit_line ctx (Printf.sprintf "const %s = %s;" coll_var coll_js);
+  (* The iteration function: %s(position, accumulator) *)
+  emit_line ctx (Printf.sprintf "function %s(%s, %s) {" loop_fn pos_var acc_var);
+  ctx.indent <- ctx.indent + 1;
+  (* Loop-exhausted check (per collection kind) → the loop's value is acc.
+     Only "list" and "array" exist: those are the built-in Iter instances
+     (maps/sets are newtypes over lists and take the list path). *)
+  (match kind with
+  | "list" ->
+      emit_line ctx
+        (Printf.sprintf
+           "if (%s === null || typeof %s !== \"object\" || !(\"_hd\" in %s)) {"
+           pos_var pos_var pos_var)
+  | _ ->
+      emit_line ctx
+        (Printf.sprintf "if (%s >= %s._arr.length) {" pos_var coll_var));
+  ctx.indent <- ctx.indent + 1;
+  cont acc_var;
+  ctx.indent <- ctx.indent - 1;
+  emit_line ctx "}";
+  (* Bind the loop variables for this iteration *)
+  push_scope ctx;
+  let acc_js =
+    let n = mangle_name acc_param in
+    if n = "_" then fresh_tmp ctx
+    else begin
+      let nm = n ^ "_" ^ string_of_int ctx.tmp_counter in
+      ctx.tmp_counter <- ctx.tmp_counter + 1;
+      nm
+    end
+  in
+  let elem_js =
+    let n = mangle_name elem_param in
+    if n = "_" then fresh_tmp ctx
+    else begin
+      let nm = n ^ "_" ^ string_of_int ctx.tmp_counter in
+      ctx.tmp_counter <- ctx.tmp_counter + 1;
+      nm
+    end
+  in
+  emit_line ctx (Printf.sprintf "const %s = %s;" acc_js acc_var);
+  (match kind with
+  | "list" ->
+      emit_line ctx (Printf.sprintf "const %s = %s._hd;" elem_js pos_var)
+  | _ ->
+      emit_line ctx
+        (Printf.sprintf "const %s = %s._arr[%s];" elem_js coll_var pos_var));
+  bind_var ctx acc_param acc_js;
+  bind_var ctx elem_param elem_js;
+  (* The next-iteration position expression *)
+  let next_pos =
+    match kind with
+    | "list" -> Printf.sprintf "%s._tl" pos_var
+    | _ -> Printf.sprintf "(%s + 1)" pos_var
+  in
+  (* Body in CPS. Its continuation is the next iteration. break/continue
+     compile to _throw_break/_throw_fold_cont (in_fold_loop), caught here. *)
+  emit_line ctx "try {";
+  ctx.indent <- ctx.indent + 1;
+  let saved_in_fold = ctx.in_fold_loop in
+  ctx.in_fold_loop <- true;
+  Fun.protect
+    ~finally:(fun () -> ctx.in_fold_loop <- saved_in_fold)
+    (fun () ->
+      compile_cps ctx body (fun v ->
+          emit_line ctx
+            (Printf.sprintf
+               "return _bounce(function() { return %s(%s, %s); });" loop_fn
+               next_pos v)));
+  ctx.indent <- ctx.indent - 1;
+  emit_line ctx "} catch (_e) {";
+  ctx.indent <- ctx.indent + 1;
+  (* continue v: this iteration's value is v *)
+  emit_line ctx
+    (Printf.sprintf
+       "if (_e && _e._tag === \"_fold_cont\") return _bounce(function() { \
+        return %s(%s, _e._val); });"
+       loop_fn next_pos);
+  (* break v: the loop's value is v *)
+  emit_line ctx "if (_e && _e._tag === \"_break\") {";
+  ctx.indent <- ctx.indent + 1;
+  cont "_e._val";
+  ctx.indent <- ctx.indent - 1;
+  emit_line ctx "}";
+  emit_line ctx "throw _e;";
+  ctx.indent <- ctx.indent - 1;
+  emit_line ctx "}";
+  pop_scope ctx;
+  ctx.indent <- ctx.indent - 1;
+  emit_line ctx "}";
+  (* Start the loop *)
+  let start_pos = match kind with "list" -> coll_var | _ -> "0" in
+  emit_line ctx
+    (Printf.sprintf "return _bounce(function() { return %s(%s, %s); });"
+       loop_fn start_pos init_js)
 
 and compile_perform_cps ctx op_name (arg : Typechecker.texpr) cont =
   match List.assoc_opt op_name ctx.direct_dispatch_ops with
