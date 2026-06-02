@@ -551,6 +551,60 @@ with
 | op arg k -> let r = resume k (arg * 100) in r
 --- expect: 505
 
+=== Optional Return Arm Tests (BUG-4 regression suite) ===
+
+--- test: handle without return arm produces the body value
+effect E = op : int -> int end
+handle
+  42
+with
+| op arg k -> resume k arg
+--- expect: 42
+
+--- test: handle without return arm with tail resume
+effect E = op : int -> int end
+handle
+  perform op 1
+with
+| op arg k -> resume k arg
+--- expect: 1
+
+--- test: handle without return arm with non-tail resume uses arm value
+effect E = op : int -> int end
+handle
+  (perform op 5) + 100
+with
+| op arg k -> let r = resume k arg in arg
+--- expect: 5
+
+--- test: handle without return arm with aborting arm
+effect E = op : int -> int end
+handle
+  (perform op 3) * 2
+with
+| op arg k -> 99
+--- expect: 99
+
+--- test: handle without return arm with multishot resume
+effect E = op : int -> int end
+handle
+  (perform op 10) + 1
+with
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 (arg * 2)))
+--- expect: 32
+
+--- test: nested handles without return arms
+effect E =
+  inner_op : int -> int
+  outer_op : int -> int
+end
+handle
+  (handle (perform inner_op 1) + (perform outer_op 10) with
+   | inner_op arg k -> resume k (arg * 2))
+with
+| outer_op arg k -> resume k (arg * 3)
+--- expect: 32
+
 === Try/With Tests ===
 
 --- test: try/with basic return

@@ -1649,6 +1649,17 @@ and parse_handle_expr p =
         else continue_parsing := false
     | _ -> continue_parsing := false
   done;
+  (* The return arm is optional (semantics.md §11: with no return arm the
+     handle expression produces the body's value). A missing one defaults to
+     identity — the same synthesis try/with and provide/with below always do.
+     Synthesizing here means no backend ever sees an arm-less handle. *)
+  let has_return_arm =
+    List.exists
+      (fun arm -> match arm with Ast.HReturn _ -> true | _ -> false)
+      !arms
+  in
+  if not has_return_arm then
+    arms := !arms @ [ Ast.HReturn ("__x", Ast.EVar "__x") ];
   Ast.EHandle (body, List.rev !arms)
 
 and parse_try_expr p =

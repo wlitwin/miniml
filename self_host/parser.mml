@@ -1622,6 +1622,16 @@ module Parser =
       | _ -> Ref.set continue_parsing false
 
     end;
+    let has_return_arm = List.exists (fn arm ->
+      do
+        match arm with
+        | Ast.HReturn _ -> true
+        | _ -> false
+
+      end) (Ref.get arms) in
+    if not has_return_arm do
+      Ref.set arms (List.concat (Ref.get arms) (Ast.HReturn ("__x", Ast.EVar "__x") :: []))
+    end;
     Ast.EHandle (body, List.rev (Ref.get arms))
   and parse_try_expr p =
     expect p Token.TRY;
