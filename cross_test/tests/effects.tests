@@ -605,6 +605,40 @@ with
 | outer_op arg k -> resume k (arg * 3)
 --- expect: 32
 
+=== Match Return Arm Type Propagation Tests (BUG-5 regression suite) ===
+
+--- test: match expression as handle return arm with multishot resume
+effect E = op : int -> int end
+handle perform op 1 with
+| return x -> (match x with | 0 -> 0 | n -> n)
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
+--- expect: 2
+
+--- test: constructor match as handle return arm with multishot resume
+effect E = op : int -> int end
+handle perform op 1 with
+| return x -> (match Some x with | Some o -> o | None -> 0)
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
+--- expect: 2
+
+--- test: bool match return arm with multishot resume arithmetic
+effect E = op : int -> int end
+handle
+  (perform op 10) * 3
+with
+| return x -> (match x > 20 with | true -> x | false -> 0)
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 (arg + 1)))
+--- expect: 63
+
+--- test: list match as handle return arm
+effect E = op : int -> int end
+handle
+  [perform op 1; perform op 2]
+with
+| return xs -> (match xs with | [] -> 0 | h :: _ -> h)
+| op arg k -> let r = resume k (arg * 10) in r
+--- expect: 10
+
 === Try/With Tests ===
 
 --- test: try/with basic return

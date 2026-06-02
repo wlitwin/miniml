@@ -486,9 +486,9 @@ and gen_handle ctx ops : string =
      - OPTIONAL (BUG-4 fixed 2026-06-02: the parser synthesizes the identity
        return arm, so an omitted one means "produce the body value" on every
        backend).
-     - SIMPLE arithmetic only: a match/for-in return arm makes instance
-       resolution for multishot `+` ambiguous on the compilers but not the
-       oracle (bugs/BUG-5). Allow full expressions once BUG-5 is fixed. *)
+     - Match arms allowed (BUG-5 fixed 2026-06-02: check-mode matches now
+       unify their result with the expected type, so typeclass dispatch on
+       resume results resolves). *)
   let return_arm =
     pick ctx
       [
@@ -497,6 +497,11 @@ and gen_handle ctx ops : string =
         ( 2,
           fun () -> Printf.sprintf "\n| return x -> (x + %d)" (rand ctx 10) );
         (1, fun () -> "\n| return x -> (x * 2)");
+        ( 1,
+          fun () ->
+            Printf.sprintf
+              "\n| return x -> (match x with | 0 -> %d | m -> (m + %d))"
+              (rand ctx 20) (rand ctx 5) );
       ]
   in
   let arms =
