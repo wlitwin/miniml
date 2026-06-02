@@ -147,7 +147,9 @@ module Bytecode =
     mut fiber_sp: int;
     mut fiber_frames: call_frame list;
     mut fiber_frame_depth: int;
-    mut fiber_extra_args: value list list
+    mut fiber_extra_args: value list list;
+    mut fiber_control: control_entry list;
+    mut fiber_return: return_entry list
   }
   and handler_entry =
     | HFull of { hf_return: value; hf_ops: (string * value) list; hf_body_fiber: fiber; hf_parent_fiber: fiber }
@@ -156,12 +158,10 @@ module Bytecode =
 
   and control_entry = {
     ce_break_ip: int;
-    ce_fiber: fiber;
     ce_frame_depth: int;
     ce_stack_depth: int
   }
   and return_entry = {
-    ret_fiber: fiber;
     ret_frame_depth: int
   }
   and continuation_data = {

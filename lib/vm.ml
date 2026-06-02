@@ -26,21 +26,15 @@ type handler_entry = Bytecode.handler_entry =
 
 type control_entry = Bytecode.control_entry = {
   ce_break_ip : int;
-  ce_fiber : Bytecode.fiber;
   ce_frame_depth : int;
   ce_stack_depth : int;
 }
 
-type return_entry = Bytecode.return_entry = {
-  ret_fiber : Bytecode.fiber;
-  ret_frame_depth : int;
-}
+type return_entry = Bytecode.return_entry = { ret_frame_depth : int }
 
 type t = {
   mutable current_fiber : Bytecode.fiber;
   mutable handler_stack : handler_entry list;
-  mutable control_stack : control_entry list;
-  mutable return_stack : return_entry list;
   (* Pending no-fiber provide resumptions: while a PERFORM-matched HProvide arm runs
      on a fiber, an entry [(fiber, frame_depth, removed_handlers)] records that the
      arm was entered at [frame_depth] with [removed_handlers] (the matched HProvide
@@ -67,6 +61,8 @@ let make_fiber () : Bytecode.fiber =
     fiber_frames = [];
     fiber_frame_depth = 0;
     fiber_extra_args = [];
+    fiber_control = [];
+    fiber_return = [];
   }
 
 (* Ensure [f.fiber_stack] can hold at least [needed] slots, growing (doubling)
@@ -1048,8 +1044,8 @@ let run vm =
             done;
             fiber.fiber_sp <- ht_stack_depth;
             fiber.fiber_extra_args <- [];
-            vm.control_stack <- ht_control;
-            vm.return_stack <- ht_return;
+            fiber.fiber_control <- ht_control;
+            fiber.fiber_return <- ht_return;
             vm.current_fiber <- fiber;
             push vm arg;
             (frame vm).frame_ip <- catch_ip;
@@ -1165,8 +1161,8 @@ let run vm =
               ht_fiber = fiber;
               ht_frame_depth = fiber.fiber_frame_depth;
               ht_stack_depth = fiber.fiber_sp;
-              ht_control = vm.control_stack;
-              ht_return = vm.return_stack;
+              ht_control = fiber.fiber_control;
+              ht_return = fiber.fiber_return;
               ht_catch = catch;
             }
         in
@@ -1217,25 +1213,25 @@ let run vm =
         let ce =
           {
             ce_break_ip = break_target;
-            ce_fiber = fiber;
             ce_frame_depth = fiber.fiber_frame_depth;
             ce_stack_depth = fiber.fiber_sp;
           }
         in
-        vm.control_stack <- ce :: vm.control_stack;
+        fiber.fiber_control <- ce :: fiber.fiber_control;
         loop ()
     | Bytecode.EXIT_LOOP -> (
-        match vm.control_stack with
+        let fiber = vm.current_fiber in
+        match fiber.fiber_control with
         | _ :: rest ->
-            vm.control_stack <- rest;
+            fiber.fiber_control <- rest;
             loop ()
         | [] -> error "EXIT_LOOP: no control entry")
     | Bytecode.LOOP_BREAK -> (
         let break_value = pop vm in
-        match vm.control_stack with
+        let fiber = vm.current_fiber in
+        match fiber.fiber_control with
         | ce :: rest ->
-            vm.control_stack <- rest;
-            let fiber = ce.ce_fiber in
+            fiber.fiber_control <- rest;
             (* Unwind frames until we reach the loop entry depth *)
             while fiber.fiber_frame_depth > ce.ce_frame_depth do
               fiber.fiber_frames <- List.tl fiber.fiber_frames;
@@ -1256,41 +1252,38 @@ let run vm =
         | [] -> error "LOOP_BREAK: no control entry")
     | Bytecode.ENTER_FUNC ->
         let fiber = vm.current_fiber in
-        let re =
-          { ret_fiber = fiber; ret_frame_depth = fiber.fiber_frame_depth }
-        in
-        vm.return_stack <- re :: vm.return_stack;
+        let re = { ret_frame_depth = fiber.fiber_frame_depth } in
+        fiber.fiber_return <- re :: fiber.fiber_return;
         loop ()
     | Bytecode.EXIT_FUNC -> (
-        match vm.return_stack with
+        let fiber = vm.current_fiber in
+        match fiber.fiber_return with
         | _ :: rest ->
-            vm.return_stack <- rest;
+            fiber.fiber_return <- rest;
             loop ()
         | [] -> error "EXIT_FUNC: no return entry")
     | Bytecode.FUNC_RETURN ->
         let result = pop vm in
         let fiber = vm.current_fiber in
-        (* Find and remove the return entry for this fiber *)
-        let rec find_and_remove acc = function
+        (* The return marker lives on this fiber's own return stack (return
+           cannot cross fiber handlers — a language restriction). *)
+        let re, remaining =
+          match fiber.fiber_return with
+          | re :: rest -> (re, rest)
           | [] -> error "FUNC_RETURN: no return entry"
-          | re :: rest when re.ret_fiber == fiber ->
-              (re, List.rev_append acc rest)
-          | re :: rest -> find_and_remove (re :: acc) rest
         in
-        let re, remaining = find_and_remove [] vm.return_stack in
-        vm.return_stack <- remaining;
+        fiber.fiber_return <- remaining;
         let target_depth = re.ret_frame_depth in
         (* Unwind frames back to the target function *)
         while fiber.fiber_frame_depth > target_depth do
           fiber.fiber_frames <- List.tl fiber.fiber_frames;
           fiber.fiber_frame_depth <- fiber.fiber_frame_depth - 1
         done;
-        (* Clean up control_stack entries above target depth *)
-        vm.control_stack <-
+        (* Drop loop markers opened inside the returned-from frames *)
+        fiber.fiber_control <-
           List.filter
-            (fun ce ->
-              not (ce.ce_fiber == fiber && ce.ce_frame_depth >= target_depth))
-            vm.control_stack;
+            (fun ce -> not (ce.ce_frame_depth >= target_depth))
+            fiber.fiber_control;
         (* Drop inline try/provide markers opened inside the returned-from frames (a
            `return` inside such a body skips its TRY_END/PROVIDE_END). *)
         vm.handler_stack <-
@@ -1326,9 +1319,9 @@ let run vm =
           loop ()
         end
     | Bytecode.LOOP_CONTINUE target -> (
-        match vm.control_stack with
+        let fiber = vm.current_fiber in
+        match fiber.fiber_control with
         | ce :: _ ->
-            let fiber = ce.ce_fiber in
             (* Drop inline try/provide markers opened in the body (continue skips
                TRY_END/PROVIDE_END). *)
             drop_try_markers_above vm fiber ce.ce_stack_depth;
@@ -1580,8 +1573,6 @@ let execute_with_globals program (globals : (int, Bytecode.value) Hashtbl.t) =
     {
       current_fiber = main_fiber;
       handler_stack = [];
-      control_stack = [];
-      return_stack = [];
       provide_resumes = [];
       globals;
       global_names = program.global_names;

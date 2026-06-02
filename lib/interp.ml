@@ -351,6 +351,10 @@ let copy_fiber (f : Bytecode.fiber) : Bytecode.fiber =
       fiber_frame_depth = f.fiber_frame_depth;
       fiber_extra_args =
         List.map (fun l -> List.map (fun v -> v) l) f.fiber_extra_args;
+      (* Per-fiber control state: copied so a multishot resume re-enters
+         loops/functions with intact markers (entries are immutable). *)
+      fiber_control = f.fiber_control;
+      fiber_return = f.fiber_return;
     }
 
 let copy_continuation = function
