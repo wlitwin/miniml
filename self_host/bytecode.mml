@@ -193,7 +193,7 @@ module Bytecode =
       | VInt n -> string_of_int n
       | VFloat f -> 
         let s = $"{f:g}" in
-        if (String.contains "." s) || (String.contains "e" s) do
+        if (String.contains "." s) || ((String.contains "e" s) || ((String.contains "n" s) || (String.contains "i" s))) do
           s
         else
           s ^ "."

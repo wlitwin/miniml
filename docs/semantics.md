@@ -52,6 +52,23 @@ itself a variant (`Wrap (Some x)` matches the value `Some 42` directly).
 
 **Variant display names are unqualified**: `Result.Ok 42` prints as `Ok 42`.
 
+**Floats stringify via C's `%g` with precision 6** (six significant digits;
+scientific notation when the decimal exponent is < -4 or ≥ 6; trailing zeros
+stripped; two-digit exponent: `1.78034e+09`). There are exactly two variants,
+and they differ only for values whose `%g` form has no `.`/`e` (whole floats,
+inf, nan):
+
+| Variant | Used by | `3.0` | `inf` |
+|---|---|---|---|
+| **bare** | `show`, `string_of_float`, `$"{f}"` interpolation | `3` | `inf` |
+| **display** | final values, `print`, values nested in structures | `3.` | `inf` |
+
+Display appends a `.` only when the result could otherwise be read as an int —
+so `inf`/`nan` never get one. `print [3.0]` is `[3.]` (display) but
+`show [3.0]` is `[3]` (bare): `print` of a structure formats with display
+semantics, it is *not* `print (show ...)`. Locked by
+cross_test/tests/float_format.tests on every backend.
+
 ---
 
 ## 2. The evaluation model

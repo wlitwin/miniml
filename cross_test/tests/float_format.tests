@@ -1,0 +1,107 @@
+=== Float Formatting (the %g spec — docs/semantics.md) ===
+
+Floats stringify via C's %g with precision 6, on every backend.
+Two variants:
+  - show / string_of_float / interpolation: bare %g           (3.0 -> "3")
+  - display (final values, print, nested in structures): %g
+    plus a trailing "." when the result could otherwise be
+    read as an int; inf/nan are unambiguous so no dot          (3.0 -> "3.")
+
+--- test: whole float displays with trailing dot
+3.0
+--- expect: 3.
+
+--- test: show whole float has no trailing dot
+show 3.0
+--- expect: 3
+
+--- test: string_of_float whole float has no trailing dot
+string_of_float 100.0
+--- expect: 100
+
+--- test: string_of_float fractional
+string_of_float 2.5
+--- expect: 2.5
+
+--- test: string interpolation of whole float
+$"{2.0}"
+--- expect: 2
+
+--- test: string interpolation of fractional float
+$"x = {1.25}"
+--- expect: x = 1.25
+
+--- test: float display rounds to six significant digits
+123456.789
+--- expect: 123457.
+
+--- test: large float displays in scientific notation
+1780344245.513
+--- expect: 1.78034e+09
+
+--- test: show large float scientific notation
+show 1780344245.513
+--- expect: 1.78034e+09
+
+--- test: small float scientific notation
+0.0000123
+--- expect: 1.23e-05
+
+--- test: boundary just below scientific threshold
+0.0001
+--- expect: 0.0001
+
+--- test: ten billion collapses to one significant digit
+10000000000.0
+--- expect: 1e+10
+
+--- test: negative large float
+0.0 - 1234567.89
+--- expect: -1.23457e+06
+
+--- test: float infinity displays bare
+1.0 / 0.0
+--- expect: inf
+
+--- test: float negative infinity displays bare
+0.0 - 1.0 / 0.0
+--- expect: -inf
+
+--- test: show of float list uses bare float format
+show [3.0; 100.0]
+--- expect: [3; 100]
+
+--- test: show of float tuple uses bare float format
+show (1.5, 2.0)
+--- expect: (1.5, 2)
+
+--- test: float list with decimals displays unchanged
+[1.5; 2.25]
+--- expect: [1.5; 2.25]
+
+--- test: string_of_float as first-class function
+List.map string_of_float [1.5; 2.0]
+--- expect: [1.5; 2]
+
+--- test: string_of_bool as direct call
+string_of_bool true
+--- expect: true
+
+--- test: print of float list uses display format
+print [3.0; 100.0];;
+()
+--- skip-emit-js: BUG-3 (nested whole floats indistinguishable from ints in untagged JS numbers)
+--- skip-playground: BUG-3 (same emit-js representation limitation)
+--- expect: [3.; 100.]
+
+--- test: whole float nested in tuple display
+(1.5, 2.0)
+--- skip-emit-js: BUG-3 (nested whole floats indistinguishable from ints in untagged JS numbers)
+--- skip-playground: BUG-3 (same emit-js representation limitation)
+--- expect: (1.5, 2.)
+
+--- test: whole float nested in list display
+[3.0; 100.0]
+--- skip-emit-js: BUG-3 (nested whole floats indistinguishable from ints in untagged JS numbers)
+--- skip-playground: BUG-3 (same emit-js representation limitation)
+--- expect: [3.; 100.]

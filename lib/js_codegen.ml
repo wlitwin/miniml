@@ -64,14 +64,44 @@ function _compare(a, b) {
   return 0;
 }
 function _match_fail(loc) { throw new Error("Match failure at " + loc); }
+// OCaml/C "%g" with precision 6 — THE float-to-string spec for every backend
+// (docs/semantics.md). %e style if the decimal exponent (after rounding to 6
+// significant digits) is < -4 or >= 6, else %f style; trailing zeros stripped;
+// two-digit exponent. Used bare by string_of_float / show / interpolation.
+function __format_g(f) {
+  if (Number.isNaN(f)) return "nan";
+  if (f === Infinity) return "inf";
+  if (f === -Infinity) return "-inf";
+  if (f === 0) return Object.is(f, -0) ? "-0" : "0";
+  const es = f.toExponential(5);
+  const X = parseInt(es.slice(es.indexOf("e") + 1), 10);
+  if (X < -4 || X >= 6) {
+    let mant = es.slice(0, es.indexOf("e"));
+    if (mant.includes(".")) mant = mant.replace(/0+$/, "").replace(/\.$/, "");
+    let digits = String(Math.abs(X));
+    if (digits.length < 2) digits = "0" + digits;
+    return mant + "e" + (X < 0 ? "-" : "+") + digits;
+  }
+  let s = f.toFixed(Math.max(0, 5 - X));
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
+}
+// Display variant: appends "." when the result could otherwise be read as an
+// int ("3."). inf/nan are unambiguous, so no dot. Only DISPLAY appends —
+// string_of_float / show / interpolation use bare __format_g.
+function __display_float(f) {
+  const s = __format_g(f);
+  return /[.eni]/.test(s) ? s : s + ".";
+}
 function _pp(v) {
   if (v === undefined) return "()";
   if (v === null) return "[]";
   if (typeof v === "number") {
-    if (!Number.isInteger(v)) {
-      const s = String(v);
-      return s.includes(".") || s.includes("e") ? s : s + ".";
-    }
+    // MiniML ints and floats are both JS numbers, so a whole float (3.0)
+    // nested in a structure is indistinguishable from the int 3 here and
+    // prints as "3" — a known emit-js representation limitation (tracked).
+    // Top-level float values use __display_float via the _last_ty dispatch.
+    if (!Number.isInteger(v)) return __display_float(v);
     return String(v);
   }
   if (typeof v === "boolean") return String(v);
@@ -3025,10 +3055,7 @@ function int_of_string(s) { const n = __parse_int(s); if (n === null) throw new 
 function float_of_int(n) { return n; }
 function int_of_float(f) { return Math.trunc(f); }
 function float_of_string(s) { const f = parseFloat(s); if (isNaN(f)) throw new Error("float_of_string: " + s); return f; }
-function string_of_float(f) {
-  const s = String(f);
-  return s.includes(".") || s.includes("e") ? s : s + ".";
-}
+function string_of_float(f) { return __format_g(f); }
 function string_of_bool(b) { return String(b); }
 function failwith(msg) { throw new Error(msg); }
 // Operator builtins as first-class values. Declared as function/var (not const)
@@ -3514,7 +3541,7 @@ let compile_program type_env (program : Typechecker.tprogram) : string =
   List.iter (compile_decl ctx) program;
   (* Print last value — suppress unit only when there was explicit output *)
   emit ctx
-    "{ const _r = _last_ty === \"float\" ? string_of_float(_last_val) : \
+    "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
      _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val); if \
      (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
   emit_exports ctx;
@@ -3551,7 +3578,7 @@ let compile_program_with_stdlib type_env
   ctx.top_level_exports <- [];
   List.iter (compile_decl ctx) user_program;
   emit ctx
-    "{ const _r = _last_ty === \"float\" ? string_of_float(_last_val) : \
+    "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
      _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val); if \
      (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
   (* Only export user-program bindings, not stdlib internals *)

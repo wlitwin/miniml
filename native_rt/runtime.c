@@ -774,18 +774,13 @@ mml_value mml_string_of_byte(mml_value v) {
 /* ---- Show support (string_of_*) ---- */
 
 mml_value mml_string_of_float(mml_value v) {
+    /* string_of_float / show / interpolation: bare %g, NO trailing dot.
+       Only DISPLAY (mml_print_float / mml_fmt_float) appends the dot.
+       This matches the OCaml reference (interp.ml string_of_float and
+       __show_float both use bare %g). */
     double d = mml_unbox_float(v);
     char buf[64];
     int len = snprintf(buf, sizeof(buf), "%g", d);
-    int has_dot = 0;
-    for (int i = 0; buf[i]; i++) {
-        if (buf[i] == '.' || buf[i] == 'e' || buf[i] == 'E' ||
-            buf[i] == 'n' || buf[i] == 'i') { has_dot = 1; break; }
-    }
-    if (!has_dot) {
-        buf[len++] = '.';
-        buf[len] = '\0';
-    }
     return mml_string_from_buf(buf, len);
 }
 

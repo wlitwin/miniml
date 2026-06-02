@@ -79,12 +79,8 @@ reg("int_of_float", 1, (args) =>
 reg("string_of_int", 1, (args) =>
   vm.vstring(String(vm.asInt(args[0]))));
 
-reg("string_of_float", 1, (args) => {
-  let f = vm.asFloat(args[0]);
-  // Match OCaml's %g format
-  let s = formatFloat(f);
-  return vm.vstring(s);
-});
+reg("string_of_float", 1, (args) =>
+  vm.vstring(vm.formatFloat(vm.asFloat(args[0]))));
 
 reg("string_of_bool", 1, (args) =>
   vm.vstring(vm.asBool(args[0]) ? "true" : "false"));
@@ -351,7 +347,7 @@ reg("__bnot_int", 1, (args) =>
 reg("__show_int", 1, (args) =>
   vm.vstring(String(vm.asInt(args[0]))));
 reg("__show_float", 1, (args) =>
-  vm.vstring(formatFloat(vm.asFloat(args[0]))));
+  vm.vstring(vm.formatFloat(vm.asFloat(args[0]))));
 reg("__show_bool", 1, (args) =>
   vm.vstring(vm.asBool(args[0]) ? "true" : "false"));
 reg("__show_string", 1, (args) => args[0]);
@@ -736,26 +732,8 @@ reg("Runtime.eval_file", 1, () => {
   vm.error("Runtime.eval_file not supported in JS VM");
 });
 
-// --- Helper: OCaml %g-like float formatting ---
-function formatFloat(f) {
-  if (!isFinite(f)) {
-    if (f !== f) return "nan";
-    return f > 0 ? "inf" : "-inf";
-  }
-  // %g uses shortest of %e and %f with 6 significant digits, trims trailing zeros
-  let s = f.toPrecision(6);
-  // Remove trailing zeros after decimal point
-  if (s.includes('.')) {
-    s = s.replace(/0+$/, '');
-    s = s.replace(/\.$/, '');
-  }
-  // Handle exponential notation
-  if (s.includes('e+')) s = s.replace('e+0', 'e+').replace('e+', 'e+');
-  if (s.includes('e-')) s = s.replace('e-0', 'e-');
-  // Match OCaml's %g: -0 -> -0
-  if (Object.is(f, -0)) return "-0";
-  return s;
-}
+// Float formatting (%g spec) lives in vm.js (formatFloat) so ppValue and the
+// builtins share one implementation.
 
 // No-op cache functions — used by the self-hosted compiler's extern declarations.
 // In the bytecode VM, caching is not needed (the JS compiler path handles it).
@@ -763,4 +741,4 @@ reg("__cache_has", 1, (_args) => vm.vbool(false));
 reg("__cache_get", 1, (_args) => vm.VUNIT);
 reg("__cache_set", 2, (_args) => vm.VUNIT);
 
-module.exports = { builtins, formatFloat };
+module.exports = { builtins };
