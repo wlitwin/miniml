@@ -1,6 +1,7 @@
 -- Differential smoke: DELIBERATE disagreement, used with --expect-disagree to
--- verify the runner's detection path stays alive. Sys.time() differs on every
--- run, so the observable outputs can never agree. (Also exercises a tracked
--- backend gap: native has no Sys.time — bugs/BUG-2.)
+-- verify the runner's detection path stays alive. Each backend runs in its own
+-- process at a different moment, so a microsecond-resolution timestamp printed
+-- as an INTEGER (integers display exactly; float %g formatting would round the
+-- differences away) can never agree across backends.
 
-Sys.time ()
+int_of_float (Sys.time () * 1000000.0)
