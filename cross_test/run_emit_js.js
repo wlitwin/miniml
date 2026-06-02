@@ -7,12 +7,11 @@
 // its own main.exe + node processes, so wall-clock time scales with cores.
 // Output is printed in source order — identical to a sequential run.
 
-const { execFile } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
-const { runPool } = require("./parallel");
+const { runPool, execFileRetry } = require("./parallel");
 
 const INTERPRETER = path.resolve(
   __dirname,
@@ -30,23 +29,9 @@ process.on("exit", () => {
 
 // Promisified execFile that resolves to {ok, stdout, stderr, status} instead
 // of rejecting, so callers can branch on success without try/catch noise.
+// Retries if the process is killed by the environment (see execFileRetry).
 function run(cmd, args, opts = {}) {
-  return new Promise((resolve) => {
-    execFile(
-      cmd,
-      args,
-      { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, ...opts },
-      (error, stdout, stderr) => {
-        resolve({
-          ok: !error,
-          stdout: stdout || "",
-          stderr: stderr || "",
-          status: error ? error.code : 0,
-          error,
-        });
-      }
-    );
-  });
+  return execFileRetry(cmd, args, opts);
 }
 
 // --- Running -------------------------------------------------------------
