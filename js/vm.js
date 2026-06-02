@@ -288,7 +288,10 @@ const FIBER_STACK_INIT = 1024;
 const FIBER_STACK_MAX = 16 * 1024 * 1024;
 
 function makeFiber() {
-  return { stack: new Array(FIBER_STACK_INIT).fill(VUNIT), sp: 0, frames: [], extraArgs: [] };
+  // control/ret are PER-FIBER control state: captured with the fiber by
+  // continuations and duplicated by copyFiber, so multishot resume re-enters
+  // loops/functions with intact markers (mirrors lib/vm.ml).
+  return { stack: new Array(FIBER_STACK_INIT).fill(VUNIT), sp: 0, frames: [], extraArgs: [], control: [], ret: [] };
 }
 
 // Ensure fiber stack holds at least `needed` slots, growing (doubling) and
@@ -313,7 +316,8 @@ function copyFiber(f) {
     ip: fr.ip,
     baseSp: fr.baseSp,
   }));
-  return { stack: newStack, sp: f.sp, frames: newFrames, extraArgs: f.extraArgs.map(a => a.slice()) };
+  return { stack: newStack, sp: f.sp, frames: newFrames, extraArgs: f.extraArgs.map(a => a.slice()),
+           control: f.control.slice(), ret: f.ret.slice() };
 }
 
 // --- Top-level helper functions ---
@@ -1102,8 +1106,8 @@ function run(vm) {
           while (tf.frames.length > he.frameDepth) tf.frames.pop();
           tf.sp = he.stackDepth;
           tf.extraArgs = [];
-          vm.controlStack = he.control.slice();
-          vm.returnStack = he.ret.slice();
+          tf.control = he.control.slice();
+          tf.ret = he.ret.slice();
           fiber = tf;
           vm.currentFiber = tf;
           tf.stack[tf.sp++] = arg;
@@ -1182,24 +1186,23 @@ function run(vm) {
       }
       case 64: { // ENTER_LOOP
         const breakTarget = op[1];
-        vm.controlStack.push({
+        fiber.control.push({
           breakIp: breakTarget,
-          fiber: fiber,
           frameDepth: fiber.frames.length,
           stackDepth: fiber.sp,
         });
         break;
       }
       case 65: { // EXIT_LOOP
-        if (vm.controlStack.length === 0) error("EXIT_LOOP: no control entry");
-        vm.controlStack.pop();
+        if (fiber.control.length === 0) error("EXIT_LOOP: no control entry");
+        fiber.control.pop();
         break;
       }
       case 66: { // LOOP_BREAK
         const breakValue = fiber.stack[--fiber.sp];
-        if (vm.controlStack.length === 0) error("LOOP_BREAK: no control entry");
-        const ce = vm.controlStack.pop();
-        const cf = ce.fiber;
+        if (fiber.control.length === 0) error("LOOP_BREAK: no control entry");
+        const ce = fiber.control.pop();
+        const cf = fiber;
         while (cf.frames.length > ce.frameDepth) cf.frames.pop();
         // Drop inline try/provide markers opened inside the loop body (break skips
         // TRY_END/PROVIDE_END).
@@ -1214,13 +1217,13 @@ function run(vm) {
       }
       case 67: { // LOOP_CONTINUE
         const target = op[1];
-        if (vm.controlStack.length === 0) error("LOOP_CONTINUE: no control entry");
-        const ce = vm.controlStack[vm.controlStack.length - 1];
+        if (fiber.control.length === 0) error("LOOP_CONTINUE: no control entry");
+        const ce = fiber.control[fiber.control.length - 1];
         // Drop inline try/provide markers opened in the body (continue skips
         // TRY_END/PROVIDE_END).
-        dropTryMarkersAbove(vm, ce.fiber, ce.stackDepth);
-        dropProvideResumesAbove(vm, ce.fiber, ce.frameDepth);
-        ce.fiber.sp = ce.stackDepth;
+        dropTryMarkersAbove(vm, fiber, ce.stackDepth);
+        dropProvideResumesAbove(vm, fiber, ce.frameDepth);
+        fiber.sp = ce.stackDepth;
         f.ip = target;
         break;
       }
@@ -1240,8 +1243,8 @@ function run(vm) {
           fiber: fiber,
           frameDepth: fiber.frames.length,
           stackDepth: fiber.sp,
-          control: vm.controlStack.slice(),
-          ret: vm.returnStack.slice(),
+          control: fiber.control.slice(),
+          ret: fiber.ret.slice(),
           catch: op[1],
         });
         break;
@@ -1286,34 +1289,27 @@ function run(vm) {
         break;
       }
       case 44: { // ENTER_FUNC
-        vm.returnStack.push({
-          fiber: fiber,
+        fiber.ret.push({
           frameDepth: fiber.frames.length,
         });
         break;
       }
       case 45: { // EXIT_FUNC
-        if (vm.returnStack.length === 0) error("EXIT_FUNC: no return entry");
-        vm.returnStack.pop();
+        if (fiber.ret.length === 0) error("EXIT_FUNC: no return entry");
+        fiber.ret.pop();
         break;
       }
       case 43: { // FUNC_RETURN
         const result = fiber.stack[--fiber.sp];
-        // Find and remove the return entry for this fiber
-        let reIdx = -1;
-        for (let i = vm.returnStack.length - 1; i >= 0; i--) {
-          if (vm.returnStack[i].fiber === fiber) { reIdx = i; break; }
-        }
-        if (reIdx === -1) error("FUNC_RETURN: no return entry");
-        const re = vm.returnStack[reIdx];
-        vm.returnStack.splice(reIdx, 1);
+        // The return marker lives on this fiber's own return stack (return
+        // cannot cross fiber handlers — a language restriction).
+        if (fiber.ret.length === 0) error("FUNC_RETURN: no return entry");
+        const re = fiber.ret.pop();
         const targetDepth = re.frameDepth;
         // Unwind frames back to the target function
         while (fiber.frames.length > targetDepth) fiber.frames.pop();
-        // Clean up control_stack entries above target depth
-        vm.controlStack = vm.controlStack.filter(ce =>
-          !(ce.fiber === fiber && ce.frameDepth >= targetDepth)
-        );
+        // Drop loop markers opened inside the returned-from frames
+        fiber.control = fiber.control.filter(ce => !(ce.frameDepth >= targetDepth));
         // Drop inline try/provide markers opened inside the returned-from frames (a
         // `return` inside such a body skips its TRY_END/PROVIDE_END).
         vm.handlerStack = vm.handlerStack.filter(h =>
@@ -1569,8 +1565,6 @@ function createVM(globalNames) {
   return {
     currentFiber: makeFiber(),
     handlerStack: [],
-    controlStack: [],
-    returnStack: [],
     provideResumes: [],
     globals: new Map(),
     globalNames,
@@ -1587,8 +1581,6 @@ function callClosure(vmInst, closure, arg) {
   fiber.frames.push({ closure, ip: 0, baseSp: 0 });
   vmInst.currentFiber = fiber;
   vmInst.handlerStack = [];
-  vmInst.controlStack = [];
-  vmInst.returnStack = [];
   vmInst.provideResumes = [];
   return run(vmInst);
 }

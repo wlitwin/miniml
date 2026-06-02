@@ -24,6 +24,22 @@
 17 mod 5
 --- expect: 2
 
+--- test: integer division by zero is a runtime error
+1 / 0
+--- expect-runtime-error: by zero
+
+--- test: integer modulo by zero is a runtime error
+5 mod 0
+--- expect-runtime-error: by zero
+
+--- test: division by zero with computed divisor
+let x = 5 in (10 / (x - 5))
+--- expect-runtime-error: by zero
+
+--- test: modulo by zero inside a function
+let f a b = a mod b in f 7 0
+--- expect-runtime-error: by zero
+
 --- test: negation
 0 - 5
 --- expect: -5

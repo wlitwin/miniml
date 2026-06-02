@@ -173,6 +173,52 @@ with
   append a b
 --- expect: [1; 2]
 
+--- test: multishot resume of continuation captured inside for-in loop
+effect Step =
+  step : int -> int
+end
+handle
+  (for i in [1; 2] with acc = 0 do (perform step i) end)
+with
+| return x -> x
+| step arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
+--- skip-emit-js: BUG-6 (emit-js loses a multishot branch — wrong handle result)
+--- skip-playground: BUG-6 (same emit-js lowering)
+--- expect: 8
+
+--- test: multishot resume inside while loop with shared mutable state
+effect Tick =
+  tick : unit -> int
+end
+let mut total = 0
+;;
+handle
+  (let mut i = 0 in
+   (for i < 2 do
+     total := (total + (perform tick ()));
+     i := (i + 1)
+   end);
+   total)
+with
+| return x -> x
+| tick () k -> let k2 = copy_continuation k in ((resume k 1) + (resume k2 10))
+--- skip-emit-js: BUG-6 (emit-js loses a multishot branch — wrong handle result)
+--- skip-playground: BUG-6 (same emit-js lowering)
+--- skip-native: BUG-9 (native gives 44 — heap/control split wrong for multishot + while + mutable state)
+--- expect: 23
+
+--- test: single-shot resume of continuation captured inside for-in loop
+effect Get =
+  get : int -> int
+end
+handle
+  (for i in [1; 2; 3] with acc = 0 do (acc + (perform get i)) end)
+with
+| return x -> x
+| get arg k -> let r = resume k (arg * 10) in r
+--- expect: 60
+
+
 === Try/With Tests ===
 
 --- test: try/with basic return

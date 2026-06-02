@@ -161,6 +161,14 @@ and fiber = {
   mutable fiber_frames : call_frame list;
   mutable fiber_frame_depth : int;
   mutable fiber_extra_args : value list list;
+  (* Loop-control and function-return markers are PER-FIBER control state:
+     they are captured with the fiber by continuations and duplicated by
+     copy_continuation, so multishot resume re-enters loops/functions with
+     intact markers (the spec: control state is copied across resumes, the
+     heap is shared). A VM-global stack breaks exactly that — the first
+     resume consumes the marker and the second finds it gone. *)
+  mutable fiber_control : control_entry list;
+  mutable fiber_return : return_entry list;
 }
 
 (* A handler installed on the handler stack. [HFull] is the general fiber-based
@@ -207,16 +215,17 @@ and handler_entry =
       hp_stack_depth : int;
     }
 
-(* A loop control marker (pushed by ENTER_LOOP, popped by EXIT_LOOP/LOOP_BREAK). *)
+(* A loop control marker (pushed by ENTER_LOOP, popped by EXIT_LOOP/LOOP_BREAK).
+   Lives on the owning fiber's [fiber_control] stack, so no fiber field. *)
 and control_entry = {
   ce_break_ip : int;
-  ce_fiber : fiber;
   ce_frame_depth : int;
   ce_stack_depth : int;
 }
 
-(* A function-return marker (pushed by ENTER_FUNC for functions that use `return`). *)
-and return_entry = { ret_fiber : fiber; ret_frame_depth : int }
+(* A function-return marker (pushed by ENTER_FUNC for functions that use `return`).
+   Lives on the owning fiber's [fiber_return] stack. *)
+and return_entry = { ret_frame_depth : int }
 
 and continuation_data = {
   cd_fiber : fiber;
