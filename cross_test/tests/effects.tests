@@ -218,6 +218,34 @@ with
 | get arg k -> let r = resume k (arg * 10) in r
 --- expect: 60
 
+--- test: non-tail perform with non-tail resume uses the arm value as handle result
+effect NtP =
+  ntp : int -> int
+end
+handle
+  (283 + (perform ntp 0))
+with
+| return x -> x
+| ntp arg k -> let r = resume k arg in arg
+--- skip-emit-js: BUG-6 (emit-js feeds the arm value back into the body instead of making it the handle result)
+--- skip-playground: BUG-6 (same emit-js lowering)
+--- expect: 0
+
+--- test: non-tail perform with aborting arm discards the body
+effect Abort =
+  abort_op : int -> int
+end
+let f2 a b = 99
+;;
+handle
+  (f2 (perform abort_op 0) 443)
+with
+| return x -> 1
+| abort_op arg k -> 7
+--- skip-emit-js: BUG-6 (emit-js runs the body to completion even when the arm never resumes)
+--- skip-playground: BUG-6 (same emit-js lowering)
+--- expect: 7
+
 
 === Try/With Tests ===
 
