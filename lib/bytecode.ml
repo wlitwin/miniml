@@ -242,8 +242,16 @@ let make_record (field_names : string list) (values : value array) : value =
 let rec pp_value = function
   | VInt n -> string_of_int n
   | VFloat f ->
+      (* Display spec: %g plus a trailing "." when the result could otherwise
+         be read as an int ("3."). inf/nan are unambiguous, so no dot — same
+         rule as the native runtime. string_of_float / show / interpolation
+         use bare %g (no dot); only DISPLAY appends. *)
       let s = Printf.sprintf "%g" f in
-      if String.contains s '.' || String.contains s 'e' then s else s ^ "."
+      if
+        String.contains s '.' || String.contains s 'e' || String.contains s 'n'
+        || String.contains s 'i'
+      then s
+      else s ^ "."
   | VBool true -> "true"
   | VBool false -> "false"
   | VString s -> s

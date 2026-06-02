@@ -3214,7 +3214,7 @@ and emit_print_call ctx arg_expr =
   let arg_val = emit_expr ctx arg_expr in
   let ty = Types.repr arg_expr.ty in
   ctx.has_print_output <- true;
-  let use_show =
+  let is_compound =
     match ty with
     | Types.TInt | Types.TBool | Types.TString | Types.TFloat | Types.TUnit ->
         false
@@ -3223,20 +3223,14 @@ and emit_print_call ctx arg_expr =
         true
     | _ -> false
   in
-  if use_show then begin
-    (* Generate show closure, call it, then print the resulting string *)
-    let show_closure =
-      emit_show_closure ctx (Types.TArrow (ty, Types.EffEmpty, Types.TString))
-    in
-    add_extern ctx "mml_apply1" "i64" [ "i64"; "i64" ];
-    let shown =
-      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_apply1"
-        ~args:[ ("i64", show_closure); ("i64", arg_val) ]
-    in
-    add_extern ctx "mml_print_string" "i64" [ "i64" ];
-    ignore
-      (Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_print_string"
-         ~args:[ ("i64", shown) ])
+  if is_compound then begin
+    (* DISPLAY format (the pp_value spec): emit type-directed formatting code
+       inline, then a newline. print must NOT go through the Show typeclass:
+       show and display are different formats — show of a whole float is "3",
+       display is "3." (cross_test float_format.tests locks this). *)
+    emit_format_value ctx arg_val ty;
+    add_extern ctx "mml_fmt_newline" "void" [];
+    Ir_emit.emit_call_void ctx.ir ~name:"mml_fmt_newline" ~args:[]
   end
   else begin
     let fn_name =
@@ -3262,6 +3256,16 @@ and emit_named_call ctx name f_expr args =
       let arg_val = emit_expr ctx (List.hd args) in
       add_extern ctx "mml_string_of_int" "i64" [ "i64" ];
       Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_string_of_int"
+        ~args:[ ("i64", arg_val) ]
+  | "string_of_float" | "Stdlib.string_of_float" ->
+      let arg_val = emit_expr ctx (List.hd args) in
+      add_extern ctx "mml_string_of_float" "i64" [ "i64" ];
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_string_of_float"
+        ~args:[ ("i64", arg_val) ]
+  | "string_of_bool" | "Stdlib.string_of_bool" ->
+      let arg_val = emit_expr ctx (List.hd args) in
+      add_extern ctx "mml_string_of_bool" "i64" [ "i64" ];
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_string_of_bool"
         ~args:[ ("i64", arg_val) ]
   | "float_of_int" | "Stdlib.float_of_int" ->
       let arg_val = emit_expr ctx (List.hd args) in
@@ -4811,6 +4815,22 @@ and emit_builtin_as_value ctx name expr_ty =
       end;
       add_extern ctx "mml_string_of_int" "i64" [ "i64" ];
       Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
+  | "string_of_float" | "Stdlib.string_of_float" ->
+      let wrapper_key = "mml_op_string_of_float" in
+      if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+        Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+        emit_func_wrapper ctx wrapper_key "mml_string_of_float" 1
+      end;
+      add_extern ctx "mml_string_of_float" "i64" [ "i64" ];
+      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
+  | "string_of_bool" | "Stdlib.string_of_bool" ->
+      let wrapper_key = "mml_op_string_of_bool" in
+      if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+        Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+        emit_func_wrapper ctx wrapper_key "mml_string_of_bool" 1
+      end;
+      add_extern ctx "mml_string_of_bool" "i64" [ "i64" ];
+      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
   | "float_of_int" | "Stdlib.float_of_int" ->
       let wrapper_key = "mml_op_float_of_int" in
       if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
@@ -4970,6 +4990,8 @@ and sanitize_name name =
     name
 
 and is_builtin_name = function
+  | "string_of_float" | "Stdlib.string_of_float" | "string_of_bool"
+  | "Stdlib.string_of_bool"
   | "string_of_int" | "Stdlib.string_of_int" | "float_of_int"
   | "Stdlib.float_of_int" | "int_of_float" | "Stdlib.int_of_float"
   | "String.length" | "String.of_byte" | "String.get" | "String.sub"
@@ -6210,7 +6232,7 @@ and emit_global_let ctx name expr =
 
 (* ---- Result type tag ---- *)
 
-let result_type_tag ty =
+and result_type_tag ty =
   match Types.repr ty with
   | Types.TInt -> 0
   | Types.TByte -> 6
@@ -6226,7 +6248,7 @@ let result_type_tag ty =
 
 (* ---- Compound result formatting ---- *)
 
-let needs_format_result ty =
+and needs_format_result ty =
   match Types.repr ty with
   | Types.TTuple _ | Types.TRecord _ | Types.TVariant _ | Types.TList _
   | Types.TPolyVariant _ | Types.TArray _ ->
@@ -6236,7 +6258,7 @@ let needs_format_result ty =
 (** Emit a @mml_format_result function that prints a value of the given type
     without a trailing newline. Generated in LLVM IR by codegen because the
     runtime doesn't know the type structure. *)
-let rec emit_format_result ctx ty =
+and emit_format_result ctx ty =
   with_fresh_ir ctx (fun fn_ir ->
       ctx.scopes <- [ Hashtbl.create 8 ];
       Ir_emit.emit_define_start fn_ir ~ret_ty:"void" ~name:"mml_format_result"

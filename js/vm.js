@@ -212,13 +212,38 @@ function runeToUtf8(cp) {
   return String.fromCodePoint(cp);
 }
 
+// OCaml/C "%g" with precision 6 — THE float-to-string spec for every backend
+// (docs/semantics.md). %e style if the decimal exponent (after rounding to 6
+// significant digits) is < -4 or >= 6, else %f style; trailing zeros stripped;
+// two-digit exponent. Used bare by string_of_float / show; ppValue (display)
+// appends "." when the result could otherwise be read as an int.
+function formatFloat(f) {
+  if (Number.isNaN(f)) return "nan";
+  if (f === Infinity) return "inf";
+  if (f === -Infinity) return "-inf";
+  if (f === 0) return Object.is(f, -0) ? "-0" : "0";
+  const es = f.toExponential(5);
+  const X = parseInt(es.slice(es.indexOf("e") + 1), 10);
+  if (X < -4 || X >= 6) {
+    let mant = es.slice(0, es.indexOf("e"));
+    if (mant.includes(".")) mant = mant.replace(/0+$/, "").replace(/\.$/, "");
+    let digits = String(Math.abs(X));
+    if (digits.length < 2) digits = "0" + digits;
+    return mant + "e" + (X < 0 ? "-" : "+") + digits;
+  }
+  let s = f.toFixed(Math.max(0, 5 - X));
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
+}
+
 function ppValue(v) {
   switch (v.tag) {
     case "int": return String(v.v);
     case "float": {
-      let s = String(v.v);
-      if (!s.includes('.') && !s.includes('e') && !s.includes('E') && isFinite(v.v)) s += ".";
-      return s;
+      // Display: %g plus "." unless unambiguous (decimal point, exponent,
+      // inf/nan already present). Same rule as Bytecode.pp_value.
+      const s = formatFloat(v.v);
+      return /[.eni]/.test(s) ? s : s + ".";
     }
     case "bool": return v.v ? "true" : "false";
     case "string": return v.v;
@@ -1578,7 +1603,7 @@ module.exports = {
   asInt, asFloat, asBool, asString, asClosure, asTuple,
   asRecord, asList, asVariant, asContinuation, asByte, asRune,
   asArray, listToArray,
-  valuesEqual, valuesCompare, valueHash, ppValue, runeToUtf8,
+  valuesEqual, valuesCompare, valueHash, ppValue, formatFloat, runeToUtf8,
   makeFiber, copyFiber,
   run, executeProto, createVM, callClosure,
   resetProfile, dumpProfile,
