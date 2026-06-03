@@ -182,8 +182,6 @@ handle
 with
 | return x -> x
 | step arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
---- skip-emit-js: BUG-11 (continuation capture does not extend through the fold function call that for-in desugars to)
---- skip-playground: BUG-11 (same emit-js lowering)
 --- expect: 8
 
 --- test: multishot resume inside while loop with shared mutable state
@@ -410,8 +408,6 @@ with
 | return x -> x
 | op0 arg k -> ((resume k 2) + arg)
 | op1 arg k -> resume k arg
---- skip-emit-js: BUG-11 (continuation capture does not extend through the fold that for-in desugars to)
---- skip-playground: BUG-11 (same emit-js lowering)
 --- expect: 1196
 
 --- test: arm value chaining across for-in iterations
@@ -421,8 +417,6 @@ handle
 with
 | return x -> x
 | op arg k -> (resume k 0) + 1000
---- skip-emit-js: BUG-11 (continuation capture does not extend through the fold that for-in desugars to)
---- skip-playground: BUG-11 (same emit-js lowering)
 --- expect: 2100
 
 === Loop Control Crossing Handler Boundaries (BUG-10/BUG-12 regression suite) ===
@@ -672,6 +666,72 @@ with
   let k3 = copy_continuation k2 in
   (resume k arg) + (resume k2 (arg * 10)) + (resume k3 (arg * 100))
 --- expect: 555
+
+=== For-In CPS Lowering Tests (BUG-11 for-in slice) ===
+
+--- test: multishot resume of for-in over an array
+effect E = op : int -> int end
+handle
+  (for x in #[1; 2] with acc = 0 do (perform op x) end)
+with
+| return x -> x
+| op arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 arg))
+--- expect: 8
+
+--- test: for-in with perform and break
+effect E = op : int -> int end
+handle
+  (for x in [1; 2; 3; 4] with acc = 0 do
+    (if (perform op x) > 2 do break 99 else (acc + x)) end)
+with
+| return x -> x
+| op arg k -> resume k arg
+--- expect: 99
+
+--- test: for-in with perform and continue
+effect E = op : int -> int end
+handle
+  (for x in [1; 2; 3] with acc = 0 do
+    (if (perform op x) = 2 do continue acc else (acc + x)) end)
+with
+| return x -> x
+| op arg k -> let r = resume k arg in r
+--- expect: 4
+
+--- test: aborting arm discards remaining for-in iterations
+effect E = op : int -> int end
+let mut count = 0
+;;
+let r = handle
+  (for x in [1; 2; 3] with acc = 0 do
+    (count := count + 1; acc + (perform op x)) end)
+with
+| return x -> 0 - 1
+| op arg k -> (if arg = 2 do 777 else (let v = resume k arg in v))
+;;
+(r, count)
+--- expect: (777, 2)
+
+--- test: nested for-in loops both with performs
+effect E = op : int -> int end
+handle
+  (for x in [1; 2] with outer = 0 do
+    (outer + (for y in [10; 20] with inner = 0 do
+      (inner + (perform op (x * y))) end)) end)
+with
+| return x -> x
+| op arg k -> let r = resume k arg in r
+--- expect: 90
+
+--- test: multishot for-in over a map
+effect E = op : int -> int end
+handle
+  (for kv in #{"a": 1; "b": 2} with acc = 0 do
+    (match kv with | (_, v) -> acc + (perform op v)) end)
+with
+| return x -> x
+| op arg k -> let r = resume k (arg * 10) in r
+--- expect: 30
 
 === Try/With Tests ===
 

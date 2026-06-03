@@ -69,6 +69,21 @@ so `inf`/`nan` never get one. `print [3.0]` is `[3.]` (display) but
 semantics, it is *not* `print (show ...)`. Locked by
 cross_test/tests/float_format.tests on every backend.
 
+**Integers are exact in [-2⁵³, 2⁵³]; overflow beyond that is undefined
+behavior.** MiniML integers are backed by each backend's native integer
+representation (OCaml 63-bit ints, JS float64 numbers, native 64-bit
+machine words), which agree exactly on every value whose magnitude is at
+most 2⁵³ (the float64 safe-integer bound). Arithmetic whose true result
+leaves that range is **undefined**: backends may wrap (OCaml/native, at
+different widths), lose precision, or saturate to ±Infinity (JS), and
+programs that overflow have no portable meaning. Programs that need
+modular arithmetic must mask explicitly (`land`) to stay in range — the
+same rule the standard library follows (see the string-hash postmortem).
+The differential fuzzer only generates in-range arithmetic for this
+reason. [LANG-1: this is a deliberate language decision — exactness over
+performance was rejected (BigInt), and defined wrapping was deferred
+because it taxes the JS backend on every operation.]
+
 ---
 
 ## 2. The evaluation model
@@ -304,6 +319,7 @@ diverges", not "cycles are detected".
 Operators on **primitive types** (int/float arithmetic and comparison, string
 `^` and comparison, bool logic, int bitwise) have their primitive meaning.
 `&&` and `||` short-circuit. Division/modulo by zero is a runtime error.
+Integer arithmetic is exact within ±2⁵³ and undefined beyond it (§1).
 
 Operators on **other types** dispatch through the operand's typeclass
 instance, selected by the operand's *static* type:
