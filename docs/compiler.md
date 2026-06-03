@@ -50,13 +50,13 @@ Here's the compilation pipeline:
   ┌──────────────┐   ┌───────────────┐
   │ SERIALIZE    │   │ VM            │
   │ --emit-json  │   │ lib/vm.ml     │
-  │ --emit-binary│   │ js/vm.js      │
+  │ --emit-binary│   │ (OCaml)       │
   └──────────────┘   └───────────────┘
 ```
 
 The pipeline branches after typechecking into three backends:
 
-- **Bytecode backend** (`--emit-json`, `--emit-binary`, or default): Compiles to stack-based bytecode, optionally optimized, then either executed directly by the OCaml or JavaScript VM, or serialized to JSON (`--emit-json`) or a compact binary format (`--emit-binary`) for later execution (`--run-json`, `--run-binary`).
+- **Bytecode backend** (`--emit-json`, `--emit-binary`, or default): Compiles to stack-based bytecode, optionally optimized, then either executed directly by the OCaml VM, or serialized to JSON (`--emit-json`) or a compact binary format (`--emit-binary`) for later execution (`--run-json`, `--run-binary`).
 - **JS codegen backend** (`--emit-js`): Compiles typed AST directly to standalone JavaScript. Uses direct-style compilation for most code, with CPS transformation and trampolining for algebraic effects. The output is a self-contained `.js` file that runs in Node.js or the browser without a VM.
 - **Native backend** (`mmlc` binary, or `--emit-ir`): Compiles typed AST to LLVM IR text (`lib/native/codegen.ml`), then invokes clang to produce a native binary linked against a C runtime (`native_rt/runtime.c`). Use `--emit-ir` to inspect the generated LLVM IR without compiling. Orchestrated by `lib/native/driver.ml`.
 
@@ -69,7 +69,7 @@ The pipeline branches after typechecking into three backends:
 
 ## Optimization Passes
 
-After stage 4a (bytecode compilation), the bytecode goes through a peephole optimizer (`lib/optimize.ml`) before being serialized or executed. The optimizer is enabled by default and can be disabled with `--no-optimize` in the self-hosted compiler or via the "Optimize" checkbox in the web playground (bytecode modes only).
+After stage 4a (bytecode compilation), the bytecode goes through a peephole optimizer (`lib/optimize.ml`) before being serialized or executed. The optimizer is enabled by default and can be disabled with `--no-optimize` in the self-hosted compiler.
 
 The optimizer uses a three-phase architecture:
 

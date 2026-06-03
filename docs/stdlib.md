@@ -1871,7 +1871,7 @@ match Sys.getenv "HOME" with
 
 ## Runtime Module
 
-Dynamic code evaluation (native backend only; not available in the JS VM).
+Dynamic code evaluation (interpreter only; not available in compiled JS or native code).
 
 ```
 Runtime.eval : string -> unit

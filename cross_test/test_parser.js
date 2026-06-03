@@ -1,5 +1,5 @@
 // The .tests file format — THE single JS implementation, shared by every
-// node-based test runner (run_js.js, run_emit_js.js, run_playground.js).
+// node-based test runner (run_emit_js.js, run_playground.js).
 // The single OCaml implementation is cross_test/test_format.ml. Any format
 // change must update exactly those two files.
 //

@@ -1,6 +1,7 @@
 // Shared worker pool for cross-test runners.
 //
-// The per-test cost of the subprocess-based runners (run_js.js, run_emit_js.js)
+// The per-test cost of the subprocess-based runners (run_emit_js.js,
+// run_playground.js)
 // is dominated by process spawns of main.exe / node, not by the tests
 // themselves, so running tests concurrently gives a near-linear wall-clock
 // speedup. Results are PRINTED IN SOURCE ORDER as they become available, so

@@ -2,14 +2,14 @@
 # Usage: make help
 
 .PHONY: all build clean test repl help \
-        test-unit test-cross test-js test-emit-js test-parity test-playground test-oracle test-translate test-all check \
-        check-run-unit check-run-diff check-run-js-suite check-run-translate check-run-js \
+        test-unit test-emit-js test-parity test-playground test-oracle test-translate test-all check \
+        check-run-unit check-run-diff check-run-translate \
         check-run-emit-js check-run-playground check-run-native check-run-oracle check-run-parity \
         check-run-fuzz test-fuzz \
         test-diff diff fuzz shrink \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
-        bundle self-host-compile \
+        self-host-compile \
         playground playground-serve \
         mmlc emit-ir test-native native-compile native-run
 
@@ -56,9 +56,6 @@ run-binary: build  ## Run a binary bundle: make run-binary FILE=bundle.mmlb
 	@test -n "$(FILE)" || (echo "Usage: make run-binary FILE=<bundle.mmlb>"; exit 1)
 	dune exec bin/main.exe -- --run-binary $(FILE)
 
-bundle: build  ## Build the browser JS bundle (js/miniml.bundle.js)
-	node js/browser.js
-
 # ── Tests ──────────────────────────────────────────────────
 
 test: test-unit  ## Run OCaml unit tests (default)
@@ -66,14 +63,8 @@ test: test-unit  ## Run OCaml unit tests (default)
 test-unit: build  ## Run OCaml unit tests (dune test)
 	dune test
 
-test-cross: build  ## Run all cross-VM tests: make test-cross [FILTER="name"]
-	bash cross_test/run_all.sh $(if $(FILTER),-t "$(FILTER)")
-
 test-ocaml: build  ## Run cross-VM tests on OCaml VM: make test-ocaml [FILTER="name"]
 	dune exec cross_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
-
-test-js: build  ## Run cross-VM tests on JS VM: make test-js [FILTER="name"]
-	node cross_test/run_js.js cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
 test-emit-js: build  ## Run cross-VM tests via --emit-js + node: make test-emit-js [FILTER="name"]
 	node cross_test/run_emit_js.js cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
@@ -108,17 +99,14 @@ diff: build  ## Differential run: do all backends agree on a program? make diff 
 	@test -n "$(FILE)" || (echo "Usage: make diff FILE=<prog.mml> [BACKENDS=oracle,vm,emit-js,native]"; exit 1)
 	dune exec diff_test/diff_runner.exe -- $(if $(BACKENDS),--backends $(BACKENDS)) $(if $(TIMEOUT),--timeout $(TIMEOUT)) $(FILE)
 
-test-js-suite: build  ## Run the JS VM test suite (js/test.js)
-	node js/test.js
-
 test-translate: build  ## Run translator tests (OCaml → MiniML)
 	dune exec translate_test/runner.exe -- translate_test/tests/*.tests
 
-test-all: test-unit test-cross test-js-suite test-translate  ## Run ALL tests (unit + cross-VM + JS suite + translator)
+test-all: test-unit test-ocaml test-translate  ## Run ALL local tests (unit + cross-VM + translator)
 	@echo ""
 	@echo "All tests passed."
 
-test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tests on all backends (ocaml, js, emit-js, native)
+test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on all backends (ocaml, emit-js, native)
 	@echo ""
 	@echo "All backends passed."
 
@@ -129,9 +117,7 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 #   Suite            Compiler    Execution
 #   test-unit        ocaml-ref   OCaml unit tests + cross tests on OCaml VM
 #   test-diff        —           differential runner smoke (agreement + detection)
-#   test-js-suite    —           JS VM unit tests
 #   test-translate   —           OCaml→MiniML translator tests
-#   test-js          ocaml-ref   cross tests on JS VM (bytecode)
 #   test-emit-js     ocaml-ref   cross tests via --emit-js + node
 #   test-playground  self-host   cross tests via compiler_native.js + node (the web playground path)
 #   test-native      ocaml-ref   cross tests as LLVM native binaries
@@ -152,7 +138,7 @@ test-all-backends: test-ocaml test-js test-emit-js test-native  ## Run cross-tes
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native js playground oracle fuzz unit translate js-suite diff
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -214,12 +200,8 @@ check-run-unit:
 check-run-diff:
 	$(CHECK_BIN)/diff_test/diff_runner.exe diff_test/smoke/effects.mml diff_test/smoke/data.mml diff_test/smoke/print_value.mml
 	$(CHECK_BIN)/diff_test/diff_runner.exe --expect-disagree diff_test/smoke/nondeterministic.mml
-check-run-js-suite:
-	node js/test.js
 check-run-translate:
 	$(CHECK_BIN)/translate_test/runner.exe translate_test/tests/*.tests
-check-run-js:
-	CROSS_TEST_JOBS=$(or $(CROSS_TEST_JOBS),4) node cross_test/run_js.js cross_test/tests/*.tests
 check-run-emit-js:
 	CROSS_TEST_JOBS=$(or $(CROSS_TEST_JOBS),4) node cross_test/run_emit_js.js cross_test/tests/*.tests
 check-run-playground:
@@ -235,13 +217,13 @@ check-run-fuzz:
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests
-test-file: build  ## Run a specific .tests file on both VMs: make test-file FILE=path/to/file.tests
+test-file: build  ## Run a specific .tests file on the OCaml VM and emit-js: make test-file FILE=path/to/file.tests
 	@test -n "$(FILE)" || (echo "Usage: make test-file FILE=<file.tests>"; exit 1)
 	@echo "=== OCaml VM ==="
 	dune exec cross_test/runner.exe -- $(FILE)
 	@echo ""
-	@echo "=== JS VM ==="
-	node cross_test/run_js.js $(FILE)
+	@echo "=== emit-js ==="
+	node cross_test/run_emit_js.js $(FILE)
 
 # ── Translation (OCaml → MiniML) ──────────────────────────
 
@@ -311,9 +293,9 @@ self-host-run: build  ## Compile self-hosted compiler and run a file through it
 
 # ── Playground ────────────────────────────────────────────
 
-playground: build bundle translate-all  ## Build the playground site (JS bundle + self-hosted compiler)
-	@echo "Compiling self-hosted compiler to js/compiler.json..."
-	dune exec bin/main.exe -- --emit-json $(SELF_HOST_FILES) > js/compiler.json
+playground: build translate-all  ## Build the playground site (self-hosted compiler as JS + stdlib bundle)
+	@echo "Building js/stdlib_sources.js..."
+	node js/build_stdlib_bundle.js
 	@echo "Compiling self-hosted compiler to js/compiler_native.js..."
 	dune exec bin/main.exe -- --emit-js $(SELF_HOST_FILES) > js/compiler_native.js
 	@echo "Playground built. Serve with: make playground-serve"
@@ -331,10 +313,9 @@ copy-to-demo: playground
 	cp js/demo.html $(DEMO_ROOT)/js/.
 	cp js/index.html $(DEMO_ROOT)/js/.
 	cp js/favicon.svg $(DEMO_ROOT)/js/.
-	cp js/compiler.json $(DEMO_ROOT)/js/.
 	cp js/compiler_native.js $(DEMO_ROOT)/js/.
 	cp js/canvas_gui_demo.js $(DEMO_ROOT)/js/.
-	cp js/miniml.bundle.js $(DEMO_ROOT)/js/.
+	cp js/stdlib_sources.js $(DEMO_ROOT)/js/.
 	cp js/miniml-harness.js $(DEMO_ROOT)/js/.
 
 # ── Native Compiler (LLVM IR backend) ─────────────────────
@@ -372,10 +353,8 @@ help:  ## Show this help
 	@echo "  make repl                      Start the REPL"
 	@echo "  make run FILE=hello.mml        Run a MiniML file"
 	@echo "  make test-all                  Run all tests"
-	@echo "  make test-cross                Run cross-VM tests"
 	@echo "  make test-file FILE=cross_test/tests/basic.tests"
 	@echo "  make translate FILE=lib/ast.ml Translate one file to MiniML"
 	@echo "  make translate-all             Translate all files to self_host/"
 	@echo "  make translate-diff            Diff translations vs self_host/"
 	@echo "  make emit-json FILE=prog.mml  Compile to JSON bundle"
-	@echo "  make bundle                    Build browser JS bundle"

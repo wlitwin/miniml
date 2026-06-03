@@ -1,6 +1,6 @@
 # Cross-VM Test Framework
 
-Tests in this directory run on **every** backend (OCaml VM, JS VM, emit-js,
+Tests in this directory run on **every** backend (OCaml VM, emit-js,
 playground, native, parity, and the oracle reference interpreter), ensuring all
 backends produce identical results.
 
@@ -12,7 +12,6 @@ make check
 
 # Individual backends (fastest first)
 make test-ocaml        # OCaml VM
-make test-js           # JS VM (bytecode on node)
 make test-emit-js      # JS codegen + node
 make test-playground   # self-host compiler emit-js path
 make test-native       # LLVM native binaries
@@ -27,7 +26,7 @@ change must update both, and only these:
 
 - `cross_test/test_format.ml` — OCaml; used by cross_test/runner.ml,
   native_test/runner.ml, compiler_test/parity_runner.ml, diff_test/diff_runner.ml
-- `cross_test/test_parser.js` — JS; used by run_js.js, run_emit_js.js,
+- `cross_test/test_parser.js` — JS; used by run_emit_js.js,
   run_playground.js
 
 ## Adding Tests

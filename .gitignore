@@ -1,7 +1,7 @@
 _build/
 research/
 js/compiler.json
-js/miniml.bundle.js
+js/stdlib_sources.js
 **/*.mmlb
 .claude/
 fuzz_failures/
