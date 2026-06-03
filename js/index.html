@@ -278,13 +278,6 @@ let () = print $"fib(20) = {fib 20}"
         <option value="polyvariants">Polymorphic Variants</option>
       </select>
       <div class="spacer"></div>
-      <label class="toggle-label"><input type="checkbox" id="optimizeToggle"> Optimize</label>
-      <select id="modeSelect">
-        <option value="js-js">JS &rarr; JS</option>
-        <option value="js-vm">JS &rarr; VM</option>
-        <option value="bc-vm">Bytecode &rarr; VM</option>
-        <option value="bc-js">Bytecode &rarr; JS</option>
-      </select>
       <span id="statusText" class="status"></span>
     </div>
 
@@ -313,7 +306,7 @@ let () = print $"fib(20) = {fib 20}"
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="miniml.bundle.js"></script>
+<script src="stdlib_sources.js"></script>
 <script>
 const source = document.getElementById("source");
 const output = document.getElementById("output");
@@ -590,10 +583,9 @@ marked.use({
   }
 });
 
-// Compiler bundle caches
-let compilerJson = null;  // JSON string for bytecode compiler bundle
-let compilerLoading = false;
-let compilerNativeJs = null;  // JS string for native JS compiler
+// Compiler cache (the self-hosted compiler compiled to JS — the playground's
+// single execution strategy: compile to JS, run as JS)
+let compilerNativeJs = null;
 let compilerNativeLoading = false;
 
 function appendOutput(text, cls) {
@@ -606,26 +598,6 @@ function appendOutput(text, cls) {
 
 function setStatus(html) {
   statusText.innerHTML = html;
-}
-
-async function loadCompiler() {
-  if (compilerJson) return compilerJson;
-  if (compilerLoading) return null;
-  compilerLoading = true;
-  setStatus('<span class="spinner"></span>Loading bytecode compiler...');
-  try {
-    const resp = await fetch("compiler.json");
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    compilerJson = await resp.text();
-    setStatus("Bytecode compiler loaded");
-    return compilerJson;
-  } catch (e) {
-    setStatus("");
-    appendOutput("Failed to load bytecode compiler: " + e.message, "error");
-    return null;
-  } finally {
-    compilerLoading = false;
-  }
 }
 
 async function loadCompilerNative() {
@@ -648,8 +620,7 @@ async function loadCompilerNative() {
   }
 }
 
-// Pre-fetch both compilers on page load
-loadCompiler();
+// Pre-fetch the compiler on page load
 loadCompilerNative();
 
 async function runProgram() {
@@ -670,14 +641,7 @@ async function runProgram() {
     return;
   }
 
-  const mode = document.getElementById("modeSelect").value;
-  const optimize = document.getElementById("optimizeToggle").checked;
-  const [compilerType, outputType] = mode.split("-");  // "bc"/"js", "vm"/"js"
-
-  const emitFlag = outputType === "js" ? "--emit-js" : "--emit-json";
-  const compilerArgs = optimize
-    ? ["compiler", emitFlag, "input.mml"]
-    : ["compiler", emitFlag, "--no-optimize", "input.mml"];
+  const compilerArgs = ["compiler", "--emit-js", "input.mml"];
 
   const readFile = (filename) => {
     if (filename === "input.mml") return code;
@@ -685,7 +649,8 @@ async function runProgram() {
     throw new Error("File not found: " + filename);
   };
 
-  // Stage 1: Compile
+  // Stage 1: Compile (the self-hosted compiler, itself compiled to JS,
+  // compiles the program to JS)
   setStatus('<span class="spinner"></span>Compiling...');
   // Yield to let browser paint the status update before blocking
   await new Promise(r => setTimeout(r, 10));
@@ -693,38 +658,7 @@ async function runProgram() {
   let compiled;
   const t0 = performance.now();
 
-  if (compilerType === "bc") {
-    // Bytecode compiler path — run compiler.json in VM
-    const compiler = await loadCompiler();
-    if (!compiler) { runBtn.disabled = false; return; }
-
-    const compileOutput = [];
-    globalThis._vmArgs = compilerArgs;
-    globalThis._vmReadFile = readFile;
-    globalThis._vmOutput = (s) => compileOutput.push(s);
-
-    try {
-      MiniML.loadBundle(compiler);
-      compiled = compileOutput.join(outputType === "js" ? "" : "\n");
-    } catch (e) {
-      const elapsed = (performance.now() - t0).toFixed(1);
-      globalThis._vmArgs = null;
-      globalThis._vmReadFile = null;
-      globalThis._vmOutput = null;
-      setStatus("");
-      let msg = e.message || String(e);
-      msg = msg.replace(/^\[line \d+\] /, "");
-      appendOutput("Compile error: " + msg, "compile-error");
-      appendOutput(`\n--- failed in ${elapsed}ms ---`, "timing");
-      runBtn.disabled = false;
-      return;
-    }
-
-    globalThis._vmArgs = null;
-    globalThis._vmReadFile = null;
-    globalThis._vmOutput = null;
-  } else {
-    // JS compiler path — eval compiler_native.js
+  {
     const compilerJs = await loadCompilerNative();
     if (!compilerJs) { runBtn.disabled = false; return; }
 
@@ -763,34 +697,11 @@ async function runProgram() {
     return;
   }
 
-  // Stage 2: Execute
+  // Stage 2: Execute the compiled JS
   setStatus('<span class="spinner"></span>Running...');
   const t1 = performance.now();
 
-  if (outputType === "vm") {
-    // Execute bytecode in VM
-    globalThis._vmOutput = (s) => appendOutput(s);
-
-    try {
-      const result = MiniML.loadBundle(compiled);
-      const runTime = (performance.now() - t1).toFixed(1);
-      if (result !== MiniML.VUNIT && result.tag !== "unit") {
-        appendOutput(MiniML.ppValue(result));
-      }
-      setStatus("");
-      appendOutput(`\n--- compiled in ${compileTime}ms, ran in ${runTime}ms ---`, "timing");
-    } catch (e) {
-      const runTime = (performance.now() - t1).toFixed(1);
-      setStatus("");
-      if (e instanceof MiniML.RuntimeError) {
-        appendOutput("Runtime error: " + e.message, "error");
-      } else {
-        appendOutput("Error: " + e.message, "error");
-      }
-      appendOutput(`\n--- compiled in ${compileTime}ms, failed in ${runTime}ms ---`, "timing");
-    }
-  } else {
-    // Execute raw JS
+  {
     globalThis._jsOutput = (s) => appendOutput(s);
 
     try {
@@ -810,27 +721,18 @@ async function runProgram() {
 
   // Stage 3: Start canvas animation loop if app was registered
   if (globalThis._canvasApp) {
-    const { initFn, frameFn, jsMode, call: jsCall } = globalThis._canvasApp;
-    const vmInst = globalThis._vmInstance;
+    const { initFn, frameFn, call: jsCall } = globalThis._canvasApp;
     stopBtn.style.display = "inline-block";
 
     // Keep output hooks active so print inside frame functions shows in output
-    if (jsMode) {
-      globalThis._jsOutput = (s) => appendOutput(s);
-    }
-    // globalThis._vmOutput stays set for VM mode
+    globalThis._jsOutput = (s) => appendOutput(s);
 
     let state;
     try {
-      if (jsMode) {
-        state = jsCall(initFn, [undefined]);
-      } else {
-        state = MiniML.callClosure(vmInst, initFn, MiniML.VUNIT);
-      }
+      state = jsCall(initFn, [undefined]);
     } catch (e) {
       appendOutput("Canvas init error: " + e.message, "error");
       stopCanvasApp();
-      globalThis._vmOutput = null;
       globalThis._jsOutput = null;
       runBtn.disabled = false;
       return;
@@ -853,15 +755,10 @@ async function runProgram() {
       _prevKeysDown = currentKeys;
 
       try {
-        if (jsMode) {
-          state = jsCall(frameFn, [state]);
-        } else {
-          state = MiniML.callClosure(vmInst, frameFn, state);
-        }
+        state = jsCall(frameFn, [state]);
       } catch (e) {
         appendOutput("Canvas frame error: " + e.message, "error");
         stopCanvasApp();
-        globalThis._vmOutput = null;
         globalThis._jsOutput = null;
         runBtn.disabled = false;
         return;
@@ -873,21 +770,10 @@ async function runProgram() {
     return;
   }
 
-  globalThis._vmOutput = null;
   runBtn.disabled = false;
 }
 
 runBtn.addEventListener("click", runProgram);
-
-// Hide optimize checkbox when output is JS (optimizer only applies to bytecode)
-const modeSelect = document.getElementById("modeSelect");
-const optimizeLabel = document.getElementById("optimizeToggle").parentElement;
-function updateOptimizeVisibility() {
-  const outputType = modeSelect.value.split("-")[1];
-  optimizeLabel.style.display = outputType === "vm" ? "" : "none";
-}
-modeSelect.addEventListener("change", updateOptimizeVisibility);
-updateOptimizeVisibility();
 
 clearBtn.addEventListener("click", () => {
   output.textContent = "";
@@ -2999,7 +2885,7 @@ const DOCS = [
   { file: "stdlib.md",   title: "Standard Library" },
   { file: "modules.md",  title: "Module System" },
   { file: "compiler.md", title: "Compiler Pipeline" },
-  { file: "js-vm.md",    title: "JavaScript VM" },
+  { file: "js-backend.md", title: "JavaScript Backend" },
   { file: "harness.md",  title: "Browser Harness" },
   { separator: true, title: "Type System Internals" },
   { file: "typesystem/00-overview.md",        title: "Overview" },

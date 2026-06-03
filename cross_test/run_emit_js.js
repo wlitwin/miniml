@@ -4,14 +4,15 @@
 // comparing printed output against expected results.
 //
 // Tests run concurrently on a worker pool (see parallel.js); each test spawns
-// its own main.exe + node processes, so wall-clock time scales with cores.
+// main.exe to compile (retried on environmental kills), then executes the
+// compiled JS in an isolated in-process vm context — no node child processes.
 // Output is printed in source order — identical to a sequential run.
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
-const { runPool, execFileRetry } = require("./parallel");
+const { runPool, execFileRetry, runJsInProcess } = require("./parallel");
 
 const INTERPRETER = path.resolve(
   __dirname,
@@ -49,25 +50,31 @@ function fail(name, msg) {
 
 async function runTest(tc, idx) {
   const tmpFile = path.join(TMP_DIR, `test_${idx}.mml`);
-  const tmpJs = path.join(TMP_DIR, `test_${idx}.js`);
   fs.writeFileSync(tmpFile, tc.source);
 
   try {
     switch (tc.expect.type) {
       case "value": {
-        // Compile to JS
-        const compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        // Compile to JS (main.exe is a child process — retried on
+        // environmental kills and on lost-pipe empty output)
+        let compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        for (
+          let retry = 0;
+          retry < 3 && compile.ok && compile.stdout === "";
+          retry++
+        ) {
+          compile = await run(INTERPRETER, ["--emit-js", tmpFile]);
+        }
         if (!compile.ok) {
           return fail(tc.name, `compilation failed: ${(compile.stderr || compile.error.message).trim()}`);
         }
 
-        // Run through node
-        fs.writeFileSync(tmpJs, compile.stdout);
-        const exec = await run("node", [tmpJs], { timeout: 10000 });
+        // Execute in an isolated in-process vm context (no child process)
+        const exec = await runJsInProcess(compile.stdout, { timeout: 10000 });
         if (!exec.ok) {
           return fail(
             tc.name,
-            `runtime error (exit ${exec.status}):\n    stderr: ${exec.stderr.trim()}\n    stdout: ${exec.stdout.trim()}`
+            `runtime error:\n    ${exec.stderr.trim()}\n    stdout: ${exec.stdout.trim()}`
           );
         }
 
@@ -118,13 +125,12 @@ async function runTest(tc, idx) {
           return pass(tc.name);
         }
 
-        fs.writeFileSync(tmpJs, compile.stdout);
-        const exec = await run("node", [tmpJs], { timeout: 10000 });
+        const exec = await runJsInProcess(compile.stdout, { timeout: 10000 });
         if (exec.ok) {
           return fail(tc.name, "expected runtime error, but succeeded");
         }
-        // Accept any non-zero exit as a runtime error
-        // (error messages may differ between VM and emit-js)
+        // Accept any error as a runtime error
+        // (error messages may differ between backends)
         return pass(tc.name);
       }
       default:
@@ -134,7 +140,6 @@ async function runTest(tc, idx) {
     return fail(tc.name, `exception: ${e.message}`);
   } finally {
     try { fs.unlinkSync(tmpFile); } catch (_) {}
-    try { fs.unlinkSync(tmpJs); } catch (_) {}
   }
 }
 
