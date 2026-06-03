@@ -104,4 +104,45 @@ async function runPool(items, worker, opts = {}) {
   return results;
 }
 
-module.exports = { runPool, defaultJobs, execFileRetry };
+// Run compiled MiniML JS in an isolated in-process vm context instead of a
+// child node process. No process spawn means no exposure to environmental
+// kills (jetsam SIGKILLs, lost pipe output under memory pressure) — the
+// failure modes that made gate runs flaky on a loaded machine. Each call gets
+// a fresh context (fresh JS built-ins, no cross-test state).
+//
+// The sandbox passes through `require` and `process` so compiled IO/Sys
+// builtins (fs reads/writes, getenv) behave exactly as they would in a child
+// process. Output goes through the _jsOutput hook; stdout is reconstructed
+// from the hook calls (print sends bare strings, println sends
+// newline-terminated ones — both become one line each, matching what
+// process.stdout.write would have produced).
+//
+// Resolves to { ok, stdout, stderr, status } — the same shape as a child
+// process run, so callers can switch transparently.
+const nodeVm = require("node:vm");
+
+function runJsInProcess(jsCode, opts = {}) {
+  const timeout = opts.timeout || 15000;
+  const outputs = [];
+  const sandbox = {
+    _jsOutput: (s) => outputs.push(s.endsWith("\n") ? s : s + "\n"),
+    require,
+    process,
+    console,
+  };
+  const ctx = nodeVm.createContext(sandbox);
+  const stdout = () => outputs.join("");
+  try {
+    nodeVm.runInContext(jsCode, ctx, { timeout });
+    return Promise.resolve({ ok: true, stdout: stdout(), stderr: "", status: 0 });
+  } catch (e) {
+    return Promise.resolve({
+      ok: false,
+      stdout: stdout(),
+      stderr: e && e.message ? e.message : String(e),
+      status: 1,
+    });
+  }
+}
+
+module.exports = { runPool, defaultJobs, execFileRetry, runJsInProcess };

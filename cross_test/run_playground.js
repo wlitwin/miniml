@@ -15,17 +15,15 @@
 // Concurrency model (see parallel.js): compilation runs IN-PROCESS and is
 // synchronous JavaScript, so it is naturally serialized by the event loop —
 // the shared globalThis._js* compiler state never interleaves. The compiled
-// tests execute in separate node processes through the worker pool, so
-// executions overlap with each other and with subsequent compiles. This keeps
-// the suite fast and, more importantly, tolerant of CPU contention when other
-// gate suites run concurrently (a serial spawn-per-test runner compounds
-// every scheduling delay across all ~2000 tests).
+// tests also execute IN-PROCESS, each in an isolated vm context. This runner
+// spawns no child processes at all, which makes it immune to the
+// environmental process kills (jetsam under memory pressure) that made gate
+// runs flaky on a loaded machine.
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { parseTestFile, parseArgs, makeFilter, skipReason } = require("./test_parser");
-const { runPool, execFileRetry } = require("./parallel");
+const { runPool, runJsInProcess } = require("./parallel");
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPILER_NATIVE = path.join(ROOT, "js", "compiler_native.js");
@@ -68,11 +66,6 @@ function selfhostCompile(source) {
 
 // --- Running ---------------------------------------------------------------
 
-const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "playground_test_"));
-process.on("exit", () => {
-  try { fs.rmSync(TMP_DIR, { recursive: true, force: true }); } catch (_) {}
-});
-
 function pass(name) {
   return { output: `  PASS: ${name}\n`, status: "pass", name };
 }
@@ -81,23 +74,9 @@ function fail(name, msg) {
   return { output: `  FAIL: ${name}\n    ${msg}\n`, status: "fail", name };
 }
 
-// Run compiled JS in an isolated node process (for timeouts and crash
-// isolation), resolving to { ok, stdout, stderr, status }. Retries if the
-// node process is killed by the environment (see execFileRetry).
-async function runCompiledJs(jsCode, idx) {
-  const tmpJs = path.join(TMP_DIR, `test_${idx}.js`);
-  fs.writeFileSync(tmpJs, jsCode);
-  const res = await execFileRetry("node", [tmpJs], { timeout: 15000 });
-  try { fs.unlinkSync(tmpJs); } catch (_) {}
-  if (res.ok) return { ok: true, stdout: res.stdout };
-  return {
-    ok: false,
-    stdout: res.stdout,
-    stderr: res.stderr || (res.error ? res.error.message : ""),
-    status: res.status,
-  };
-}
-
+// Compiled test JS runs in an isolated in-process vm context (see
+// runJsInProcess) — no child processes anywhere in this runner, so it is
+// immune to environmental process kills under memory pressure.
 async function runTest(tc, idx) {
   switch (tc.expect.type) {
     case "value": {
@@ -107,21 +86,11 @@ async function runTest(tc, idx) {
       } catch (e) {
         return fail(tc.name, `compilation failed: ${(e.message || String(e)).split("\n")[0]}`);
       }
-      let res = await runCompiledJs(jsCode, idx);
-      // Empty stdout from a zero-exit child when output was expected is an
-      // environmental artifact (pipe output lost under memory pressure), not
-      // a test result — the program either prints or errors. Re-run it.
-      for (
-        let retry = 0;
-        retry < 3 && res.ok && res.stdout === "" && tc.expect.value !== "";
-        retry++
-      ) {
-        res = await runCompiledJs(jsCode, idx);
-      }
+      const res = await runJsInProcess(jsCode, { timeout: 15000 });
       if (!res.ok) {
         return fail(
           tc.name,
-          `runtime error (exit ${res.status}):\n    stderr: ${res.stderr.trim()}\n    stdout: ${res.stdout.trim()}`
+          `runtime error:\n    ${res.stderr.trim()}\n    stdout: ${res.stdout.trim()}`
         );
       }
       const actual = res.stdout.replace(/\n$/, "");
@@ -163,9 +132,9 @@ async function runTest(tc, idx) {
         // compiler catches the problem early (matches run_emit_js.js).
         return pass(tc.name);
       }
-      const res = await runCompiledJs(jsCode, idx);
+      const res = await runJsInProcess(jsCode, { timeout: 15000 });
       if (res.ok) return fail(tc.name, "expected runtime error, but succeeded");
-      return pass(tc.name); // any non-zero exit counts (messages differ across backends)
+      return pass(tc.name); // any error counts (messages differ across backends)
     }
     default:
       return fail(tc.name, `unknown expectation type: ${tc.expect.type}`);
