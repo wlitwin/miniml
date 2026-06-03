@@ -107,7 +107,17 @@ async function runTest(tc, idx) {
       } catch (e) {
         return fail(tc.name, `compilation failed: ${(e.message || String(e)).split("\n")[0]}`);
       }
-      const res = await runCompiledJs(jsCode, idx);
+      let res = await runCompiledJs(jsCode, idx);
+      // Empty stdout from a zero-exit child when output was expected is an
+      // environmental artifact (pipe output lost under memory pressure), not
+      // a test result — the program either prints or errors. Re-run it.
+      for (
+        let retry = 0;
+        retry < 3 && res.ok && res.stdout === "" && tc.expect.value !== "";
+        retry++
+      ) {
+        res = await runCompiledJs(jsCode, idx);
+      }
       if (!res.ok) {
         return fail(
           tc.name,

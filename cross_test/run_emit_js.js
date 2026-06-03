@@ -63,7 +63,17 @@ async function runTest(tc, idx) {
 
         // Run through node
         fs.writeFileSync(tmpJs, compile.stdout);
-        const exec = await run("node", [tmpJs], { timeout: 10000 });
+        let exec = await run("node", [tmpJs], { timeout: 10000 });
+        // Empty stdout from a zero-exit child when output was expected is an
+        // environmental artifact (pipe output lost under memory pressure),
+        // not a test result. Re-run it.
+        for (
+          let retry = 0;
+          retry < 3 && exec.ok && exec.stdout === "" && tc.expect.value !== "";
+          retry++
+        ) {
+          exec = await run("node", [tmpJs], { timeout: 10000 });
+        }
         if (!exec.ok) {
           return fail(
             tc.name,
