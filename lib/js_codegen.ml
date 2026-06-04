@@ -2927,6 +2927,19 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
            "const %s = _trampoline(function() { return %s(%s); });" result_var
            k_js v_js);
       cont result_var
+  | Typechecker.TEApp
+      ({ expr = Typechecker.TEFun (param, body, false); _ }, arg) ->
+      (* Immediately-applied lambda under a handler: beta-reduce to
+         `let param = arg in body` so a perform in [body] threads through the
+         enclosing CPS region instead of being trapped in the lambda's own
+         per-function trampoline (BUG-11, immediately-applied-lambda slice; see
+         docs/effect-lowering.md §7 step 2). You don't CPS what you can inline.
+         Guarded on has_return = false: a `return` in a lambda body targets the
+         lambda, but a `let` would retarget it to the enclosing function. The
+         opaque-HOF case (a lambda passed to List.map etc.) cannot be inlined
+         and still needs the CPS calling convention — the remaining BUG-11
+         work, steps 3+. *)
+      compile_let_cps ctx param arg body cont
   | Typechecker.TEApp (fn, arg) -> compile_app_cps ctx te fn arg cont
   | _ ->
       let v = compile_non_tail ctx te in

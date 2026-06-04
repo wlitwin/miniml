@@ -879,6 +879,56 @@ with
 | inc () k -> resume k ()
 --- expect: 0
 
+--- test: immediately-applied effectful lambda
+effect Ask =
+  get : unit -> int
+end
+handle
+  let x = (fn b -> b + perform get ()) 10 in
+  x + 1
+with
+| return v -> v
+| get () k -> resume k 5
+--- expect: 16
+
+--- test: multishot resume across immediately-applied lambda
+effect Choose =
+  pick : unit -> bool
+end
+handle
+  let x = (fn u -> if perform pick () do 10 else 20) () in
+  x + 1
+with
+| return v -> v
+| pick () k ->
+    let a = resume (copy_continuation k) true in
+    let b = resume k false in
+    a + b
+--- expect: 32
+
+--- test: immediately-applied lambda perform in body not argument
+effect Ask2 =
+  ask : int -> int
+end
+handle
+  (fn n -> (perform ask n) * 2) 7
+with
+| return v -> v
+| ask n k -> resume k (n + 100)
+--- expect: 214
+
+--- test: immediately-applied lambda with perform nested in perform argument
+effect E2 =
+  op0 : int -> int
+  op1 : int -> int
+end
+handle
+  perform op0 ((fn p -> perform op1 p) 12)
+with
+| op0 arg k -> let k2 = copy_continuation k in ((resume k arg) + (resume k2 434))
+| op1 arg k -> let k2 = copy_continuation k in ((resume k 510) + (resume k2 arg))
+--- expect: 1390
+
 --- test: for loop break with effect tracking
 let mut sum = 0 in
 for x in [1; 2; 3; 4; 5] do

@@ -2061,6 +2061,7 @@ module Js_codegen =
       let result_var = fresh_tmp ctx in
       emit_line ctx ($"const {result_var} = _trampoline(function() \{ return {k_js}({v_js}); \});");
       cont result_var
+    | Typechecker.TEApp (({expr = Typechecker.TEFun ((param, body, false)); _}, arg)) -> compile_let_cps ctx param arg body cont
     | Typechecker.TEApp ((fn_, arg)) -> compile_app_cps ctx te fn_ arg cont
     | _ -> 
       let v = compile_non_tail ctx te in
