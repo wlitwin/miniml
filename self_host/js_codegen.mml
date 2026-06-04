@@ -66,12 +66,16 @@ module Js_codegen =
     mut loop_via_throw: bool;
     mut fold_cont_pending: bool;
     mut top_level_exports: (string * string) list;
-    function_arities: (string, int) Hashtbl.t
+    function_arities: (string, int) Hashtbl.t;
+    twinnable: (string, string list * string list * Typechecker.texpr) Hashtbl.t;
+    twins_requested: (string, unit) Hashtbl.t;
+    twins_emitted: (string, unit) Hashtbl.t;
+    mut in_full_handler: bool
   }
 
   pub let create_ctx type_env =
     let tbl = Hashtbl.create 16 in
-    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64}
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false}
 
   pub let with_in_cps ctx value f =
     let saved = ctx.in_cps in
@@ -974,11 +978,47 @@ module Js_codegen =
         end) body_lines;
         Buffer.add_string ctx.buf (indent_str ^ "}\n")
       end;
-      emit_line ctx "}"
+      emit_line ctx "}";
+      if (needs_cps fn_expr.ty) && (not has_return) do
+        Hashtbl.set ctx.twinnable js_name (all_params, js_params, final_body)
+      end
     | _ -> 
       let v = compile_expr ctx fn_expr in
       emit_line ctx ($"const {js_name} = {v};")
 
+  and emit_cps_twin ctx js_name =
+    match Hashtbl.get ctx.twinnable js_name with
+    | None -> ()
+    | Some ((all_params, js_params, final_body)) -> 
+      Hashtbl.set ctx.twins_emitted js_name ();
+      let k_param = "$k" in
+      let saved_ifh = ctx.in_full_handler in
+      ctx.in_full_handler := true;
+      emit_indent ctx;
+      emit ctx ($"function {js_name}$cps({String.concat ", " (List.concat js_params (k_param :: []))}) ");
+      emit ctx "{\n";
+      ctx.indent := ctx.indent + 1;
+      push_scope ctx;
+      List.iter2 (fn mml_name js_nm -> bind_var ctx mml_name js_nm) all_params js_params;
+      let _ = with_handler_tail_resume ctx false (fn () -> with_function_ctx ctx None [] [] [] false (fn () -> with_in_cps ctx true (fn () -> compile_cps ctx final_body (fn v -> emit_line ctx ($"return _bounce(function() \{ return {k_param}({v}); \});"))))) in
+      pop_scope ctx;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "}";
+      ctx.in_full_handler := saved_ifh
+
+  and drain_cps_twins ctx =
+    let pending () = Hashtbl.fold (fn n () acc -> if Hashtbl.has ctx.twins_emitted n do
+      acc
+    else
+      n :: acc) ctx.twins_requested [] in
+    let rec loop () =
+      match pending () with
+      | [] -> ()
+      | names -> 
+        List.iter (emit_cps_twin ctx) names;
+        loop ()
+     in
+    loop ()
   and compile_app ctx _te fn_ arg =
     let rec collect_args expr acc =
       match expr.expr with
@@ -1960,9 +2000,11 @@ module Js_codegen =
       emit_line ctx "});";
       let body_needs_cps =
         if simple_ops = [] do
-          expr_has_perform body
+          eval_invokes_effect body
         else
           expr_has_unhandled_perform simple_ops body in
+      let saved_ifh = ctx.in_full_handler in
+      ctx.in_full_handler := (full_ops <> []) || saved_ifh;
       emit_line ctx "try {";
       ctx.indent := ctx.indent + 1;
       if body_needs_cps do
@@ -2002,12 +2044,40 @@ module Js_codegen =
         | None -> emit_line ctx ($"return {body_v};")
 
       end;
+      ctx.in_full_handler := saved_ifh;
       ctx.indent := ctx.indent - 1;
       emit_line ctx ($"\} finally \{ _h = {h_saved}; \}")) () in (fn () -> ctx.direct_dispatch_ops := saved_direct_ops) (); _protect_result);
       ctx.indent := ctx.indent - 1;
       emit_line ctx "})();"
     end;
     result
+  and is_twin_call ctx te =
+    if not ctx.in_full_handler do
+      false
+    else do
+      let rec collect e acc =
+        match e.expr with
+        | Typechecker.TEApp ((f, a)) -> collect f (a :: acc)
+        | _ -> (e, acc)
+       in
+      match te.expr with
+      | Typechecker.TEApp _ -> 
+        do
+          let (base, args) = collect te [] in
+          match base.expr with
+          | Typechecker.TEVar name when needs_cps base.ty -> 
+            do
+              match Hashtbl.get ctx.twinnable (lookup_var ctx name) with
+              | Some ((_, js_params, _)) -> (List.length js_params) = (List.length args)
+              | None -> false
+
+            end
+          | _ -> false
+
+        end
+      | _ -> false
+
+    end
   and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
     match anf_lift_effects ctx te with
     | Some lifted -> compile_cps ctx lifted cont
@@ -2015,6 +2085,13 @@ module Js_codegen =
 
   and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
     match te.expr with
+    | Typechecker.TEBreak value_te -> 
+      let v = compile_non_tail ctx value_te in
+      emit_line ctx ($"return _throw_break({v});")
+    | Typechecker.TEContinueLoop -> emit_line ctx "return _throw_continue();"
+    | Typechecker.TEFoldContinue value_te -> 
+      let v = compile_non_tail ctx value_te in
+      emit_line ctx ($"return _throw_fold_cont({v});")
     | Typechecker.TELet ((name, _, e1, e2)) -> compile_let_cps ctx name e1 e2 cont
     | Typechecker.TELetRec ((name, _, fn_expr, body)) -> compile_letrec_cps ctx name fn_expr body cont
     | Typechecker.TELetRecAnd ((bindings, body)) -> compile_letrec_and_cps ctx bindings body cont
@@ -2023,7 +2100,7 @@ module Js_codegen =
     | Typechecker.TEMatch ((scrut, arms, _partial)) -> compile_match_cps ctx scrut arms te.loc cont
     | Typechecker.TEMatchTree cm -> compile_js_match_tree_cps ctx cm cont
     | Typechecker.TELetMut ((name, init, body)) -> 
-      if expr_has_perform init do
+      if eval_invokes_effect init do
         compile_cps ctx init (fn init_v -> let js_name = mangle_name name in
         let actual_name = js_name ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
         ctx.tmp_counter := ctx.tmp_counter + 1;
@@ -2045,10 +2122,10 @@ module Js_codegen =
       end
     | Typechecker.TEWhile {tw_cond; tw_body; tw_step} -> compile_while_cps ctx tw_cond tw_body tw_step cont
     | Typechecker.TEForLoop fold_app when expr_has_perform te -> compile_forloop_cps ctx te fold_app cont
-    | Typechecker.TEApp _ when not (expr_has_perform te) -> 
+    | Typechecker.TEApp _ when (not (is_twin_call ctx te)) && (not (expr_has_perform te)) -> 
       let v = with_in_cps ctx false (fn () -> compile_non_tail ctx te) in
       cont v
-    | _ when not (expr_has_perform te) -> 
+    | _ when (not (is_twin_call ctx te)) && (not (expr_has_perform te)) -> 
       let v = compile_non_tail ctx te in
       cont v
     | Typechecker.TEPerform ((op_name, arg)) -> compile_perform_cps ctx op_name arg cont
@@ -2279,7 +2356,7 @@ module Js_codegen =
       emit_line ctx "});"
 
   and compile_let_cps ctx name e1 e2 cont =
-    if expr_has_perform e1 do
+    if eval_invokes_effect e1 do
       compile_cps ctx e1 (fn v1 -> let js_name = mangle_name name in
       let actual_name =
         if js_name = "_" do
@@ -2322,7 +2399,7 @@ module Js_codegen =
     compile_cps ctx body cont;
     pop_scope ctx
   and compile_seq_cps ctx e1 e2 cont =
-    if expr_has_perform e1 do
+    if eval_invokes_effect e1 do
       compile_cps ctx e1 (fn v1 -> emit_line ctx ($"_resolve({v1});");
       compile_cps ctx e2 cont)
     else do
@@ -2381,28 +2458,59 @@ module Js_codegen =
       | _ -> (expr, acc)
      in
     let (base_fn, all_args) = collect_args fn_ (arg :: []) in
-    let fn_js = compile_non_tail ctx base_fn in
-    let args_js = List.map (compile_non_tail ctx) all_args in
-    let n = List.length all_args in
-    let known_arity = count_arrows base_fn.ty in
-    let print_shape =
-      match (base_fn.expr, all_args) with
-      | (Typechecker.TEVar (pname), a :: []) when (lookup_var ctx pname) = "print" -> float_shape ctx.type_env a.ty
-      | _ -> None
-     in
-    let call_expr =
-      if known_arity = (Some n) do
-        let args_js =
-          match print_shape with
-          | Some s -> List.concat args_js (s :: [])
-          | None -> args_js
-         in
-        fn_js ^ ("(" ^ ((String.concat ", " args_js) ^ ")"))
+    let twin =
+      if not ctx.in_full_handler do
+        None
       else
-        "_call(" ^ (fn_js ^ (", [" ^ ((String.concat ", " args_js) ^ "])"))) in
-    let result_var = fresh_tmp ctx in
-    emit_line ctx ($"const {result_var} = _resolve({call_expr});");
-    cont result_var
+        match base_fn.expr with
+        | Typechecker.TEVar name when needs_cps base_fn.ty -> 
+          do
+            let jsn = lookup_var ctx name in
+            match Hashtbl.get ctx.twinnable jsn with
+            | Some ((_, js_params, _)) when (List.length js_params) = (List.length all_args) -> Some jsn
+            | _ -> None
+
+          end
+        | _ -> None
+     in
+    match twin with
+    | Some jsn -> 
+      Hashtbl.set ctx.twins_requested jsn ();
+      let args_js = List.map (compile_non_tail ctx) all_args in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx ($"return {jsn}$cps({String.concat ", " args_js}, function({result_var}) \{");
+      ctx.indent := ctx.indent + 1;
+      emit_line ctx "return _bounce(function() {";
+      ctx.indent := ctx.indent + 1;
+      cont result_var;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});";
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "});"
+    | None -> 
+      let fn_js = compile_non_tail ctx base_fn in
+      let args_js = List.map (compile_non_tail ctx) all_args in
+      let n = List.length all_args in
+      let known_arity = count_arrows base_fn.ty in
+      let print_shape =
+        match (base_fn.expr, all_args) with
+        | (Typechecker.TEVar (pname), a :: []) when (lookup_var ctx pname) = "print" -> float_shape ctx.type_env a.ty
+        | _ -> None
+       in
+      let call_expr =
+        if known_arity = (Some n) do
+          let args_js =
+            match print_shape with
+            | Some s -> List.concat args_js (s :: [])
+            | None -> args_js
+           in
+          fn_js ^ ("(" ^ ((String.concat ", " args_js) ^ ")"))
+        else
+          "_call(" ^ (fn_js ^ (", [" ^ ((String.concat ", " args_js) ^ "])"))) in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx ($"const {result_var} = _resolve({call_expr});");
+      cont result_var
+
   and compile_decl ctx (decl : Typechecker.tdecl) =
     match decl with
     | Typechecker.TDLet ((name, te)) -> 
@@ -2553,6 +2661,7 @@ module Js_codegen =
     emit ctx "let _last_ty = null;\n";
     emit ctx "let _last_shape = null;\n";
     List.iter (compile_decl ctx) program;
+    drain_cps_twins ctx;
     emit ctx "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
     emit_exports ctx;
     Buffer.contents ctx.buf
@@ -2580,6 +2689,7 @@ module Js_codegen =
     let stdlib_exports = ctx.top_level_exports in
     ctx.top_level_exports := [];
     List.iter (compile_decl ctx) user_program;
+    drain_cps_twins ctx;
     emit ctx "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
     let user_exports = ctx.top_level_exports in
     ctx.top_level_exports := user_exports;

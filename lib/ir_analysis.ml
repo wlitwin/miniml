@@ -40,9 +40,9 @@ let rec needs_cps (ty : Types.ty) =
 
 (* ---- Effect / tail-resume analysis (hoisted from Js_codegen) ------------- *)
 
-let rec expr_has_perform_with ~check_perform ~enter_funs
+let rec expr_has_perform_with ~check_perform ~enter_funs ~on_app
     (te : Typechecker.texpr) =
-  let go = expr_has_perform_with ~check_perform ~enter_funs in
+  let go = expr_has_perform_with ~check_perform ~enter_funs ~on_app in
   match te.expr with
   (* The perform's ARGUMENT can itself contain performs (of other ops) — it
      must be visited too. Missing this made `perform simple_op (... perform
@@ -87,7 +87,7 @@ let rec expr_has_perform_with ~check_perform ~enter_funs
          to direct-style compilation with its own trampoline (the nested
          immediately-applied-lambda slice of BUG-11). *)
       go fbody || go arg
-  | Typechecker.TEApp (fn, arg) -> go fn || go arg
+  | Typechecker.TEApp (fn, arg) -> on_app fn || go fn || go arg
   | Typechecker.TEHandle (body, arms) ->
       go body
       || List.exists
@@ -130,20 +130,23 @@ let rec expr_has_perform_with ~check_perform ~enter_funs
          that lambda always runs as part of evaluating the loop — so performs
          inside it are evaluation effects even under ~enter_funs:false (where
          ordinary lambdas are treated as inert values). *)
-      expr_has_perform_with ~check_perform ~enter_funs:true e
+      expr_has_perform_with ~check_perform ~enter_funs:true ~on_app e
   | Typechecker.TEContinueLoop -> false
   | Typechecker.TEInt _ | Typechecker.TEFloat _ | Typechecker.TEBool _
   | Typechecker.TEString _ | Typechecker.TEByte _ | Typechecker.TERune _
   | Typechecker.TEUnit | Typechecker.TENil | Typechecker.TEVar _ ->
       false
 
+let no_app : Typechecker.texpr -> bool = fun _ -> false
+
 let expr_has_perform te =
-  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:true te
+  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:true
+    ~on_app:no_app te
 
 let expr_has_unhandled_perform handled_ops te =
   expr_has_perform_with
     ~check_perform:(fun op -> not (List.mem op handled_ops))
-    ~enter_funs:true te
+    ~enter_funs:true ~on_app:no_app te
 
 (* Can *evaluating* this expression perform an effect? Unlike
    [expr_has_perform] this does not look inside lambdas: evaluating a lambda
@@ -151,7 +154,25 @@ let expr_has_unhandled_perform handled_ops te =
    the ANF lifting below to decide which subexpressions need to be threaded
    through real continuations. *)
 let eval_can_perform te =
-  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:false te
+  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:false
+    ~on_app:no_app te
+
+(* Does evaluating this expression INVOKE an effect — either a direct [perform]
+   (like [expr_has_perform]) OR a call to a function whose latent effect row is
+   non-empty (a perform hidden behind a function NAME, which [expr_has_perform]
+   cannot see)? This is the [needs_cps]-aware CPS decision: a handler/function
+   body that calls an effectful function must be compiled in CPS even when it
+   contains no syntactic [perform], so the captured continuation threads through
+   the call instead of being severed at the callee's boundary (BUG-11, the
+   opaque-named-call slice; see docs/effect-lowering.md §12).
+
+   It is a strict superset of [expr_has_perform] (same ~enter_funs:true walk),
+   adding only the [on_app] trigger — so programs that call no effectful
+   function compile exactly as before. *)
+let eval_invokes_effect te =
+  expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:true
+    ~on_app:(fun fn -> needs_cps fn.Typechecker.ty)
+    te
 
 (* Does this loop body contain a `break`/`continue` targeting THIS loop that sits
    inside a handler body? A handler body compiles to a separate JS function (the
