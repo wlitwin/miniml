@@ -58938,7 +58938,7 @@ function Js_codegen$mangle_name(name) {
 }
 function Js_codegen$create_ctx(type_env) {
   const tbl_13472 = Hashtbl$create(16);
-  const _t13473 = ({break_flag_name: "_break_flag", break_val_name: "_break_val", buf: Buffer$create(4096), cont_flag_name: "_cont_flag", current_fn_name: ({_tag: 0, _name: "None"}), current_fn_params: null, current_module: ({_tag: 0, _name: "None"}), direct_dispatch_ops: null, fold_cont_pending: false, function_arities: Hashtbl$create(64), handler_tail_resume: false, in_cps: false, in_fold_loop: false, in_full_handler: false, in_tail_position: false, indent: 0, loop_via_throw: false, scopes: ({_hd: tbl_13472, _tl: null}), tco_used: false, tmp_counter: 0, top_level_exports: null, trywith_ops: null, twinnable: Hashtbl$create(64), twins_emitted: Hashtbl$create(64), twins_requested: Hashtbl$create(64), type_env: type_env});
+  const _t13473 = ({break_flag_name: "_break_flag", break_val_name: "_break_val", buf: Buffer$create(4096), cont_flag_name: "_cont_flag", cps_form_vars: Hashtbl$create(16), current_fn_name: ({_tag: 0, _name: "None"}), current_fn_params: null, current_module: ({_tag: 0, _name: "None"}), direct_dispatch_ops: null, fold_cont_pending: false, function_arities: Hashtbl$create(64), handler_tail_resume: false, in_cps: false, in_fold_loop: false, in_full_handler: false, in_tail_position: false, indent: 0, loop_via_throw: false, scopes: ({_hd: tbl_13472, _tl: null}), tco_used: false, tmp_counter: 0, top_level_exports: null, trywith_ops: null, twinnable: Hashtbl$create(64), twins_emitted: Hashtbl$create(64), twins_requested: Hashtbl$create(64), type_env: type_env});
   return _t13473;
 }
 function Js_codegen$with_in_cps(ctx, value, f) {
@@ -61845,7 +61845,7 @@ function Js_codegen$compile_named_function(ctx, js_name, fn_expr) {
         Js_codegen$emit_line(ctx, "}");
         let _t14226;
         if ((Ir_analysis$needs_cps(fn_expr.ty) && (!has_return))) {
-          _t14226 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.twinnable, js_name, [all_params, js_params_14200, final_body]]);
+          _t14226 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.twinnable, js_name, [all_params, js_params_14200, final_body, fn_expr.ty]]);
         } else {
           _t14226 = undefined;
         }
@@ -61878,6 +61878,7 @@ function Js_codegen$emit_cps_twin(ctx, js_name) {
       const all_params = _t14229._val[0];
       const js_params = _t14229._val[1];
       const final_body = _t14229._val[2];
+      const fn_ty = _t14229._val[3];
       _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.twins_emitted, js_name, undefined]);
       const k_param_14232 = "$k";
       const saved_ifh_14234 = ctx.in_full_handler;
@@ -61891,23 +61892,33 @@ function Js_codegen$emit_cps_twin(ctx, js_name) {
         return Js_codegen$bind_var(ctx, mml_name, js_nm);
       }
       List$iter2(_t14236, all_params, js_params);
-      function _t14237(_) {
-        function _t14238(_) {
-          function _t14239(_) {
-            function _t14240(v) {
+      const cps_ps_14237 = _call(Js_codegen$cps_form_param_names, [fn_ty, js_params]);
+      function _t14239(p) {
+        return _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.cps_form_vars, p, undefined]);
+      }
+      List$iter(_t14239, cps_ps_14237);
+      function _t14240(_) {
+        function _t14241(_) {
+          function _t14242(_) {
+            function _t14243(v) {
               return Js_codegen$emit_line(ctx, (((("return _bounce(function() { return " + __dict_Show_string.show(k_param_14232)) + "(") + __dict_Show_string.show(v)) + "); });"));
             }
-            return _call(Js_codegen$compile_cps, [ctx, final_body, _t14240]);
+            return _call(Js_codegen$compile_cps, [ctx, final_body, _t14243]);
           }
-          return Js_codegen$with_in_cps(ctx, true, _t14239);
+          return Js_codegen$with_in_cps(ctx, true, _t14242);
         }
-        return Js_codegen$with_function_ctx(ctx, ({_tag: 0, _name: "None"}), null, null, null, false, _t14238);
+        return Js_codegen$with_function_ctx(ctx, ({_tag: 0, _name: "None"}), null, null, null, false, _t14241);
       }
-      Js_codegen$with_handler_tail_resume(ctx, false, _t14237);
+      Js_codegen$with_handler_tail_resume(ctx, false, _t14240);
+      function _t14244(p) {
+        return _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, ctx.cps_form_vars, p]);
+      }
+      List$iter(_t14244, cps_ps_14237);
       Js_codegen$pop_scope(ctx);
       (ctx.indent = (ctx.indent - 1), undefined);
       Js_codegen$emit_line(ctx, "}");
-      const _t14235 = (ctx.in_full_handler = saved_ifh_14234, undefined);
+      const _t14238 = (ctx.in_full_handler = saved_ifh_14234, undefined);
+      const _t14235 = _t14238;
       const _t14233 = _t14235;
       _t14230 = _t14233;
       break _t14231;
@@ -61916,2832 +61927,3003 @@ function Js_codegen$emit_cps_twin(ctx, js_name) {
   }
   return _t14230;
 }
+function Js_codegen$cps_form_param_names(fn_ty, js_params) {
+  function param_types(ty) {
+    let _t14246;
+    const _t14245 = Types$repr(ty);
+    _t14247: {
+      if (_t14245._tag === 7) {
+        const a = _t14245._val[0];
+        const r = _t14245._val[2];
+        _t14246 = ({_hd: a, _tl: param_types(r)});
+        break _t14247;
+      }
+      if (_t14245._tag === 8) {
+        const a = _t14245._val[0];
+        const r = _t14245._val[2];
+        _t14246 = ({_hd: a, _tl: param_types(r)});
+        break _t14247;
+      }
+      _t14246 = null;
+      break _t14247;
+    }
+    return _t14246;
+  }
+  const ptys_14249 = param_types(fn_ty);
+  function zip(ps, tys) {
+    while (true) {
+      let _t14252;
+      const _t14251 = [ps, tys];
+      _t14253: {
+        if (_t14251[0] !== null) {
+          if (_t14251[1] !== null) {
+            const p = _t14251[0]._hd;
+            const ps$p = _t14251[0]._tl;
+            const t = _t14251[1]._hd;
+            const tys$p = _t14251[1]._tl;
+            let _t14254;
+            if (Ir_analysis$needs_cps(t)) {
+              _t14254 = ({_hd: p, _tl: zip(ps$p, tys$p)});
+            } else {
+              const _t14255 = ps$p;
+              const _t14256 = tys$p;
+              ps = _t14255;
+              tys = _t14256;
+              continue;
+              _t14254 = undefined;
+            }
+            _t14252 = _t14254;
+            break _t14253;
+          }
+          _t14252 = null;
+          break _t14253;
+        }
+        _t14252 = null;
+        break _t14253;
+      }
+      return _t14252;
+    }
+  }
+  const _t14257 = zip(js_params, ptys_14249);
+  const _t14250 = _t14257;
+  const _t14248 = _t14250;
+  return _t14248;
+}
+function Js_codegen$compile_cps_value(ctx, te) {
+  let _t14259;
+  const _t14258 = te.expr;
+  _t14260: {
+    if (_t14258._tag === 10) {
+      if (!_t14258._val[2]) {
+        const param = _t14258._val[0];
+        const body = _t14258._val[1];
+        function collect_params(params, b) {
+          while (true) {
+            let _t14262;
+            const _t14261 = b.expr;
+            _t14263: {
+              if (_t14261._tag === 10) {
+                if (!_t14261._val[2]) {
+                  const p = _t14261._val[0];
+                  const inner = _t14261._val[1];
+                  const _t14264 = ({_hd: p, _tl: params});
+                  const _t14265 = inner;
+                  params = _t14264;
+                  b = _t14265;
+                  continue;
+                  _t14262 = undefined;
+                  break _t14263;
+                }
+                _t14262 = [List$rev(params), b];
+                break _t14263;
+              }
+              _t14262 = [List$rev(params), b];
+              break _t14263;
+            }
+            return _t14262;
+          }
+        }
+        let _t14268;
+        const _t14267 = collect_params(({_hd: param, _tl: null}), body);
+        _t14269: {
+          const all_params = _t14267[0];
+          const final_body = _t14267[1];
+          const js_params_14270 = Js_codegen$dedup_js_params(List$map(Js_codegen$mangle_name, all_params));
+          const fn_name_14272 = Js_codegen$fresh_tmp(ctx);
+          const k_param_14274 = "$k";
+          Js_codegen$emit_indent(ctx);
+          Js_codegen$emit(ctx, (((("function " + __dict_Show_string.show(fn_name_14272)) + "(") + __dict_Show_string.show(_call(String$concat, [", ", List$concat(js_params_14270, ({_hd: k_param_14274, _tl: null}))]))) + ") "));
+          Js_codegen$emit(ctx, "{\n");
+          (ctx.indent = (ctx.indent + 1), undefined);
+          Js_codegen$push_scope(ctx);
+          function _t14276(m, j) {
+            return Js_codegen$bind_var(ctx, m, j);
+          }
+          List$iter2(_t14276, all_params, js_params_14270);
+          const cps_ps_14277 = Js_codegen$cps_form_param_names(te.ty, js_params_14270);
+          function _t14279(p) {
+            return _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.cps_form_vars, p, undefined]);
+          }
+          List$iter(_t14279, cps_ps_14277);
+          function _t14280(_) {
+            function _t14281(_) {
+              function _t14282(_) {
+                function _t14283(v) {
+                  return Js_codegen$emit_line(ctx, (((("return _bounce(function() { return " + __dict_Show_string.show(k_param_14274)) + "(") + __dict_Show_string.show(v)) + "); });"));
+                }
+                return _call(Js_codegen$compile_cps, [ctx, final_body, _t14283]);
+              }
+              return Js_codegen$with_in_cps(ctx, true, _t14282);
+            }
+            return Js_codegen$with_function_ctx(ctx, ({_tag: 0, _name: "None"}), null, null, null, false, _t14281);
+          }
+          Js_codegen$with_handler_tail_resume(ctx, false, _t14280);
+          function _t14284(p) {
+            return _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, ctx.cps_form_vars, p]);
+          }
+          List$iter(_t14284, cps_ps_14277);
+          Js_codegen$pop_scope(ctx);
+          (ctx.indent = (ctx.indent - 1), undefined);
+          Js_codegen$emit_line(ctx, "}");
+          const _t14278 = fn_name_14272;
+          const _t14275 = _t14278;
+          const _t14273 = _t14275;
+          const _t14271 = _t14273;
+          _t14268 = _t14271;
+          break _t14269;
+        }
+        const _t14266 = _t14268;
+        _t14259 = _t14266;
+        break _t14260;
+      }
+      _t14259 = Js_codegen$compile_non_tail(ctx, te);
+      break _t14260;
+    }
+    if (_t14258._tag === 7) {
+      const name = _t14258._val;
+      const jsn_14285 = Js_codegen$lookup_var(ctx, name);
+      let _t14287;
+      if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, ctx.twinnable, jsn_14285])) {
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.twins_requested, jsn_14285, undefined]);
+        _t14287 = (jsn_14285 + "$cps");
+      } else {
+        _t14287 = jsn_14285;
+      }
+      const _t14286 = _t14287;
+      _t14259 = _t14286;
+      break _t14260;
+    }
+    _t14259 = Js_codegen$compile_non_tail(ctx, te);
+    break _t14260;
+  }
+  return _t14259;
+}
 function Js_codegen$drain_cps_twins(ctx) {
   function loop(_) {
     while (true) {
-      function _t14241(_) {
-        function _t14242(n, _, acc) {
-          let _t14243;
+      function _t14288(_) {
+        function _t14289(n, _, acc) {
+          let _t14290;
           if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, ctx.twins_emitted, n])) {
-            _t14243 = acc;
+            _t14290 = acc;
           } else {
-            _t14243 = ({_hd: n, _tl: acc});
+            _t14290 = ({_hd: n, _tl: acc});
           }
-          return _t14243;
+          return _t14290;
         }
-        return Hashtbl$fold(_t14242, ctx.twins_requested, null);
+        return Hashtbl$fold(_t14289, ctx.twins_requested, null);
       }
-      let _t14245;
-      const _t14244 = _t14241(undefined);
-      _t14246: {
-        if (_t14244 === null) {
-          _t14245 = undefined;
-          break _t14246;
+      let _t14292;
+      const _t14291 = _t14288(undefined);
+      _t14293: {
+        if (_t14291 === null) {
+          _t14292 = undefined;
+          break _t14293;
         }
-        const names = _t14244;
+        const names = _t14291;
         List$iter(_call(Js_codegen$emit_cps_twin, [ctx]), names);
-        const _t14247 = undefined;
-        _ = _t14247;
+        const _t14294 = undefined;
+        _ = _t14294;
         continue;
-        _t14245 = undefined;
-        break _t14246;
+        _t14292 = undefined;
+        break _t14293;
       }
-      return _t14245;
+      return _t14292;
     }
   }
-  const _t14248 = loop(undefined);
-  return _t14248;
+  const _t14295 = loop(undefined);
+  return _t14295;
 }
 function Js_codegen$compile_app(ctx, _te, fn_, arg) {
   function collect_args(expr, acc) {
     while (true) {
-      let _t14250;
-      const _t14249 = expr.expr;
-      _t14251: {
-        if (_t14249._tag === 11) {
-          const inner_fn = _t14249._val[0];
-          const inner_arg = _t14249._val[1];
-          const _t14252 = inner_fn;
-          const _t14253 = ({_hd: inner_arg, _tl: acc});
-          expr = _t14252;
-          acc = _t14253;
+      let _t14297;
+      const _t14296 = expr.expr;
+      _t14298: {
+        if (_t14296._tag === 11) {
+          const inner_fn = _t14296._val[0];
+          const inner_arg = _t14296._val[1];
+          const _t14299 = inner_fn;
+          const _t14300 = ({_hd: inner_arg, _tl: acc});
+          expr = _t14299;
+          acc = _t14300;
           continue;
-          _t14250 = undefined;
-          break _t14251;
+          _t14297 = undefined;
+          break _t14298;
         }
-        _t14250 = [expr, acc];
-        break _t14251;
+        _t14297 = [expr, acc];
+        break _t14298;
       }
-      return _t14250;
+      return _t14297;
     }
   }
-  let _t14256;
-  const _t14255 = collect_args(fn_, ({_hd: arg, _tl: null}));
-  _t14257: {
-    const base_fn = _t14255[0];
-    const all_args = _t14255[1];
-    const n_14258 = List$length(all_args);
-    let _t14261;
-    const _t14260 = [ctx.current_fn_name, base_fn.expr];
-    _t14262: {
-      if (_t14260[0]._tag === 1) {
-        if (_t14260[1]._tag === 7) {
-          const fn_name = _t14260[0]._val;
-          const var_name = _t14260[1]._val;
-          _t14261 = ((Js_codegen$mangle_name(var_name) === fn_name) && (n_14258 === List$length(ctx.current_fn_params)));
-          break _t14262;
+  let _t14303;
+  const _t14302 = collect_args(fn_, ({_hd: arg, _tl: null}));
+  _t14304: {
+    const base_fn = _t14302[0];
+    const all_args = _t14302[1];
+    const n_14305 = List$length(all_args);
+    let _t14308;
+    const _t14307 = [ctx.current_fn_name, base_fn.expr];
+    _t14309: {
+      if (_t14307[0]._tag === 1) {
+        if (_t14307[1]._tag === 7) {
+          const fn_name = _t14307[0]._val;
+          const var_name = _t14307[1]._val;
+          _t14308 = ((Js_codegen$mangle_name(var_name) === fn_name) && (n_14305 === List$length(ctx.current_fn_params)));
+          break _t14309;
         }
-        _t14261 = false;
-        break _t14262;
+        _t14308 = false;
+        break _t14309;
       }
-      _t14261 = false;
-      break _t14262;
+      _t14308 = false;
+      break _t14309;
     }
-    const is_self_call_14263 = _t14261;
-    let _t14265;
-    if ((is_self_call_14263 && ctx.in_tail_position)) {
+    const is_self_call_14310 = _t14308;
+    let _t14312;
+    if ((is_self_call_14310 && ctx.in_tail_position)) {
       (ctx.tco_used = true, undefined);
-      function _t14266(a) {
-        const tmp_14267 = Js_codegen$fresh_tmp(ctx);
-        const v_14269 = Js_codegen$compile_non_tail(ctx, a);
-        Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(tmp_14267)) + " = ") + __dict_Show_string.show(v_14269)) + ";"));
-        const _t14270 = tmp_14267;
-        const _t14268 = _t14270;
-        return _t14268;
+      function _t14313(a) {
+        const tmp_14314 = Js_codegen$fresh_tmp(ctx);
+        const v_14316 = Js_codegen$compile_non_tail(ctx, a);
+        Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(tmp_14314)) + " = ") + __dict_Show_string.show(v_14316)) + ";"));
+        const _t14317 = tmp_14314;
+        const _t14315 = _t14317;
+        return _t14315;
       }
-      const arg_tmps_14271 = List$map(_t14266, all_args);
-      function _t14273(param, tmp) {
+      const arg_tmps_14318 = List$map(_t14313, all_args);
+      function _t14320(param, tmp) {
         return Js_codegen$emit_line(ctx, (((__dict_Show_string.show(param) + " = ") + __dict_Show_string.show(tmp)) + ";"));
       }
-      List$iter2(_t14273, ctx.current_fn_params, arg_tmps_14271);
+      List$iter2(_t14320, ctx.current_fn_params, arg_tmps_14318);
       Js_codegen$emit_line(ctx, "continue;");
-      const _t14272 = "undefined";
-      _t14265 = _t14272;
+      const _t14319 = "undefined";
+      _t14312 = _t14319;
     } else {
-      const fn_js_14274 = Js_codegen$compile_non_tail(ctx, base_fn);
-      let _t14276;
+      const fn_js_14321 = Js_codegen$compile_non_tail(ctx, base_fn);
+      let _t14323;
       if (!_eq(ctx.direct_dispatch_ops, null)) {
-        function _t14277(_) {
+        function _t14324(_) {
           return List$map(_call(Js_codegen$compile_non_tail, [ctx]), all_args);
         }
-        _t14276 = Js_codegen$with_in_cps(ctx, true, _t14277);
+        _t14323 = Js_codegen$with_in_cps(ctx, true, _t14324);
       } else {
-        _t14276 = List$map(_call(Js_codegen$compile_non_tail, [ctx]), all_args);
+        _t14323 = List$map(_call(Js_codegen$compile_non_tail, [ctx]), all_args);
       }
-      const args_js_14278 = _t14276;
-      let _t14281;
-      const _t14280 = base_fn.expr;
-      _t14282: {
-        if (_t14280._tag === 7) {
-          const name = _t14280._val;
-          const js_nm_14283 = Js_codegen$lookup_var(ctx, name);
-          const _t14284 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, ctx.function_arities, js_nm_14283]);
-          _t14281 = _t14284;
-          break _t14282;
+      const args_js_14325 = _t14323;
+      let _t14328;
+      const _t14327 = base_fn.expr;
+      _t14329: {
+        if (_t14327._tag === 7) {
+          const name = _t14327._val;
+          const js_nm_14330 = Js_codegen$lookup_var(ctx, name);
+          const _t14331 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, ctx.function_arities, js_nm_14330]);
+          _t14328 = _t14331;
+          break _t14329;
         }
-        _t14281 = ({_tag: 0, _name: "None"});
-        break _t14282;
+        _t14328 = ({_tag: 0, _name: "None"});
+        break _t14329;
       }
-      const actual_arity_14285 = _t14281;
-      let _t14288;
-      const _t14287 = actual_arity_14285;
-      _t14289: {
-        if (_t14287._tag === 0) {
-          let _t14291;
-          const _t14290 = base_fn.expr;
-          _t14292: {
-            if (_t14290._tag === 7) {
-              let _t14293;
-              if ((n_14258 === 1)) {
-                _t14293 = Js_codegen$count_arrows(base_fn.ty);
+      const actual_arity_14332 = _t14328;
+      let _t14335;
+      const _t14334 = actual_arity_14332;
+      _t14336: {
+        if (_t14334._tag === 0) {
+          let _t14338;
+          const _t14337 = base_fn.expr;
+          _t14339: {
+            if (_t14337._tag === 7) {
+              let _t14340;
+              if ((n_14305 === 1)) {
+                _t14340 = Js_codegen$count_arrows(base_fn.ty);
               } else {
-                _t14293 = ({_tag: 0, _name: "None"});
+                _t14340 = ({_tag: 0, _name: "None"});
               }
-              _t14291 = _t14293;
-              break _t14292;
+              _t14338 = _t14340;
+              break _t14339;
             }
-            _t14291 = Js_codegen$count_arrows(base_fn.ty);
-            break _t14292;
+            _t14338 = Js_codegen$count_arrows(base_fn.ty);
+            break _t14339;
           }
-          _t14288 = _t14291;
-          break _t14289;
+          _t14335 = _t14338;
+          break _t14336;
         }
-        if (_t14287._tag === 1) {
-          _t14288 = actual_arity_14285;
-          break _t14289;
+        if (_t14334._tag === 1) {
+          _t14335 = actual_arity_14332;
+          break _t14336;
         }
         _match_fail("line 0");
       }
-      const known_arity_14294 = _t14288;
-      function _t14296(a) {
-        let _t14298;
-        const _t14297 = a.expr;
-        _t14299: {
-          if (_t14297._tag === 7) {
-            const name = _t14297._val;
-            _t14298 = (((String$length(name) >= 7) && (_call(String$sub, [name, 0, 7]) === "__dict_")) || ((String$length(name) >= 5) && (_call(String$sub, [name, 0, 5]) === "__ev_")));
-            break _t14299;
+      const known_arity_14341 = _t14335;
+      function _t14343(a) {
+        let _t14345;
+        const _t14344 = a.expr;
+        _t14346: {
+          if (_t14344._tag === 7) {
+            const name = _t14344._val;
+            _t14345 = (((String$length(name) >= 7) && (_call(String$sub, [name, 0, 7]) === "__dict_")) || ((String$length(name) >= 5) && (_call(String$sub, [name, 0, 5]) === "__ev_")));
+            break _t14346;
           }
-          _t14298 = false;
-          break _t14299;
+          _t14345 = false;
+          break _t14346;
         }
-        return _t14298;
+        return _t14345;
       }
-      const has_implicit_args_14300 = List$exists(_t14296, all_args);
-      let _t14303;
-      const _t14302 = [base_fn.expr, all_args];
-      _t14304: {
-        if (_t14302[0]._tag === 7) {
-          if (_t14302[1] !== null) {
-            if (_t14302[1]._tl === null) {
-              const pname = _t14302[0]._val;
-              const a = _t14302[1]._hd;
+      const has_implicit_args_14347 = List$exists(_t14343, all_args);
+      let _t14350;
+      const _t14349 = [base_fn.expr, all_args];
+      _t14351: {
+        if (_t14349[0]._tag === 7) {
+          if (_t14349[1] !== null) {
+            if (_t14349[1]._tl === null) {
+              const pname = _t14349[0]._val;
+              const a = _t14349[1]._hd;
               if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
-                const pname = _t14302[0]._val;
-                const a = _t14302[1]._hd;
-                _t14303 = Js_codegen$float_shape(ctx.type_env, a.ty);
-                break _t14304;
+                const pname = _t14349[0]._val;
+                const a = _t14349[1]._hd;
+                _t14350 = Js_codegen$float_shape(ctx.type_env, a.ty);
+                break _t14351;
               } else {
-                _t14303 = ({_tag: 0, _name: "None"});
-                break _t14304;
+                _t14350 = ({_tag: 0, _name: "None"});
+                break _t14351;
               }
             }
-            _t14303 = ({_tag: 0, _name: "None"});
-            break _t14304;
+            _t14350 = ({_tag: 0, _name: "None"});
+            break _t14351;
           }
-          _t14303 = ({_tag: 0, _name: "None"});
-          break _t14304;
+          _t14350 = ({_tag: 0, _name: "None"});
+          break _t14351;
         }
-        _t14303 = ({_tag: 0, _name: "None"});
-        break _t14304;
+        _t14350 = ({_tag: 0, _name: "None"});
+        break _t14351;
       }
-      const print_shape_14305 = _t14303;
-      let _t14307;
-      if ((_eq(known_arity_14294, ({_tag: 1, _name: "Some", _val: n_14258})) && (!has_implicit_args_14300))) {
-        let _t14309;
-        const _t14308 = print_shape_14305;
-        _t14310: {
-          if (_t14308._tag === 0) {
-            _t14309 = args_js_14278;
-            break _t14310;
+      const print_shape_14352 = _t14350;
+      let _t14354;
+      if ((_eq(known_arity_14341, ({_tag: 1, _name: "Some", _val: n_14305})) && (!has_implicit_args_14347))) {
+        let _t14356;
+        const _t14355 = print_shape_14352;
+        _t14357: {
+          if (_t14355._tag === 0) {
+            _t14356 = args_js_14325;
+            break _t14357;
           }
-          if (_t14308._tag === 1) {
-            const s = _t14308._val;
-            _t14309 = List$concat(args_js_14278, ({_hd: s, _tl: null}));
-            break _t14310;
+          if (_t14355._tag === 1) {
+            const s = _t14355._val;
+            _t14356 = List$concat(args_js_14325, ({_hd: s, _tl: null}));
+            break _t14357;
           }
           _match_fail("line 0");
         }
-        const args_js_14311 = _t14309;
-        const _t14312 = (fn_js_14274 + ("(" + (_call(String$concat, [", ", args_js_14311]) + ")")));
-        _t14307 = _t14312;
+        const args_js_14358 = _t14356;
+        const _t14359 = (fn_js_14321 + ("(" + (_call(String$concat, [", ", args_js_14358]) + ")")));
+        _t14354 = _t14359;
       } else {
-        _t14307 = ("_call(" + (fn_js_14274 + (", [" + (_call(String$concat, [", ", args_js_14278]) + "])"))));
+        _t14354 = ("_call(" + (fn_js_14321 + (", [" + (_call(String$concat, [", ", args_js_14325]) + "])"))));
       }
-      const _t14306 = _t14307;
-      const _t14301 = _t14306;
-      const _t14295 = _t14301;
-      const _t14286 = _t14295;
-      const _t14279 = _t14286;
-      const _t14275 = _t14279;
-      _t14265 = _t14275;
+      const _t14353 = _t14354;
+      const _t14348 = _t14353;
+      const _t14342 = _t14348;
+      const _t14333 = _t14342;
+      const _t14326 = _t14333;
+      const _t14322 = _t14326;
+      _t14312 = _t14322;
     }
-    const _t14264 = _t14265;
-    const _t14259 = _t14264;
-    _t14256 = _t14259;
-    break _t14257;
+    const _t14311 = _t14312;
+    const _t14306 = _t14311;
+    _t14303 = _t14306;
+    break _t14304;
   }
-  const _t14254 = _t14256;
-  return _t14254;
+  const _t14301 = _t14303;
+  return _t14301;
 }
 function Js_codegen$count_arrows(ty) {
   function go(ty, n) {
     while (true) {
-      let _t14314;
-      const _t14313 = Types$repr(ty);
-      _t14315: {
-        if (_t14313._tag === 7) {
-          const ret = _t14313._val[2];
-          const _t14316 = ret;
-          const _t14317 = (n + 1);
-          ty = _t14316;
-          n = _t14317;
+      let _t14361;
+      const _t14360 = Types$repr(ty);
+      _t14362: {
+        if (_t14360._tag === 7) {
+          const ret = _t14360._val[2];
+          const _t14363 = ret;
+          const _t14364 = (n + 1);
+          ty = _t14363;
+          n = _t14364;
           continue;
-          _t14314 = undefined;
-          break _t14315;
+          _t14361 = undefined;
+          break _t14362;
         }
-        _t14314 = n;
-        break _t14315;
+        _t14361 = n;
+        break _t14362;
       }
-      return _t14314;
+      return _t14361;
     }
   }
-  const n_14319 = go(ty, 0);
-  let _t14321;
-  if ((n_14319 > 0)) {
-    _t14321 = ({_tag: 1, _name: "Some", _val: n_14319});
+  const n_14366 = go(ty, 0);
+  let _t14368;
+  if ((n_14366 > 0)) {
+    _t14368 = ({_tag: 1, _name: "Some", _val: n_14366});
   } else {
-    _t14321 = ({_tag: 0, _name: "None"});
+    _t14368 = ({_tag: 0, _name: "None"});
   }
-  const _t14320 = _t14321;
-  const _t14318 = _t14320;
-  return _t14318;
+  const _t14367 = _t14368;
+  const _t14365 = _t14367;
+  return _t14365;
 }
 function Js_codegen$compile_binop(ctx, op, e1, e2) {
-  let _t14323;
-  const _t14322 = op;
-  _t14324: {
-    if (_t14322._tag === 0) {
-      const resolved_14325 = Types$repr(e1.ty);
-      let _t14328;
-      const _t14327 = resolved_14325;
-      _t14329: {
-        if (_t14327._tag === 1) {
-          const a_14330 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14332 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14335;
-          const _t14334 = op;
-          _t14336: {
-            if (_t14334._tag === 0) {
-              _t14335 = "+";
-              break _t14336;
+  let _t14370;
+  const _t14369 = op;
+  _t14371: {
+    if (_t14369._tag === 0) {
+      const resolved_14372 = Types$repr(e1.ty);
+      let _t14375;
+      const _t14374 = resolved_14372;
+      _t14376: {
+        if (_t14374._tag === 1) {
+          const a_14377 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14379 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14382;
+          const _t14381 = op;
+          _t14383: {
+            if (_t14381._tag === 0) {
+              _t14382 = "+";
+              break _t14383;
             }
-            if (_t14334._tag === 3) {
-              _t14335 = "/";
-              break _t14336;
+            if (_t14381._tag === 3) {
+              _t14382 = "/";
+              break _t14383;
             }
-            if (_t14334._tag === 2) {
-              _t14335 = "*";
-              break _t14336;
+            if (_t14381._tag === 2) {
+              _t14382 = "*";
+              break _t14383;
             }
-            if (_t14334._tag === 1) {
-              _t14335 = "-";
-              break _t14336;
+            if (_t14381._tag === 1) {
+              _t14382 = "-";
+              break _t14383;
             }
-            _t14335 = failwith("assert false");
-            break _t14336;
+            _t14382 = failwith("assert false");
+            break _t14383;
           }
-          const js_op_14337 = _t14335;
-          let _t14339;
-          if ((_eq(resolved_14325, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14339 = ("__num_div_int(" + (a_14330 + (", " + (b_14332 + ")"))));
+          const js_op_14384 = _t14382;
+          let _t14386;
+          if ((_eq(resolved_14372, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14386 = ("__num_div_int(" + (a_14377 + (", " + (b_14379 + ")"))));
           } else {
-            _t14339 = ("(" + (a_14330 + (" " + (js_op_14337 + (" " + (b_14332 + ")"))))));
+            _t14386 = ("(" + (a_14377 + (" " + (js_op_14384 + (" " + (b_14379 + ")"))))));
           }
-          const _t14338 = _t14339;
-          const _t14333 = _t14338;
-          const _t14331 = _t14333;
-          _t14328 = _t14331;
-          break _t14329;
+          const _t14385 = _t14386;
+          const _t14380 = _t14385;
+          const _t14378 = _t14380;
+          _t14375 = _t14378;
+          break _t14376;
         }
-        if (_t14327._tag === 0) {
-          const a_14340 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14342 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14345;
-          const _t14344 = op;
-          _t14346: {
-            if (_t14344._tag === 0) {
-              _t14345 = "+";
-              break _t14346;
+        if (_t14374._tag === 0) {
+          const a_14387 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14389 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14392;
+          const _t14391 = op;
+          _t14393: {
+            if (_t14391._tag === 0) {
+              _t14392 = "+";
+              break _t14393;
             }
-            if (_t14344._tag === 3) {
-              _t14345 = "/";
-              break _t14346;
+            if (_t14391._tag === 3) {
+              _t14392 = "/";
+              break _t14393;
             }
-            if (_t14344._tag === 2) {
-              _t14345 = "*";
-              break _t14346;
+            if (_t14391._tag === 2) {
+              _t14392 = "*";
+              break _t14393;
             }
-            if (_t14344._tag === 1) {
-              _t14345 = "-";
-              break _t14346;
+            if (_t14391._tag === 1) {
+              _t14392 = "-";
+              break _t14393;
             }
-            _t14345 = failwith("assert false");
-            break _t14346;
+            _t14392 = failwith("assert false");
+            break _t14393;
           }
-          const js_op_14347 = _t14345;
-          let _t14349;
-          if ((_eq(resolved_14325, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14349 = ("__num_div_int(" + (a_14340 + (", " + (b_14342 + ")"))));
+          const js_op_14394 = _t14392;
+          let _t14396;
+          if ((_eq(resolved_14372, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14396 = ("__num_div_int(" + (a_14387 + (", " + (b_14389 + ")"))));
           } else {
-            _t14349 = ("(" + (a_14340 + (" " + (js_op_14347 + (" " + (b_14342 + ")"))))));
+            _t14396 = ("(" + (a_14387 + (" " + (js_op_14394 + (" " + (b_14389 + ")"))))));
           }
-          const _t14348 = _t14349;
-          const _t14343 = _t14348;
-          const _t14341 = _t14343;
-          _t14328 = _t14341;
-          break _t14329;
+          const _t14395 = _t14396;
+          const _t14390 = _t14395;
+          const _t14388 = _t14390;
+          _t14375 = _t14388;
+          break _t14376;
         }
-        let _t14351;
-        const _t14350 = op;
-        _t14352: {
-          if (_t14350._tag === 0) {
-            _t14351 = "+";
-            break _t14352;
+        let _t14398;
+        const _t14397 = op;
+        _t14399: {
+          if (_t14397._tag === 0) {
+            _t14398 = "+";
+            break _t14399;
           }
-          if (_t14350._tag === 3) {
-            _t14351 = "/";
-            break _t14352;
+          if (_t14397._tag === 3) {
+            _t14398 = "/";
+            break _t14399;
           }
-          if (_t14350._tag === 2) {
-            _t14351 = "*";
-            break _t14352;
+          if (_t14397._tag === 2) {
+            _t14398 = "*";
+            break _t14399;
           }
-          if (_t14350._tag === 1) {
-            _t14351 = "-";
-            break _t14352;
+          if (_t14397._tag === 1) {
+            _t14398 = "-";
+            break _t14399;
           }
-          _t14351 = failwith("assert false");
-          break _t14352;
+          _t14398 = failwith("assert false");
+          break _t14399;
         }
-        const method_name_14353 = _t14351;
-        const _t14354 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14353, e1, e2]);
-        _t14328 = _t14354;
-        break _t14329;
+        const method_name_14400 = _t14398;
+        const _t14401 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14400, e1, e2]);
+        _t14375 = _t14401;
+        break _t14376;
       }
-      const _t14326 = _t14328;
-      _t14323 = _t14326;
-      break _t14324;
+      const _t14373 = _t14375;
+      _t14370 = _t14373;
+      break _t14371;
     }
-    if (_t14322._tag === 11) {
-      const a_14355 = Js_codegen$compile_non_tail(ctx, e1);
-      const buf_before_14357 = Buffer$length(ctx.buf);
-      const b_14359 = Js_codegen$compile_non_tail(ctx, e2);
-      let _t14361;
-      if ((Buffer$length(ctx.buf) === buf_before_14357)) {
-        _t14361 = ("(" + (a_14355 + (" && " + (b_14359 + ")"))));
+    if (_t14369._tag === 11) {
+      const a_14402 = Js_codegen$compile_non_tail(ctx, e1);
+      const buf_before_14404 = Buffer$length(ctx.buf);
+      const b_14406 = Js_codegen$compile_non_tail(ctx, e2);
+      let _t14408;
+      if ((Buffer$length(ctx.buf) === buf_before_14404)) {
+        _t14408 = ("(" + (a_14402 + (" && " + (b_14406 + ")"))));
       } else {
-        const stmts_14362 = Buffer$sub(ctx.buf, buf_before_14357, (Buffer$length(ctx.buf) - buf_before_14357));
-        Buffer$truncate(ctx.buf, buf_before_14357);
-        const result_14364 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14364)) + ";"));
-        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(a_14355)) + ") {"));
+        const stmts_14409 = Buffer$sub(ctx.buf, buf_before_14404, (Buffer$length(ctx.buf) - buf_before_14404));
+        Buffer$truncate(ctx.buf, buf_before_14404);
+        const result_14411 = Js_codegen$fresh_tmp(ctx);
+        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14411)) + ";"));
+        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(a_14402)) + ") {"));
         (ctx.indent = (ctx.indent + 1), undefined);
-        Buffer$add_string(ctx.buf, stmts_14362);
-        Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14364) + " = ") + __dict_Show_string.show(b_14359)) + ";"));
+        Buffer$add_string(ctx.buf, stmts_14409);
+        Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14411) + " = ") + __dict_Show_string.show(b_14406)) + ";"));
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "} else {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        Js_codegen$emit_line(ctx, (__dict_Show_string.show(result_14364) + " = false;"));
+        Js_codegen$emit_line(ctx, (__dict_Show_string.show(result_14411) + " = false;"));
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "}");
-        const _t14365 = result_14364;
-        const _t14363 = _t14365;
-        _t14361 = _t14363;
+        const _t14412 = result_14411;
+        const _t14410 = _t14412;
+        _t14408 = _t14410;
       }
-      const _t14360 = _t14361;
-      const _t14358 = _t14360;
-      const _t14356 = _t14358;
-      _t14323 = _t14356;
-      break _t14324;
+      const _t14407 = _t14408;
+      const _t14405 = _t14407;
+      const _t14403 = _t14405;
+      _t14370 = _t14403;
+      break _t14371;
     }
-    if (_t14322._tag === 13) {
-      const a_14366 = Js_codegen$compile_non_tail(ctx, e1);
-      const b_14368 = Js_codegen$compile_non_tail(ctx, e2);
-      const _t14369 = ("(" + (a_14366 + (" + " + (b_14368 + ")"))));
-      const _t14367 = _t14369;
-      _t14323 = _t14367;
-      break _t14324;
+    if (_t14369._tag === 13) {
+      const a_14413 = Js_codegen$compile_non_tail(ctx, e1);
+      const b_14415 = Js_codegen$compile_non_tail(ctx, e2);
+      const _t14416 = ("(" + (a_14413 + (" + " + (b_14415 + ")"))));
+      const _t14414 = _t14416;
+      _t14370 = _t14414;
+      break _t14371;
     }
-    if (_t14322._tag === 3) {
-      const resolved_14370 = Types$repr(e1.ty);
-      let _t14373;
-      const _t14372 = resolved_14370;
-      _t14374: {
-        if (_t14372._tag === 1) {
-          const a_14375 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14377 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14380;
-          const _t14379 = op;
-          _t14381: {
-            if (_t14379._tag === 0) {
-              _t14380 = "+";
-              break _t14381;
+    if (_t14369._tag === 3) {
+      const resolved_14417 = Types$repr(e1.ty);
+      let _t14420;
+      const _t14419 = resolved_14417;
+      _t14421: {
+        if (_t14419._tag === 1) {
+          const a_14422 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14424 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14427;
+          const _t14426 = op;
+          _t14428: {
+            if (_t14426._tag === 0) {
+              _t14427 = "+";
+              break _t14428;
             }
-            if (_t14379._tag === 3) {
-              _t14380 = "/";
-              break _t14381;
+            if (_t14426._tag === 3) {
+              _t14427 = "/";
+              break _t14428;
             }
-            if (_t14379._tag === 2) {
-              _t14380 = "*";
-              break _t14381;
+            if (_t14426._tag === 2) {
+              _t14427 = "*";
+              break _t14428;
             }
-            if (_t14379._tag === 1) {
-              _t14380 = "-";
-              break _t14381;
+            if (_t14426._tag === 1) {
+              _t14427 = "-";
+              break _t14428;
             }
-            _t14380 = failwith("assert false");
-            break _t14381;
+            _t14427 = failwith("assert false");
+            break _t14428;
           }
-          const js_op_14382 = _t14380;
-          let _t14384;
-          if ((_eq(resolved_14370, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14384 = ("__num_div_int(" + (a_14375 + (", " + (b_14377 + ")"))));
+          const js_op_14429 = _t14427;
+          let _t14431;
+          if ((_eq(resolved_14417, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14431 = ("__num_div_int(" + (a_14422 + (", " + (b_14424 + ")"))));
           } else {
-            _t14384 = ("(" + (a_14375 + (" " + (js_op_14382 + (" " + (b_14377 + ")"))))));
+            _t14431 = ("(" + (a_14422 + (" " + (js_op_14429 + (" " + (b_14424 + ")"))))));
           }
-          const _t14383 = _t14384;
-          const _t14378 = _t14383;
-          const _t14376 = _t14378;
-          _t14373 = _t14376;
-          break _t14374;
+          const _t14430 = _t14431;
+          const _t14425 = _t14430;
+          const _t14423 = _t14425;
+          _t14420 = _t14423;
+          break _t14421;
         }
-        if (_t14372._tag === 0) {
-          const a_14385 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14387 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14390;
-          const _t14389 = op;
-          _t14391: {
-            if (_t14389._tag === 0) {
-              _t14390 = "+";
-              break _t14391;
+        if (_t14419._tag === 0) {
+          const a_14432 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14434 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14437;
+          const _t14436 = op;
+          _t14438: {
+            if (_t14436._tag === 0) {
+              _t14437 = "+";
+              break _t14438;
             }
-            if (_t14389._tag === 3) {
-              _t14390 = "/";
-              break _t14391;
+            if (_t14436._tag === 3) {
+              _t14437 = "/";
+              break _t14438;
             }
-            if (_t14389._tag === 2) {
-              _t14390 = "*";
-              break _t14391;
+            if (_t14436._tag === 2) {
+              _t14437 = "*";
+              break _t14438;
             }
-            if (_t14389._tag === 1) {
-              _t14390 = "-";
-              break _t14391;
+            if (_t14436._tag === 1) {
+              _t14437 = "-";
+              break _t14438;
             }
-            _t14390 = failwith("assert false");
-            break _t14391;
+            _t14437 = failwith("assert false");
+            break _t14438;
           }
-          const js_op_14392 = _t14390;
-          let _t14394;
-          if ((_eq(resolved_14370, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14394 = ("__num_div_int(" + (a_14385 + (", " + (b_14387 + ")"))));
+          const js_op_14439 = _t14437;
+          let _t14441;
+          if ((_eq(resolved_14417, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14441 = ("__num_div_int(" + (a_14432 + (", " + (b_14434 + ")"))));
           } else {
-            _t14394 = ("(" + (a_14385 + (" " + (js_op_14392 + (" " + (b_14387 + ")"))))));
+            _t14441 = ("(" + (a_14432 + (" " + (js_op_14439 + (" " + (b_14434 + ")"))))));
           }
-          const _t14393 = _t14394;
-          const _t14388 = _t14393;
-          const _t14386 = _t14388;
-          _t14373 = _t14386;
-          break _t14374;
+          const _t14440 = _t14441;
+          const _t14435 = _t14440;
+          const _t14433 = _t14435;
+          _t14420 = _t14433;
+          break _t14421;
         }
-        let _t14396;
-        const _t14395 = op;
-        _t14397: {
-          if (_t14395._tag === 0) {
-            _t14396 = "+";
-            break _t14397;
+        let _t14443;
+        const _t14442 = op;
+        _t14444: {
+          if (_t14442._tag === 0) {
+            _t14443 = "+";
+            break _t14444;
           }
-          if (_t14395._tag === 3) {
-            _t14396 = "/";
-            break _t14397;
+          if (_t14442._tag === 3) {
+            _t14443 = "/";
+            break _t14444;
           }
-          if (_t14395._tag === 2) {
-            _t14396 = "*";
-            break _t14397;
+          if (_t14442._tag === 2) {
+            _t14443 = "*";
+            break _t14444;
           }
-          if (_t14395._tag === 1) {
-            _t14396 = "-";
-            break _t14397;
+          if (_t14442._tag === 1) {
+            _t14443 = "-";
+            break _t14444;
           }
-          _t14396 = failwith("assert false");
-          break _t14397;
+          _t14443 = failwith("assert false");
+          break _t14444;
         }
-        const method_name_14398 = _t14396;
-        const _t14399 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14398, e1, e2]);
-        _t14373 = _t14399;
-        break _t14374;
+        const method_name_14445 = _t14443;
+        const _t14446 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14445, e1, e2]);
+        _t14420 = _t14446;
+        break _t14421;
       }
-      const _t14371 = _t14373;
-      _t14323 = _t14371;
-      break _t14324;
+      const _t14418 = _t14420;
+      _t14370 = _t14418;
+      break _t14371;
     }
-    if (_t14322._tag === 5) {
-      const resolved_14400 = Types$repr(e1.ty);
-      let _t14403;
-      const _t14402 = resolved_14400;
-      _t14404: {
-        if (_t14402._tag === 2) {
-          _t14403 = true;
-          break _t14404;
+    if (_t14369._tag === 5) {
+      const resolved_14447 = Types$repr(e1.ty);
+      let _t14450;
+      const _t14449 = resolved_14447;
+      _t14451: {
+        if (_t14449._tag === 2) {
+          _t14450 = true;
+          break _t14451;
         }
-        if (_t14402._tag === 4) {
-          _t14403 = true;
-          break _t14404;
+        if (_t14449._tag === 4) {
+          _t14450 = true;
+          break _t14451;
         }
-        if (_t14402._tag === 1) {
-          _t14403 = true;
-          break _t14404;
+        if (_t14449._tag === 1) {
+          _t14450 = true;
+          break _t14451;
         }
-        if (_t14402._tag === 0) {
-          _t14403 = true;
-          break _t14404;
+        if (_t14449._tag === 0) {
+          _t14450 = true;
+          break _t14451;
         }
-        if (_t14402._tag === 5) {
-          _t14403 = true;
-          break _t14404;
+        if (_t14449._tag === 5) {
+          _t14450 = true;
+          break _t14451;
         }
-        if (_t14402._tag === 3) {
-          _t14403 = true;
-          break _t14404;
+        if (_t14449._tag === 3) {
+          _t14450 = true;
+          break _t14451;
         }
-        if (_t14402._tag === 6) {
-          _t14403 = true;
-          break _t14404;
+        if (_t14449._tag === 6) {
+          _t14450 = true;
+          break _t14451;
         }
-        _t14403 = false;
-        break _t14404;
+        _t14450 = false;
+        break _t14451;
       }
-      const is_primitive_14405 = _t14403;
-      let _t14407;
-      if (is_primitive_14405) {
-        const a_14408 = Js_codegen$compile_non_tail(ctx, e1);
-        const b_14410 = Js_codegen$compile_non_tail(ctx, e2);
-        let _t14412;
+      const is_primitive_14452 = _t14450;
+      let _t14454;
+      if (is_primitive_14452) {
+        const a_14455 = Js_codegen$compile_non_tail(ctx, e1);
+        const b_14457 = Js_codegen$compile_non_tail(ctx, e2);
+        let _t14459;
         if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
-          _t14412 = "===";
+          _t14459 = "===";
         } else {
-          _t14412 = "!==";
+          _t14459 = "!==";
         }
-        const js_op_14413 = _t14412;
-        const _t14414 = ("(" + (a_14408 + (" " + (js_op_14413 + (" " + (b_14410 + ")"))))));
-        const _t14411 = _t14414;
-        const _t14409 = _t14411;
-        _t14407 = _t14409;
+        const js_op_14460 = _t14459;
+        const _t14461 = ("(" + (a_14455 + (" " + (js_op_14460 + (" " + (b_14457 + ")"))))));
+        const _t14458 = _t14461;
+        const _t14456 = _t14458;
+        _t14454 = _t14456;
       } else {
-        const conc_ty_14415 = Types$repr(e1.ty);
-        function _t14417(c) {
+        const conc_ty_14462 = Types$repr(e1.ty);
+        function _t14464(c) {
           return (c.class_name === "Eq");
         }
-        let _t14419;
-        const _t14418 = List$find(_t14417, ctx.type_env.classes);
-        _t14420: {
-          if (_t14418._tag === 0) {
-            _t14419 = ({_tag: 0, _name: "None"});
-            break _t14420;
+        let _t14466;
+        const _t14465 = List$find(_t14464, ctx.type_env.classes);
+        _t14467: {
+          if (_t14465._tag === 0) {
+            _t14466 = ({_tag: 0, _name: "None"});
+            break _t14467;
           }
-          if (_t14418._tag === 1) {
-            const class_def = _t14418._val;
-            const num_params_14421 = List$length(class_def.class_params);
-            function _t14423(_) {
-              return ({_tag: 1, _name: "Some", _val: conc_ty_14415});
+          if (_t14465._tag === 1) {
+            const class_def = _t14465._val;
+            const num_params_14468 = List$length(class_def.class_params);
+            function _t14470(_) {
+              return ({_tag: 1, _name: "Some", _val: conc_ty_14462});
             }
-            const partial_14424 = List$init(num_params_14421, _t14423);
-            function _t14426(opt) {
-              let _t14428;
-              const _t14427 = opt;
-              _t14429: {
-                if (_t14427._tag === 0) {
-                  _t14428 = ({_tag: 0, _name: "None"});
-                  break _t14429;
+            const partial_14471 = List$init(num_params_14468, _t14470);
+            function _t14473(opt) {
+              let _t14475;
+              const _t14474 = opt;
+              _t14476: {
+                if (_t14474._tag === 0) {
+                  _t14475 = ({_tag: 0, _name: "None"});
+                  break _t14476;
                 }
-                if (_t14427._tag === 1) {
-                  const ty = _t14427._val;
-                  let _t14431;
-                  const _t14430 = Types$repr(ty);
-                  _t14432: {
-                    if (_t14430._tag === 15) {
-                      if (_t14430._val.contents._tag === 0) {
-                        _t14431 = ({_tag: 0, _name: "None"});
-                        break _t14432;
+                if (_t14474._tag === 1) {
+                  const ty = _t14474._val;
+                  let _t14478;
+                  const _t14477 = Types$repr(ty);
+                  _t14479: {
+                    if (_t14477._tag === 15) {
+                      if (_t14477._val.contents._tag === 0) {
+                        _t14478 = ({_tag: 0, _name: "None"});
+                        break _t14479;
                       }
-                      _t14431 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
-                      break _t14432;
+                      _t14478 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
+                      break _t14479;
                     }
-                    _t14431 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
-                    break _t14432;
+                    _t14478 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
+                    break _t14479;
                   }
-                  _t14428 = _t14431;
-                  break _t14429;
+                  _t14475 = _t14478;
+                  break _t14476;
                 }
                 _match_fail("line 0");
               }
-              return _t14428;
+              return _t14475;
             }
-            const concrete_partial_14433 = List$map(_t14426, partial_14424);
-            function _t14435(inst) {
-              return ((inst.inst_class === "Eq") && ((List$length(inst.inst_tys) === num_params_14421) && (_eq(inst.inst_constraints, null) && Types$match_partial_inst(inst.inst_tys, concrete_partial_14433))));
+            const concrete_partial_14480 = List$map(_t14473, partial_14471);
+            function _t14482(inst) {
+              return ((inst.inst_class === "Eq") && ((List$length(inst.inst_tys) === num_params_14468) && (_eq(inst.inst_constraints, null) && Types$match_partial_inst(inst.inst_tys, concrete_partial_14480))));
             }
-            const matching_14436 = List$filter(_t14435, ctx.type_env.instances);
-            let _t14439;
-            const _t14438 = matching_14436;
-            _t14440: {
-              if (_t14438 === null) {
-                _t14439 = ({_tag: 0, _name: "None"});
-                break _t14440;
+            const matching_14483 = List$filter(_t14482, ctx.type_env.instances);
+            let _t14486;
+            const _t14485 = matching_14483;
+            _t14487: {
+              if (_t14485 === null) {
+                _t14486 = ({_tag: 0, _name: "None"});
+                break _t14487;
               }
-              if (_t14438 !== null) {
-                if (_t14438._tl === null) {
-                  const inst = _t14438._hd;
-                  _t14439 = ({_tag: 1, _name: "Some", _val: inst});
-                  break _t14440;
+              if (_t14485 !== null) {
+                if (_t14485._tl === null) {
+                  const inst = _t14485._hd;
+                  _t14486 = ({_tag: 1, _name: "Some", _val: inst});
+                  break _t14487;
                 }
-                _t14439 = Types$most_specific_inst(matching_14436);
-                break _t14440;
+                _t14486 = Types$most_specific_inst(matching_14483);
+                break _t14487;
               }
               _match_fail("line 0");
             }
-            const _t14437 = _t14439;
-            const _t14434 = _t14437;
-            const _t14425 = _t14434;
-            const _t14422 = _t14425;
-            _t14419 = _t14422;
-            break _t14420;
+            const _t14484 = _t14486;
+            const _t14481 = _t14484;
+            const _t14472 = _t14481;
+            const _t14469 = _t14472;
+            _t14466 = _t14469;
+            break _t14467;
           }
           _match_fail("line 0");
         }
-        const custom_eq_14441 = _t14419;
-        let _t14444;
-        const _t14443 = custom_eq_14441;
-        _t14445: {
-          if (_t14443._tag === 0) {
-            const a_14446 = Js_codegen$compile_non_tail(ctx, e1);
-            const b_14448 = Js_codegen$compile_non_tail(ctx, e2);
-            const eq_call_14450 = ("_eq(" + (a_14446 + (", " + (b_14448 + ")"))));
-            let _t14452;
+        const custom_eq_14488 = _t14466;
+        let _t14491;
+        const _t14490 = custom_eq_14488;
+        _t14492: {
+          if (_t14490._tag === 0) {
+            const a_14493 = Js_codegen$compile_non_tail(ctx, e1);
+            const b_14495 = Js_codegen$compile_non_tail(ctx, e2);
+            const eq_call_14497 = ("_eq(" + (a_14493 + (", " + (b_14495 + ")"))));
+            let _t14499;
             if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
-              _t14452 = eq_call_14450;
+              _t14499 = eq_call_14497;
             } else {
-              _t14452 = ("!" + eq_call_14450);
+              _t14499 = ("!" + eq_call_14497);
             }
-            const _t14451 = _t14452;
-            const _t14449 = _t14451;
-            const _t14447 = _t14449;
-            _t14444 = _t14447;
-            break _t14445;
+            const _t14498 = _t14499;
+            const _t14496 = _t14498;
+            const _t14494 = _t14496;
+            _t14491 = _t14494;
+            break _t14492;
           }
-          if (_t14443._tag === 1) {
-            const inst = _t14443._val;
-            let _t14453;
+          if (_t14490._tag === 1) {
+            const inst = _t14490._val;
+            let _t14500;
             if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
-              _t14453 = "=";
+              _t14500 = "=";
             } else {
-              _t14453 = "<>";
+              _t14500 = "<>";
             }
-            const method_name_14454 = _t14453;
-            const dict_access_14456 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name_14454)));
-            const a_14458 = Js_codegen$compile_non_tail(ctx, e1);
-            const b_14460 = Js_codegen$compile_non_tail(ctx, e2);
-            const _t14461 = ("_call(" + (dict_access_14456 + (", [" + (a_14458 + (", " + (b_14460 + "])"))))));
-            const _t14459 = _t14461;
-            const _t14457 = _t14459;
-            const _t14455 = _t14457;
-            _t14444 = _t14455;
-            break _t14445;
+            const method_name_14501 = _t14500;
+            const dict_access_14503 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name_14501)));
+            const a_14505 = Js_codegen$compile_non_tail(ctx, e1);
+            const b_14507 = Js_codegen$compile_non_tail(ctx, e2);
+            const _t14508 = ("_call(" + (dict_access_14503 + (", [" + (a_14505 + (", " + (b_14507 + "])"))))));
+            const _t14506 = _t14508;
+            const _t14504 = _t14506;
+            const _t14502 = _t14504;
+            _t14491 = _t14502;
+            break _t14492;
           }
           _match_fail("line 0");
         }
-        const _t14442 = _t14444;
-        const _t14416 = _t14442;
-        _t14407 = _t14416;
+        const _t14489 = _t14491;
+        const _t14463 = _t14489;
+        _t14454 = _t14463;
       }
-      const _t14406 = _t14407;
-      const _t14401 = _t14406;
-      _t14323 = _t14401;
-      break _t14324;
+      const _t14453 = _t14454;
+      const _t14448 = _t14453;
+      _t14370 = _t14448;
+      break _t14371;
     }
-    if (_t14322._tag === 10) {
-      const resolved_14462 = Types$repr(e1.ty);
-      let _t14465;
-      const _t14464 = resolved_14462;
-      _t14466: {
-        if (_t14464._tag === 4) {
-          _t14465 = true;
-          break _t14466;
+    if (_t14369._tag === 10) {
+      const resolved_14509 = Types$repr(e1.ty);
+      let _t14512;
+      const _t14511 = resolved_14509;
+      _t14513: {
+        if (_t14511._tag === 4) {
+          _t14512 = true;
+          break _t14513;
         }
-        if (_t14464._tag === 1) {
-          _t14465 = true;
-          break _t14466;
+        if (_t14511._tag === 1) {
+          _t14512 = true;
+          break _t14513;
         }
-        if (_t14464._tag === 0) {
-          _t14465 = true;
-          break _t14466;
+        if (_t14511._tag === 0) {
+          _t14512 = true;
+          break _t14513;
         }
-        if (_t14464._tag === 5) {
-          _t14465 = true;
-          break _t14466;
+        if (_t14511._tag === 5) {
+          _t14512 = true;
+          break _t14513;
         }
-        if (_t14464._tag === 3) {
-          _t14465 = true;
-          break _t14466;
+        if (_t14511._tag === 3) {
+          _t14512 = true;
+          break _t14513;
         }
-        _t14465 = false;
-        break _t14466;
+        _t14512 = false;
+        break _t14513;
       }
-      const is_builtin_14467 = _t14465;
-      let _t14469;
-      if (is_builtin_14467) {
-        const a_14470 = Js_codegen$compile_non_tail(ctx, e1);
-        const b_14472 = Js_codegen$compile_non_tail(ctx, e2);
-        let _t14475;
-        const _t14474 = op;
-        _t14476: {
-          if (_t14474._tag === 10) {
-            _t14475 = ">=";
-            break _t14476;
+      const is_builtin_14514 = _t14512;
+      let _t14516;
+      if (is_builtin_14514) {
+        const a_14517 = Js_codegen$compile_non_tail(ctx, e1);
+        const b_14519 = Js_codegen$compile_non_tail(ctx, e2);
+        let _t14522;
+        const _t14521 = op;
+        _t14523: {
+          if (_t14521._tag === 10) {
+            _t14522 = ">=";
+            break _t14523;
           }
-          if (_t14474._tag === 8) {
-            _t14475 = ">";
-            break _t14476;
+          if (_t14521._tag === 8) {
+            _t14522 = ">";
+            break _t14523;
           }
-          if (_t14474._tag === 9) {
-            _t14475 = "<=";
-            break _t14476;
+          if (_t14521._tag === 9) {
+            _t14522 = "<=";
+            break _t14523;
           }
-          if (_t14474._tag === 7) {
-            _t14475 = "<";
-            break _t14476;
+          if (_t14521._tag === 7) {
+            _t14522 = "<";
+            break _t14523;
           }
-          _t14475 = failwith("assert false");
-          break _t14476;
+          _t14522 = failwith("assert false");
+          break _t14523;
         }
-        const js_op_14477 = _t14475;
-        const _t14478 = ("(" + (a_14470 + (" " + (js_op_14477 + (" " + (b_14472 + ")"))))));
-        const _t14473 = _t14478;
-        const _t14471 = _t14473;
-        _t14469 = _t14471;
+        const js_op_14524 = _t14522;
+        const _t14525 = ("(" + (a_14517 + (" " + (js_op_14524 + (" " + (b_14519 + ")"))))));
+        const _t14520 = _t14525;
+        const _t14518 = _t14520;
+        _t14516 = _t14518;
       } else {
-        let _t14480;
-        const _t14479 = op;
-        _t14481: {
-          if (_t14479._tag === 10) {
-            _t14480 = ">=";
-            break _t14481;
+        let _t14527;
+        const _t14526 = op;
+        _t14528: {
+          if (_t14526._tag === 10) {
+            _t14527 = ">=";
+            break _t14528;
           }
-          if (_t14479._tag === 8) {
-            _t14480 = ">";
-            break _t14481;
+          if (_t14526._tag === 8) {
+            _t14527 = ">";
+            break _t14528;
           }
-          if (_t14479._tag === 9) {
-            _t14480 = "<=";
-            break _t14481;
+          if (_t14526._tag === 9) {
+            _t14527 = "<=";
+            break _t14528;
           }
-          if (_t14479._tag === 7) {
-            _t14480 = "<";
-            break _t14481;
+          if (_t14526._tag === 7) {
+            _t14527 = "<";
+            break _t14528;
           }
-          _t14480 = failwith("assert false");
-          break _t14481;
+          _t14527 = failwith("assert false");
+          break _t14528;
         }
-        const method_name_14482 = _t14480;
-        const _t14483 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14482, e1, e2]);
-        _t14469 = _t14483;
+        const method_name_14529 = _t14527;
+        const _t14530 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14529, e1, e2]);
+        _t14516 = _t14530;
       }
-      const _t14468 = _t14469;
-      const _t14463 = _t14468;
-      _t14323 = _t14463;
-      break _t14324;
+      const _t14515 = _t14516;
+      const _t14510 = _t14515;
+      _t14370 = _t14510;
+      break _t14371;
     }
-    if (_t14322._tag === 8) {
-      const resolved_14484 = Types$repr(e1.ty);
-      let _t14487;
-      const _t14486 = resolved_14484;
-      _t14488: {
-        if (_t14486._tag === 4) {
-          _t14487 = true;
-          break _t14488;
+    if (_t14369._tag === 8) {
+      const resolved_14531 = Types$repr(e1.ty);
+      let _t14534;
+      const _t14533 = resolved_14531;
+      _t14535: {
+        if (_t14533._tag === 4) {
+          _t14534 = true;
+          break _t14535;
         }
-        if (_t14486._tag === 1) {
-          _t14487 = true;
-          break _t14488;
+        if (_t14533._tag === 1) {
+          _t14534 = true;
+          break _t14535;
         }
-        if (_t14486._tag === 0) {
-          _t14487 = true;
-          break _t14488;
+        if (_t14533._tag === 0) {
+          _t14534 = true;
+          break _t14535;
         }
-        if (_t14486._tag === 5) {
-          _t14487 = true;
-          break _t14488;
+        if (_t14533._tag === 5) {
+          _t14534 = true;
+          break _t14535;
         }
-        if (_t14486._tag === 3) {
-          _t14487 = true;
-          break _t14488;
+        if (_t14533._tag === 3) {
+          _t14534 = true;
+          break _t14535;
         }
-        _t14487 = false;
-        break _t14488;
+        _t14534 = false;
+        break _t14535;
       }
-      const is_builtin_14489 = _t14487;
-      let _t14491;
-      if (is_builtin_14489) {
-        const a_14492 = Js_codegen$compile_non_tail(ctx, e1);
-        const b_14494 = Js_codegen$compile_non_tail(ctx, e2);
-        let _t14497;
-        const _t14496 = op;
-        _t14498: {
-          if (_t14496._tag === 10) {
-            _t14497 = ">=";
-            break _t14498;
+      const is_builtin_14536 = _t14534;
+      let _t14538;
+      if (is_builtin_14536) {
+        const a_14539 = Js_codegen$compile_non_tail(ctx, e1);
+        const b_14541 = Js_codegen$compile_non_tail(ctx, e2);
+        let _t14544;
+        const _t14543 = op;
+        _t14545: {
+          if (_t14543._tag === 10) {
+            _t14544 = ">=";
+            break _t14545;
           }
-          if (_t14496._tag === 8) {
-            _t14497 = ">";
-            break _t14498;
+          if (_t14543._tag === 8) {
+            _t14544 = ">";
+            break _t14545;
           }
-          if (_t14496._tag === 9) {
-            _t14497 = "<=";
-            break _t14498;
+          if (_t14543._tag === 9) {
+            _t14544 = "<=";
+            break _t14545;
           }
-          if (_t14496._tag === 7) {
-            _t14497 = "<";
-            break _t14498;
+          if (_t14543._tag === 7) {
+            _t14544 = "<";
+            break _t14545;
           }
-          _t14497 = failwith("assert false");
-          break _t14498;
+          _t14544 = failwith("assert false");
+          break _t14545;
         }
-        const js_op_14499 = _t14497;
-        const _t14500 = ("(" + (a_14492 + (" " + (js_op_14499 + (" " + (b_14494 + ")"))))));
-        const _t14495 = _t14500;
-        const _t14493 = _t14495;
-        _t14491 = _t14493;
+        const js_op_14546 = _t14544;
+        const _t14547 = ("(" + (a_14539 + (" " + (js_op_14546 + (" " + (b_14541 + ")"))))));
+        const _t14542 = _t14547;
+        const _t14540 = _t14542;
+        _t14538 = _t14540;
       } else {
-        let _t14502;
-        const _t14501 = op;
-        _t14503: {
-          if (_t14501._tag === 10) {
-            _t14502 = ">=";
-            break _t14503;
+        let _t14549;
+        const _t14548 = op;
+        _t14550: {
+          if (_t14548._tag === 10) {
+            _t14549 = ">=";
+            break _t14550;
           }
-          if (_t14501._tag === 8) {
-            _t14502 = ">";
-            break _t14503;
+          if (_t14548._tag === 8) {
+            _t14549 = ">";
+            break _t14550;
           }
-          if (_t14501._tag === 9) {
-            _t14502 = "<=";
-            break _t14503;
+          if (_t14548._tag === 9) {
+            _t14549 = "<=";
+            break _t14550;
           }
-          if (_t14501._tag === 7) {
-            _t14502 = "<";
-            break _t14503;
+          if (_t14548._tag === 7) {
+            _t14549 = "<";
+            break _t14550;
           }
-          _t14502 = failwith("assert false");
-          break _t14503;
+          _t14549 = failwith("assert false");
+          break _t14550;
         }
-        const method_name_14504 = _t14502;
-        const _t14505 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14504, e1, e2]);
-        _t14491 = _t14505;
+        const method_name_14551 = _t14549;
+        const _t14552 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14551, e1, e2]);
+        _t14538 = _t14552;
       }
-      const _t14490 = _t14491;
-      const _t14485 = _t14490;
-      _t14323 = _t14485;
-      break _t14324;
+      const _t14537 = _t14538;
+      const _t14532 = _t14537;
+      _t14370 = _t14532;
+      break _t14371;
     }
-    if (_t14322._tag === 14) {
-      const resolved_14506 = Types$repr(e1.ty);
-      let _t14509;
-      const _t14508 = resolved_14506;
-      _t14510: {
-        if (_t14508._tag === 0) {
-          const a_14511 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14513 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14516;
-          const _t14515 = op;
-          _t14517: {
-            if (_t14515._tag === 14) {
-              _t14516 = "&";
-              break _t14517;
+    if (_t14369._tag === 14) {
+      const resolved_14553 = Types$repr(e1.ty);
+      let _t14556;
+      const _t14555 = resolved_14553;
+      _t14557: {
+        if (_t14555._tag === 0) {
+          const a_14558 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14560 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14563;
+          const _t14562 = op;
+          _t14564: {
+            if (_t14562._tag === 14) {
+              _t14563 = "&";
+              break _t14564;
             }
-            if (_t14515._tag === 15) {
-              _t14516 = "|";
-              break _t14517;
+            if (_t14562._tag === 15) {
+              _t14563 = "|";
+              break _t14564;
             }
-            if (_t14515._tag === 17) {
-              _t14516 = "<<";
-              break _t14517;
+            if (_t14562._tag === 17) {
+              _t14563 = "<<";
+              break _t14564;
             }
-            if (_t14515._tag === 18) {
-              _t14516 = ">>";
-              break _t14517;
+            if (_t14562._tag === 18) {
+              _t14563 = ">>";
+              break _t14564;
             }
-            if (_t14515._tag === 16) {
-              _t14516 = "^";
-              break _t14517;
+            if (_t14562._tag === 16) {
+              _t14563 = "^";
+              break _t14564;
             }
-            _t14516 = failwith("assert false");
-            break _t14517;
+            _t14563 = failwith("assert false");
+            break _t14564;
           }
-          const js_op_14518 = _t14516;
-          const _t14519 = ("(" + (a_14511 + (" " + (js_op_14518 + (" " + (b_14513 + ")"))))));
-          const _t14514 = _t14519;
-          const _t14512 = _t14514;
-          _t14509 = _t14512;
-          break _t14510;
+          const js_op_14565 = _t14563;
+          const _t14566 = ("(" + (a_14558 + (" " + (js_op_14565 + (" " + (b_14560 + ")"))))));
+          const _t14561 = _t14566;
+          const _t14559 = _t14561;
+          _t14556 = _t14559;
+          break _t14557;
         }
-        let _t14521;
-        const _t14520 = op;
-        _t14522: {
-          if (_t14520._tag === 14) {
-            _t14521 = "land";
-            break _t14522;
+        let _t14568;
+        const _t14567 = op;
+        _t14569: {
+          if (_t14567._tag === 14) {
+            _t14568 = "land";
+            break _t14569;
           }
-          if (_t14520._tag === 15) {
-            _t14521 = "lor";
-            break _t14522;
+          if (_t14567._tag === 15) {
+            _t14568 = "lor";
+            break _t14569;
           }
-          if (_t14520._tag === 17) {
-            _t14521 = "lsl";
-            break _t14522;
+          if (_t14567._tag === 17) {
+            _t14568 = "lsl";
+            break _t14569;
           }
-          if (_t14520._tag === 18) {
-            _t14521 = "lsr";
-            break _t14522;
+          if (_t14567._tag === 18) {
+            _t14568 = "lsr";
+            break _t14569;
           }
-          if (_t14520._tag === 16) {
-            _t14521 = "lxor";
-            break _t14522;
+          if (_t14567._tag === 16) {
+            _t14568 = "lxor";
+            break _t14569;
           }
-          _t14521 = failwith("assert false");
-          break _t14522;
+          _t14568 = failwith("assert false");
+          break _t14569;
         }
-        const method_name_14523 = _t14521;
-        const _t14524 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14523, e1, e2]);
-        _t14509 = _t14524;
-        break _t14510;
+        const method_name_14570 = _t14568;
+        const _t14571 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14570, e1, e2]);
+        _t14556 = _t14571;
+        break _t14557;
       }
-      const _t14507 = _t14509;
-      _t14323 = _t14507;
-      break _t14324;
+      const _t14554 = _t14556;
+      _t14370 = _t14554;
+      break _t14371;
     }
-    if (_t14322._tag === 9) {
-      const resolved_14525 = Types$repr(e1.ty);
-      let _t14528;
-      const _t14527 = resolved_14525;
-      _t14529: {
-        if (_t14527._tag === 4) {
-          _t14528 = true;
-          break _t14529;
+    if (_t14369._tag === 9) {
+      const resolved_14572 = Types$repr(e1.ty);
+      let _t14575;
+      const _t14574 = resolved_14572;
+      _t14576: {
+        if (_t14574._tag === 4) {
+          _t14575 = true;
+          break _t14576;
         }
-        if (_t14527._tag === 1) {
-          _t14528 = true;
-          break _t14529;
+        if (_t14574._tag === 1) {
+          _t14575 = true;
+          break _t14576;
         }
-        if (_t14527._tag === 0) {
-          _t14528 = true;
-          break _t14529;
+        if (_t14574._tag === 0) {
+          _t14575 = true;
+          break _t14576;
         }
-        if (_t14527._tag === 5) {
-          _t14528 = true;
-          break _t14529;
+        if (_t14574._tag === 5) {
+          _t14575 = true;
+          break _t14576;
         }
-        if (_t14527._tag === 3) {
-          _t14528 = true;
-          break _t14529;
+        if (_t14574._tag === 3) {
+          _t14575 = true;
+          break _t14576;
         }
-        _t14528 = false;
-        break _t14529;
+        _t14575 = false;
+        break _t14576;
       }
-      const is_builtin_14530 = _t14528;
-      let _t14532;
-      if (is_builtin_14530) {
-        const a_14533 = Js_codegen$compile_non_tail(ctx, e1);
-        const b_14535 = Js_codegen$compile_non_tail(ctx, e2);
-        let _t14538;
-        const _t14537 = op;
-        _t14539: {
-          if (_t14537._tag === 10) {
-            _t14538 = ">=";
-            break _t14539;
+      const is_builtin_14577 = _t14575;
+      let _t14579;
+      if (is_builtin_14577) {
+        const a_14580 = Js_codegen$compile_non_tail(ctx, e1);
+        const b_14582 = Js_codegen$compile_non_tail(ctx, e2);
+        let _t14585;
+        const _t14584 = op;
+        _t14586: {
+          if (_t14584._tag === 10) {
+            _t14585 = ">=";
+            break _t14586;
           }
-          if (_t14537._tag === 8) {
-            _t14538 = ">";
-            break _t14539;
+          if (_t14584._tag === 8) {
+            _t14585 = ">";
+            break _t14586;
           }
-          if (_t14537._tag === 9) {
-            _t14538 = "<=";
-            break _t14539;
+          if (_t14584._tag === 9) {
+            _t14585 = "<=";
+            break _t14586;
           }
-          if (_t14537._tag === 7) {
-            _t14538 = "<";
-            break _t14539;
+          if (_t14584._tag === 7) {
+            _t14585 = "<";
+            break _t14586;
           }
-          _t14538 = failwith("assert false");
-          break _t14539;
+          _t14585 = failwith("assert false");
+          break _t14586;
         }
-        const js_op_14540 = _t14538;
-        const _t14541 = ("(" + (a_14533 + (" " + (js_op_14540 + (" " + (b_14535 + ")"))))));
-        const _t14536 = _t14541;
-        const _t14534 = _t14536;
-        _t14532 = _t14534;
+        const js_op_14587 = _t14585;
+        const _t14588 = ("(" + (a_14580 + (" " + (js_op_14587 + (" " + (b_14582 + ")"))))));
+        const _t14583 = _t14588;
+        const _t14581 = _t14583;
+        _t14579 = _t14581;
       } else {
-        let _t14543;
-        const _t14542 = op;
-        _t14544: {
-          if (_t14542._tag === 10) {
-            _t14543 = ">=";
-            break _t14544;
+        let _t14590;
+        const _t14589 = op;
+        _t14591: {
+          if (_t14589._tag === 10) {
+            _t14590 = ">=";
+            break _t14591;
           }
-          if (_t14542._tag === 8) {
-            _t14543 = ">";
-            break _t14544;
+          if (_t14589._tag === 8) {
+            _t14590 = ">";
+            break _t14591;
           }
-          if (_t14542._tag === 9) {
-            _t14543 = "<=";
-            break _t14544;
+          if (_t14589._tag === 9) {
+            _t14590 = "<=";
+            break _t14591;
           }
-          if (_t14542._tag === 7) {
-            _t14543 = "<";
-            break _t14544;
+          if (_t14589._tag === 7) {
+            _t14590 = "<";
+            break _t14591;
           }
-          _t14543 = failwith("assert false");
-          break _t14544;
+          _t14590 = failwith("assert false");
+          break _t14591;
         }
-        const method_name_14545 = _t14543;
-        const _t14546 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14545, e1, e2]);
-        _t14532 = _t14546;
+        const method_name_14592 = _t14590;
+        const _t14593 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14592, e1, e2]);
+        _t14579 = _t14593;
       }
-      const _t14531 = _t14532;
-      const _t14526 = _t14531;
-      _t14323 = _t14526;
-      break _t14324;
+      const _t14578 = _t14579;
+      const _t14573 = _t14578;
+      _t14370 = _t14573;
+      break _t14371;
     }
-    if (_t14322._tag === 15) {
-      const resolved_14547 = Types$repr(e1.ty);
-      let _t14550;
-      const _t14549 = resolved_14547;
-      _t14551: {
-        if (_t14549._tag === 0) {
-          const a_14552 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14554 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14557;
-          const _t14556 = op;
-          _t14558: {
-            if (_t14556._tag === 14) {
-              _t14557 = "&";
-              break _t14558;
+    if (_t14369._tag === 15) {
+      const resolved_14594 = Types$repr(e1.ty);
+      let _t14597;
+      const _t14596 = resolved_14594;
+      _t14598: {
+        if (_t14596._tag === 0) {
+          const a_14599 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14601 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14604;
+          const _t14603 = op;
+          _t14605: {
+            if (_t14603._tag === 14) {
+              _t14604 = "&";
+              break _t14605;
             }
-            if (_t14556._tag === 15) {
-              _t14557 = "|";
-              break _t14558;
+            if (_t14603._tag === 15) {
+              _t14604 = "|";
+              break _t14605;
             }
-            if (_t14556._tag === 17) {
-              _t14557 = "<<";
-              break _t14558;
+            if (_t14603._tag === 17) {
+              _t14604 = "<<";
+              break _t14605;
             }
-            if (_t14556._tag === 18) {
-              _t14557 = ">>";
-              break _t14558;
+            if (_t14603._tag === 18) {
+              _t14604 = ">>";
+              break _t14605;
             }
-            if (_t14556._tag === 16) {
-              _t14557 = "^";
-              break _t14558;
+            if (_t14603._tag === 16) {
+              _t14604 = "^";
+              break _t14605;
             }
-            _t14557 = failwith("assert false");
-            break _t14558;
+            _t14604 = failwith("assert false");
+            break _t14605;
           }
-          const js_op_14559 = _t14557;
-          const _t14560 = ("(" + (a_14552 + (" " + (js_op_14559 + (" " + (b_14554 + ")"))))));
-          const _t14555 = _t14560;
-          const _t14553 = _t14555;
-          _t14550 = _t14553;
-          break _t14551;
+          const js_op_14606 = _t14604;
+          const _t14607 = ("(" + (a_14599 + (" " + (js_op_14606 + (" " + (b_14601 + ")"))))));
+          const _t14602 = _t14607;
+          const _t14600 = _t14602;
+          _t14597 = _t14600;
+          break _t14598;
         }
-        let _t14562;
-        const _t14561 = op;
-        _t14563: {
-          if (_t14561._tag === 14) {
-            _t14562 = "land";
-            break _t14563;
+        let _t14609;
+        const _t14608 = op;
+        _t14610: {
+          if (_t14608._tag === 14) {
+            _t14609 = "land";
+            break _t14610;
           }
-          if (_t14561._tag === 15) {
-            _t14562 = "lor";
-            break _t14563;
+          if (_t14608._tag === 15) {
+            _t14609 = "lor";
+            break _t14610;
           }
-          if (_t14561._tag === 17) {
-            _t14562 = "lsl";
-            break _t14563;
+          if (_t14608._tag === 17) {
+            _t14609 = "lsl";
+            break _t14610;
           }
-          if (_t14561._tag === 18) {
-            _t14562 = "lsr";
-            break _t14563;
+          if (_t14608._tag === 18) {
+            _t14609 = "lsr";
+            break _t14610;
           }
-          if (_t14561._tag === 16) {
-            _t14562 = "lxor";
-            break _t14563;
+          if (_t14608._tag === 16) {
+            _t14609 = "lxor";
+            break _t14610;
           }
-          _t14562 = failwith("assert false");
-          break _t14563;
+          _t14609 = failwith("assert false");
+          break _t14610;
         }
-        const method_name_14564 = _t14562;
-        const _t14565 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14564, e1, e2]);
-        _t14550 = _t14565;
-        break _t14551;
+        const method_name_14611 = _t14609;
+        const _t14612 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14611, e1, e2]);
+        _t14597 = _t14612;
+        break _t14598;
       }
-      const _t14548 = _t14550;
-      _t14323 = _t14548;
-      break _t14324;
+      const _t14595 = _t14597;
+      _t14370 = _t14595;
+      break _t14371;
     }
-    if (_t14322._tag === 17) {
-      const resolved_14566 = Types$repr(e1.ty);
-      let _t14569;
-      const _t14568 = resolved_14566;
-      _t14570: {
-        if (_t14568._tag === 0) {
-          const a_14571 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14573 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14576;
-          const _t14575 = op;
-          _t14577: {
-            if (_t14575._tag === 14) {
-              _t14576 = "&";
-              break _t14577;
+    if (_t14369._tag === 17) {
+      const resolved_14613 = Types$repr(e1.ty);
+      let _t14616;
+      const _t14615 = resolved_14613;
+      _t14617: {
+        if (_t14615._tag === 0) {
+          const a_14618 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14620 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14623;
+          const _t14622 = op;
+          _t14624: {
+            if (_t14622._tag === 14) {
+              _t14623 = "&";
+              break _t14624;
             }
-            if (_t14575._tag === 15) {
-              _t14576 = "|";
-              break _t14577;
+            if (_t14622._tag === 15) {
+              _t14623 = "|";
+              break _t14624;
             }
-            if (_t14575._tag === 17) {
-              _t14576 = "<<";
-              break _t14577;
+            if (_t14622._tag === 17) {
+              _t14623 = "<<";
+              break _t14624;
             }
-            if (_t14575._tag === 18) {
-              _t14576 = ">>";
-              break _t14577;
+            if (_t14622._tag === 18) {
+              _t14623 = ">>";
+              break _t14624;
             }
-            if (_t14575._tag === 16) {
-              _t14576 = "^";
-              break _t14577;
+            if (_t14622._tag === 16) {
+              _t14623 = "^";
+              break _t14624;
             }
-            _t14576 = failwith("assert false");
-            break _t14577;
+            _t14623 = failwith("assert false");
+            break _t14624;
           }
-          const js_op_14578 = _t14576;
-          const _t14579 = ("(" + (a_14571 + (" " + (js_op_14578 + (" " + (b_14573 + ")"))))));
-          const _t14574 = _t14579;
-          const _t14572 = _t14574;
-          _t14569 = _t14572;
-          break _t14570;
+          const js_op_14625 = _t14623;
+          const _t14626 = ("(" + (a_14618 + (" " + (js_op_14625 + (" " + (b_14620 + ")"))))));
+          const _t14621 = _t14626;
+          const _t14619 = _t14621;
+          _t14616 = _t14619;
+          break _t14617;
         }
-        let _t14581;
-        const _t14580 = op;
-        _t14582: {
-          if (_t14580._tag === 14) {
-            _t14581 = "land";
-            break _t14582;
+        let _t14628;
+        const _t14627 = op;
+        _t14629: {
+          if (_t14627._tag === 14) {
+            _t14628 = "land";
+            break _t14629;
           }
-          if (_t14580._tag === 15) {
-            _t14581 = "lor";
-            break _t14582;
+          if (_t14627._tag === 15) {
+            _t14628 = "lor";
+            break _t14629;
           }
-          if (_t14580._tag === 17) {
-            _t14581 = "lsl";
-            break _t14582;
+          if (_t14627._tag === 17) {
+            _t14628 = "lsl";
+            break _t14629;
           }
-          if (_t14580._tag === 18) {
-            _t14581 = "lsr";
-            break _t14582;
+          if (_t14627._tag === 18) {
+            _t14628 = "lsr";
+            break _t14629;
           }
-          if (_t14580._tag === 16) {
-            _t14581 = "lxor";
-            break _t14582;
+          if (_t14627._tag === 16) {
+            _t14628 = "lxor";
+            break _t14629;
           }
-          _t14581 = failwith("assert false");
-          break _t14582;
+          _t14628 = failwith("assert false");
+          break _t14629;
         }
-        const method_name_14583 = _t14581;
-        const _t14584 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14583, e1, e2]);
-        _t14569 = _t14584;
-        break _t14570;
+        const method_name_14630 = _t14628;
+        const _t14631 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14630, e1, e2]);
+        _t14616 = _t14631;
+        break _t14617;
       }
-      const _t14567 = _t14569;
-      _t14323 = _t14567;
-      break _t14324;
+      const _t14614 = _t14616;
+      _t14370 = _t14614;
+      break _t14371;
     }
-    if (_t14322._tag === 18) {
-      const resolved_14585 = Types$repr(e1.ty);
-      let _t14588;
-      const _t14587 = resolved_14585;
-      _t14589: {
-        if (_t14587._tag === 0) {
-          const a_14590 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14592 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14595;
-          const _t14594 = op;
-          _t14596: {
-            if (_t14594._tag === 14) {
-              _t14595 = "&";
-              break _t14596;
+    if (_t14369._tag === 18) {
+      const resolved_14632 = Types$repr(e1.ty);
+      let _t14635;
+      const _t14634 = resolved_14632;
+      _t14636: {
+        if (_t14634._tag === 0) {
+          const a_14637 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14639 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14642;
+          const _t14641 = op;
+          _t14643: {
+            if (_t14641._tag === 14) {
+              _t14642 = "&";
+              break _t14643;
             }
-            if (_t14594._tag === 15) {
-              _t14595 = "|";
-              break _t14596;
+            if (_t14641._tag === 15) {
+              _t14642 = "|";
+              break _t14643;
             }
-            if (_t14594._tag === 17) {
-              _t14595 = "<<";
-              break _t14596;
+            if (_t14641._tag === 17) {
+              _t14642 = "<<";
+              break _t14643;
             }
-            if (_t14594._tag === 18) {
-              _t14595 = ">>";
-              break _t14596;
+            if (_t14641._tag === 18) {
+              _t14642 = ">>";
+              break _t14643;
             }
-            if (_t14594._tag === 16) {
-              _t14595 = "^";
-              break _t14596;
+            if (_t14641._tag === 16) {
+              _t14642 = "^";
+              break _t14643;
             }
-            _t14595 = failwith("assert false");
-            break _t14596;
+            _t14642 = failwith("assert false");
+            break _t14643;
           }
-          const js_op_14597 = _t14595;
-          const _t14598 = ("(" + (a_14590 + (" " + (js_op_14597 + (" " + (b_14592 + ")"))))));
-          const _t14593 = _t14598;
-          const _t14591 = _t14593;
-          _t14588 = _t14591;
-          break _t14589;
+          const js_op_14644 = _t14642;
+          const _t14645 = ("(" + (a_14637 + (" " + (js_op_14644 + (" " + (b_14639 + ")"))))));
+          const _t14640 = _t14645;
+          const _t14638 = _t14640;
+          _t14635 = _t14638;
+          break _t14636;
         }
-        let _t14600;
-        const _t14599 = op;
-        _t14601: {
-          if (_t14599._tag === 14) {
-            _t14600 = "land";
-            break _t14601;
+        let _t14647;
+        const _t14646 = op;
+        _t14648: {
+          if (_t14646._tag === 14) {
+            _t14647 = "land";
+            break _t14648;
           }
-          if (_t14599._tag === 15) {
-            _t14600 = "lor";
-            break _t14601;
+          if (_t14646._tag === 15) {
+            _t14647 = "lor";
+            break _t14648;
           }
-          if (_t14599._tag === 17) {
-            _t14600 = "lsl";
-            break _t14601;
+          if (_t14646._tag === 17) {
+            _t14647 = "lsl";
+            break _t14648;
           }
-          if (_t14599._tag === 18) {
-            _t14600 = "lsr";
-            break _t14601;
+          if (_t14646._tag === 18) {
+            _t14647 = "lsr";
+            break _t14648;
           }
-          if (_t14599._tag === 16) {
-            _t14600 = "lxor";
-            break _t14601;
+          if (_t14646._tag === 16) {
+            _t14647 = "lxor";
+            break _t14648;
           }
-          _t14600 = failwith("assert false");
-          break _t14601;
+          _t14647 = failwith("assert false");
+          break _t14648;
         }
-        const method_name_14602 = _t14600;
-        const _t14603 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14602, e1, e2]);
-        _t14588 = _t14603;
-        break _t14589;
+        const method_name_14649 = _t14647;
+        const _t14650 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14649, e1, e2]);
+        _t14635 = _t14650;
+        break _t14636;
       }
-      const _t14586 = _t14588;
-      _t14323 = _t14586;
-      break _t14324;
+      const _t14633 = _t14635;
+      _t14370 = _t14633;
+      break _t14371;
     }
-    if (_t14322._tag === 7) {
-      const resolved_14604 = Types$repr(e1.ty);
-      let _t14607;
-      const _t14606 = resolved_14604;
-      _t14608: {
-        if (_t14606._tag === 4) {
-          _t14607 = true;
-          break _t14608;
+    if (_t14369._tag === 7) {
+      const resolved_14651 = Types$repr(e1.ty);
+      let _t14654;
+      const _t14653 = resolved_14651;
+      _t14655: {
+        if (_t14653._tag === 4) {
+          _t14654 = true;
+          break _t14655;
         }
-        if (_t14606._tag === 1) {
-          _t14607 = true;
-          break _t14608;
+        if (_t14653._tag === 1) {
+          _t14654 = true;
+          break _t14655;
         }
-        if (_t14606._tag === 0) {
-          _t14607 = true;
-          break _t14608;
+        if (_t14653._tag === 0) {
+          _t14654 = true;
+          break _t14655;
         }
-        if (_t14606._tag === 5) {
-          _t14607 = true;
-          break _t14608;
+        if (_t14653._tag === 5) {
+          _t14654 = true;
+          break _t14655;
         }
-        if (_t14606._tag === 3) {
-          _t14607 = true;
-          break _t14608;
+        if (_t14653._tag === 3) {
+          _t14654 = true;
+          break _t14655;
         }
-        _t14607 = false;
-        break _t14608;
+        _t14654 = false;
+        break _t14655;
       }
-      const is_builtin_14609 = _t14607;
-      let _t14611;
-      if (is_builtin_14609) {
-        const a_14612 = Js_codegen$compile_non_tail(ctx, e1);
-        const b_14614 = Js_codegen$compile_non_tail(ctx, e2);
-        let _t14617;
-        const _t14616 = op;
-        _t14618: {
-          if (_t14616._tag === 10) {
-            _t14617 = ">=";
-            break _t14618;
+      const is_builtin_14656 = _t14654;
+      let _t14658;
+      if (is_builtin_14656) {
+        const a_14659 = Js_codegen$compile_non_tail(ctx, e1);
+        const b_14661 = Js_codegen$compile_non_tail(ctx, e2);
+        let _t14664;
+        const _t14663 = op;
+        _t14665: {
+          if (_t14663._tag === 10) {
+            _t14664 = ">=";
+            break _t14665;
           }
-          if (_t14616._tag === 8) {
-            _t14617 = ">";
-            break _t14618;
+          if (_t14663._tag === 8) {
+            _t14664 = ">";
+            break _t14665;
           }
-          if (_t14616._tag === 9) {
-            _t14617 = "<=";
-            break _t14618;
+          if (_t14663._tag === 9) {
+            _t14664 = "<=";
+            break _t14665;
           }
-          if (_t14616._tag === 7) {
-            _t14617 = "<";
-            break _t14618;
+          if (_t14663._tag === 7) {
+            _t14664 = "<";
+            break _t14665;
           }
-          _t14617 = failwith("assert false");
-          break _t14618;
+          _t14664 = failwith("assert false");
+          break _t14665;
         }
-        const js_op_14619 = _t14617;
-        const _t14620 = ("(" + (a_14612 + (" " + (js_op_14619 + (" " + (b_14614 + ")"))))));
-        const _t14615 = _t14620;
-        const _t14613 = _t14615;
-        _t14611 = _t14613;
+        const js_op_14666 = _t14664;
+        const _t14667 = ("(" + (a_14659 + (" " + (js_op_14666 + (" " + (b_14661 + ")"))))));
+        const _t14662 = _t14667;
+        const _t14660 = _t14662;
+        _t14658 = _t14660;
       } else {
-        let _t14622;
-        const _t14621 = op;
-        _t14623: {
-          if (_t14621._tag === 10) {
-            _t14622 = ">=";
-            break _t14623;
-          }
-          if (_t14621._tag === 8) {
-            _t14622 = ">";
-            break _t14623;
-          }
-          if (_t14621._tag === 9) {
-            _t14622 = "<=";
-            break _t14623;
-          }
-          if (_t14621._tag === 7) {
-            _t14622 = "<";
-            break _t14623;
-          }
-          _t14622 = failwith("assert false");
-          break _t14623;
-        }
-        const method_name_14624 = _t14622;
-        const _t14625 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14624, e1, e2]);
-        _t14611 = _t14625;
-      }
-      const _t14610 = _t14611;
-      const _t14605 = _t14610;
-      _t14323 = _t14605;
-      break _t14324;
-    }
-    if (_t14322._tag === 16) {
-      const resolved_14626 = Types$repr(e1.ty);
-      let _t14629;
-      const _t14628 = resolved_14626;
-      _t14630: {
-        if (_t14628._tag === 0) {
-          const a_14631 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14633 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14636;
-          const _t14635 = op;
-          _t14637: {
-            if (_t14635._tag === 14) {
-              _t14636 = "&";
-              break _t14637;
-            }
-            if (_t14635._tag === 15) {
-              _t14636 = "|";
-              break _t14637;
-            }
-            if (_t14635._tag === 17) {
-              _t14636 = "<<";
-              break _t14637;
-            }
-            if (_t14635._tag === 18) {
-              _t14636 = ">>";
-              break _t14637;
-            }
-            if (_t14635._tag === 16) {
-              _t14636 = "^";
-              break _t14637;
-            }
-            _t14636 = failwith("assert false");
-            break _t14637;
-          }
-          const js_op_14638 = _t14636;
-          const _t14639 = ("(" + (a_14631 + (" " + (js_op_14638 + (" " + (b_14633 + ")"))))));
-          const _t14634 = _t14639;
-          const _t14632 = _t14634;
-          _t14629 = _t14632;
-          break _t14630;
-        }
-        let _t14641;
-        const _t14640 = op;
-        _t14642: {
-          if (_t14640._tag === 14) {
-            _t14641 = "land";
-            break _t14642;
-          }
-          if (_t14640._tag === 15) {
-            _t14641 = "lor";
-            break _t14642;
-          }
-          if (_t14640._tag === 17) {
-            _t14641 = "lsl";
-            break _t14642;
-          }
-          if (_t14640._tag === 18) {
-            _t14641 = "lsr";
-            break _t14642;
-          }
-          if (_t14640._tag === 16) {
-            _t14641 = "lxor";
-            break _t14642;
-          }
-          _t14641 = failwith("assert false");
-          break _t14642;
-        }
-        const method_name_14643 = _t14641;
-        const _t14644 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14643, e1, e2]);
-        _t14629 = _t14644;
-        break _t14630;
-      }
-      const _t14627 = _t14629;
-      _t14323 = _t14627;
-      break _t14324;
-    }
-    if (_t14322._tag === 4) {
-      const a_14645 = Js_codegen$compile_non_tail(ctx, e1);
-      const b_14647 = Js_codegen$compile_non_tail(ctx, e2);
-      const _t14648 = ("$mod(" + (a_14645 + (", " + (b_14647 + ")"))));
-      const _t14646 = _t14648;
-      _t14323 = _t14646;
-      break _t14324;
-    }
-    if (_t14322._tag === 2) {
-      const resolved_14649 = Types$repr(e1.ty);
-      let _t14652;
-      const _t14651 = resolved_14649;
-      _t14653: {
-        if (_t14651._tag === 1) {
-          const a_14654 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14656 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14659;
-          const _t14658 = op;
-          _t14660: {
-            if (_t14658._tag === 0) {
-              _t14659 = "+";
-              break _t14660;
-            }
-            if (_t14658._tag === 3) {
-              _t14659 = "/";
-              break _t14660;
-            }
-            if (_t14658._tag === 2) {
-              _t14659 = "*";
-              break _t14660;
-            }
-            if (_t14658._tag === 1) {
-              _t14659 = "-";
-              break _t14660;
-            }
-            _t14659 = failwith("assert false");
-            break _t14660;
-          }
-          const js_op_14661 = _t14659;
-          let _t14663;
-          if ((_eq(resolved_14649, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14663 = ("__num_div_int(" + (a_14654 + (", " + (b_14656 + ")"))));
-          } else {
-            _t14663 = ("(" + (a_14654 + (" " + (js_op_14661 + (" " + (b_14656 + ")"))))));
-          }
-          const _t14662 = _t14663;
-          const _t14657 = _t14662;
-          const _t14655 = _t14657;
-          _t14652 = _t14655;
-          break _t14653;
-        }
-        if (_t14651._tag === 0) {
-          const a_14664 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14666 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14669;
-          const _t14668 = op;
-          _t14670: {
-            if (_t14668._tag === 0) {
-              _t14669 = "+";
-              break _t14670;
-            }
-            if (_t14668._tag === 3) {
-              _t14669 = "/";
-              break _t14670;
-            }
-            if (_t14668._tag === 2) {
-              _t14669 = "*";
-              break _t14670;
-            }
-            if (_t14668._tag === 1) {
-              _t14669 = "-";
-              break _t14670;
-            }
-            _t14669 = failwith("assert false");
+        let _t14669;
+        const _t14668 = op;
+        _t14670: {
+          if (_t14668._tag === 10) {
+            _t14669 = ">=";
             break _t14670;
           }
-          const js_op_14671 = _t14669;
-          let _t14673;
-          if ((_eq(resolved_14649, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14673 = ("__num_div_int(" + (a_14664 + (", " + (b_14666 + ")"))));
-          } else {
-            _t14673 = ("(" + (a_14664 + (" " + (js_op_14671 + (" " + (b_14666 + ")"))))));
+          if (_t14668._tag === 8) {
+            _t14669 = ">";
+            break _t14670;
           }
-          const _t14672 = _t14673;
-          const _t14667 = _t14672;
-          const _t14665 = _t14667;
-          _t14652 = _t14665;
-          break _t14653;
+          if (_t14668._tag === 9) {
+            _t14669 = "<=";
+            break _t14670;
+          }
+          if (_t14668._tag === 7) {
+            _t14669 = "<";
+            break _t14670;
+          }
+          _t14669 = failwith("assert false");
+          break _t14670;
         }
-        let _t14675;
-        const _t14674 = op;
-        _t14676: {
-          if (_t14674._tag === 0) {
-            _t14675 = "+";
-            break _t14676;
-          }
-          if (_t14674._tag === 3) {
-            _t14675 = "/";
-            break _t14676;
-          }
-          if (_t14674._tag === 2) {
-            _t14675 = "*";
-            break _t14676;
-          }
-          if (_t14674._tag === 1) {
-            _t14675 = "-";
-            break _t14676;
-          }
-          _t14675 = failwith("assert false");
-          break _t14676;
-        }
-        const method_name_14677 = _t14675;
-        const _t14678 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14677, e1, e2]);
-        _t14652 = _t14678;
-        break _t14653;
+        const method_name_14671 = _t14669;
+        const _t14672 = _call(Js_codegen$compile_class_binop, [ctx, "Ord", method_name_14671, e1, e2]);
+        _t14658 = _t14672;
       }
-      const _t14650 = _t14652;
-      _t14323 = _t14650;
-      break _t14324;
+      const _t14657 = _t14658;
+      const _t14652 = _t14657;
+      _t14370 = _t14652;
+      break _t14371;
     }
-    if (_t14322._tag === 6) {
-      const resolved_14679 = Types$repr(e1.ty);
-      let _t14682;
-      const _t14681 = resolved_14679;
-      _t14683: {
-        if (_t14681._tag === 2) {
-          _t14682 = true;
-          break _t14683;
+    if (_t14369._tag === 16) {
+      const resolved_14673 = Types$repr(e1.ty);
+      let _t14676;
+      const _t14675 = resolved_14673;
+      _t14677: {
+        if (_t14675._tag === 0) {
+          const a_14678 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14680 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14683;
+          const _t14682 = op;
+          _t14684: {
+            if (_t14682._tag === 14) {
+              _t14683 = "&";
+              break _t14684;
+            }
+            if (_t14682._tag === 15) {
+              _t14683 = "|";
+              break _t14684;
+            }
+            if (_t14682._tag === 17) {
+              _t14683 = "<<";
+              break _t14684;
+            }
+            if (_t14682._tag === 18) {
+              _t14683 = ">>";
+              break _t14684;
+            }
+            if (_t14682._tag === 16) {
+              _t14683 = "^";
+              break _t14684;
+            }
+            _t14683 = failwith("assert false");
+            break _t14684;
+          }
+          const js_op_14685 = _t14683;
+          const _t14686 = ("(" + (a_14678 + (" " + (js_op_14685 + (" " + (b_14680 + ")"))))));
+          const _t14681 = _t14686;
+          const _t14679 = _t14681;
+          _t14676 = _t14679;
+          break _t14677;
         }
-        if (_t14681._tag === 4) {
-          _t14682 = true;
-          break _t14683;
+        let _t14688;
+        const _t14687 = op;
+        _t14689: {
+          if (_t14687._tag === 14) {
+            _t14688 = "land";
+            break _t14689;
+          }
+          if (_t14687._tag === 15) {
+            _t14688 = "lor";
+            break _t14689;
+          }
+          if (_t14687._tag === 17) {
+            _t14688 = "lsl";
+            break _t14689;
+          }
+          if (_t14687._tag === 18) {
+            _t14688 = "lsr";
+            break _t14689;
+          }
+          if (_t14687._tag === 16) {
+            _t14688 = "lxor";
+            break _t14689;
+          }
+          _t14688 = failwith("assert false");
+          break _t14689;
         }
-        if (_t14681._tag === 1) {
-          _t14682 = true;
-          break _t14683;
-        }
-        if (_t14681._tag === 0) {
-          _t14682 = true;
-          break _t14683;
-        }
-        if (_t14681._tag === 5) {
-          _t14682 = true;
-          break _t14683;
-        }
-        if (_t14681._tag === 3) {
-          _t14682 = true;
-          break _t14683;
-        }
-        if (_t14681._tag === 6) {
-          _t14682 = true;
-          break _t14683;
-        }
-        _t14682 = false;
-        break _t14683;
+        const method_name_14690 = _t14688;
+        const _t14691 = _call(Js_codegen$compile_class_binop, [ctx, "Bitwise", method_name_14690, e1, e2]);
+        _t14676 = _t14691;
+        break _t14677;
       }
-      const is_primitive_14684 = _t14682;
-      let _t14686;
-      if (is_primitive_14684) {
-        const a_14687 = Js_codegen$compile_non_tail(ctx, e1);
-        const b_14689 = Js_codegen$compile_non_tail(ctx, e2);
-        let _t14691;
-        if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
-          _t14691 = "===";
-        } else {
-          _t14691 = "!==";
+      const _t14674 = _t14676;
+      _t14370 = _t14674;
+      break _t14371;
+    }
+    if (_t14369._tag === 4) {
+      const a_14692 = Js_codegen$compile_non_tail(ctx, e1);
+      const b_14694 = Js_codegen$compile_non_tail(ctx, e2);
+      const _t14695 = ("$mod(" + (a_14692 + (", " + (b_14694 + ")"))));
+      const _t14693 = _t14695;
+      _t14370 = _t14693;
+      break _t14371;
+    }
+    if (_t14369._tag === 2) {
+      const resolved_14696 = Types$repr(e1.ty);
+      let _t14699;
+      const _t14698 = resolved_14696;
+      _t14700: {
+        if (_t14698._tag === 1) {
+          const a_14701 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14703 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14706;
+          const _t14705 = op;
+          _t14707: {
+            if (_t14705._tag === 0) {
+              _t14706 = "+";
+              break _t14707;
+            }
+            if (_t14705._tag === 3) {
+              _t14706 = "/";
+              break _t14707;
+            }
+            if (_t14705._tag === 2) {
+              _t14706 = "*";
+              break _t14707;
+            }
+            if (_t14705._tag === 1) {
+              _t14706 = "-";
+              break _t14707;
+            }
+            _t14706 = failwith("assert false");
+            break _t14707;
+          }
+          const js_op_14708 = _t14706;
+          let _t14710;
+          if ((_eq(resolved_14696, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14710 = ("__num_div_int(" + (a_14701 + (", " + (b_14703 + ")"))));
+          } else {
+            _t14710 = ("(" + (a_14701 + (" " + (js_op_14708 + (" " + (b_14703 + ")"))))));
+          }
+          const _t14709 = _t14710;
+          const _t14704 = _t14709;
+          const _t14702 = _t14704;
+          _t14699 = _t14702;
+          break _t14700;
         }
-        const js_op_14692 = _t14691;
-        const _t14693 = ("(" + (a_14687 + (" " + (js_op_14692 + (" " + (b_14689 + ")"))))));
-        const _t14690 = _t14693;
-        const _t14688 = _t14690;
-        _t14686 = _t14688;
+        if (_t14698._tag === 0) {
+          const a_14711 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14713 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14716;
+          const _t14715 = op;
+          _t14717: {
+            if (_t14715._tag === 0) {
+              _t14716 = "+";
+              break _t14717;
+            }
+            if (_t14715._tag === 3) {
+              _t14716 = "/";
+              break _t14717;
+            }
+            if (_t14715._tag === 2) {
+              _t14716 = "*";
+              break _t14717;
+            }
+            if (_t14715._tag === 1) {
+              _t14716 = "-";
+              break _t14717;
+            }
+            _t14716 = failwith("assert false");
+            break _t14717;
+          }
+          const js_op_14718 = _t14716;
+          let _t14720;
+          if ((_eq(resolved_14696, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14720 = ("__num_div_int(" + (a_14711 + (", " + (b_14713 + ")"))));
+          } else {
+            _t14720 = ("(" + (a_14711 + (" " + (js_op_14718 + (" " + (b_14713 + ")"))))));
+          }
+          const _t14719 = _t14720;
+          const _t14714 = _t14719;
+          const _t14712 = _t14714;
+          _t14699 = _t14712;
+          break _t14700;
+        }
+        let _t14722;
+        const _t14721 = op;
+        _t14723: {
+          if (_t14721._tag === 0) {
+            _t14722 = "+";
+            break _t14723;
+          }
+          if (_t14721._tag === 3) {
+            _t14722 = "/";
+            break _t14723;
+          }
+          if (_t14721._tag === 2) {
+            _t14722 = "*";
+            break _t14723;
+          }
+          if (_t14721._tag === 1) {
+            _t14722 = "-";
+            break _t14723;
+          }
+          _t14722 = failwith("assert false");
+          break _t14723;
+        }
+        const method_name_14724 = _t14722;
+        const _t14725 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14724, e1, e2]);
+        _t14699 = _t14725;
+        break _t14700;
+      }
+      const _t14697 = _t14699;
+      _t14370 = _t14697;
+      break _t14371;
+    }
+    if (_t14369._tag === 6) {
+      const resolved_14726 = Types$repr(e1.ty);
+      let _t14729;
+      const _t14728 = resolved_14726;
+      _t14730: {
+        if (_t14728._tag === 2) {
+          _t14729 = true;
+          break _t14730;
+        }
+        if (_t14728._tag === 4) {
+          _t14729 = true;
+          break _t14730;
+        }
+        if (_t14728._tag === 1) {
+          _t14729 = true;
+          break _t14730;
+        }
+        if (_t14728._tag === 0) {
+          _t14729 = true;
+          break _t14730;
+        }
+        if (_t14728._tag === 5) {
+          _t14729 = true;
+          break _t14730;
+        }
+        if (_t14728._tag === 3) {
+          _t14729 = true;
+          break _t14730;
+        }
+        if (_t14728._tag === 6) {
+          _t14729 = true;
+          break _t14730;
+        }
+        _t14729 = false;
+        break _t14730;
+      }
+      const is_primitive_14731 = _t14729;
+      let _t14733;
+      if (is_primitive_14731) {
+        const a_14734 = Js_codegen$compile_non_tail(ctx, e1);
+        const b_14736 = Js_codegen$compile_non_tail(ctx, e2);
+        let _t14738;
+        if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
+          _t14738 = "===";
+        } else {
+          _t14738 = "!==";
+        }
+        const js_op_14739 = _t14738;
+        const _t14740 = ("(" + (a_14734 + (" " + (js_op_14739 + (" " + (b_14736 + ")"))))));
+        const _t14737 = _t14740;
+        const _t14735 = _t14737;
+        _t14733 = _t14735;
       } else {
-        const conc_ty_14694 = Types$repr(e1.ty);
-        function _t14696(c) {
+        const conc_ty_14741 = Types$repr(e1.ty);
+        function _t14743(c) {
           return (c.class_name === "Eq");
         }
-        let _t14698;
-        const _t14697 = List$find(_t14696, ctx.type_env.classes);
-        _t14699: {
-          if (_t14697._tag === 0) {
-            _t14698 = ({_tag: 0, _name: "None"});
-            break _t14699;
+        let _t14745;
+        const _t14744 = List$find(_t14743, ctx.type_env.classes);
+        _t14746: {
+          if (_t14744._tag === 0) {
+            _t14745 = ({_tag: 0, _name: "None"});
+            break _t14746;
           }
-          if (_t14697._tag === 1) {
-            const class_def = _t14697._val;
-            const num_params_14700 = List$length(class_def.class_params);
-            function _t14702(_) {
-              return ({_tag: 1, _name: "Some", _val: conc_ty_14694});
+          if (_t14744._tag === 1) {
+            const class_def = _t14744._val;
+            const num_params_14747 = List$length(class_def.class_params);
+            function _t14749(_) {
+              return ({_tag: 1, _name: "Some", _val: conc_ty_14741});
             }
-            const partial_14703 = List$init(num_params_14700, _t14702);
-            function _t14705(opt) {
-              let _t14707;
-              const _t14706 = opt;
-              _t14708: {
-                if (_t14706._tag === 0) {
-                  _t14707 = ({_tag: 0, _name: "None"});
-                  break _t14708;
+            const partial_14750 = List$init(num_params_14747, _t14749);
+            function _t14752(opt) {
+              let _t14754;
+              const _t14753 = opt;
+              _t14755: {
+                if (_t14753._tag === 0) {
+                  _t14754 = ({_tag: 0, _name: "None"});
+                  break _t14755;
                 }
-                if (_t14706._tag === 1) {
-                  const ty = _t14706._val;
-                  let _t14710;
-                  const _t14709 = Types$repr(ty);
-                  _t14711: {
-                    if (_t14709._tag === 15) {
-                      if (_t14709._val.contents._tag === 0) {
-                        _t14710 = ({_tag: 0, _name: "None"});
-                        break _t14711;
+                if (_t14753._tag === 1) {
+                  const ty = _t14753._val;
+                  let _t14757;
+                  const _t14756 = Types$repr(ty);
+                  _t14758: {
+                    if (_t14756._tag === 15) {
+                      if (_t14756._val.contents._tag === 0) {
+                        _t14757 = ({_tag: 0, _name: "None"});
+                        break _t14758;
                       }
-                      _t14710 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
-                      break _t14711;
+                      _t14757 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
+                      break _t14758;
                     }
-                    _t14710 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
-                    break _t14711;
+                    _t14757 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
+                    break _t14758;
                   }
-                  _t14707 = _t14710;
-                  break _t14708;
+                  _t14754 = _t14757;
+                  break _t14755;
                 }
                 _match_fail("line 0");
               }
-              return _t14707;
+              return _t14754;
             }
-            const concrete_partial_14712 = List$map(_t14705, partial_14703);
-            function _t14714(inst) {
-              return ((inst.inst_class === "Eq") && ((List$length(inst.inst_tys) === num_params_14700) && (_eq(inst.inst_constraints, null) && Types$match_partial_inst(inst.inst_tys, concrete_partial_14712))));
+            const concrete_partial_14759 = List$map(_t14752, partial_14750);
+            function _t14761(inst) {
+              return ((inst.inst_class === "Eq") && ((List$length(inst.inst_tys) === num_params_14747) && (_eq(inst.inst_constraints, null) && Types$match_partial_inst(inst.inst_tys, concrete_partial_14759))));
             }
-            const matching_14715 = List$filter(_t14714, ctx.type_env.instances);
-            let _t14718;
-            const _t14717 = matching_14715;
-            _t14719: {
-              if (_t14717 === null) {
-                _t14718 = ({_tag: 0, _name: "None"});
-                break _t14719;
+            const matching_14762 = List$filter(_t14761, ctx.type_env.instances);
+            let _t14765;
+            const _t14764 = matching_14762;
+            _t14766: {
+              if (_t14764 === null) {
+                _t14765 = ({_tag: 0, _name: "None"});
+                break _t14766;
               }
-              if (_t14717 !== null) {
-                if (_t14717._tl === null) {
-                  const inst = _t14717._hd;
-                  _t14718 = ({_tag: 1, _name: "Some", _val: inst});
-                  break _t14719;
+              if (_t14764 !== null) {
+                if (_t14764._tl === null) {
+                  const inst = _t14764._hd;
+                  _t14765 = ({_tag: 1, _name: "Some", _val: inst});
+                  break _t14766;
                 }
-                _t14718 = Types$most_specific_inst(matching_14715);
-                break _t14719;
+                _t14765 = Types$most_specific_inst(matching_14762);
+                break _t14766;
               }
               _match_fail("line 0");
             }
-            const _t14716 = _t14718;
-            const _t14713 = _t14716;
-            const _t14704 = _t14713;
-            const _t14701 = _t14704;
-            _t14698 = _t14701;
-            break _t14699;
+            const _t14763 = _t14765;
+            const _t14760 = _t14763;
+            const _t14751 = _t14760;
+            const _t14748 = _t14751;
+            _t14745 = _t14748;
+            break _t14746;
           }
           _match_fail("line 0");
         }
-        const custom_eq_14720 = _t14698;
-        let _t14723;
-        const _t14722 = custom_eq_14720;
-        _t14724: {
-          if (_t14722._tag === 0) {
-            const a_14725 = Js_codegen$compile_non_tail(ctx, e1);
-            const b_14727 = Js_codegen$compile_non_tail(ctx, e2);
-            const eq_call_14729 = ("_eq(" + (a_14725 + (", " + (b_14727 + ")"))));
-            let _t14731;
+        const custom_eq_14767 = _t14745;
+        let _t14770;
+        const _t14769 = custom_eq_14767;
+        _t14771: {
+          if (_t14769._tag === 0) {
+            const a_14772 = Js_codegen$compile_non_tail(ctx, e1);
+            const b_14774 = Js_codegen$compile_non_tail(ctx, e2);
+            const eq_call_14776 = ("_eq(" + (a_14772 + (", " + (b_14774 + ")"))));
+            let _t14778;
             if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
-              _t14731 = eq_call_14729;
+              _t14778 = eq_call_14776;
             } else {
-              _t14731 = ("!" + eq_call_14729);
+              _t14778 = ("!" + eq_call_14776);
             }
-            const _t14730 = _t14731;
-            const _t14728 = _t14730;
-            const _t14726 = _t14728;
-            _t14723 = _t14726;
-            break _t14724;
+            const _t14777 = _t14778;
+            const _t14775 = _t14777;
+            const _t14773 = _t14775;
+            _t14770 = _t14773;
+            break _t14771;
           }
-          if (_t14722._tag === 1) {
-            const inst = _t14722._val;
-            let _t14732;
+          if (_t14769._tag === 1) {
+            const inst = _t14769._val;
+            let _t14779;
             if (_eq(op, ({_tag: 5, _name: "Eq"}))) {
-              _t14732 = "=";
+              _t14779 = "=";
             } else {
-              _t14732 = "<>";
+              _t14779 = "<>";
             }
-            const method_name_14733 = _t14732;
-            const dict_access_14735 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name_14733)));
-            const a_14737 = Js_codegen$compile_non_tail(ctx, e1);
-            const b_14739 = Js_codegen$compile_non_tail(ctx, e2);
-            const _t14740 = ("_call(" + (dict_access_14735 + (", [" + (a_14737 + (", " + (b_14739 + "])"))))));
-            const _t14738 = _t14740;
-            const _t14736 = _t14738;
-            const _t14734 = _t14736;
-            _t14723 = _t14734;
-            break _t14724;
+            const method_name_14780 = _t14779;
+            const dict_access_14782 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name_14780)));
+            const a_14784 = Js_codegen$compile_non_tail(ctx, e1);
+            const b_14786 = Js_codegen$compile_non_tail(ctx, e2);
+            const _t14787 = ("_call(" + (dict_access_14782 + (", [" + (a_14784 + (", " + (b_14786 + "])"))))));
+            const _t14785 = _t14787;
+            const _t14783 = _t14785;
+            const _t14781 = _t14783;
+            _t14770 = _t14781;
+            break _t14771;
           }
           _match_fail("line 0");
         }
-        const _t14721 = _t14723;
-        const _t14695 = _t14721;
-        _t14686 = _t14695;
+        const _t14768 = _t14770;
+        const _t14742 = _t14768;
+        _t14733 = _t14742;
       }
-      const _t14685 = _t14686;
-      const _t14680 = _t14685;
-      _t14323 = _t14680;
-      break _t14324;
+      const _t14732 = _t14733;
+      const _t14727 = _t14732;
+      _t14370 = _t14727;
+      break _t14371;
     }
-    if (_t14322._tag === 12) {
-      const a_14741 = Js_codegen$compile_non_tail(ctx, e1);
-      const buf_before_14743 = Buffer$length(ctx.buf);
-      const b_14745 = Js_codegen$compile_non_tail(ctx, e2);
-      let _t14747;
-      if ((Buffer$length(ctx.buf) === buf_before_14743)) {
-        _t14747 = ("(" + (a_14741 + (" || " + (b_14745 + ")"))));
+    if (_t14369._tag === 12) {
+      const a_14788 = Js_codegen$compile_non_tail(ctx, e1);
+      const buf_before_14790 = Buffer$length(ctx.buf);
+      const b_14792 = Js_codegen$compile_non_tail(ctx, e2);
+      let _t14794;
+      if ((Buffer$length(ctx.buf) === buf_before_14790)) {
+        _t14794 = ("(" + (a_14788 + (" || " + (b_14792 + ")"))));
       } else {
-        const stmts_14748 = Buffer$sub(ctx.buf, buf_before_14743, (Buffer$length(ctx.buf) - buf_before_14743));
-        Buffer$truncate(ctx.buf, buf_before_14743);
-        const result_14750 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14750)) + ";"));
-        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(a_14741)) + ") {"));
+        const stmts_14795 = Buffer$sub(ctx.buf, buf_before_14790, (Buffer$length(ctx.buf) - buf_before_14790));
+        Buffer$truncate(ctx.buf, buf_before_14790);
+        const result_14797 = Js_codegen$fresh_tmp(ctx);
+        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14797)) + ";"));
+        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(a_14788)) + ") {"));
         (ctx.indent = (ctx.indent + 1), undefined);
-        Js_codegen$emit_line(ctx, (__dict_Show_string.show(result_14750) + " = true;"));
+        Js_codegen$emit_line(ctx, (__dict_Show_string.show(result_14797) + " = true;"));
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "} else {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        Buffer$add_string(ctx.buf, stmts_14748);
-        Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14750) + " = ") + __dict_Show_string.show(b_14745)) + ";"));
+        Buffer$add_string(ctx.buf, stmts_14795);
+        Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14797) + " = ") + __dict_Show_string.show(b_14792)) + ";"));
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "}");
-        const _t14751 = result_14750;
-        const _t14749 = _t14751;
-        _t14747 = _t14749;
+        const _t14798 = result_14797;
+        const _t14796 = _t14798;
+        _t14794 = _t14796;
       }
-      const _t14746 = _t14747;
-      const _t14744 = _t14746;
-      const _t14742 = _t14744;
-      _t14323 = _t14742;
-      break _t14324;
+      const _t14793 = _t14794;
+      const _t14791 = _t14793;
+      const _t14789 = _t14791;
+      _t14370 = _t14789;
+      break _t14371;
     }
-    if (_t14322._tag === 19) {
-      const fn_js_14752 = Js_codegen$compile_non_tail(ctx, e2);
-      const arg_js_14754 = Js_codegen$compile_non_tail(ctx, e1);
-      const _t14755 = ("_call(" + (fn_js_14752 + (", [" + (arg_js_14754 + "])"))));
-      const _t14753 = _t14755;
-      _t14323 = _t14753;
-      break _t14324;
+    if (_t14369._tag === 19) {
+      const fn_js_14799 = Js_codegen$compile_non_tail(ctx, e2);
+      const arg_js_14801 = Js_codegen$compile_non_tail(ctx, e1);
+      const _t14802 = ("_call(" + (fn_js_14799 + (", [" + (arg_js_14801 + "])"))));
+      const _t14800 = _t14802;
+      _t14370 = _t14800;
+      break _t14371;
     }
-    if (_t14322._tag === 1) {
-      const resolved_14756 = Types$repr(e1.ty);
-      let _t14759;
-      const _t14758 = resolved_14756;
-      _t14760: {
-        if (_t14758._tag === 1) {
-          const a_14761 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14763 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14766;
-          const _t14765 = op;
-          _t14767: {
-            if (_t14765._tag === 0) {
-              _t14766 = "+";
-              break _t14767;
+    if (_t14369._tag === 1) {
+      const resolved_14803 = Types$repr(e1.ty);
+      let _t14806;
+      const _t14805 = resolved_14803;
+      _t14807: {
+        if (_t14805._tag === 1) {
+          const a_14808 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14810 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14813;
+          const _t14812 = op;
+          _t14814: {
+            if (_t14812._tag === 0) {
+              _t14813 = "+";
+              break _t14814;
             }
-            if (_t14765._tag === 3) {
-              _t14766 = "/";
-              break _t14767;
+            if (_t14812._tag === 3) {
+              _t14813 = "/";
+              break _t14814;
             }
-            if (_t14765._tag === 2) {
-              _t14766 = "*";
-              break _t14767;
+            if (_t14812._tag === 2) {
+              _t14813 = "*";
+              break _t14814;
             }
-            if (_t14765._tag === 1) {
-              _t14766 = "-";
-              break _t14767;
+            if (_t14812._tag === 1) {
+              _t14813 = "-";
+              break _t14814;
             }
-            _t14766 = failwith("assert false");
-            break _t14767;
+            _t14813 = failwith("assert false");
+            break _t14814;
           }
-          const js_op_14768 = _t14766;
-          let _t14770;
-          if ((_eq(resolved_14756, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14770 = ("__num_div_int(" + (a_14761 + (", " + (b_14763 + ")"))));
+          const js_op_14815 = _t14813;
+          let _t14817;
+          if ((_eq(resolved_14803, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14817 = ("__num_div_int(" + (a_14808 + (", " + (b_14810 + ")"))));
           } else {
-            _t14770 = ("(" + (a_14761 + (" " + (js_op_14768 + (" " + (b_14763 + ")"))))));
+            _t14817 = ("(" + (a_14808 + (" " + (js_op_14815 + (" " + (b_14810 + ")"))))));
           }
-          const _t14769 = _t14770;
-          const _t14764 = _t14769;
-          const _t14762 = _t14764;
-          _t14759 = _t14762;
-          break _t14760;
+          const _t14816 = _t14817;
+          const _t14811 = _t14816;
+          const _t14809 = _t14811;
+          _t14806 = _t14809;
+          break _t14807;
         }
-        if (_t14758._tag === 0) {
-          const a_14771 = Js_codegen$compile_non_tail(ctx, e1);
-          const b_14773 = Js_codegen$compile_non_tail(ctx, e2);
-          let _t14776;
-          const _t14775 = op;
-          _t14777: {
-            if (_t14775._tag === 0) {
-              _t14776 = "+";
-              break _t14777;
+        if (_t14805._tag === 0) {
+          const a_14818 = Js_codegen$compile_non_tail(ctx, e1);
+          const b_14820 = Js_codegen$compile_non_tail(ctx, e2);
+          let _t14823;
+          const _t14822 = op;
+          _t14824: {
+            if (_t14822._tag === 0) {
+              _t14823 = "+";
+              break _t14824;
             }
-            if (_t14775._tag === 3) {
-              _t14776 = "/";
-              break _t14777;
+            if (_t14822._tag === 3) {
+              _t14823 = "/";
+              break _t14824;
             }
-            if (_t14775._tag === 2) {
-              _t14776 = "*";
-              break _t14777;
+            if (_t14822._tag === 2) {
+              _t14823 = "*";
+              break _t14824;
             }
-            if (_t14775._tag === 1) {
-              _t14776 = "-";
-              break _t14777;
+            if (_t14822._tag === 1) {
+              _t14823 = "-";
+              break _t14824;
             }
-            _t14776 = failwith("assert false");
-            break _t14777;
+            _t14823 = failwith("assert false");
+            break _t14824;
           }
-          const js_op_14778 = _t14776;
-          let _t14780;
-          if ((_eq(resolved_14756, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
-            _t14780 = ("__num_div_int(" + (a_14771 + (", " + (b_14773 + ")"))));
+          const js_op_14825 = _t14823;
+          let _t14827;
+          if ((_eq(resolved_14803, ({_tag: 0, _name: "TInt"})) && _eq(op, ({_tag: 3, _name: "Div"})))) {
+            _t14827 = ("__num_div_int(" + (a_14818 + (", " + (b_14820 + ")"))));
           } else {
-            _t14780 = ("(" + (a_14771 + (" " + (js_op_14778 + (" " + (b_14773 + ")"))))));
+            _t14827 = ("(" + (a_14818 + (" " + (js_op_14825 + (" " + (b_14820 + ")"))))));
           }
-          const _t14779 = _t14780;
-          const _t14774 = _t14779;
-          const _t14772 = _t14774;
-          _t14759 = _t14772;
-          break _t14760;
+          const _t14826 = _t14827;
+          const _t14821 = _t14826;
+          const _t14819 = _t14821;
+          _t14806 = _t14819;
+          break _t14807;
         }
-        let _t14782;
-        const _t14781 = op;
-        _t14783: {
-          if (_t14781._tag === 0) {
-            _t14782 = "+";
-            break _t14783;
+        let _t14829;
+        const _t14828 = op;
+        _t14830: {
+          if (_t14828._tag === 0) {
+            _t14829 = "+";
+            break _t14830;
           }
-          if (_t14781._tag === 3) {
-            _t14782 = "/";
-            break _t14783;
+          if (_t14828._tag === 3) {
+            _t14829 = "/";
+            break _t14830;
           }
-          if (_t14781._tag === 2) {
-            _t14782 = "*";
-            break _t14783;
+          if (_t14828._tag === 2) {
+            _t14829 = "*";
+            break _t14830;
           }
-          if (_t14781._tag === 1) {
-            _t14782 = "-";
-            break _t14783;
+          if (_t14828._tag === 1) {
+            _t14829 = "-";
+            break _t14830;
           }
-          _t14782 = failwith("assert false");
-          break _t14783;
+          _t14829 = failwith("assert false");
+          break _t14830;
         }
-        const method_name_14784 = _t14782;
-        const _t14785 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14784, e1, e2]);
-        _t14759 = _t14785;
-        break _t14760;
+        const method_name_14831 = _t14829;
+        const _t14832 = _call(Js_codegen$compile_class_binop, [ctx, "Num", method_name_14831, e1, e2]);
+        _t14806 = _t14832;
+        break _t14807;
       }
-      const _t14757 = _t14759;
-      _t14323 = _t14757;
-      break _t14324;
+      const _t14804 = _t14806;
+      _t14370 = _t14804;
+      break _t14371;
     }
     _match_fail("line 0");
   }
-  return _t14323;
+  return _t14370;
 }
 function Js_codegen$resolve_class_dict_access(ctx, class_name, method_name, operand_ty) {
-  const conc_ty_14786 = Types$repr(operand_ty);
-  function _t14788(c) {
+  const conc_ty_14833 = Types$repr(operand_ty);
+  function _t14835(c) {
     return (c.class_name === class_name);
   }
-  let _t14790;
-  const _t14789 = List$find(_t14788, ctx.type_env.classes);
-  _t14791: {
-    if (_t14789._tag === 0) {
-      _t14790 = Js_codegen$error((("class " + __dict_Show_string.show(class_name)) + " not found"));
-      break _t14791;
+  let _t14837;
+  const _t14836 = List$find(_t14835, ctx.type_env.classes);
+  _t14838: {
+    if (_t14836._tag === 0) {
+      _t14837 = Js_codegen$error((("class " + __dict_Show_string.show(class_name)) + " not found"));
+      break _t14838;
     }
-    if (_t14789._tag === 1) {
-      const cd = _t14789._val;
-      _t14790 = cd;
-      break _t14791;
+    if (_t14836._tag === 1) {
+      const cd = _t14836._val;
+      _t14837 = cd;
+      break _t14838;
     }
     _match_fail("line 0");
   }
-  const class_def_14792 = _t14790;
-  const num_params_14794 = List$length(class_def_14792.class_params);
-  function _t14796(_) {
-    return ({_tag: 1, _name: "Some", _val: conc_ty_14786});
+  const class_def_14839 = _t14837;
+  const num_params_14841 = List$length(class_def_14839.class_params);
+  function _t14843(_) {
+    return ({_tag: 1, _name: "Some", _val: conc_ty_14833});
   }
-  const partial_14797 = List$init(num_params_14794, _t14796);
-  function _t14799(opt) {
-    let _t14801;
-    const _t14800 = opt;
-    _t14802: {
-      if (_t14800._tag === 0) {
-        _t14801 = ({_tag: 0, _name: "None"});
-        break _t14802;
+  const partial_14844 = List$init(num_params_14841, _t14843);
+  function _t14846(opt) {
+    let _t14848;
+    const _t14847 = opt;
+    _t14849: {
+      if (_t14847._tag === 0) {
+        _t14848 = ({_tag: 0, _name: "None"});
+        break _t14849;
       }
-      if (_t14800._tag === 1) {
-        const ty = _t14800._val;
-        let _t14804;
-        const _t14803 = Types$repr(ty);
-        _t14805: {
-          if (_t14803._tag === 15) {
-            if (_t14803._val.contents._tag === 0) {
-              _t14804 = ({_tag: 0, _name: "None"});
-              break _t14805;
+      if (_t14847._tag === 1) {
+        const ty = _t14847._val;
+        let _t14851;
+        const _t14850 = Types$repr(ty);
+        _t14852: {
+          if (_t14850._tag === 15) {
+            if (_t14850._val.contents._tag === 0) {
+              _t14851 = ({_tag: 0, _name: "None"});
+              break _t14852;
             }
-            _t14804 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
-            break _t14805;
+            _t14851 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
+            break _t14852;
           }
-          _t14804 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
-          break _t14805;
+          _t14851 = ({_tag: 1, _name: "Some", _val: Types$repr(ty)});
+          break _t14852;
         }
-        _t14801 = _t14804;
-        break _t14802;
+        _t14848 = _t14851;
+        break _t14849;
       }
       _match_fail("line 0");
     }
-    return _t14801;
+    return _t14848;
   }
-  const concrete_partial_14806 = List$map(_t14799, partial_14797);
-  function _t14808(inst) {
-    return ((inst.inst_class === class_name) && ((List$length(inst.inst_tys) === num_params_14794) && Types$match_partial_inst(inst.inst_tys, concrete_partial_14806)));
+  const concrete_partial_14853 = List$map(_t14846, partial_14844);
+  function _t14855(inst) {
+    return ((inst.inst_class === class_name) && ((List$length(inst.inst_tys) === num_params_14841) && Types$match_partial_inst(inst.inst_tys, concrete_partial_14853)));
   }
-  const matching_14809 = List$filter(_t14808, ctx.type_env.instances);
-  let _t14812;
-  const _t14811 = matching_14809;
-  _t14813: {
-    if (_t14811 === null) {
-      _t14812 = Js_codegen$error(((("no instance of " + __dict_Show_string.show(class_name)) + " for type ") + __dict_Show_string.show(Types$pp_ty(conc_ty_14786))));
-      break _t14813;
+  const matching_14856 = List$filter(_t14855, ctx.type_env.instances);
+  let _t14859;
+  const _t14858 = matching_14856;
+  _t14860: {
+    if (_t14858 === null) {
+      _t14859 = Js_codegen$error(((("no instance of " + __dict_Show_string.show(class_name)) + " for type ") + __dict_Show_string.show(Types$pp_ty(conc_ty_14833))));
+      break _t14860;
     }
-    if (_t14811 !== null) {
-      if (_t14811._tl === null) {
-        const inst = _t14811._hd;
-        _t14812 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name)));
-        break _t14813;
+    if (_t14858 !== null) {
+      if (_t14858._tl === null) {
+        const inst = _t14858._hd;
+        _t14859 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name)));
+        break _t14860;
       }
-      let _t14815;
-      const _t14814 = Types$most_specific_inst(matching_14809);
-      _t14816: {
-        if (_t14814._tag === 0) {
-          _t14815 = Js_codegen$error(((("ambiguous instance for " + __dict_Show_string.show(class_name)) + " method ") + __dict_Show_string.show(method_name)));
-          break _t14816;
+      let _t14862;
+      const _t14861 = Types$most_specific_inst(matching_14856);
+      _t14863: {
+        if (_t14861._tag === 0) {
+          _t14862 = Js_codegen$error(((("ambiguous instance for " + __dict_Show_string.show(class_name)) + " method ") + __dict_Show_string.show(method_name)));
+          break _t14863;
         }
-        if (_t14814._tag === 1) {
-          const inst = _t14814._val;
-          let _t14817;
+        if (_t14861._tag === 1) {
+          const inst = _t14861._val;
+          let _t14864;
           if (_eq(inst.inst_constraints, null)) {
-            _t14817 = Js_codegen$mangle_name((inst.inst_dict_name + ("$" + method_name)));
+            _t14864 = Js_codegen$mangle_name((inst.inst_dict_name + ("$" + method_name)));
           } else {
-            _t14817 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name)));
+            _t14864 = (Js_codegen$mangle_name(inst.inst_dict_name) + ("." + Js_codegen$mangle_name(method_name)));
           }
-          _t14815 = _t14817;
-          break _t14816;
+          _t14862 = _t14864;
+          break _t14863;
         }
         _match_fail("line 0");
       }
-      _t14812 = _t14815;
-      break _t14813;
+      _t14859 = _t14862;
+      break _t14860;
     }
     _match_fail("line 0");
   }
-  const _t14810 = _t14812;
-  const _t14807 = _t14810;
-  const _t14798 = _t14807;
-  const _t14795 = _t14798;
-  const _t14793 = _t14795;
-  const _t14787 = _t14793;
-  return _t14787;
+  const _t14857 = _t14859;
+  const _t14854 = _t14857;
+  const _t14845 = _t14854;
+  const _t14842 = _t14845;
+  const _t14840 = _t14842;
+  const _t14834 = _t14840;
+  return _t14834;
 }
 function Js_codegen$compile_class_binop(ctx, class_name, method_name, e1, e2) {
-  const dict_access_14818 = Js_codegen$resolve_class_dict_access(ctx, class_name, method_name, e1.ty);
-  const a_14820 = Js_codegen$compile_non_tail(ctx, e1);
-  const b_14822 = Js_codegen$compile_non_tail(ctx, e2);
-  const _t14823 = ("_call(" + (dict_access_14818 + (", [" + (a_14820 + (", " + (b_14822 + "])"))))));
-  const _t14821 = _t14823;
-  const _t14819 = _t14821;
-  return _t14819;
+  const dict_access_14865 = Js_codegen$resolve_class_dict_access(ctx, class_name, method_name, e1.ty);
+  const a_14867 = Js_codegen$compile_non_tail(ctx, e1);
+  const b_14869 = Js_codegen$compile_non_tail(ctx, e2);
+  const _t14870 = ("_call(" + (dict_access_14865 + (", [" + (a_14867 + (", " + (b_14869 + "])"))))));
+  const _t14868 = _t14870;
+  const _t14866 = _t14868;
+  return _t14866;
 }
 function Js_codegen$compile_unop(ctx, op, e) {
-  let _t14825;
-  const _t14824 = op;
-  _t14826: {
-    if (_t14824._tag === 2) {
-      const resolved_14827 = Types$repr(e.ty);
-      let _t14830;
-      const _t14829 = resolved_14827;
-      _t14831: {
-        if (_t14829._tag === 0) {
-          const v_14832 = Js_codegen$compile_non_tail(ctx, e);
-          const _t14833 = ("(~" + (v_14832 + ")"));
-          _t14830 = _t14833;
-          break _t14831;
+  let _t14872;
+  const _t14871 = op;
+  _t14873: {
+    if (_t14871._tag === 2) {
+      const resolved_14874 = Types$repr(e.ty);
+      let _t14877;
+      const _t14876 = resolved_14874;
+      _t14878: {
+        if (_t14876._tag === 0) {
+          const v_14879 = Js_codegen$compile_non_tail(ctx, e);
+          const _t14880 = ("(~" + (v_14879 + ")"));
+          _t14877 = _t14880;
+          break _t14878;
         }
-        _t14830 = _call(Js_codegen$compile_class_unop, [ctx, "Bitwise", "lnot", e]);
-        break _t14831;
+        _t14877 = _call(Js_codegen$compile_class_unop, [ctx, "Bitwise", "lnot", e]);
+        break _t14878;
       }
-      const _t14828 = _t14830;
-      _t14825 = _t14828;
-      break _t14826;
+      const _t14875 = _t14877;
+      _t14872 = _t14875;
+      break _t14873;
     }
-    if (_t14824._tag === 0) {
-      const resolved_14834 = Types$repr(e.ty);
-      let _t14837;
-      const _t14836 = resolved_14834;
-      _t14838: {
-        if (_t14836._tag === 1) {
-          const v_14839 = Js_codegen$compile_non_tail(ctx, e);
-          const _t14840 = ("(-" + (v_14839 + ")"));
-          _t14837 = _t14840;
-          break _t14838;
+    if (_t14871._tag === 0) {
+      const resolved_14881 = Types$repr(e.ty);
+      let _t14884;
+      const _t14883 = resolved_14881;
+      _t14885: {
+        if (_t14883._tag === 1) {
+          const v_14886 = Js_codegen$compile_non_tail(ctx, e);
+          const _t14887 = ("(-" + (v_14886 + ")"));
+          _t14884 = _t14887;
+          break _t14885;
         }
-        if (_t14836._tag === 0) {
-          const v_14841 = Js_codegen$compile_non_tail(ctx, e);
-          const _t14842 = ("(-" + (v_14841 + ")"));
-          _t14837 = _t14842;
-          break _t14838;
+        if (_t14883._tag === 0) {
+          const v_14888 = Js_codegen$compile_non_tail(ctx, e);
+          const _t14889 = ("(-" + (v_14888 + ")"));
+          _t14884 = _t14889;
+          break _t14885;
         }
-        _t14837 = _call(Js_codegen$compile_class_unop, [ctx, "Num", "neg", e]);
-        break _t14838;
+        _t14884 = _call(Js_codegen$compile_class_unop, [ctx, "Num", "neg", e]);
+        break _t14885;
       }
-      const _t14835 = _t14837;
-      _t14825 = _t14835;
-      break _t14826;
+      const _t14882 = _t14884;
+      _t14872 = _t14882;
+      break _t14873;
     }
-    if (_t14824._tag === 1) {
-      const v_14843 = Js_codegen$compile_non_tail(ctx, e);
-      const _t14844 = ("(!" + (v_14843 + ")"));
-      _t14825 = _t14844;
-      break _t14826;
+    if (_t14871._tag === 1) {
+      const v_14890 = Js_codegen$compile_non_tail(ctx, e);
+      const _t14891 = ("(!" + (v_14890 + ")"));
+      _t14872 = _t14891;
+      break _t14873;
     }
     _match_fail("line 0");
   }
-  return _t14825;
+  return _t14872;
 }
 function Js_codegen$compile_class_unop(ctx, class_name, method_name, e) {
-  const dict_access_14845 = Js_codegen$resolve_class_dict_access(ctx, class_name, method_name, e.ty);
-  const v_14847 = Js_codegen$compile_non_tail(ctx, e);
-  const _t14848 = ("_call(" + (dict_access_14845 + (", [" + (v_14847 + "])"))));
-  const _t14846 = _t14848;
-  return _t14846;
+  const dict_access_14892 = Js_codegen$resolve_class_dict_access(ctx, class_name, method_name, e.ty);
+  const v_14894 = Js_codegen$compile_non_tail(ctx, e);
+  const _t14895 = ("_call(" + (dict_access_14892 + (", [" + (v_14894 + "])"))));
+  const _t14893 = _t14895;
+  return _t14893;
 }
 function Js_codegen$compile_if(ctx, cond, then_e, else_e) {
-  const c_14849 = Js_codegen$compile_non_tail(ctx, cond);
-  const result_14851 = Js_codegen$fresh_tmp(ctx);
-  Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14851)) + ";"));
-  Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(c_14849)) + ") {"));
+  const c_14896 = Js_codegen$compile_non_tail(ctx, cond);
+  const result_14898 = Js_codegen$fresh_tmp(ctx);
+  Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14898)) + ";"));
+  Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(c_14896)) + ") {"));
   (ctx.indent = (ctx.indent + 1), undefined);
-  const t_14853 = Js_codegen$compile_expr(ctx, then_e);
-  Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14851) + " = ") + __dict_Show_string.show(t_14853)) + ";"));
+  const t_14900 = Js_codegen$compile_expr(ctx, then_e);
+  Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14898) + " = ") + __dict_Show_string.show(t_14900)) + ";"));
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "} else {");
   (ctx.indent = (ctx.indent + 1), undefined);
-  const e_14855 = Js_codegen$compile_expr(ctx, else_e);
-  Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14851) + " = ") + __dict_Show_string.show(e_14855)) + ";"));
+  const e_14902 = Js_codegen$compile_expr(ctx, else_e);
+  Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14898) + " = ") + __dict_Show_string.show(e_14902)) + ";"));
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "}");
-  const _t14856 = result_14851;
-  const _t14854 = _t14856;
-  const _t14852 = _t14854;
-  const _t14850 = _t14852;
-  return _t14850;
+  const _t14903 = result_14898;
+  const _t14901 = _t14903;
+  const _t14899 = _t14901;
+  const _t14897 = _t14899;
+  return _t14897;
 }
 function Js_codegen$compile_seq(ctx, e1, e2) {
-  const v1_14857 = Js_codegen$compile_non_tail(ctx, e1);
-  Js_codegen$emit_line(ctx, (v1_14857 + ";"));
-  const _t14858 = Js_codegen$compile_expr(ctx, e2);
-  return _t14858;
+  const v1_14904 = Js_codegen$compile_non_tail(ctx, e1);
+  Js_codegen$emit_line(ctx, (v1_14904 + ";"));
+  const _t14905 = Js_codegen$compile_expr(ctx, e2);
+  return _t14905;
 }
 function Js_codegen$compile_let_mut(ctx, name, init, body) {
-  const v_14859 = Js_codegen$compile_expr(ctx, init);
-  const js_name_14861 = Js_codegen$mangle_name(name);
-  const actual_name_14863 = (js_name_14861 + ("_" + string_of_int(ctx.tmp_counter)));
+  const v_14906 = Js_codegen$compile_expr(ctx, init);
+  const js_name_14908 = Js_codegen$mangle_name(name);
+  const actual_name_14910 = (js_name_14908 + ("_" + string_of_int(ctx.tmp_counter)));
   (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
   Js_codegen$push_scope(ctx);
-  Js_codegen$bind_var(ctx, name, actual_name_14863);
-  Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(actual_name_14863)) + " = ") + __dict_Show_string.show(v_14859)) + ";"));
-  const result_14865 = Js_codegen$fresh_tmp(ctx);
-  const b_14867 = Js_codegen$compile_expr(ctx, body);
-  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(result_14865)) + " = ") + __dict_Show_string.show(b_14867)) + ";"));
+  Js_codegen$bind_var(ctx, name, actual_name_14910);
+  Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(actual_name_14910)) + " = ") + __dict_Show_string.show(v_14906)) + ";"));
+  const result_14912 = Js_codegen$fresh_tmp(ctx);
+  const b_14914 = Js_codegen$compile_expr(ctx, body);
+  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(result_14912)) + " = ") + __dict_Show_string.show(b_14914)) + ";"));
   Js_codegen$pop_scope(ctx);
-  const _t14868 = result_14865;
-  const _t14866 = _t14868;
-  const _t14864 = _t14866;
-  const _t14862 = _t14864;
-  const _t14860 = _t14862;
-  return _t14860;
+  const _t14915 = result_14912;
+  const _t14913 = _t14915;
+  const _t14911 = _t14913;
+  const _t14909 = _t14911;
+  const _t14907 = _t14909;
+  return _t14907;
 }
 function Js_codegen$compile_while(ctx, cond, body, step) {
-  const result_14869 = Js_codegen$fresh_tmp(ctx);
-  const break_flag_14871 = Js_codegen$fresh_tmp(ctx);
-  const break_val_14873 = Js_codegen$fresh_tmp(ctx);
-  const via_throw_14875 = Ir_analysis$loop_body_escapes_loop_ctl(body);
-  function _t14877(_) {
-    Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14869)) + " = undefined;"));
-    Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(break_flag_14871)) + " = false, ") + __dict_Show_string.show(break_val_14873)) + ";"));
-    function _t14878(_) {
-      let _t14879;
-      if (via_throw_14875) {
+  const result_14916 = Js_codegen$fresh_tmp(ctx);
+  const break_flag_14918 = Js_codegen$fresh_tmp(ctx);
+  const break_val_14920 = Js_codegen$fresh_tmp(ctx);
+  const via_throw_14922 = Ir_analysis$loop_body_escapes_loop_ctl(body);
+  function _t14924(_) {
+    Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14916)) + " = undefined;"));
+    Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(break_flag_14918)) + " = false, ") + __dict_Show_string.show(break_val_14920)) + ";"));
+    function _t14925(_) {
+      let _t14926;
+      if (via_throw_14922) {
         Js_codegen$emit_line(ctx, "try {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        const v_body_14880 = Js_codegen$compile_expr(ctx, body);
-        Js_codegen$emit_line(ctx, (v_body_14880 + ";"));
+        const v_body_14927 = Js_codegen$compile_expr(ctx, body);
+        Js_codegen$emit_line(ctx, (v_body_14927 + ";"));
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "} catch (_e) {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        Js_codegen$emit_line(ctx, (((("if (_e && _e._tag === \"_break\") { " + __dict_Show_string.show(break_val_14873)) + " = _e._val; ") + __dict_Show_string.show(break_flag_14871)) + " = true; break; }"));
+        Js_codegen$emit_line(ctx, (((("if (_e && _e._tag === \"_break\") { " + __dict_Show_string.show(break_val_14920)) + " = _e._val; ") + __dict_Show_string.show(break_flag_14918)) + " = true; break; }"));
         Js_codegen$emit_line(ctx, "else if (_e && _e._tag === \"_continue\") { continue; }");
         Js_codegen$emit_line(ctx, "else throw _e;");
         (ctx.indent = (ctx.indent - 1), undefined);
-        const _t14881 = Js_codegen$emit_line(ctx, "}");
-        _t14879 = _t14881;
+        const _t14928 = Js_codegen$emit_line(ctx, "}");
+        _t14926 = _t14928;
       } else {
-        const v_body_14882 = Js_codegen$compile_expr(ctx, body);
-        const _t14883 = Js_codegen$emit_line(ctx, (v_body_14882 + ";"));
-        _t14879 = _t14883;
+        const v_body_14929 = Js_codegen$compile_expr(ctx, body);
+        const _t14930 = Js_codegen$emit_line(ctx, (v_body_14929 + ";"));
+        _t14926 = _t14930;
       }
-      return _t14879;
+      return _t14926;
     }
-    const emit_body_14884 = _t14878;
-    let _t14887;
-    const _t14886 = step;
-    _t14888: {
-      if (_t14886._tag === 0) {
+    const emit_body_14931 = _t14925;
+    let _t14934;
+    const _t14933 = step;
+    _t14935: {
+      if (_t14933._tag === 0) {
         Js_codegen$emit_line(ctx, "while (true) {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        const c_14889 = Js_codegen$compile_expr(ctx, cond);
-        Js_codegen$emit_line(ctx, (("if (!(" + __dict_Show_string.show(c_14889)) + ")) break;"));
-        const _t14890 = emit_body_14884(undefined);
-        _t14887 = _t14890;
-        break _t14888;
+        const c_14936 = Js_codegen$compile_expr(ctx, cond);
+        Js_codegen$emit_line(ctx, (("if (!(" + __dict_Show_string.show(c_14936)) + ")) break;"));
+        const _t14937 = emit_body_14931(undefined);
+        _t14934 = _t14937;
+        break _t14935;
       }
-      if (_t14886._tag === 1) {
-        const step_te = _t14886._val;
-        const step_flag_14891 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(step_flag_14891)) + " = false;"));
+      if (_t14933._tag === 1) {
+        const step_te = _t14933._val;
+        const step_flag_14938 = Js_codegen$fresh_tmp(ctx);
+        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(step_flag_14938)) + " = false;"));
         Js_codegen$emit_line(ctx, "while (true) {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        Js_codegen$emit_line(ctx, (((("if (" + __dict_Show_string.show(step_flag_14891)) + ") { ") + __dict_Show_string.show(Js_codegen$compile_expr(ctx, step_te))) + "; }"));
-        Js_codegen$emit_line(ctx, (__dict_Show_string.show(step_flag_14891) + " = true;"));
-        const c_14893 = Js_codegen$compile_expr(ctx, cond);
-        Js_codegen$emit_line(ctx, (("if (!(" + __dict_Show_string.show(c_14893)) + ")) break;"));
-        const _t14894 = emit_body_14884(undefined);
-        const _t14892 = _t14894;
-        _t14887 = _t14892;
-        break _t14888;
+        Js_codegen$emit_line(ctx, (((("if (" + __dict_Show_string.show(step_flag_14938)) + ") { ") + __dict_Show_string.show(Js_codegen$compile_expr(ctx, step_te))) + "; }"));
+        Js_codegen$emit_line(ctx, (__dict_Show_string.show(step_flag_14938) + " = true;"));
+        const c_14940 = Js_codegen$compile_expr(ctx, cond);
+        Js_codegen$emit_line(ctx, (("if (!(" + __dict_Show_string.show(c_14940)) + ")) break;"));
+        const _t14941 = emit_body_14931(undefined);
+        const _t14939 = _t14941;
+        _t14934 = _t14939;
+        break _t14935;
       }
       _match_fail("line 0");
     }
-    _t14887;
+    _t14934;
     (ctx.indent = (ctx.indent - 1), undefined);
     Js_codegen$emit_line(ctx, "}");
-    Js_codegen$emit_line(ctx, (((((__dict_Show_string.show(result_14869) + " = ") + __dict_Show_string.show(break_flag_14871)) + " ? ") + __dict_Show_string.show(break_val_14873)) + " : undefined;"));
-    const _t14885 = result_14869;
-    return _t14885;
+    Js_codegen$emit_line(ctx, (((((__dict_Show_string.show(result_14916) + " = ") + __dict_Show_string.show(break_flag_14918)) + " ? ") + __dict_Show_string.show(break_val_14920)) + " : undefined;"));
+    const _t14932 = result_14916;
+    return _t14932;
   }
-  const _t14876 = Js_codegen$with_loop_ctx(ctx, break_flag_14871, break_val_14873, via_throw_14875, _t14877);
-  const _t14874 = _t14876;
-  const _t14872 = _t14874;
-  const _t14870 = _t14872;
-  return _t14870;
+  const _t14923 = Js_codegen$with_loop_ctx(ctx, break_flag_14918, break_val_14920, via_throw_14922, _t14924);
+  const _t14921 = _t14923;
+  const _t14919 = _t14921;
+  const _t14917 = _t14919;
+  return _t14917;
 }
 function Js_codegen$compile_match(ctx, scrut, arms, loc) {
-  const scrut_js_14895 = Js_codegen$compile_non_tail(ctx, scrut);
-  const scrut_tmp_14897 = Js_codegen$fresh_tmp(ctx);
-  const result_14899 = Js_codegen$fresh_tmp(ctx);
-  const label_14901 = Js_codegen$fresh_tmp(ctx);
-  Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14899)) + ";"));
-  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_14897)) + " = ") + __dict_Show_string.show(scrut_js_14895)) + ";"));
-  Js_codegen$emit_line(ctx, (__dict_Show_string.show(label_14901) + ": {"));
+  const scrut_js_14942 = Js_codegen$compile_non_tail(ctx, scrut);
+  const scrut_tmp_14944 = Js_codegen$fresh_tmp(ctx);
+  const result_14946 = Js_codegen$fresh_tmp(ctx);
+  const label_14948 = Js_codegen$fresh_tmp(ctx);
+  Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_14946)) + ";"));
+  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_14944)) + " = ") + __dict_Show_string.show(scrut_js_14942)) + ";"));
+  Js_codegen$emit_line(ctx, (__dict_Show_string.show(label_14948) + ": {"));
   (ctx.indent = (ctx.indent + 1), undefined);
-  function _t14903(__p383) {
-    let _t14905;
-    const _t14904 = __p383;
-    _t14906: {
-      const pat = _t14904[0];
-      const guard = _t14904[1];
-      const body = _t14904[2];
-      let _t14908;
-      const _t14907 = _call(Js_codegen$compile_pattern, [ctx, scrut_tmp_14897, pat]);
-      _t14909: {
-        const conds = _t14907[0];
-        const bindings = _t14907[1];
-        let _t14911;
-        const _t14910 = conds;
-        _t14912: {
-          if (_t14910 === null) {
-            _t14911 = "true";
-            break _t14912;
+  function _t14950(__p383) {
+    let _t14952;
+    const _t14951 = __p383;
+    _t14953: {
+      const pat = _t14951[0];
+      const guard = _t14951[1];
+      const body = _t14951[2];
+      let _t14955;
+      const _t14954 = _call(Js_codegen$compile_pattern, [ctx, scrut_tmp_14944, pat]);
+      _t14956: {
+        const conds = _t14954[0];
+        const bindings = _t14954[1];
+        let _t14958;
+        const _t14957 = conds;
+        _t14959: {
+          if (_t14957 === null) {
+            _t14958 = "true";
+            break _t14959;
           }
-          _t14911 = _call(String$concat, [" && ", conds]);
-          break _t14912;
+          _t14958 = _call(String$concat, [" && ", conds]);
+          break _t14959;
         }
-        const cond_str_14913 = _t14911;
-        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(cond_str_14913)) + ") {"));
+        const cond_str_14960 = _t14958;
+        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(cond_str_14960)) + ") {"));
         (ctx.indent = (ctx.indent + 1), undefined);
         Js_codegen$push_scope(ctx);
-        function _t14915(__p384) {
-          let _t14917;
-          const _t14916 = __p384;
-          _t14918: {
-            const mml_name = _t14916[0];
-            const js_expr = _t14916[1];
-            const base_14919 = Js_codegen$mangle_name(mml_name);
-            let _t14921;
-            if (_call(List$mem, [__dict_Eq_string, base_14919, ctx.current_fn_params])) {
-              function _t14922(n) {
+        function _t14962(__p384) {
+          let _t14964;
+          const _t14963 = __p384;
+          _t14965: {
+            const mml_name = _t14963[0];
+            const js_expr = _t14963[1];
+            const base_14966 = Js_codegen$mangle_name(mml_name);
+            let _t14968;
+            if (_call(List$mem, [__dict_Eq_string, base_14966, ctx.current_fn_params])) {
+              function _t14969(n) {
                 (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
                 return n;
               }
-              _t14921 = _call(_t14922, [(base_14919 + ("_" + string_of_int(ctx.tmp_counter)))]);
+              _t14968 = _call(_t14969, [(base_14966 + ("_" + string_of_int(ctx.tmp_counter)))]);
             } else {
-              _t14921 = base_14919;
+              _t14968 = base_14966;
             }
-            const js_name_14923 = _t14921;
-            Js_codegen$bind_var(ctx, mml_name, js_name_14923);
-            const _t14924 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_name_14923)) + " = ") + __dict_Show_string.show(js_expr)) + ";"));
-            const _t14920 = _t14924;
-            _t14917 = _t14920;
-            break _t14918;
+            const js_name_14970 = _t14968;
+            Js_codegen$bind_var(ctx, mml_name, js_name_14970);
+            const _t14971 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_name_14970)) + " = ") + __dict_Show_string.show(js_expr)) + ";"));
+            const _t14967 = _t14971;
+            _t14964 = _t14967;
+            break _t14965;
           }
-          return _t14917;
+          return _t14964;
         }
-        List$iter(_t14915, bindings);
-        let _t14926;
-        const _t14925 = guard;
-        _t14927: {
-          if (_t14925._tag === 0) {
-            const b_14928 = Js_codegen$compile_expr(ctx, body);
-            Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14899) + " = ") + __dict_Show_string.show(b_14928)) + ";"));
-            const _t14929 = Js_codegen$emit_line(ctx, (("break " + __dict_Show_string.show(label_14901)) + ";"));
-            _t14926 = _t14929;
-            break _t14927;
+        List$iter(_t14962, bindings);
+        let _t14973;
+        const _t14972 = guard;
+        _t14974: {
+          if (_t14972._tag === 0) {
+            const b_14975 = Js_codegen$compile_expr(ctx, body);
+            Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14946) + " = ") + __dict_Show_string.show(b_14975)) + ";"));
+            const _t14976 = Js_codegen$emit_line(ctx, (("break " + __dict_Show_string.show(label_14948)) + ";"));
+            _t14973 = _t14976;
+            break _t14974;
           }
-          if (_t14925._tag === 1) {
-            const g = _t14925._val;
-            const guard_js_14930 = Js_codegen$compile_expr(ctx, g);
-            Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(guard_js_14930)) + ") {"));
+          if (_t14972._tag === 1) {
+            const g = _t14972._val;
+            const guard_js_14977 = Js_codegen$compile_expr(ctx, g);
+            Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(guard_js_14977)) + ") {"));
             (ctx.indent = (ctx.indent + 1), undefined);
-            const b_14932 = Js_codegen$compile_expr(ctx, body);
-            Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14899) + " = ") + __dict_Show_string.show(b_14932)) + ";"));
-            Js_codegen$emit_line(ctx, (("break " + __dict_Show_string.show(label_14901)) + ";"));
+            const b_14979 = Js_codegen$compile_expr(ctx, body);
+            Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result_14946) + " = ") + __dict_Show_string.show(b_14979)) + ";"));
+            Js_codegen$emit_line(ctx, (("break " + __dict_Show_string.show(label_14948)) + ";"));
             (ctx.indent = (ctx.indent - 1), undefined);
-            const _t14933 = Js_codegen$emit_line(ctx, "}");
-            const _t14931 = _t14933;
-            _t14926 = _t14931;
-            break _t14927;
+            const _t14980 = Js_codegen$emit_line(ctx, "}");
+            const _t14978 = _t14980;
+            _t14973 = _t14978;
+            break _t14974;
           }
           _match_fail("line 0");
         }
-        _t14926;
+        _t14973;
         Js_codegen$pop_scope(ctx);
         (ctx.indent = (ctx.indent - 1), undefined);
-        const _t14914 = Js_codegen$emit_line(ctx, "}");
-        _t14908 = _t14914;
-        break _t14909;
+        const _t14961 = Js_codegen$emit_line(ctx, "}");
+        _t14955 = _t14961;
+        break _t14956;
       }
-      _t14905 = _t14908;
-      break _t14906;
+      _t14952 = _t14955;
+      break _t14953;
     }
-    return _t14905;
+    return _t14952;
   }
-  List$iter(_t14903, arms);
+  List$iter(_t14950, arms);
   Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(loc.line)) + "\");"));
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "}");
-  const _t14902 = result_14899;
-  const _t14900 = _t14902;
-  const _t14898 = _t14900;
-  const _t14896 = _t14898;
-  return _t14896;
+  const _t14949 = result_14946;
+  const _t14947 = _t14949;
+  const _t14945 = _t14947;
+  const _t14943 = _t14945;
+  return _t14943;
 }
 function Js_codegen$compile_pattern(ctx, scrutinee, pat) {
   while (true) {
-    let _t14935;
-    const _t14934 = pat;
-    _t14936: {
-      if (_t14934._tag === 19) {
-        const inner_pat = _t14934._val[0];
-        const _t14937 = ctx;
-        const _t14938 = scrutinee;
-        const _t14939 = inner_pat;
-        ctx = _t14937;
-        scrutinee = _t14938;
-        pat = _t14939;
+    let _t14982;
+    const _t14981 = pat;
+    _t14983: {
+      if (_t14981._tag === 19) {
+        const inner_pat = _t14981._val[0];
+        const _t14984 = ctx;
+        const _t14985 = scrutinee;
+        const _t14986 = inner_pat;
+        ctx = _t14984;
+        scrutinee = _t14985;
+        pat = _t14986;
         continue;
-        _t14935 = undefined;
-        break _t14936;
+        _t14982 = undefined;
+        break _t14983;
       }
-      if (_t14934._tag === 14) {
-        const pats = _t14934._val;
-        const len_cond_14940 = ((__dict_Show_string.show(scrutinee) + "._arr.length === ") + __dict_Show_int.show(List$length(pats)));
-        const all_conds_14942 = Ref$create(({_hd: len_cond_14940, _tl: null}));
-        const all_binds_14944 = Ref$create(null);
-        function _t14946(i, sub_pat) {
-          const elem_expr_14947 = (((__dict_Show_string.show(scrutinee) + "._arr[") + __dict_Show_int.show(i)) + "]");
-          let _t14950;
-          const _t14949 = Js_codegen$compile_pattern(ctx, elem_expr_14947, sub_pat);
-          _t14951: {
-            const c = _t14949[0];
-            const b = _t14949[1];
-            Ref$set(all_conds_14942, List$concat(Ref$get(all_conds_14942), c));
-            _t14950 = Ref$set(all_binds_14944, List$concat(Ref$get(all_binds_14944), b));
-            break _t14951;
+      if (_t14981._tag === 14) {
+        const pats = _t14981._val;
+        const len_cond_14987 = ((__dict_Show_string.show(scrutinee) + "._arr.length === ") + __dict_Show_int.show(List$length(pats)));
+        const all_conds_14989 = Ref$create(({_hd: len_cond_14987, _tl: null}));
+        const all_binds_14991 = Ref$create(null);
+        function _t14993(i, sub_pat) {
+          const elem_expr_14994 = (((__dict_Show_string.show(scrutinee) + "._arr[") + __dict_Show_int.show(i)) + "]");
+          let _t14997;
+          const _t14996 = Js_codegen$compile_pattern(ctx, elem_expr_14994, sub_pat);
+          _t14998: {
+            const c = _t14996[0];
+            const b = _t14996[1];
+            Ref$set(all_conds_14989, List$concat(Ref$get(all_conds_14989), c));
+            _t14997 = Ref$set(all_binds_14991, List$concat(Ref$get(all_binds_14991), b));
+            break _t14998;
           }
-          const _t14948 = _t14950;
-          return _t14948;
+          const _t14995 = _t14997;
+          return _t14995;
         }
-        List$iteri(_t14946, pats);
-        const _t14945 = [Ref$get(all_conds_14942), Ref$get(all_binds_14944)];
-        const _t14943 = _t14945;
-        const _t14941 = _t14943;
-        _t14935 = _t14941;
-        break _t14936;
+        List$iteri(_t14993, pats);
+        const _t14992 = [Ref$get(all_conds_14989), Ref$get(all_binds_14991)];
+        const _t14990 = _t14992;
+        const _t14988 = _t14990;
+        _t14982 = _t14988;
+        break _t14983;
       }
-      if (_t14934._tag === 12) {
-        const inner_pat = _t14934._val[0];
-        const name = _t14934._val[1];
-        let _t14953;
-        const _t14952 = Js_codegen$compile_pattern(ctx, scrutinee, inner_pat);
-        _t14954: {
-          const conds = _t14952[0];
-          const binds = _t14952[1];
-          _t14953 = [conds, List$concat(binds, ({_hd: [name, scrutinee], _tl: null}))];
-          break _t14954;
+      if (_t14981._tag === 12) {
+        const inner_pat = _t14981._val[0];
+        const name = _t14981._val[1];
+        let _t15000;
+        const _t14999 = Js_codegen$compile_pattern(ctx, scrutinee, inner_pat);
+        _t15001: {
+          const conds = _t14999[0];
+          const binds = _t14999[1];
+          _t15000 = [conds, List$concat(binds, ({_hd: [name, scrutinee], _tl: null}))];
+          break _t15001;
         }
-        _t14935 = _t14953;
-        break _t14936;
+        _t14982 = _t15000;
+        break _t14983;
       }
-      if (_t14934._tag === 4) {
-        if (!_t14934._val) {
-          _t14935 = [({_hd: ("!" + scrutinee), _tl: null}), null];
-          break _t14936;
+      if (_t14981._tag === 4) {
+        if (!_t14981._val) {
+          _t14982 = [({_hd: ("!" + scrutinee), _tl: null}), null];
+          break _t14983;
         }
-        if (_t14934._val) {
-          _t14935 = [({_hd: scrutinee, _tl: null}), null];
-          break _t14936;
+        if (_t14981._val) {
+          _t14982 = [({_hd: scrutinee, _tl: null}), null];
+          break _t14983;
         }
         _match_fail("line 0");
       }
-      if (_t14934._tag === 8) {
-        const hd_pat = _t14934._val[0];
-        const tl_pat = _t14934._val[1];
-        let _t14956;
-        const _t14955 = Js_codegen$compile_pattern(ctx, (scrutinee + "._hd"), hd_pat);
-        _t14957: {
-          const hd_conds = _t14955[0];
-          const hd_binds = _t14955[1];
-          let _t14959;
-          const _t14958 = Js_codegen$compile_pattern(ctx, (scrutinee + "._tl"), tl_pat);
-          _t14960: {
-            const tl_conds = _t14958[0];
-            const tl_binds = _t14958[1];
-            const conds_14961 = List$concat(({_hd: (scrutinee + " !== null"), _tl: hd_conds}), tl_conds);
-            const _t14962 = [conds_14961, List$concat(hd_binds, tl_binds)];
-            _t14959 = _t14962;
-            break _t14960;
+      if (_t14981._tag === 8) {
+        const hd_pat = _t14981._val[0];
+        const tl_pat = _t14981._val[1];
+        let _t15003;
+        const _t15002 = Js_codegen$compile_pattern(ctx, (scrutinee + "._hd"), hd_pat);
+        _t15004: {
+          const hd_conds = _t15002[0];
+          const hd_binds = _t15002[1];
+          let _t15006;
+          const _t15005 = Js_codegen$compile_pattern(ctx, (scrutinee + "._tl"), tl_pat);
+          _t15007: {
+            const tl_conds = _t15005[0];
+            const tl_binds = _t15005[1];
+            const conds_15008 = List$concat(({_hd: (scrutinee + " !== null"), _tl: hd_conds}), tl_conds);
+            const _t15009 = [conds_15008, List$concat(hd_binds, tl_binds)];
+            _t15006 = _t15009;
+            break _t15007;
           }
-          _t14956 = _t14959;
-          break _t14957;
+          _t15003 = _t15006;
+          break _t15004;
         }
-        _t14935 = _t14956;
-        break _t14936;
+        _t14982 = _t15003;
+        break _t14983;
       }
-      if (_t14934._tag === 10) {
-        const name = _t14934._val[0];
-        const arg_pat = _t14934._val[1];
+      if (_t14981._tag === 10) {
+        const name = _t14981._val[0];
+        const arg_pat = _t14981._val[1];
         if (Js_codegen$is_newtype_ctor(ctx.type_env, name)) {
-          const name = _t14934._val[0];
-          const arg_pat = _t14934._val[1];
-          let _t14964;
-          const _t14963 = arg_pat;
-          _t14965: {
-            if (_t14963._tag === 0) {
-              _t14964 = [null, null];
-              break _t14965;
+          const name = _t14981._val[0];
+          const arg_pat = _t14981._val[1];
+          let _t15011;
+          const _t15010 = arg_pat;
+          _t15012: {
+            if (_t15010._tag === 0) {
+              _t15011 = [null, null];
+              break _t15012;
             }
-            if (_t14963._tag === 1) {
-              const sub_pat = _t14963._val;
-              const _t14966 = ctx;
-              const _t14967 = scrutinee;
-              const _t14968 = sub_pat;
-              ctx = _t14966;
-              scrutinee = _t14967;
-              pat = _t14968;
+            if (_t15010._tag === 1) {
+              const sub_pat = _t15010._val;
+              const _t15013 = ctx;
+              const _t15014 = scrutinee;
+              const _t15015 = sub_pat;
+              ctx = _t15013;
+              scrutinee = _t15014;
+              pat = _t15015;
               continue;
-              _t14964 = undefined;
-              break _t14965;
+              _t15011 = undefined;
+              break _t15012;
             }
             _match_fail("line 0");
           }
-          _t14935 = _t14964;
-          break _t14936;
+          _t14982 = _t15011;
+          break _t14983;
         } else {
-          const name = _t14934._val[0];
-          const arg_pat = _t14934._val[1];
-          let _t14969;
+          const name = _t14981._val[0];
+          const arg_pat = _t14981._val[1];
+          let _t15016;
           if (((String$length(name) > 0) && (_call(String$get, [name, 0]) === 96))) {
-            _t14969 = _call(Types$polyvar_tag, [__dict_Hash_string, _call(String$sub, [name, 1, (String$length(name) - 1)])]);
+            _t15016 = _call(Types$polyvar_tag, [__dict_Hash_string, _call(String$sub, [name, 1, (String$length(name) - 1)])]);
           } else {
-            _t14969 = Js_codegen$tag_for_constructor(ctx.type_env, name);
+            _t15016 = Js_codegen$tag_for_constructor(ctx.type_env, name);
           }
-          const tag_14970 = _t14969;
-          const conds_14972 = ({_hd: ((__dict_Show_string.show(scrutinee) + "._tag === ") + __dict_Show_int.show(tag_14970)), _tl: null});
-          let _t14975;
-          const _t14974 = arg_pat;
-          _t14976: {
-            if (_t14974._tag === 0) {
-              _t14975 = [conds_14972, null];
-              break _t14976;
+          const tag_15017 = _t15016;
+          const conds_15019 = ({_hd: ((__dict_Show_string.show(scrutinee) + "._tag === ") + __dict_Show_int.show(tag_15017)), _tl: null});
+          let _t15022;
+          const _t15021 = arg_pat;
+          _t15023: {
+            if (_t15021._tag === 0) {
+              _t15022 = [conds_15019, null];
+              break _t15023;
             }
-            if (_t14974._tag === 1) {
-              const sub_pat = _t14974._val;
-              let _t14978;
-              const _t14977 = Js_codegen$compile_pattern(ctx, (scrutinee + "._val"), sub_pat);
-              _t14979: {
-                const sub_conds = _t14977[0];
-                const sub_binds = _t14977[1];
-                _t14978 = [List$concat(conds_14972, sub_conds), sub_binds];
-                break _t14979;
+            if (_t15021._tag === 1) {
+              const sub_pat = _t15021._val;
+              let _t15025;
+              const _t15024 = Js_codegen$compile_pattern(ctx, (scrutinee + "._val"), sub_pat);
+              _t15026: {
+                const sub_conds = _t15024[0];
+                const sub_binds = _t15024[1];
+                _t15025 = [List$concat(conds_15019, sub_conds), sub_binds];
+                break _t15026;
               }
-              _t14975 = _t14978;
-              break _t14976;
+              _t15022 = _t15025;
+              break _t15023;
             }
             _match_fail("line 0");
           }
-          const _t14973 = _t14975;
-          const _t14971 = _t14973;
-          _t14935 = _t14971;
-          break _t14936;
+          const _t15020 = _t15022;
+          const _t15018 = _t15020;
+          _t14982 = _t15018;
+          break _t14983;
         }
       }
-      if (_t14934._tag === 3) {
-        const f = _t14934._val;
-        _t14935 = [({_hd: ((__dict_Show_string.show(scrutinee) + " === ") + __dict_Show_string.show(__dict_Show_float.show(f))), _tl: null}), null];
-        break _t14936;
+      if (_t14981._tag === 3) {
+        const f = _t14981._val;
+        _t14982 = [({_hd: ((__dict_Show_string.show(scrutinee) + " === ") + __dict_Show_string.show(__dict_Show_float.show(f))), _tl: null}), null];
+        break _t14983;
       }
-      if (_t14934._tag === 2) {
-        const n = _t14934._val;
-        _t14935 = [({_hd: ((__dict_Show_string.show(scrutinee) + " === ") + __dict_Show_int.show(n)), _tl: null}), null];
-        break _t14936;
+      if (_t14981._tag === 2) {
+        const n = _t14981._val;
+        _t14982 = [({_hd: ((__dict_Show_string.show(scrutinee) + " === ") + __dict_Show_int.show(n)), _tl: null}), null];
+        break _t14983;
       }
-      if (_t14934._tag === 15) {
-        const entries = _t14934._val;
-        const all_conds_14980 = Ref$create(null);
-        const all_binds_14982 = Ref$create(null);
-        function _t14984(__p387) {
-          let _t14986;
-          const _t14985 = __p387;
-          _t14987: {
-            const key_pat = _t14985[0];
-            const val_pat = _t14985[1];
-            function _t14988(key_pat) {
-              let _t14990;
-              const _t14989 = key_pat;
-              _t14991: {
-                if (_t14989._tag === 4) {
-                  const b = _t14989._val;
-                  let _t14992;
+      if (_t14981._tag === 15) {
+        const entries = _t14981._val;
+        const all_conds_15027 = Ref$create(null);
+        const all_binds_15029 = Ref$create(null);
+        function _t15031(__p387) {
+          let _t15033;
+          const _t15032 = __p387;
+          _t15034: {
+            const key_pat = _t15032[0];
+            const val_pat = _t15032[1];
+            function _t15035(key_pat) {
+              let _t15037;
+              const _t15036 = key_pat;
+              _t15038: {
+                if (_t15036._tag === 4) {
+                  const b = _t15036._val;
+                  let _t15039;
                   if (b) {
-                    _t14992 = "true";
+                    _t15039 = "true";
                   } else {
-                    _t14992 = "false";
+                    _t15039 = "false";
                   }
-                  _t14990 = _t14992;
-                  break _t14991;
+                  _t15037 = _t15039;
+                  break _t15038;
                 }
-                if (_t14989._tag === 3) {
-                  const f = _t14989._val;
-                  _t14990 = __dict_Show_float.show(f);
-                  break _t14991;
+                if (_t15036._tag === 3) {
+                  const f = _t15036._val;
+                  _t15037 = __dict_Show_float.show(f);
+                  break _t15038;
                 }
-                if (_t14989._tag === 2) {
-                  const n = _t14989._val;
-                  _t14990 = string_of_int(n);
-                  break _t14991;
+                if (_t15036._tag === 2) {
+                  const n = _t15036._val;
+                  _t15037 = string_of_int(n);
+                  break _t15038;
                 }
-                if (_t14989._tag === 18) {
-                  const name = _t14989._val;
-                  _t14990 = Js_codegen$lookup_var(ctx, name);
-                  break _t14991;
+                if (_t15036._tag === 18) {
+                  const name = _t15036._val;
+                  _t15037 = Js_codegen$lookup_var(ctx, name);
+                  break _t15038;
                 }
-                if (_t14989._tag === 5) {
-                  const s = _t14989._val;
-                  _t14990 = Js_codegen$escape_js_string(s);
-                  break _t14991;
+                if (_t15036._tag === 5) {
+                  const s = _t15036._val;
+                  _t15037 = Js_codegen$escape_js_string(s);
+                  break _t15038;
                 }
-                _t14990 = Js_codegen$error("map pattern keys must be literals or pin patterns");
-                break _t14991;
+                _t15037 = Js_codegen$error("map pattern keys must be literals or pin patterns");
+                break _t15038;
               }
-              return _t14990;
+              return _t15037;
             }
-            const key_expr_14993 = _t14988(key_pat);
-            Ref$set(all_conds_14980, List$concat(Ref$get(all_conds_14980), ({_hd: (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.has")) + "(") + __dict_Show_string.show(key_expr_14993)) + ", ") + __dict_Show_string.show(scrutinee)) + ")"), _tl: null})));
-            const val_expr_14995 = (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.get")) + "(") + __dict_Show_string.show(key_expr_14993)) + ", ") + __dict_Show_string.show(scrutinee)) + ")._val");
-            let _t14998;
-            const _t14997 = Js_codegen$compile_pattern(ctx, val_expr_14995, val_pat);
-            _t14999: {
-              const c = _t14997[0];
-              const b = _t14997[1];
-              Ref$set(all_conds_14980, List$concat(Ref$get(all_conds_14980), c));
-              _t14998 = Ref$set(all_binds_14982, List$concat(Ref$get(all_binds_14982), b));
-              break _t14999;
+            const key_expr_15040 = _t15035(key_pat);
+            Ref$set(all_conds_15027, List$concat(Ref$get(all_conds_15027), ({_hd: (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.has")) + "(") + __dict_Show_string.show(key_expr_15040)) + ", ") + __dict_Show_string.show(scrutinee)) + ")"), _tl: null})));
+            const val_expr_15042 = (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.get")) + "(") + __dict_Show_string.show(key_expr_15040)) + ", ") + __dict_Show_string.show(scrutinee)) + ")._val");
+            let _t15045;
+            const _t15044 = Js_codegen$compile_pattern(ctx, val_expr_15042, val_pat);
+            _t15046: {
+              const c = _t15044[0];
+              const b = _t15044[1];
+              Ref$set(all_conds_15027, List$concat(Ref$get(all_conds_15027), c));
+              _t15045 = Ref$set(all_binds_15029, List$concat(Ref$get(all_binds_15029), b));
+              break _t15046;
             }
-            const _t14996 = _t14998;
-            const _t14994 = _t14996;
-            _t14986 = _t14994;
-            break _t14987;
+            const _t15043 = _t15045;
+            const _t15041 = _t15043;
+            _t15033 = _t15041;
+            break _t15034;
           }
-          return _t14986;
+          return _t15033;
         }
-        List$iter(_t14984, entries);
-        const _t14983 = [Ref$get(all_conds_14980), Ref$get(all_binds_14982)];
-        const _t14981 = _t14983;
-        _t14935 = _t14981;
-        break _t14936;
+        List$iter(_t15031, entries);
+        const _t15030 = [Ref$get(all_conds_15027), Ref$get(all_binds_15029)];
+        const _t15028 = _t15030;
+        _t14982 = _t15028;
+        break _t14983;
       }
-      if (_t14934._tag === 9) {
-        _t14935 = [({_hd: (scrutinee + " === null"), _tl: null}), null];
-        break _t14936;
+      if (_t14981._tag === 9) {
+        _t14982 = [({_hd: (scrutinee + " === null"), _tl: null}), null];
+        break _t14983;
       }
-      if (_t14934._tag === 13) {
-        const p1 = _t14934._val[0];
-        const p2 = _t14934._val[1];
-        let _t15001;
-        const _t15000 = Js_codegen$compile_pattern(ctx, scrutinee, p1);
-        _t15002: {
-          const conds1 = _t15000[0];
-          const binds1 = _t15000[1];
-          let _t15004;
-          const _t15003 = Js_codegen$compile_pattern(ctx, scrutinee, p2);
-          _t15005: {
-            const conds2 = _t15003[0];
-            const binds2 = _t15003[1];
-            let _t15007;
-            const _t15006 = conds1;
-            _t15008: {
-              if (_t15006 === null) {
-                _t15007 = "true";
-                break _t15008;
+      if (_t14981._tag === 13) {
+        const p1 = _t14981._val[0];
+        const p2 = _t14981._val[1];
+        let _t15048;
+        const _t15047 = Js_codegen$compile_pattern(ctx, scrutinee, p1);
+        _t15049: {
+          const conds1 = _t15047[0];
+          const binds1 = _t15047[1];
+          let _t15051;
+          const _t15050 = Js_codegen$compile_pattern(ctx, scrutinee, p2);
+          _t15052: {
+            const conds2 = _t15050[0];
+            const binds2 = _t15050[1];
+            let _t15054;
+            const _t15053 = conds1;
+            _t15055: {
+              if (_t15053 === null) {
+                _t15054 = "true";
+                break _t15055;
               }
-              const cs = _t15006;
-              _t15007 = _call(String$concat, [" && ", cs]);
-              break _t15008;
+              const cs = _t15053;
+              _t15054 = _call(String$concat, [" && ", cs]);
+              break _t15055;
             }
-            const cond1_15009 = _t15007;
-            let _t15012;
-            const _t15011 = conds2;
-            _t15013: {
-              if (_t15011 === null) {
-                _t15012 = "true";
-                break _t15013;
+            const cond1_15056 = _t15054;
+            let _t15059;
+            const _t15058 = conds2;
+            _t15060: {
+              if (_t15058 === null) {
+                _t15059 = "true";
+                break _t15060;
               }
-              const cs = _t15011;
-              _t15012 = _call(String$concat, [" && ", cs]);
-              break _t15013;
+              const cs = _t15058;
+              _t15059 = _call(String$concat, [" && ", cs]);
+              break _t15060;
             }
-            const cond2_15014 = _t15012;
-            let _t15016;
+            const cond2_15061 = _t15059;
+            let _t15063;
             if (_eq(binds1, binds2)) {
-              _t15016 = binds1;
+              _t15063 = binds1;
             } else {
-              function _t15017(__p386) {
-                let _t15019;
-                const _t15018 = __p386;
-                _t15020: {
-                  const name = _t15018[0];
-                  const expr1 = _t15018[1];
-                  const expr2_15021 = _call(List$assoc, [__dict_Eq_string, name, binds2]);
-                  let _t15023;
-                  if ((expr1 === expr2_15021)) {
-                    _t15023 = [name, expr1];
+              function _t15064(__p386) {
+                let _t15066;
+                const _t15065 = __p386;
+                _t15067: {
+                  const name = _t15065[0];
+                  const expr1 = _t15065[1];
+                  const expr2_15068 = _call(List$assoc, [__dict_Eq_string, name, binds2]);
+                  let _t15070;
+                  if ((expr1 === expr2_15068)) {
+                    _t15070 = [name, expr1];
                   } else {
-                    _t15023 = [name, (((((("(" + __dict_Show_string.show(cond1_15009)) + " ? ") + __dict_Show_string.show(expr1)) + " : ") + __dict_Show_string.show(expr2_15021)) + ")")];
+                    _t15070 = [name, (((((("(" + __dict_Show_string.show(cond1_15056)) + " ? ") + __dict_Show_string.show(expr1)) + " : ") + __dict_Show_string.show(expr2_15068)) + ")")];
                   }
-                  const _t15022 = _t15023;
-                  _t15019 = _t15022;
-                  break _t15020;
+                  const _t15069 = _t15070;
+                  _t15066 = _t15069;
+                  break _t15067;
                 }
-                return _t15019;
+                return _t15066;
               }
-              _t15016 = List$map(_t15017, binds1);
+              _t15063 = List$map(_t15064, binds1);
             }
-            const binds_15024 = _t15016;
-            const _t15025 = [({_hd: ("(" + (cond1_15009 + (" || " + (cond2_15014 + ")")))), _tl: null}), binds_15024];
-            const _t15015 = _t15025;
-            const _t15010 = _t15015;
-            _t15004 = _t15010;
-            break _t15005;
+            const binds_15071 = _t15063;
+            const _t15072 = [({_hd: ("(" + (cond1_15056 + (" || " + (cond2_15061 + ")")))), _tl: null}), binds_15071];
+            const _t15062 = _t15072;
+            const _t15057 = _t15062;
+            _t15051 = _t15057;
+            break _t15052;
           }
-          _t15001 = _t15004;
-          break _t15002;
+          _t15048 = _t15051;
+          break _t15049;
         }
-        _t14935 = _t15001;
-        break _t14936;
+        _t14982 = _t15048;
+        break _t14983;
       }
-      if (_t14934._tag === 18) {
-        const name = _t14934._val;
-        const js_name_15026 = Js_codegen$lookup_var(ctx, name);
-        const _t15027 = [({_hd: (((("_eq(" + __dict_Show_string.show(scrutinee)) + ", ") + __dict_Show_string.show(js_name_15026)) + ")"), _tl: null}), null];
-        _t14935 = _t15027;
-        break _t14936;
+      if (_t14981._tag === 18) {
+        const name = _t14981._val;
+        const js_name_15073 = Js_codegen$lookup_var(ctx, name);
+        const _t15074 = [({_hd: (((("_eq(" + __dict_Show_string.show(scrutinee)) + ", ") + __dict_Show_string.show(js_name_15073)) + ")"), _tl: null}), null];
+        _t14982 = _t15074;
+        break _t14983;
       }
-      if (_t14934._tag === 17) {
-        const tag = _t14934._val[0];
-        const arg_pat = _t14934._val[1];
-        const num_tag_15028 = _call(Types$polyvar_tag, [__dict_Hash_string, tag]);
-        const conds_15030 = ({_hd: ((__dict_Show_string.show(scrutinee) + "._tag === ") + __dict_Show_int.show(num_tag_15028)), _tl: null});
-        let _t15033;
-        const _t15032 = arg_pat;
-        _t15034: {
-          if (_t15032._tag === 0) {
-            _t15033 = [conds_15030, null];
-            break _t15034;
+      if (_t14981._tag === 17) {
+        const tag = _t14981._val[0];
+        const arg_pat = _t14981._val[1];
+        const num_tag_15075 = _call(Types$polyvar_tag, [__dict_Hash_string, tag]);
+        const conds_15077 = ({_hd: ((__dict_Show_string.show(scrutinee) + "._tag === ") + __dict_Show_int.show(num_tag_15075)), _tl: null});
+        let _t15080;
+        const _t15079 = arg_pat;
+        _t15081: {
+          if (_t15079._tag === 0) {
+            _t15080 = [conds_15077, null];
+            break _t15081;
           }
-          if (_t15032._tag === 1) {
-            const sub_pat = _t15032._val;
-            let _t15036;
-            const _t15035 = Js_codegen$compile_pattern(ctx, (scrutinee + "._val"), sub_pat);
-            _t15037: {
-              const sub_conds = _t15035[0];
-              const sub_binds = _t15035[1];
-              _t15036 = [List$concat(conds_15030, sub_conds), sub_binds];
-              break _t15037;
+          if (_t15079._tag === 1) {
+            const sub_pat = _t15079._val;
+            let _t15083;
+            const _t15082 = Js_codegen$compile_pattern(ctx, (scrutinee + "._val"), sub_pat);
+            _t15084: {
+              const sub_conds = _t15082[0];
+              const sub_binds = _t15082[1];
+              _t15083 = [List$concat(conds_15077, sub_conds), sub_binds];
+              break _t15084;
             }
-            _t15033 = _t15036;
-            break _t15034;
+            _t15080 = _t15083;
+            break _t15081;
           }
           _match_fail("line 0");
         }
-        const _t15031 = _t15033;
-        const _t15029 = _t15031;
-        _t14935 = _t15029;
-        break _t14936;
+        const _t15078 = _t15080;
+        const _t15076 = _t15078;
+        _t14982 = _t15076;
+        break _t14983;
       }
-      if (_t14934._tag === 11) {
-        const field_pats = _t14934._val;
-        const all_conds_15038 = Ref$create(null);
-        const all_binds_15040 = Ref$create(null);
-        function _t15042(__p385) {
-          let _t15044;
-          const _t15043 = __p385;
-          _t15045: {
-            const fname = _t15043[0];
-            const sub_pat = _t15043[1];
-            const field_expr_15046 = (scrutinee + ("." + Js_codegen$mangle_name(fname)));
-            let _t15049;
-            const _t15048 = Js_codegen$compile_pattern(ctx, field_expr_15046, sub_pat);
-            _t15050: {
-              const c = _t15048[0];
-              const b = _t15048[1];
-              Ref$set(all_conds_15038, List$concat(Ref$get(all_conds_15038), c));
-              _t15049 = Ref$set(all_binds_15040, List$concat(Ref$get(all_binds_15040), b));
-              break _t15050;
+      if (_t14981._tag === 11) {
+        const field_pats = _t14981._val;
+        const all_conds_15085 = Ref$create(null);
+        const all_binds_15087 = Ref$create(null);
+        function _t15089(__p385) {
+          let _t15091;
+          const _t15090 = __p385;
+          _t15092: {
+            const fname = _t15090[0];
+            const sub_pat = _t15090[1];
+            const field_expr_15093 = (scrutinee + ("." + Js_codegen$mangle_name(fname)));
+            let _t15096;
+            const _t15095 = Js_codegen$compile_pattern(ctx, field_expr_15093, sub_pat);
+            _t15097: {
+              const c = _t15095[0];
+              const b = _t15095[1];
+              Ref$set(all_conds_15085, List$concat(Ref$get(all_conds_15085), c));
+              _t15096 = Ref$set(all_binds_15087, List$concat(Ref$get(all_binds_15087), b));
+              break _t15097;
             }
-            const _t15047 = _t15049;
-            _t15044 = _t15047;
-            break _t15045;
+            const _t15094 = _t15096;
+            _t15091 = _t15094;
+            break _t15092;
           }
-          return _t15044;
+          return _t15091;
         }
-        List$iter(_t15042, field_pats);
-        const _t15041 = [Ref$get(all_conds_15038), Ref$get(all_binds_15040)];
-        const _t15039 = _t15041;
-        _t14935 = _t15039;
-        break _t14936;
+        List$iter(_t15089, field_pats);
+        const _t15088 = [Ref$get(all_conds_15085), Ref$get(all_binds_15087)];
+        const _t15086 = _t15088;
+        _t14982 = _t15086;
+        break _t14983;
       }
-      if (_t14934._tag === 16) {
-        _t14935 = failwith("PatSet should be desugared before JS codegen");
-        break _t14936;
+      if (_t14981._tag === 16) {
+        _t14982 = failwith("PatSet should be desugared before JS codegen");
+        break _t14983;
       }
-      if (_t14934._tag === 5) {
-        const s = _t14934._val;
-        _t14935 = [({_hd: ((__dict_Show_string.show(scrutinee) + " === ") + __dict_Show_string.show(Js_codegen$escape_js_string(s))), _tl: null}), null];
-        break _t14936;
+      if (_t14981._tag === 5) {
+        const s = _t14981._val;
+        _t14982 = [({_hd: ((__dict_Show_string.show(scrutinee) + " === ") + __dict_Show_string.show(Js_codegen$escape_js_string(s))), _tl: null}), null];
+        break _t14983;
       }
-      if (_t14934._tag === 7) {
-        const pats = _t14934._val;
-        const all_conds_15051 = Ref$create(null);
-        const all_binds_15053 = Ref$create(null);
-        function _t15055(i, sub_pat) {
-          const elem_expr_15056 = (((__dict_Show_string.show(scrutinee) + "[") + __dict_Show_int.show(i)) + "]");
-          let _t15059;
-          const _t15058 = Js_codegen$compile_pattern(ctx, elem_expr_15056, sub_pat);
-          _t15060: {
-            const c = _t15058[0];
-            const b = _t15058[1];
-            Ref$set(all_conds_15051, List$concat(Ref$get(all_conds_15051), c));
-            _t15059 = Ref$set(all_binds_15053, List$concat(Ref$get(all_binds_15053), b));
-            break _t15060;
+      if (_t14981._tag === 7) {
+        const pats = _t14981._val;
+        const all_conds_15098 = Ref$create(null);
+        const all_binds_15100 = Ref$create(null);
+        function _t15102(i, sub_pat) {
+          const elem_expr_15103 = (((__dict_Show_string.show(scrutinee) + "[") + __dict_Show_int.show(i)) + "]");
+          let _t15106;
+          const _t15105 = Js_codegen$compile_pattern(ctx, elem_expr_15103, sub_pat);
+          _t15107: {
+            const c = _t15105[0];
+            const b = _t15105[1];
+            Ref$set(all_conds_15098, List$concat(Ref$get(all_conds_15098), c));
+            _t15106 = Ref$set(all_binds_15100, List$concat(Ref$get(all_binds_15100), b));
+            break _t15107;
           }
-          const _t15057 = _t15059;
-          return _t15057;
+          const _t15104 = _t15106;
+          return _t15104;
         }
-        List$iteri(_t15055, pats);
-        const _t15054 = [Ref$get(all_conds_15051), Ref$get(all_binds_15053)];
-        const _t15052 = _t15054;
-        _t14935 = _t15052;
-        break _t14936;
+        List$iteri(_t15102, pats);
+        const _t15101 = [Ref$get(all_conds_15098), Ref$get(all_binds_15100)];
+        const _t15099 = _t15101;
+        _t14982 = _t15099;
+        break _t14983;
       }
-      if (_t14934._tag === 6) {
-        _t14935 = [null, null];
-        break _t14936;
+      if (_t14981._tag === 6) {
+        _t14982 = [null, null];
+        break _t14983;
       }
-      if (_t14934._tag === 1) {
-        const name = _t14934._val;
-        _t14935 = [null, ({_hd: [name, scrutinee], _tl: null})];
-        break _t14936;
+      if (_t14981._tag === 1) {
+        const name = _t14981._val;
+        _t14982 = [null, ({_hd: [name, scrutinee], _tl: null})];
+        break _t14983;
       }
-      if (_t14934._tag === 0) {
-        _t14935 = [null, null];
-        break _t14936;
+      if (_t14981._tag === 0) {
+        _t14982 = [null, null];
+        break _t14983;
       }
       _match_fail("line 0");
     }
-    return _t14935;
+    return _t14982;
   }
 }
 function Js_codegen$compile_js_match_tree(ctx, cm) {
-  const scrut_js_15061 = Js_codegen$compile_non_tail(ctx, cm.scrutinee);
-  const scrut_tmp_15063 = Js_codegen$fresh_tmp(ctx);
-  const result_15065 = Js_codegen$fresh_tmp(ctx);
-  const label_15067 = Js_codegen$fresh_tmp(ctx);
-  Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_15065)) + ";"));
-  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_15063)) + " = ") + __dict_Show_string.show(scrut_js_15061)) + ";"));
-  Js_codegen$emit_line(ctx, (__dict_Show_string.show(label_15067) + ": {"));
+  const scrut_js_15108 = Js_codegen$compile_non_tail(ctx, cm.scrutinee);
+  const scrut_tmp_15110 = Js_codegen$fresh_tmp(ctx);
+  const result_15112 = Js_codegen$fresh_tmp(ctx);
+  const label_15114 = Js_codegen$fresh_tmp(ctx);
+  Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(result_15112)) + ";"));
+  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_15110)) + " = ") + __dict_Show_string.show(scrut_js_15108)) + ";"));
+  Js_codegen$emit_line(ctx, (__dict_Show_string.show(label_15114) + ": {"));
   (ctx.indent = (ctx.indent + 1), undefined);
-  _call(Js_codegen$emit_dtree_js, [ctx, cm, scrut_tmp_15063, result_15065, label_15067]);
+  _call(Js_codegen$emit_dtree_js, [ctx, cm, scrut_tmp_15110, result_15112, label_15114]);
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "}");
-  const _t15068 = result_15065;
-  const _t15066 = _t15068;
-  const _t15064 = _t15066;
-  const _t15062 = _t15064;
-  return _t15062;
+  const _t15115 = result_15112;
+  const _t15113 = _t15115;
+  const _t15111 = _t15113;
+  const _t15109 = _t15111;
+  return _t15109;
 }
 function Js_codegen$emit_dtree_js(ctx, cm, scrut_tmp, result, label) {
   return _call(Js_codegen$emit_dtree_js_node, [ctx, cm, scrut_tmp, result, label, cm.tree]);
 }
 function Js_codegen$emit_dtree_js_node(ctx, cm, scrut_tmp, result, label, tree) {
   while (true) {
-    let _t15070;
-    const _t15069 = tree;
-    _t15071: {
-      if (_t15069._tag === 3) {
-        const loc = _t15069._val;
-        _t15070 = Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(loc.line)) + "\");"));
-        break _t15071;
+    let _t15117;
+    const _t15116 = tree;
+    _t15118: {
+      if (_t15116._tag === 3) {
+        const loc = _t15116._val;
+        _t15117 = Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(loc.line)) + "\");"));
+        break _t15118;
       }
-      if (_t15069._tag === 1) {
-        const guard = _t15069._val.guard;
-        const bindings = _t15069._val.bindings;
-        const on_true = _t15069._val.on_true;
-        const on_false = _t15069._val.on_false;
+      if (_t15116._tag === 1) {
+        const guard = _t15116._val.guard;
+        const bindings = _t15116._val.bindings;
+        const on_true = _t15116._val.on_true;
+        const on_false = _t15116._val.on_false;
         Js_codegen$push_scope(ctx);
         _call(Js_codegen$emit_bindings_js, [ctx, scrut_tmp, bindings]);
-        const guard_js_15072 = Js_codegen$compile_expr(ctx, guard);
-        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(guard_js_15072)) + ") {"));
+        const guard_js_15119 = Js_codegen$compile_expr(ctx, guard);
+        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(guard_js_15119)) + ") {"));
         (ctx.indent = (ctx.indent + 1), undefined);
         Js_codegen$emit_dtree_js_node(ctx, cm, scrut_tmp, result, label, on_true);
         (ctx.indent = (ctx.indent - 1), undefined);
@@ -64750,329 +64932,329 @@ function Js_codegen$emit_dtree_js_node(ctx, cm, scrut_tmp, result, label, tree) 
         Js_codegen$pop_scope(ctx);
         Js_codegen$emit_dtree_js_node(ctx, cm, scrut_tmp, result, label, on_false);
         (ctx.indent = (ctx.indent - 1), undefined);
-        const _t15073 = Js_codegen$emit_line(ctx, "}");
-        _t15070 = _t15073;
-        break _t15071;
+        const _t15120 = Js_codegen$emit_line(ctx, "}");
+        _t15117 = _t15120;
+        break _t15118;
       }
-      if (_t15069._tag === 2) {
-        const arm_idx = _t15069._val.arm_idx;
-        const bindings = _t15069._val.bindings;
+      if (_t15116._tag === 2) {
+        const arm_idx = _t15116._val.arm_idx;
+        const bindings = _t15116._val.bindings;
         Js_codegen$push_scope(ctx);
         _call(Js_codegen$emit_bindings_js, [ctx, scrut_tmp, bindings]);
-        const arm_15074 = _call(Array$get, [cm.match_arms, arm_idx]);
-        const body_js_15076 = Js_codegen$compile_expr(ctx, arm_15074.arm_body);
-        Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result) + " = ") + __dict_Show_string.show(body_js_15076)) + ";"));
+        const arm_15121 = _call(Array$get, [cm.match_arms, arm_idx]);
+        const body_js_15123 = Js_codegen$compile_expr(ctx, arm_15121.arm_body);
+        Js_codegen$emit_line(ctx, (((__dict_Show_string.show(result) + " = ") + __dict_Show_string.show(body_js_15123)) + ";"));
         Js_codegen$emit_line(ctx, (("break " + __dict_Show_string.show(label)) + ";"));
-        const _t15077 = Js_codegen$pop_scope(ctx);
-        const _t15075 = _t15077;
-        _t15070 = _t15075;
-        break _t15071;
+        const _t15124 = Js_codegen$pop_scope(ctx);
+        const _t15122 = _t15124;
+        _t15117 = _t15122;
+        break _t15118;
       }
-      if (_t15069._tag === 0) {
-        const occ = _t15069._val.occ;
-        const cases = _t15069._val.cases;
-        const _mml$default = _t15069._val._mml$default;
-        const occ_js_15078 = _call(Js_codegen$emit_occurrence_js, [ctx, scrut_tmp, occ]);
-        function _t15080(__p388) {
-          let _t15082;
-          const _t15081 = __p388;
-          _t15083: {
-            const test = _t15081[0];
-            const _binds = _t15081[1];
-            const sub_tree = _t15081[2];
-            const cond_js_15084 = _call(Js_codegen$emit_test_js, [ctx, occ_js_15078, test]);
-            Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(cond_js_15084)) + ") {"));
+      if (_t15116._tag === 0) {
+        const occ = _t15116._val.occ;
+        const cases = _t15116._val.cases;
+        const _mml$default = _t15116._val._mml$default;
+        const occ_js_15125 = _call(Js_codegen$emit_occurrence_js, [ctx, scrut_tmp, occ]);
+        function _t15127(__p388) {
+          let _t15129;
+          const _t15128 = __p388;
+          _t15130: {
+            const test = _t15128[0];
+            const _binds = _t15128[1];
+            const sub_tree = _t15128[2];
+            const cond_js_15131 = _call(Js_codegen$emit_test_js, [ctx, occ_js_15125, test]);
+            Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(cond_js_15131)) + ") {"));
             (ctx.indent = (ctx.indent + 1), undefined);
             Js_codegen$emit_dtree_js_node(ctx, cm, scrut_tmp, result, label, sub_tree);
             (ctx.indent = (ctx.indent - 1), undefined);
-            const _t15085 = Js_codegen$emit_line(ctx, "}");
-            _t15082 = _t15085;
-            break _t15083;
+            const _t15132 = Js_codegen$emit_line(ctx, "}");
+            _t15129 = _t15132;
+            break _t15130;
           }
-          return _t15082;
+          return _t15129;
         }
-        List$iter(_t15080, cases);
-        let _t15087;
-        const _t15086 = _mml$default;
-        _t15088: {
-          if (_t15086._tag === 0) {
-            _t15087 = Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(cm.loc.line)) + "\");"));
-            break _t15088;
+        List$iter(_t15127, cases);
+        let _t15134;
+        const _t15133 = _mml$default;
+        _t15135: {
+          if (_t15133._tag === 0) {
+            _t15134 = Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(cm.loc.line)) + "\");"));
+            break _t15135;
           }
-          if (_t15086._tag === 1) {
-            const def_tree = _t15086._val;
-            const _t15089 = ctx;
-            const _t15090 = cm;
-            const _t15091 = scrut_tmp;
-            const _t15092 = result;
-            const _t15093 = label;
-            const _t15094 = def_tree;
-            ctx = _t15089;
-            cm = _t15090;
-            scrut_tmp = _t15091;
-            result = _t15092;
-            label = _t15093;
-            tree = _t15094;
+          if (_t15133._tag === 1) {
+            const def_tree = _t15133._val;
+            const _t15136 = ctx;
+            const _t15137 = cm;
+            const _t15138 = scrut_tmp;
+            const _t15139 = result;
+            const _t15140 = label;
+            const _t15141 = def_tree;
+            ctx = _t15136;
+            cm = _t15137;
+            scrut_tmp = _t15138;
+            result = _t15139;
+            label = _t15140;
+            tree = _t15141;
             continue;
-            _t15087 = undefined;
-            break _t15088;
+            _t15134 = undefined;
+            break _t15135;
           }
           _match_fail("line 0");
         }
-        const _t15079 = _t15087;
-        _t15070 = _t15079;
-        break _t15071;
+        const _t15126 = _t15134;
+        _t15117 = _t15126;
+        break _t15118;
       }
       _match_fail("line 0");
     }
-    return _t15070;
+    return _t15117;
   }
 }
 function Js_codegen$emit_occurrence_js(ctx, scrut_tmp, occ) {
-  function _t15095(js, step) {
-    let _t15097;
-    const _t15096 = step;
-    _t15098: {
-      if (_t15096._tag === 5) {
-        const i = _t15096._val;
-        _t15097 = (((__dict_Show_string.show(js) + "._arr[") + __dict_Show_int.show(i)) + "]");
-        break _t15098;
+  function _t15142(js, step) {
+    let _t15144;
+    const _t15143 = step;
+    _t15145: {
+      if (_t15143._tag === 5) {
+        const i = _t15143._val;
+        _t15144 = (((__dict_Show_string.show(js) + "._arr[") + __dict_Show_int.show(i)) + "]");
+        break _t15145;
       }
-      if (_t15096._tag === 3) {
-        _t15097 = (js + "._hd");
-        break _t15098;
+      if (_t15143._tag === 3) {
+        _t15144 = (js + "._hd");
+        break _t15145;
       }
-      if (_t15096._tag === 4) {
-        _t15097 = (js + "._tl");
-        break _t15098;
+      if (_t15143._tag === 4) {
+        _t15144 = (js + "._tl");
+        break _t15145;
       }
-      if (_t15096._tag === 6) {
-        const mk = _t15096._val;
-        let _t15100;
-        const _t15099 = mk;
-        _t15101: {
-          if (_t15099._tag === 2) {
-            const b = _t15099._val;
-            let _t15102;
+      if (_t15143._tag === 6) {
+        const mk = _t15143._val;
+        let _t15147;
+        const _t15146 = mk;
+        _t15148: {
+          if (_t15146._tag === 2) {
+            const b = _t15146._val;
+            let _t15149;
             if (b) {
-              _t15102 = "true";
+              _t15149 = "true";
             } else {
-              _t15102 = "false";
+              _t15149 = "false";
             }
-            _t15100 = _t15102;
-            break _t15101;
+            _t15147 = _t15149;
+            break _t15148;
           }
-          if (_t15099._tag === 3) {
-            const f = _t15099._val;
-            _t15100 = __dict_Show_float.show(f);
-            break _t15101;
+          if (_t15146._tag === 3) {
+            const f = _t15146._val;
+            _t15147 = __dict_Show_float.show(f);
+            break _t15148;
           }
-          if (_t15099._tag === 0) {
-            const n = _t15099._val;
-            _t15100 = string_of_int(n);
-            break _t15101;
+          if (_t15146._tag === 0) {
+            const n = _t15146._val;
+            _t15147 = string_of_int(n);
+            break _t15148;
           }
-          if (_t15099._tag === 4) {
-            const name = _t15099._val;
-            _t15100 = Js_codegen$lookup_var(ctx, name);
-            break _t15101;
+          if (_t15146._tag === 4) {
+            const name = _t15146._val;
+            _t15147 = Js_codegen$lookup_var(ctx, name);
+            break _t15148;
           }
-          if (_t15099._tag === 1) {
-            const s = _t15099._val;
-            _t15100 = Js_codegen$escape_js_string(s);
-            break _t15101;
+          if (_t15146._tag === 1) {
+            const s = _t15146._val;
+            _t15147 = Js_codegen$escape_js_string(s);
+            break _t15148;
           }
           _match_fail("line 0");
         }
-        const key_js_15103 = _t15100;
-        const _t15104 = (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.get")) + "(") + __dict_Show_string.show(key_js_15103)) + ", ") + __dict_Show_string.show(js)) + ")._val");
-        _t15097 = _t15104;
-        break _t15098;
+        const key_js_15150 = _t15147;
+        const _t15151 = (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.get")) + "(") + __dict_Show_string.show(key_js_15150)) + ", ") + __dict_Show_string.show(js)) + ")._val");
+        _t15144 = _t15151;
+        break _t15145;
       }
-      if (_t15096._tag === 1) {
-        const name = _t15096._val[0];
-        _t15097 = (js + ("." + Js_codegen$mangle_name(name)));
-        break _t15098;
+      if (_t15143._tag === 1) {
+        const name = _t15143._val[0];
+        _t15144 = (js + ("." + Js_codegen$mangle_name(name)));
+        break _t15145;
       }
-      if (_t15096._tag === 0) {
-        const i = _t15096._val;
-        _t15097 = (((__dict_Show_string.show(js) + "[") + __dict_Show_int.show(i)) + "]");
-        break _t15098;
+      if (_t15143._tag === 0) {
+        const i = _t15143._val;
+        _t15144 = (((__dict_Show_string.show(js) + "[") + __dict_Show_int.show(i)) + "]");
+        break _t15145;
       }
-      if (_t15096._tag === 2) {
-        _t15097 = (js + "._val");
-        break _t15098;
+      if (_t15143._tag === 2) {
+        _t15144 = (js + "._val");
+        break _t15145;
       }
       _match_fail("line 0");
     }
-    return _t15097;
+    return _t15144;
   }
-  return List$fold(_t15095, scrut_tmp, occ);
+  return List$fold(_t15142, scrut_tmp, occ);
 }
 function Js_codegen$emit_test_js(ctx, occ_js, test) {
-  let _t15106;
-  const _t15105 = test;
-  _t15107: {
-    if (_t15105._tag === 9) {
-      const n = _t15105._val;
-      _t15106 = ((__dict_Show_string.show(occ_js) + "._arr.length === ") + __dict_Show_int.show(n));
-      break _t15107;
+  let _t15153;
+  const _t15152 = test;
+  _t15154: {
+    if (_t15152._tag === 9) {
+      const n = _t15152._val;
+      _t15153 = ((__dict_Show_string.show(occ_js) + "._arr.length === ") + __dict_Show_int.show(n));
+      break _t15154;
     }
-    if (_t15105._tag === 2) {
-      if (!_t15105._val) {
-        _t15106 = ("!" + occ_js);
-        break _t15107;
+    if (_t15152._tag === 2) {
+      if (!_t15152._val) {
+        _t15153 = ("!" + occ_js);
+        break _t15154;
       }
-      if (_t15105._val) {
-        _t15106 = occ_js;
-        break _t15107;
+      if (_t15152._val) {
+        _t15153 = occ_js;
+        break _t15154;
       }
       _match_fail("line 0");
     }
-    if (_t15105._tag === 8) {
-      _t15106 = (occ_js + " !== null");
-      break _t15107;
+    if (_t15152._tag === 8) {
+      _t15153 = (occ_js + " !== null");
+      break _t15154;
     }
-    if (_t15105._tag === 0) {
-      const tag = _t15105._val[1];
-      _t15106 = ((__dict_Show_string.show(occ_js) + "._tag === ") + __dict_Show_int.show(tag));
-      break _t15107;
+    if (_t15152._tag === 0) {
+      const tag = _t15152._val[1];
+      _t15153 = ((__dict_Show_string.show(occ_js) + "._tag === ") + __dict_Show_int.show(tag));
+      break _t15154;
     }
-    if (_t15105._tag === 4) {
-      const f = _t15105._val;
-      _t15106 = ((__dict_Show_string.show(occ_js) + " === ") + __dict_Show_string.show(__dict_Show_float.show(f)));
-      break _t15107;
+    if (_t15152._tag === 4) {
+      const f = _t15152._val;
+      _t15153 = ((__dict_Show_string.show(occ_js) + " === ") + __dict_Show_string.show(__dict_Show_float.show(f)));
+      break _t15154;
     }
-    if (_t15105._tag === 3) {
-      const n = _t15105._val;
-      _t15106 = ((__dict_Show_string.show(occ_js) + " === ") + __dict_Show_int.show(n));
-      break _t15107;
+    if (_t15152._tag === 3) {
+      const n = _t15152._val;
+      _t15153 = ((__dict_Show_string.show(occ_js) + " === ") + __dict_Show_int.show(n));
+      break _t15154;
     }
-    if (_t15105._tag === 10) {
-      const mk = _t15105._val;
-      let _t15109;
-      const _t15108 = mk;
-      _t15110: {
-        if (_t15108._tag === 2) {
-          const b = _t15108._val;
-          let _t15111;
+    if (_t15152._tag === 10) {
+      const mk = _t15152._val;
+      let _t15156;
+      const _t15155 = mk;
+      _t15157: {
+        if (_t15155._tag === 2) {
+          const b = _t15155._val;
+          let _t15158;
           if (b) {
-            _t15111 = "true";
+            _t15158 = "true";
           } else {
-            _t15111 = "false";
+            _t15158 = "false";
           }
-          _t15109 = _t15111;
-          break _t15110;
+          _t15156 = _t15158;
+          break _t15157;
         }
-        if (_t15108._tag === 3) {
-          const f = _t15108._val;
-          _t15109 = __dict_Show_float.show(f);
-          break _t15110;
+        if (_t15155._tag === 3) {
+          const f = _t15155._val;
+          _t15156 = __dict_Show_float.show(f);
+          break _t15157;
         }
-        if (_t15108._tag === 0) {
-          const n = _t15108._val;
-          _t15109 = string_of_int(n);
-          break _t15110;
+        if (_t15155._tag === 0) {
+          const n = _t15155._val;
+          _t15156 = string_of_int(n);
+          break _t15157;
         }
-        if (_t15108._tag === 4) {
-          const name = _t15108._val;
-          _t15109 = Js_codegen$lookup_var(ctx, name);
-          break _t15110;
+        if (_t15155._tag === 4) {
+          const name = _t15155._val;
+          _t15156 = Js_codegen$lookup_var(ctx, name);
+          break _t15157;
         }
-        if (_t15108._tag === 1) {
-          const s = _t15108._val;
-          _t15109 = Js_codegen$escape_js_string(s);
-          break _t15110;
+        if (_t15155._tag === 1) {
+          const s = _t15155._val;
+          _t15156 = Js_codegen$escape_js_string(s);
+          break _t15157;
         }
         _match_fail("line 0");
       }
-      const key_js_15112 = _t15109;
-      const _t15113 = (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.has")) + "(") + __dict_Show_string.show(key_js_15112)) + ", ") + __dict_Show_string.show(occ_js)) + ")");
-      _t15106 = _t15113;
-      break _t15107;
+      const key_js_15159 = _t15156;
+      const _t15160 = (((((__dict_Show_string.show(Js_codegen$mangle_name("Map.has")) + "(") + __dict_Show_string.show(key_js_15159)) + ", ") + __dict_Show_string.show(occ_js)) + ")");
+      _t15153 = _t15160;
+      break _t15154;
     }
-    if (_t15105._tag === 7) {
-      _t15106 = (occ_js + " === null");
-      break _t15107;
+    if (_t15152._tag === 7) {
+      _t15153 = (occ_js + " === null");
+      break _t15154;
     }
-    if (_t15105._tag === 11) {
-      const name = _t15105._val;
-      const js_name_15114 = Js_codegen$lookup_var(ctx, name);
-      const _t15115 = (((("_eq(" + __dict_Show_string.show(occ_js)) + ", ") + __dict_Show_string.show(js_name_15114)) + ")");
-      _t15106 = _t15115;
-      break _t15107;
+    if (_t15152._tag === 11) {
+      const name = _t15152._val;
+      const js_name_15161 = Js_codegen$lookup_var(ctx, name);
+      const _t15162 = (((("_eq(" + __dict_Show_string.show(occ_js)) + ", ") + __dict_Show_string.show(js_name_15161)) + ")");
+      _t15153 = _t15162;
+      break _t15154;
     }
-    if (_t15105._tag === 1) {
-      const hash = _t15105._val[1];
-      _t15106 = ((__dict_Show_string.show(occ_js) + "._tag === ") + __dict_Show_int.show(hash));
-      break _t15107;
+    if (_t15152._tag === 1) {
+      const hash = _t15152._val[1];
+      _t15153 = ((__dict_Show_string.show(occ_js) + "._tag === ") + __dict_Show_int.show(hash));
+      break _t15154;
     }
-    if (_t15105._tag === 5) {
-      const s = _t15105._val;
-      _t15106 = ((__dict_Show_string.show(occ_js) + " === ") + __dict_Show_string.show(Js_codegen$escape_js_string(s)));
-      break _t15107;
+    if (_t15152._tag === 5) {
+      const s = _t15152._val;
+      _t15153 = ((__dict_Show_string.show(occ_js) + " === ") + __dict_Show_string.show(Js_codegen$escape_js_string(s)));
+      break _t15154;
     }
-    if (_t15105._tag === 6) {
-      _t15106 = "true";
-      break _t15107;
+    if (_t15152._tag === 6) {
+      _t15153 = "true";
+      break _t15154;
     }
     _match_fail("line 0");
   }
-  return _t15106;
+  return _t15153;
 }
 function Js_codegen$emit_bindings_js(ctx, scrut_tmp, bindings) {
-  function _t15116(b) {
-    const js_expr_15117 = Js_codegen$emit_occurrence_js(ctx, scrut_tmp, b.bind_occ);
-    const base_15119 = Js_codegen$mangle_name(b.var_name);
-    let _t15121;
-    if (_call(List$mem, [__dict_Eq_string, base_15119, ctx.current_fn_params])) {
-      const n_15122 = ctx.tmp_counter;
-      (ctx.tmp_counter = (n_15122 + 1), undefined);
-      const _t15123 = (base_15119 + ("_" + string_of_int(n_15122)));
-      _t15121 = _t15123;
+  function _t15163(b) {
+    const js_expr_15164 = Js_codegen$emit_occurrence_js(ctx, scrut_tmp, b.bind_occ);
+    const base_15166 = Js_codegen$mangle_name(b.var_name);
+    let _t15168;
+    if (_call(List$mem, [__dict_Eq_string, base_15166, ctx.current_fn_params])) {
+      const n_15169 = ctx.tmp_counter;
+      (ctx.tmp_counter = (n_15169 + 1), undefined);
+      const _t15170 = (base_15166 + ("_" + string_of_int(n_15169)));
+      _t15168 = _t15170;
     } else {
-      _t15121 = base_15119;
+      _t15168 = base_15166;
     }
-    const _t15120 = _t15121;
-    const js_name_15124 = _t15120;
-    Js_codegen$bind_var(ctx, b.var_name, js_name_15124);
-    const _t15125 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_name_15124)) + " = ") + __dict_Show_string.show(js_expr_15117)) + ";"));
-    const _t15118 = _t15125;
-    return _t15118;
+    const _t15167 = _t15168;
+    const js_name_15171 = _t15167;
+    Js_codegen$bind_var(ctx, b.var_name, js_name_15171);
+    const _t15172 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_name_15171)) + " = ") + __dict_Show_string.show(js_expr_15164)) + ";"));
+    const _t15165 = _t15172;
+    return _t15165;
   }
-  return List$iter(_t15116, bindings);
+  return List$iter(_t15163, bindings);
 }
 function Js_codegen$compile_js_match_tree_cps(ctx, cm, cont) {
-  function _t15126(scrut_js) {
-    const scrut_tmp_15127 = Js_codegen$fresh_tmp(ctx);
-    Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_15127)) + " = ") + __dict_Show_string.show(scrut_js)) + ";"));
-    const matched_15129 = Js_codegen$fresh_tmp(ctx);
-    Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(matched_15129)) + " = false;"));
-    _call(Js_codegen$emit_dtree_js_cps, [ctx, cm, scrut_tmp_15127, matched_15129, cont, cm.tree]);
-    const _t15130 = Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched_15129)) + ") _match_fail(\"line ") + __dict_Show_int.show(cm.loc.line)) + "\");"));
-    const _t15128 = _t15130;
-    return _t15128;
+  function _t15173(scrut_js) {
+    const scrut_tmp_15174 = Js_codegen$fresh_tmp(ctx);
+    Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_15174)) + " = ") + __dict_Show_string.show(scrut_js)) + ";"));
+    const matched_15176 = Js_codegen$fresh_tmp(ctx);
+    Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(matched_15176)) + " = false;"));
+    _call(Js_codegen$emit_dtree_js_cps, [ctx, cm, scrut_tmp_15174, matched_15176, cont, cm.tree]);
+    const _t15177 = Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched_15176)) + ") _match_fail(\"line ") + __dict_Show_int.show(cm.loc.line)) + "\");"));
+    const _t15175 = _t15177;
+    return _t15175;
   }
-  return _call(Js_codegen$compile_cps, [ctx, cm.scrutinee, _t15126]);
+  return _call(Js_codegen$compile_cps, [ctx, cm.scrutinee, _t15173]);
 }
 function Js_codegen$emit_dtree_js_cps(ctx, cm, scrut_tmp, matched, cont, tree) {
-  let _t15132;
-  const _t15131 = tree;
-  _t15133: {
-    if (_t15131._tag === 3) {
-      const loc = _t15131._val;
-      _t15132 = Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(loc.line)) + "\");"));
-      break _t15133;
+  let _t15179;
+  const _t15178 = tree;
+  _t15180: {
+    if (_t15178._tag === 3) {
+      const loc = _t15178._val;
+      _t15179 = Js_codegen$emit_line(ctx, (("_match_fail(\"line " + __dict_Show_int.show(loc.line)) + "\");"));
+      break _t15180;
     }
-    if (_t15131._tag === 1) {
-      const guard = _t15131._val.guard;
-      const bindings = _t15131._val.bindings;
-      const on_true = _t15131._val.on_true;
-      const on_false = _t15131._val.on_false;
+    if (_t15178._tag === 1) {
+      const guard = _t15178._val.guard;
+      const bindings = _t15178._val.bindings;
+      const on_true = _t15178._val.on_true;
+      const on_false = _t15178._val.on_false;
       Js_codegen$push_scope(ctx);
       Js_codegen$emit_bindings_js(ctx, scrut_tmp, bindings);
-      const guard_js_15134 = Js_codegen$compile_non_tail(ctx, guard);
-      Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched)) + " && ") + __dict_Show_string.show(guard_js_15134)) + ") {"));
+      const guard_js_15181 = Js_codegen$compile_non_tail(ctx, guard);
+      Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched)) + " && ") + __dict_Show_string.show(guard_js_15181)) + ") {"));
       (ctx.indent = (ctx.indent + 1), undefined);
       Js_codegen$emit_dtree_js_cps(ctx, cm, scrut_tmp, matched, cont, on_true);
       (ctx.indent = (ctx.indent - 1), undefined);
@@ -65082,1357 +65264,1359 @@ function Js_codegen$emit_dtree_js_cps(ctx, cm, scrut_tmp, matched, cont, tree) {
       (ctx.indent = (ctx.indent + 1), undefined);
       Js_codegen$emit_dtree_js_cps(ctx, cm, scrut_tmp, matched, cont, on_false);
       (ctx.indent = (ctx.indent - 1), undefined);
-      const _t15135 = Js_codegen$emit_line(ctx, "}");
-      _t15132 = _t15135;
-      break _t15133;
+      const _t15182 = Js_codegen$emit_line(ctx, "}");
+      _t15179 = _t15182;
+      break _t15180;
     }
-    if (_t15131._tag === 2) {
-      const arm_idx = _t15131._val.arm_idx;
-      const bindings = _t15131._val.bindings;
+    if (_t15178._tag === 2) {
+      const arm_idx = _t15178._val.arm_idx;
+      const bindings = _t15178._val.bindings;
       Js_codegen$push_scope(ctx);
       Js_codegen$emit_bindings_js(ctx, scrut_tmp, bindings);
       Js_codegen$emit_line(ctx, (__dict_Show_string.show(matched) + " = true;"));
-      const arm_15136 = _call(Array$get, [cm.match_arms, arm_idx]);
-      _call(Js_codegen$compile_cps, [ctx, arm_15136.arm_body, cont]);
-      const _t15137 = Js_codegen$pop_scope(ctx);
-      _t15132 = _t15137;
-      break _t15133;
+      const arm_15183 = _call(Array$get, [cm.match_arms, arm_idx]);
+      _call(Js_codegen$compile_cps, [ctx, arm_15183.arm_body, cont]);
+      const _t15184 = Js_codegen$pop_scope(ctx);
+      _t15179 = _t15184;
+      break _t15180;
     }
-    if (_t15131._tag === 0) {
-      const occ = _t15131._val.occ;
-      const cases = _t15131._val.cases;
-      const _mml$default = _t15131._val._mml$default;
-      const occ_js_15138 = Js_codegen$emit_occurrence_js(ctx, scrut_tmp, occ);
-      function _t15140(__p389) {
-        let _t15142;
-        const _t15141 = __p389;
-        _t15143: {
-          const test = _t15141[0];
-          const _binds = _t15141[1];
-          const sub_tree = _t15141[2];
-          const cond_js_15144 = Js_codegen$emit_test_js(ctx, occ_js_15138, test);
-          Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched)) + " && ") + __dict_Show_string.show(cond_js_15144)) + ") {"));
+    if (_t15178._tag === 0) {
+      const occ = _t15178._val.occ;
+      const cases = _t15178._val.cases;
+      const _mml$default = _t15178._val._mml$default;
+      const occ_js_15185 = Js_codegen$emit_occurrence_js(ctx, scrut_tmp, occ);
+      function _t15187(__p389) {
+        let _t15189;
+        const _t15188 = __p389;
+        _t15190: {
+          const test = _t15188[0];
+          const _binds = _t15188[1];
+          const sub_tree = _t15188[2];
+          const cond_js_15191 = Js_codegen$emit_test_js(ctx, occ_js_15185, test);
+          Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched)) + " && ") + __dict_Show_string.show(cond_js_15191)) + ") {"));
           (ctx.indent = (ctx.indent + 1), undefined);
           Js_codegen$emit_dtree_js_cps(ctx, cm, scrut_tmp, matched, cont, sub_tree);
           (ctx.indent = (ctx.indent - 1), undefined);
-          const _t15145 = Js_codegen$emit_line(ctx, "}");
-          _t15142 = _t15145;
-          break _t15143;
+          const _t15192 = Js_codegen$emit_line(ctx, "}");
+          _t15189 = _t15192;
+          break _t15190;
         }
-        return _t15142;
+        return _t15189;
       }
-      List$iter(_t15140, cases);
-      let _t15147;
-      const _t15146 = _mml$default;
-      _t15148: {
-        if (_t15146._tag === 0) {
-          _t15147 = undefined;
-          break _t15148;
+      List$iter(_t15187, cases);
+      let _t15194;
+      const _t15193 = _mml$default;
+      _t15195: {
+        if (_t15193._tag === 0) {
+          _t15194 = undefined;
+          break _t15195;
         }
-        if (_t15146._tag === 1) {
-          const def_tree = _t15146._val;
+        if (_t15193._tag === 1) {
+          const def_tree = _t15193._val;
           Js_codegen$emit_line(ctx, (("if (!" + __dict_Show_string.show(matched)) + ") {"));
           (ctx.indent = (ctx.indent + 1), undefined);
           Js_codegen$emit_dtree_js_cps(ctx, cm, scrut_tmp, matched, cont, def_tree);
           (ctx.indent = (ctx.indent - 1), undefined);
-          _t15147 = Js_codegen$emit_line(ctx, "}");
-          break _t15148;
+          _t15194 = Js_codegen$emit_line(ctx, "}");
+          break _t15195;
         }
         _match_fail("line 0");
       }
-      const _t15139 = _t15147;
-      _t15132 = _t15139;
-      break _t15133;
+      const _t15186 = _t15194;
+      _t15179 = _t15186;
+      break _t15180;
     }
     _match_fail("line 0");
   }
-  return _t15132;
+  return _t15179;
 }
 function Js_codegen$compile_handle_trywith(ctx, body, op_arms, return_arm, result) {
   Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(result)) + " = (function() {"));
   (ctx.indent = (ctx.indent + 1), undefined);
-  const h_saved_15149 = Js_codegen$fresh_tmp(ctx);
-  Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(h_saved_15149)) + " = _h;"));
-  Js_codegen$emit_line(ctx, (("_h = Object.assign({}, " + __dict_Show_string.show(h_saved_15149)) + ", {"));
+  const h_saved_15196 = Js_codegen$fresh_tmp(ctx);
+  Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(h_saved_15196)) + " = _h;"));
+  Js_codegen$emit_line(ctx, (("_h = Object.assign({}, " + __dict_Show_string.show(h_saved_15196)) + ", {"));
   (ctx.indent = (ctx.indent + 1), undefined);
-  function _t15151(__p390) {
-    let _t15153;
-    const _t15152 = __p390;
-    _t15154: {
-      const op_name = _t15152[0];
-      const arg_name = _t15152[1];
-      const k_name = _t15152[2];
-      const arg_js_15155 = Js_codegen$mangle_name(arg_name);
-      const k_js_15157 = Js_codegen$mangle_name(k_name);
-      const _t15158 = Js_codegen$emit_line(ctx, (((((((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15155)) + ", ") + __dict_Show_string.show(k_js_15157)) + ") { throw {_e: \"") + __dict_Show_string.show(op_name)) + "\", _v: ") + __dict_Show_string.show(arg_js_15155)) + "}; },"));
-      const _t15156 = _t15158;
-      _t15153 = _t15156;
-      break _t15154;
+  function _t15198(__p390) {
+    let _t15200;
+    const _t15199 = __p390;
+    _t15201: {
+      const op_name = _t15199[0];
+      const arg_name = _t15199[1];
+      const k_name = _t15199[2];
+      const arg_js_15202 = Js_codegen$mangle_name(arg_name);
+      const k_js_15204 = Js_codegen$mangle_name(k_name);
+      const _t15205 = Js_codegen$emit_line(ctx, (((((((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15202)) + ", ") + __dict_Show_string.show(k_js_15204)) + ") { throw {_e: \"") + __dict_Show_string.show(op_name)) + "\", _v: ") + __dict_Show_string.show(arg_js_15202)) + "}; },"));
+      const _t15203 = _t15205;
+      _t15200 = _t15203;
+      break _t15201;
     }
-    return _t15153;
+    return _t15200;
   }
-  List$iter(_t15151, op_arms);
+  List$iter(_t15198, op_arms);
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "});");
   Js_codegen$emit_line(ctx, "try {");
   (ctx.indent = (ctx.indent + 1), undefined);
-  function _t15159(__p391) {
-    let _t15161;
-    const _t15160 = __p391;
-    _t15162: {
-      const op = _t15160[0];
-      _t15161 = op;
-      break _t15162;
+  function _t15206(__p391) {
+    let _t15208;
+    const _t15207 = __p391;
+    _t15209: {
+      const op = _t15207[0];
+      _t15208 = op;
+      break _t15209;
     }
-    return _t15161;
+    return _t15208;
   }
-  const handled_op_names_15163 = List$map(_t15159, op_arms);
-  const body_needs_cps_15165 = Ir_analysis$expr_has_unhandled_perform(handled_op_names_15163, body);
-  function _t15167(__p392) {
-    let _t15169;
-    const _t15168 = __p392;
-    _t15170: {
-      const op = _t15168[0];
-      _t15169 = (!_call(List$mem, [__dict_Eq_string, op, handled_op_names_15163]));
-      break _t15170;
+  const handled_op_names_15210 = List$map(_t15206, op_arms);
+  const body_needs_cps_15212 = Ir_analysis$expr_has_unhandled_perform(handled_op_names_15210, body);
+  function _t15214(__p392) {
+    let _t15216;
+    const _t15215 = __p392;
+    _t15217: {
+      const op = _t15215[0];
+      _t15216 = (!_call(List$mem, [__dict_Eq_string, op, handled_op_names_15210]));
+      break _t15217;
     }
-    return _t15169;
+    return _t15216;
   }
-  function _t15171(_) {
-    let _t15172;
-    if (body_needs_cps_15165) {
+  function _t15218(_) {
+    let _t15219;
+    if (body_needs_cps_15212) {
       Js_codegen$emit_line(ctx, "return _trampoline(function() {");
       (ctx.indent = (ctx.indent + 1), undefined);
-      function _t15173(_) {
-        function _t15174(body_result) {
-          let _t15176;
-          const _t15175 = return_arm;
-          _t15177: {
-            if (_t15175._tag === 0) {
-              _t15176 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_result)) + ";"));
-              break _t15177;
+      function _t15220(_) {
+        function _t15221(body_result) {
+          let _t15223;
+          const _t15222 = return_arm;
+          _t15224: {
+            if (_t15222._tag === 0) {
+              _t15223 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_result)) + ";"));
+              break _t15224;
             }
-            if (_t15175._tag === 1) {
-              const ret_name = _t15175._val[0];
-              const ret_body = _t15175._val[1];
-              const ret_js_15178 = Js_codegen$mangle_name(ret_name);
-              const actual_ret_15180 = (ret_js_15178 + ("_" + string_of_int(ctx.tmp_counter)));
+            if (_t15222._tag === 1) {
+              const ret_name = _t15222._val[0];
+              const ret_body = _t15222._val[1];
+              const ret_js_15225 = Js_codegen$mangle_name(ret_name);
+              const actual_ret_15227 = (ret_js_15225 + ("_" + string_of_int(ctx.tmp_counter)));
               (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
               Js_codegen$push_scope(ctx);
-              Js_codegen$bind_var(ctx, ret_name, actual_ret_15180);
-              Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15180)) + " = ") + __dict_Show_string.show(body_result)) + ";"));
-              const v_15182 = Js_codegen$compile_non_tail(ctx, ret_body);
-              Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15182)) + ";"));
-              const _t15183 = Js_codegen$pop_scope(ctx);
-              const _t15181 = _t15183;
-              const _t15179 = _t15181;
-              _t15176 = _t15179;
-              break _t15177;
+              Js_codegen$bind_var(ctx, ret_name, actual_ret_15227);
+              Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15227)) + " = ") + __dict_Show_string.show(body_result)) + ";"));
+              const v_15229 = Js_codegen$compile_non_tail(ctx, ret_body);
+              Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15229)) + ";"));
+              const _t15230 = Js_codegen$pop_scope(ctx);
+              const _t15228 = _t15230;
+              const _t15226 = _t15228;
+              _t15223 = _t15226;
+              break _t15224;
             }
             _match_fail("line 0");
           }
-          return _t15176;
+          return _t15223;
         }
-        return _call(Js_codegen$compile_cps, [ctx, body, _t15174]);
+        return _call(Js_codegen$compile_cps, [ctx, body, _t15221]);
       }
-      Js_codegen$with_in_cps(ctx, true, _t15173);
+      Js_codegen$with_in_cps(ctx, true, _t15220);
       (ctx.indent = (ctx.indent - 1), undefined);
-      _t15172 = Js_codegen$emit_line(ctx, "});");
+      _t15219 = Js_codegen$emit_line(ctx, "});");
     } else {
-      const body_v_15184 = Js_codegen$compile_non_tail(ctx, body);
-      let _t15187;
-      const _t15186 = return_arm;
-      _t15188: {
-        if (_t15186._tag === 0) {
-          _t15187 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_v_15184)) + ";"));
-          break _t15188;
+      const body_v_15231 = Js_codegen$compile_non_tail(ctx, body);
+      let _t15234;
+      const _t15233 = return_arm;
+      _t15235: {
+        if (_t15233._tag === 0) {
+          _t15234 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_v_15231)) + ";"));
+          break _t15235;
         }
-        if (_t15186._tag === 1) {
-          const ret_name = _t15186._val[0];
-          const ret_body = _t15186._val[1];
-          const ret_js_15189 = Js_codegen$mangle_name(ret_name);
-          const actual_ret_15191 = (ret_js_15189 + ("_" + string_of_int(ctx.tmp_counter)));
+        if (_t15233._tag === 1) {
+          const ret_name = _t15233._val[0];
+          const ret_body = _t15233._val[1];
+          const ret_js_15236 = Js_codegen$mangle_name(ret_name);
+          const actual_ret_15238 = (ret_js_15236 + ("_" + string_of_int(ctx.tmp_counter)));
           (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
           Js_codegen$push_scope(ctx);
-          Js_codegen$bind_var(ctx, ret_name, actual_ret_15191);
-          Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15191)) + " = ") + __dict_Show_string.show(body_v_15184)) + ";"));
-          const rv_15193 = Js_codegen$compile_non_tail(ctx, ret_body);
-          Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(rv_15193)) + ";"));
-          const _t15194 = Js_codegen$pop_scope(ctx);
-          const _t15192 = _t15194;
-          const _t15190 = _t15192;
-          _t15187 = _t15190;
-          break _t15188;
+          Js_codegen$bind_var(ctx, ret_name, actual_ret_15238);
+          Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15238)) + " = ") + __dict_Show_string.show(body_v_15231)) + ";"));
+          const rv_15240 = Js_codegen$compile_non_tail(ctx, ret_body);
+          Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(rv_15240)) + ";"));
+          const _t15241 = Js_codegen$pop_scope(ctx);
+          const _t15239 = _t15241;
+          const _t15237 = _t15239;
+          _t15234 = _t15237;
+          break _t15235;
         }
         _match_fail("line 0");
       }
-      const _t15185 = _t15187;
-      _t15172 = _t15185;
+      const _t15232 = _t15234;
+      _t15219 = _t15232;
     }
-    return _t15172;
+    return _t15219;
   }
-  Js_codegen$with_handle_ops(ctx, List$concat(handled_op_names_15163, ctx.trywith_ops), List$filter(_t15167, ctx.direct_dispatch_ops), _t15171);
+  Js_codegen$with_handle_ops(ctx, List$concat(handled_op_names_15210, ctx.trywith_ops), List$filter(_t15214, ctx.direct_dispatch_ops), _t15218);
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "} catch (_exc) {");
   (ctx.indent = (ctx.indent + 1), undefined);
-  const first_15195 = Ref$create(true);
-  function _t15197(__p393) {
-    let _t15199;
-    const _t15198 = __p393;
-    _t15200: {
-      const op_name = _t15198[0];
-      const arg_name = _t15198[1];
-      const _k_name = _t15198[2];
-      const handler_body = _t15198[3];
-      let _t15201;
-      if (Ref$get(first_15195)) {
-        _t15201 = "if";
+  const first_15242 = Ref$create(true);
+  function _t15244(__p393) {
+    let _t15246;
+    const _t15245 = __p393;
+    _t15247: {
+      const op_name = _t15245[0];
+      const arg_name = _t15245[1];
+      const _k_name = _t15245[2];
+      const handler_body = _t15245[3];
+      let _t15248;
+      if (Ref$get(first_15242)) {
+        _t15248 = "if";
       } else {
-        _t15201 = "} else if";
+        _t15248 = "} else if";
       }
-      const prefix_15202 = _t15201;
-      Ref$set(first_15195, false);
-      Js_codegen$emit_line(ctx, (((__dict_Show_string.show(prefix_15202) + " (_exc && _exc._e === \"") + __dict_Show_string.show(op_name)) + "\") {"));
+      const prefix_15249 = _t15248;
+      Ref$set(first_15242, false);
+      Js_codegen$emit_line(ctx, (((__dict_Show_string.show(prefix_15249) + " (_exc && _exc._e === \"") + __dict_Show_string.show(op_name)) + "\") {"));
       (ctx.indent = (ctx.indent + 1), undefined);
       Js_codegen$push_scope(ctx);
-      const arg_js_15204 = Js_codegen$mangle_name(arg_name);
-      Js_codegen$bind_var(ctx, arg_name, arg_js_15204);
-      Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(arg_js_15204)) + " = _exc._v;"));
-      const v_15206 = Js_codegen$compile_non_tail(ctx, handler_body);
-      Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15206)) + ";"));
+      const arg_js_15251 = Js_codegen$mangle_name(arg_name);
+      Js_codegen$bind_var(ctx, arg_name, arg_js_15251);
+      Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(arg_js_15251)) + " = _exc._v;"));
+      const v_15253 = Js_codegen$compile_non_tail(ctx, handler_body);
+      Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15253)) + ";"));
       Js_codegen$pop_scope(ctx);
-      const _t15207 = (ctx.indent = (ctx.indent - 1), undefined);
-      const _t15205 = _t15207;
-      const _t15203 = _t15205;
-      _t15199 = _t15203;
-      break _t15200;
+      const _t15254 = (ctx.indent = (ctx.indent - 1), undefined);
+      const _t15252 = _t15254;
+      const _t15250 = _t15252;
+      _t15246 = _t15250;
+      break _t15247;
     }
-    return _t15199;
+    return _t15246;
   }
-  List$iter(_t15197, op_arms);
+  List$iter(_t15244, op_arms);
   Js_codegen$emit_line(ctx, "} else { throw _exc; }");
   (ctx.indent = (ctx.indent - 1), undefined);
-  Js_codegen$emit_line(ctx, (("} finally { _h = " + __dict_Show_string.show(h_saved_15149)) + "; }"));
+  Js_codegen$emit_line(ctx, (("} finally { _h = " + __dict_Show_string.show(h_saved_15196)) + "; }"));
   (ctx.indent = (ctx.indent - 1), undefined);
-  const _t15196 = Js_codegen$emit_line(ctx, "})();");
-  const _t15166 = _t15196;
-  const _t15164 = _t15166;
-  const _t15150 = _t15164;
-  return _t15150;
+  const _t15243 = Js_codegen$emit_line(ctx, "})();");
+  const _t15213 = _t15243;
+  const _t15211 = _t15213;
+  const _t15197 = _t15211;
+  return _t15197;
 }
 function Js_codegen$compile_handle(ctx, body, arms) {
-  const result_15208 = Js_codegen$fresh_tmp(ctx);
-  const return_arm_15210 = Ref$create(({_tag: 0, _name: "None"}));
-  const provide_ops_15212 = Ref$create(null);
-  const try_ops_15214 = Ref$create(null);
-  const full_ops_15216 = Ref$create(null);
-  function _t15218(arm) {
-    let _t15220;
-    const _t15219 = arm;
-    _t15221: {
-      if (_t15219._tag === 1) {
-        const op = _t15219._val.op_name;
-        const arg = _t15219._val.arg;
-        const k = _t15219._val.k;
-        const body = _t15219._val.body;
-        _t15220 = Ref$set(full_ops_15216, ({_hd: [op, arg, k, body], _tl: Ref$get(full_ops_15216)}));
-        break _t15221;
+  const result_15255 = Js_codegen$fresh_tmp(ctx);
+  const return_arm_15257 = Ref$create(({_tag: 0, _name: "None"}));
+  const provide_ops_15259 = Ref$create(null);
+  const try_ops_15261 = Ref$create(null);
+  const full_ops_15263 = Ref$create(null);
+  function _t15265(arm) {
+    let _t15267;
+    const _t15266 = arm;
+    _t15268: {
+      if (_t15266._tag === 1) {
+        const op = _t15266._val.op_name;
+        const arg = _t15266._val.arg;
+        const k = _t15266._val.k;
+        const body = _t15266._val.body;
+        _t15267 = Ref$set(full_ops_15263, ({_hd: [op, arg, k, body], _tl: Ref$get(full_ops_15263)}));
+        break _t15268;
       }
-      if (_t15219._tag === 2) {
-        const op = _t15219._val[0];
-        const arg = _t15219._val[1];
-        const body = _t15219._val[2];
-        _t15220 = Ref$set(provide_ops_15212, ({_hd: [op, arg, body], _tl: Ref$get(provide_ops_15212)}));
-        break _t15221;
+      if (_t15266._tag === 2) {
+        const op = _t15266._val[0];
+        const arg = _t15266._val[1];
+        const body = _t15266._val[2];
+        _t15267 = Ref$set(provide_ops_15259, ({_hd: [op, arg, body], _tl: Ref$get(provide_ops_15259)}));
+        break _t15268;
       }
-      if (_t15219._tag === 3) {
-        const op = _t15219._val[0];
-        const arg = _t15219._val[1];
-        const body = _t15219._val[2];
-        _t15220 = Ref$set(try_ops_15214, ({_hd: [op, arg, body], _tl: Ref$get(try_ops_15214)}));
-        break _t15221;
+      if (_t15266._tag === 3) {
+        const op = _t15266._val[0];
+        const arg = _t15266._val[1];
+        const body = _t15266._val[2];
+        _t15267 = Ref$set(try_ops_15261, ({_hd: [op, arg, body], _tl: Ref$get(try_ops_15261)}));
+        break _t15268;
       }
-      if (_t15219._tag === 0) {
-        const name = _t15219._val[0];
-        const body = _t15219._val[1];
-        _t15220 = Ref$set(return_arm_15210, ({_tag: 1, _name: "Some", _val: [name, body]}));
-        break _t15221;
+      if (_t15266._tag === 0) {
+        const name = _t15266._val[0];
+        const body = _t15266._val[1];
+        _t15267 = Ref$set(return_arm_15257, ({_tag: 1, _name: "Some", _val: [name, body]}));
+        break _t15268;
       }
       _match_fail("line 0");
     }
-    return _t15220;
+    return _t15267;
   }
-  List$iter(_t15218, arms);
-  const provide_ops_15222 = List$rev(Ref$get(provide_ops_15212));
-  const try_ops_15224 = List$rev(Ref$get(try_ops_15214));
-  const full_ops_15226 = List$rev(Ref$get(full_ops_15216));
-  let _t15229;
-  const _t15228 = Ref$get(return_arm_15210);
-  _t15230: {
-    if (_t15228._tag === 0) {
-      _t15229 = true;
-      break _t15230;
+  List$iter(_t15265, arms);
+  const provide_ops_15269 = List$rev(Ref$get(provide_ops_15259));
+  const try_ops_15271 = List$rev(Ref$get(try_ops_15261));
+  const full_ops_15273 = List$rev(Ref$get(full_ops_15263));
+  let _t15276;
+  const _t15275 = Ref$get(return_arm_15257);
+  _t15277: {
+    if (_t15275._tag === 0) {
+      _t15276 = true;
+      break _t15277;
     }
-    if (_t15228._tag === 1) {
-      const rb = _t15228._val[1];
-      _t15229 = (!Ir_analysis$expr_has_perform(rb));
-      break _t15230;
+    if (_t15275._tag === 1) {
+      const rb = _t15275._val[1];
+      _t15276 = (!Ir_analysis$expr_has_perform(rb));
+      break _t15277;
     }
     _match_fail("line 0");
   }
-  const return_arm_pure_15231 = _t15229;
-  let _t15233;
-  if ((_eq(full_ops_15226, null) && (_eq(provide_ops_15222, null) && (!_eq(try_ops_15224, null) && return_arm_pure_15231)))) {
-    function _t15234(__p394) {
-      let _t15236;
-      const _t15235 = __p394;
-      _t15237: {
-        const op = _t15235[0];
-        const arg = _t15235[1];
-        const body = _t15235[2];
-        _t15236 = [op, arg, "__k_try", body];
-        break _t15237;
+  const return_arm_pure_15278 = _t15276;
+  let _t15280;
+  if ((_eq(full_ops_15273, null) && (_eq(provide_ops_15269, null) && (!_eq(try_ops_15271, null) && return_arm_pure_15278)))) {
+    function _t15281(__p394) {
+      let _t15283;
+      const _t15282 = __p394;
+      _t15284: {
+        const op = _t15282[0];
+        const arg = _t15282[1];
+        const body = _t15282[2];
+        _t15283 = [op, arg, "__k_try", body];
+        break _t15284;
       }
-      return _t15236;
+      return _t15283;
     }
-    const trywith_arms_15238 = List$map(_t15234, try_ops_15224);
-    const _t15239 = Js_codegen$compile_handle_trywith(ctx, body, trywith_arms_15238, Ref$get(return_arm_15210), result_15208);
-    _t15233 = _t15239;
+    const trywith_arms_15285 = List$map(_t15281, try_ops_15271);
+    const _t15286 = Js_codegen$compile_handle_trywith(ctx, body, trywith_arms_15285, Ref$get(return_arm_15257), result_15255);
+    _t15280 = _t15286;
   } else {
-    function _t15240(__p395) {
-      let _t15242;
-      const _t15241 = __p395;
-      _t15243: {
-        const op = _t15241[0];
-        _t15242 = op;
-        break _t15243;
+    function _t15287(__p395) {
+      let _t15289;
+      const _t15288 = __p395;
+      _t15290: {
+        const op = _t15288[0];
+        _t15289 = op;
+        break _t15290;
       }
-      return _t15242;
+      return _t15289;
     }
-    const simple_ops_15244 = List$map(_t15240, provide_ops_15222);
-    Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(result_15208)) + " = (function() {"));
+    const simple_ops_15291 = List$map(_t15287, provide_ops_15269);
+    Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(result_15255)) + " = (function() {"));
     (ctx.indent = (ctx.indent + 1), undefined);
-    const h_saved_15246 = Js_codegen$fresh_tmp(ctx);
-    Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(h_saved_15246)) + " = _h;"));
-    const saved_direct_ops_15248 = ctx.direct_dispatch_ops;
-    function _t15250(_) {
-      function _t15251(__p396) {
-        let _t15253;
-        const _t15252 = __p396;
-        _t15254: {
-          const op_name = _t15252[0];
-          const arg_name = _t15252[1];
-          const value_body = _t15252[2];
-          const direct_fn_15255 = Js_codegen$fresh_tmp(ctx);
-          const arg_js_15257 = Js_codegen$mangle_name(arg_name);
-          Js_codegen$emit_line(ctx, (((("function " + __dict_Show_string.show(direct_fn_15255)) + "(") + __dict_Show_string.show(arg_js_15257)) + ") {"));
+    const h_saved_15293 = Js_codegen$fresh_tmp(ctx);
+    Js_codegen$emit_line(ctx, (("const " + __dict_Show_string.show(h_saved_15293)) + " = _h;"));
+    const saved_direct_ops_15295 = ctx.direct_dispatch_ops;
+    function _t15297(_) {
+      function _t15298(__p396) {
+        let _t15300;
+        const _t15299 = __p396;
+        _t15301: {
+          const op_name = _t15299[0];
+          const arg_name = _t15299[1];
+          const value_body = _t15299[2];
+          const direct_fn_15302 = Js_codegen$fresh_tmp(ctx);
+          const arg_js_15304 = Js_codegen$mangle_name(arg_name);
+          Js_codegen$emit_line(ctx, (((("function " + __dict_Show_string.show(direct_fn_15302)) + "(") + __dict_Show_string.show(arg_js_15304)) + ") {"));
           (ctx.indent = (ctx.indent + 1), undefined);
           Js_codegen$push_scope(ctx);
-          Js_codegen$bind_var(ctx, arg_name, arg_js_15257);
-          const v_15259 = Js_codegen$compile_non_tail(ctx, value_body);
-          Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15259)) + ";"));
+          Js_codegen$bind_var(ctx, arg_name, arg_js_15304);
+          const v_15306 = Js_codegen$compile_non_tail(ctx, value_body);
+          Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15306)) + ";"));
           Js_codegen$pop_scope(ctx);
           (ctx.indent = (ctx.indent - 1), undefined);
           Js_codegen$emit_line(ctx, "}");
-          const _t15260 = (ctx.direct_dispatch_ops = ({_hd: [op_name, direct_fn_15255], _tl: ctx.direct_dispatch_ops}), undefined);
-          const _t15258 = _t15260;
-          const _t15256 = _t15258;
-          _t15253 = _t15256;
-          break _t15254;
+          const _t15307 = (ctx.direct_dispatch_ops = ({_hd: [op_name, direct_fn_15302], _tl: ctx.direct_dispatch_ops}), undefined);
+          const _t15305 = _t15307;
+          const _t15303 = _t15305;
+          _t15300 = _t15303;
+          break _t15301;
         }
-        return _t15253;
+        return _t15300;
       }
-      List$iter(_t15251, provide_ops_15222);
-      function _t15261(__p397) {
-        let _t15263;
-        const _t15262 = __p397;
-        _t15264: {
-          const op = _t15262[0];
-          _t15263 = op;
-          break _t15264;
+      List$iter(_t15298, provide_ops_15269);
+      function _t15308(__p397) {
+        let _t15310;
+        const _t15309 = __p397;
+        _t15311: {
+          const op = _t15309[0];
+          _t15310 = op;
+          break _t15311;
         }
-        return _t15263;
+        return _t15310;
       }
-      function _t15265(__p398) {
-        let _t15267;
-        const _t15266 = __p398;
-        _t15268: {
-          const op = _t15266[0];
-          _t15267 = op;
-          break _t15268;
+      function _t15312(__p398) {
+        let _t15314;
+        const _t15313 = __p398;
+        _t15315: {
+          const op = _t15313[0];
+          _t15314 = op;
+          break _t15315;
         }
-        return _t15267;
+        return _t15314;
       }
-      const shadowed_ops_15269 = List$concat(List$map(_t15261, full_ops_15226), List$map(_t15265, try_ops_15224));
-      let _t15271;
-      if (!_eq(shadowed_ops_15269, null)) {
-        function _t15272(__p399) {
-          let _t15274;
-          const _t15273 = __p399;
-          _t15275: {
-            const op = _t15273[0];
-            _t15274 = (!_call(List$mem, [__dict_Eq_string, op, shadowed_ops_15269]));
-            break _t15275;
+      const shadowed_ops_15316 = List$concat(List$map(_t15308, full_ops_15273), List$map(_t15312, try_ops_15271));
+      let _t15318;
+      if (!_eq(shadowed_ops_15316, null)) {
+        function _t15319(__p399) {
+          let _t15321;
+          const _t15320 = __p399;
+          _t15322: {
+            const op = _t15320[0];
+            _t15321 = (!_call(List$mem, [__dict_Eq_string, op, shadowed_ops_15316]));
+            break _t15322;
           }
-          return _t15274;
+          return _t15321;
         }
-        _t15271 = (ctx.direct_dispatch_ops = List$filter(_t15272, ctx.direct_dispatch_ops), undefined);
+        _t15318 = (ctx.direct_dispatch_ops = List$filter(_t15319, ctx.direct_dispatch_ops), undefined);
       } else {
-        _t15271 = undefined;
+        _t15318 = undefined;
       }
-      _t15271;
-      Js_codegen$emit_line(ctx, (("_h = Object.assign({}, " + __dict_Show_string.show(h_saved_15246)) + ", {"));
+      _t15318;
+      Js_codegen$emit_line(ctx, (("_h = Object.assign({}, " + __dict_Show_string.show(h_saved_15293)) + ", {"));
       (ctx.indent = (ctx.indent + 1), undefined);
-      function _t15276(__p400) {
-        let _t15278;
-        const _t15277 = __p400;
-        _t15279: {
-          const op_name = _t15277[0];
-          const arg_name = _t15277[1];
-          const arg_js_15280 = Js_codegen$mangle_name(arg_name);
-          const k_js_15282 = "_k";
-          const direct_fn_15284 = _call(List$assoc, [__dict_Eq_string, op_name, ctx.direct_dispatch_ops]);
-          const _t15285 = Js_codegen$emit_line(ctx, (((((((((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15280)) + ", ") + __dict_Show_string.show(k_js_15282)) + ") { return _bounce(function() { return ") + __dict_Show_string.show(k_js_15282)) + "(") + __dict_Show_string.show(direct_fn_15284)) + "(") + __dict_Show_string.show(arg_js_15280)) + ")); }); },"));
-          const _t15283 = _t15285;
-          const _t15281 = _t15283;
-          _t15278 = _t15281;
-          break _t15279;
+      function _t15323(__p400) {
+        let _t15325;
+        const _t15324 = __p400;
+        _t15326: {
+          const op_name = _t15324[0];
+          const arg_name = _t15324[1];
+          const arg_js_15327 = Js_codegen$mangle_name(arg_name);
+          const k_js_15329 = "_k";
+          const direct_fn_15331 = _call(List$assoc, [__dict_Eq_string, op_name, ctx.direct_dispatch_ops]);
+          const _t15332 = Js_codegen$emit_line(ctx, (((((((((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15327)) + ", ") + __dict_Show_string.show(k_js_15329)) + ") { return _bounce(function() { return ") + __dict_Show_string.show(k_js_15329)) + "(") + __dict_Show_string.show(direct_fn_15331)) + "(") + __dict_Show_string.show(arg_js_15327)) + ")); }); },"));
+          const _t15330 = _t15332;
+          const _t15328 = _t15330;
+          _t15325 = _t15328;
+          break _t15326;
         }
-        return _t15278;
+        return _t15325;
       }
-      List$iter(_t15276, provide_ops_15222);
-      function _t15286(__p401) {
-        let _t15288;
-        const _t15287 = __p401;
-        _t15289: {
-          const op_name = _t15287[0];
-          const arg_name = _t15287[1];
-          const fallback_body = _t15287[2];
-          const arg_js_15290 = Js_codegen$mangle_name(arg_name);
-          Js_codegen$emit_line(ctx, (((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15290)) + ", ") + __dict_Show_string.show("_k")) + ") {"));
+      List$iter(_t15323, provide_ops_15269);
+      function _t15333(__p401) {
+        let _t15335;
+        const _t15334 = __p401;
+        _t15336: {
+          const op_name = _t15334[0];
+          const arg_name = _t15334[1];
+          const fallback_body = _t15334[2];
+          const arg_js_15337 = Js_codegen$mangle_name(arg_name);
+          Js_codegen$emit_line(ctx, (((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15337)) + ", ") + __dict_Show_string.show("_k")) + ") {"));
           (ctx.indent = (ctx.indent + 1), undefined);
           Js_codegen$push_scope(ctx);
-          Js_codegen$bind_var(ctx, arg_name, arg_js_15290);
-          const v_15292 = Js_codegen$compile_non_tail(ctx, fallback_body);
-          Js_codegen$emit_line(ctx, (("return _bounce(function() { return " + __dict_Show_string.show(v_15292)) + "; });"));
+          Js_codegen$bind_var(ctx, arg_name, arg_js_15337);
+          const v_15339 = Js_codegen$compile_non_tail(ctx, fallback_body);
+          Js_codegen$emit_line(ctx, (("return _bounce(function() { return " + __dict_Show_string.show(v_15339)) + "; });"));
           Js_codegen$pop_scope(ctx);
           (ctx.indent = (ctx.indent - 1), undefined);
-          const _t15293 = Js_codegen$emit_line(ctx, "},");
-          const _t15291 = _t15293;
-          _t15288 = _t15291;
-          break _t15289;
+          const _t15340 = Js_codegen$emit_line(ctx, "},");
+          const _t15338 = _t15340;
+          _t15335 = _t15338;
+          break _t15336;
         }
-        return _t15288;
+        return _t15335;
       }
-      List$iter(_t15286, try_ops_15224);
-      function _t15294(__p402) {
-        let _t15296;
-        const _t15295 = __p402;
-        _t15297: {
-          const op_name = _t15295[0];
-          const arg_name = _t15295[1];
-          const k_name = _t15295[2];
-          const handler_body = _t15295[3];
-          const arg_js_15298 = Js_codegen$mangle_name(arg_name);
-          const k_js_15300 = Js_codegen$mangle_name(k_name);
-          const k_raw_15302 = "_k_raw";
-          Js_codegen$emit_line(ctx, (((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15298)) + ", ") + __dict_Show_string.show(k_raw_15302)) + ") {"));
+      List$iter(_t15333, try_ops_15271);
+      function _t15341(__p402) {
+        let _t15343;
+        const _t15342 = __p402;
+        _t15344: {
+          const op_name = _t15342[0];
+          const arg_name = _t15342[1];
+          const k_name = _t15342[2];
+          const handler_body = _t15342[3];
+          const arg_js_15345 = Js_codegen$mangle_name(arg_name);
+          const k_js_15347 = Js_codegen$mangle_name(k_name);
+          const k_raw_15349 = "_k_raw";
+          Js_codegen$emit_line(ctx, (((((("\"" + __dict_Show_string.show(op_name)) + "\": function(") + __dict_Show_string.show(arg_js_15345)) + ", ") + __dict_Show_string.show(k_raw_15349)) + ") {"));
           (ctx.indent = (ctx.indent + 1), undefined);
-          Js_codegen$emit_line(ctx, (((((((("const " + __dict_Show_string.show(k_js_15300)) + " = function(_v) { if (") + __dict_Show_string.show(k_js_15300)) + "._used) throw new Error(\"Effect continuation already resumed\"); ") + __dict_Show_string.show(k_js_15300)) + "._used = true; return ") + __dict_Show_string.show(k_raw_15302)) + "(_v); };"));
-          Js_codegen$emit_line(ctx, (__dict_Show_string.show(k_js_15300) + "._used = false;"));
-          Js_codegen$emit_line(ctx, (((__dict_Show_string.show(k_js_15300) + "._k_raw = ") + __dict_Show_string.show(k_raw_15302)) + ";"));
+          Js_codegen$emit_line(ctx, (((((((("const " + __dict_Show_string.show(k_js_15347)) + " = function(_v) { if (") + __dict_Show_string.show(k_js_15347)) + "._used) throw new Error(\"Effect continuation already resumed\"); ") + __dict_Show_string.show(k_js_15347)) + "._used = true; return ") + __dict_Show_string.show(k_raw_15349)) + "(_v); };"));
+          Js_codegen$emit_line(ctx, (__dict_Show_string.show(k_js_15347) + "._used = false;"));
+          Js_codegen$emit_line(ctx, (((__dict_Show_string.show(k_js_15347) + "._k_raw = ") + __dict_Show_string.show(k_raw_15349)) + ";"));
           Js_codegen$push_scope(ctx);
-          Js_codegen$bind_var(ctx, arg_name, arg_js_15298);
-          Js_codegen$bind_var(ctx, k_name, k_js_15300);
-          function _t15304(_) {
+          Js_codegen$bind_var(ctx, arg_name, arg_js_15345);
+          Js_codegen$bind_var(ctx, k_name, k_js_15347);
+          function _t15351(_) {
             return Js_codegen$compile_non_tail(ctx, handler_body);
           }
-          const v_15305 = Js_codegen$with_handler_tail_resume(ctx, Ir_analysis$all_resumes_are_tail(handler_body), _t15304);
-          Js_codegen$emit_line(ctx, (("return _bounce(function() { return " + __dict_Show_string.show(v_15305)) + "; });"));
+          const v_15352 = Js_codegen$with_handler_tail_resume(ctx, Ir_analysis$all_resumes_are_tail(handler_body), _t15351);
+          Js_codegen$emit_line(ctx, (("return _bounce(function() { return " + __dict_Show_string.show(v_15352)) + "; });"));
           Js_codegen$pop_scope(ctx);
           (ctx.indent = (ctx.indent - 1), undefined);
-          const _t15306 = Js_codegen$emit_line(ctx, "},");
-          const _t15303 = _t15306;
-          const _t15301 = _t15303;
-          const _t15299 = _t15301;
-          _t15296 = _t15299;
-          break _t15297;
+          const _t15353 = Js_codegen$emit_line(ctx, "},");
+          const _t15350 = _t15353;
+          const _t15348 = _t15350;
+          const _t15346 = _t15348;
+          _t15343 = _t15346;
+          break _t15344;
         }
-        return _t15296;
+        return _t15343;
       }
-      List$iter(_t15294, full_ops_15226);
+      List$iter(_t15341, full_ops_15273);
       (ctx.indent = (ctx.indent - 1), undefined);
       Js_codegen$emit_line(ctx, "});");
-      let _t15307;
-      if (_eq(simple_ops_15244, null)) {
-        _t15307 = Ir_analysis$eval_invokes_effect(body);
+      let _t15354;
+      if (_eq(simple_ops_15291, null)) {
+        _t15354 = Ir_analysis$eval_invokes_effect(body);
       } else {
-        _t15307 = Ir_analysis$expr_has_unhandled_perform(simple_ops_15244, body);
+        _t15354 = Ir_analysis$expr_has_unhandled_perform(simple_ops_15291, body);
       }
-      const body_needs_cps_15308 = _t15307;
-      const saved_ifh_15310 = ctx.in_full_handler;
-      (ctx.in_full_handler = (!_eq(full_ops_15226, null) || saved_ifh_15310), undefined);
+      const body_needs_cps_15355 = _t15354;
+      const saved_ifh_15357 = ctx.in_full_handler;
+      (ctx.in_full_handler = (!_eq(full_ops_15273, null) || saved_ifh_15357), undefined);
       Js_codegen$emit_line(ctx, "try {");
       (ctx.indent = (ctx.indent + 1), undefined);
-      let _t15312;
-      if (body_needs_cps_15308) {
+      let _t15359;
+      if (body_needs_cps_15355) {
         Js_codegen$emit_line(ctx, "return _trampoline(function() {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        function _t15313(_) {
-          function _t15314(body_result) {
-            let _t15316;
-            const _t15315 = Ref$get(return_arm_15210);
-            _t15317: {
-              if (_t15315._tag === 0) {
-                _t15316 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_result)) + ";"));
-                break _t15317;
+        function _t15360(_) {
+          function _t15361(body_result) {
+            let _t15363;
+            const _t15362 = Ref$get(return_arm_15257);
+            _t15364: {
+              if (_t15362._tag === 0) {
+                _t15363 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_result)) + ";"));
+                break _t15364;
               }
-              if (_t15315._tag === 1) {
-                const ret_name = _t15315._val[0];
-                const ret_body = _t15315._val[1];
-                const ret_js_15318 = Js_codegen$mangle_name(ret_name);
-                const actual_ret_15320 = (ret_js_15318 + ("_" + string_of_int(ctx.tmp_counter)));
+              if (_t15362._tag === 1) {
+                const ret_name = _t15362._val[0];
+                const ret_body = _t15362._val[1];
+                const ret_js_15365 = Js_codegen$mangle_name(ret_name);
+                const actual_ret_15367 = (ret_js_15365 + ("_" + string_of_int(ctx.tmp_counter)));
                 (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
                 Js_codegen$push_scope(ctx);
-                Js_codegen$bind_var(ctx, ret_name, actual_ret_15320);
-                Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15320)) + " = ") + __dict_Show_string.show(body_result)) + ";"));
-                const v_15322 = Js_codegen$compile_non_tail(ctx, ret_body);
-                Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15322)) + ";"));
-                const _t15323 = Js_codegen$pop_scope(ctx);
-                const _t15321 = _t15323;
-                const _t15319 = _t15321;
-                _t15316 = _t15319;
-                break _t15317;
+                Js_codegen$bind_var(ctx, ret_name, actual_ret_15367);
+                Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15367)) + " = ") + __dict_Show_string.show(body_result)) + ";"));
+                const v_15369 = Js_codegen$compile_non_tail(ctx, ret_body);
+                Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(v_15369)) + ";"));
+                const _t15370 = Js_codegen$pop_scope(ctx);
+                const _t15368 = _t15370;
+                const _t15366 = _t15368;
+                _t15363 = _t15366;
+                break _t15364;
               }
               _match_fail("line 0");
             }
-            return _t15316;
+            return _t15363;
           }
-          return _call(Js_codegen$compile_cps, [ctx, body, _t15314]);
+          return _call(Js_codegen$compile_cps, [ctx, body, _t15361]);
         }
-        Js_codegen$with_in_cps(ctx, true, _t15313);
+        Js_codegen$with_in_cps(ctx, true, _t15360);
         (ctx.indent = (ctx.indent - 1), undefined);
-        _t15312 = Js_codegen$emit_line(ctx, "});");
+        _t15359 = Js_codegen$emit_line(ctx, "});");
       } else {
-        const body_v_15324 = Js_codegen$compile_non_tail(ctx, body);
-        let _t15327;
-        const _t15326 = Ref$get(return_arm_15210);
-        _t15328: {
-          if (_t15326._tag === 0) {
-            _t15327 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_v_15324)) + ";"));
-            break _t15328;
+        const body_v_15371 = Js_codegen$compile_non_tail(ctx, body);
+        let _t15374;
+        const _t15373 = Ref$get(return_arm_15257);
+        _t15375: {
+          if (_t15373._tag === 0) {
+            _t15374 = Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(body_v_15371)) + ";"));
+            break _t15375;
           }
-          if (_t15326._tag === 1) {
-            const ret_name = _t15326._val[0];
-            const ret_body = _t15326._val[1];
-            const ret_js_15329 = Js_codegen$mangle_name(ret_name);
-            const actual_ret_15331 = (ret_js_15329 + ("_" + string_of_int(ctx.tmp_counter)));
+          if (_t15373._tag === 1) {
+            const ret_name = _t15373._val[0];
+            const ret_body = _t15373._val[1];
+            const ret_js_15376 = Js_codegen$mangle_name(ret_name);
+            const actual_ret_15378 = (ret_js_15376 + ("_" + string_of_int(ctx.tmp_counter)));
             (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
             Js_codegen$push_scope(ctx);
-            Js_codegen$bind_var(ctx, ret_name, actual_ret_15331);
-            Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15331)) + " = ") + __dict_Show_string.show(body_v_15324)) + ";"));
-            const rv_15333 = Js_codegen$compile_non_tail(ctx, ret_body);
-            Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(rv_15333)) + ";"));
-            const _t15334 = Js_codegen$pop_scope(ctx);
-            const _t15332 = _t15334;
-            const _t15330 = _t15332;
-            _t15327 = _t15330;
-            break _t15328;
+            Js_codegen$bind_var(ctx, ret_name, actual_ret_15378);
+            Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_ret_15378)) + " = ") + __dict_Show_string.show(body_v_15371)) + ";"));
+            const rv_15380 = Js_codegen$compile_non_tail(ctx, ret_body);
+            Js_codegen$emit_line(ctx, (("return " + __dict_Show_string.show(rv_15380)) + ";"));
+            const _t15381 = Js_codegen$pop_scope(ctx);
+            const _t15379 = _t15381;
+            const _t15377 = _t15379;
+            _t15374 = _t15377;
+            break _t15375;
           }
           _match_fail("line 0");
         }
-        const _t15325 = _t15327;
-        _t15312 = _t15325;
+        const _t15372 = _t15374;
+        _t15359 = _t15372;
       }
-      _t15312;
-      (ctx.in_full_handler = saved_ifh_15310, undefined);
+      _t15359;
+      (ctx.in_full_handler = saved_ifh_15357, undefined);
       (ctx.indent = (ctx.indent - 1), undefined);
-      const _t15311 = Js_codegen$emit_line(ctx, (("} finally { _h = " + __dict_Show_string.show(h_saved_15246)) + "; }"));
-      const _t15309 = _t15311;
-      const _t15270 = _t15309;
-      return _t15270;
+      const _t15358 = Js_codegen$emit_line(ctx, (("} finally { _h = " + __dict_Show_string.show(h_saved_15293)) + "; }"));
+      const _t15356 = _t15358;
+      const _t15317 = _t15356;
+      return _t15317;
     }
-    const _protect_result_15335 = _t15250(undefined);
-    function _t15337(_) {
-      return (ctx.direct_dispatch_ops = saved_direct_ops_15248, undefined);
+    const _protect_result_15382 = _t15297(undefined);
+    function _t15384(_) {
+      return (ctx.direct_dispatch_ops = saved_direct_ops_15295, undefined);
     }
-    _t15337(undefined);
-    const _t15336 = _protect_result_15335;
-    _t15336;
+    _t15384(undefined);
+    const _t15383 = _protect_result_15382;
+    _t15383;
     (ctx.indent = (ctx.indent - 1), undefined);
-    const _t15249 = Js_codegen$emit_line(ctx, "})();");
-    const _t15247 = _t15249;
-    const _t15245 = _t15247;
-    _t15233 = _t15245;
+    const _t15296 = Js_codegen$emit_line(ctx, "})();");
+    const _t15294 = _t15296;
+    const _t15292 = _t15294;
+    _t15280 = _t15292;
   }
-  _t15233;
-  const _t15232 = result_15208;
-  const _t15227 = _t15232;
-  const _t15225 = _t15227;
-  const _t15223 = _t15225;
-  const _t15217 = _t15223;
-  const _t15215 = _t15217;
-  const _t15213 = _t15215;
-  const _t15211 = _t15213;
-  const _t15209 = _t15211;
-  return _t15209;
+  _t15280;
+  const _t15279 = result_15255;
+  const _t15274 = _t15279;
+  const _t15272 = _t15274;
+  const _t15270 = _t15272;
+  const _t15264 = _t15270;
+  const _t15262 = _t15264;
+  const _t15260 = _t15262;
+  const _t15258 = _t15260;
+  const _t15256 = _t15258;
+  return _t15256;
 }
 function Js_codegen$is_twin_call(ctx, te) {
-  let _t15338;
+  let _t15385;
   if ((!ctx.in_full_handler)) {
-    _t15338 = false;
+    _t15385 = false;
   } else {
     function collect(e, acc) {
       while (true) {
-        let _t15340;
-        const _t15339 = e.expr;
-        _t15341: {
-          if (_t15339._tag === 11) {
-            const f = _t15339._val[0];
-            const a = _t15339._val[1];
-            const _t15342 = f;
-            const _t15343 = ({_hd: a, _tl: acc});
-            e = _t15342;
-            acc = _t15343;
+        let _t15387;
+        const _t15386 = e.expr;
+        _t15388: {
+          if (_t15386._tag === 11) {
+            const f = _t15386._val[0];
+            const a = _t15386._val[1];
+            const _t15389 = f;
+            const _t15390 = ({_hd: a, _tl: acc});
+            e = _t15389;
+            acc = _t15390;
             continue;
-            _t15340 = undefined;
-            break _t15341;
+            _t15387 = undefined;
+            break _t15388;
           }
-          _t15340 = [e, acc];
-          break _t15341;
+          _t15387 = [e, acc];
+          break _t15388;
         }
-        return _t15340;
+        return _t15387;
       }
     }
-    let _t15346;
-    const _t15345 = te.expr;
-    _t15347: {
-      if (_t15345._tag === 11) {
-        let _t15349;
-        const _t15348 = collect(te, null);
-        _t15350: {
-          const base = _t15348[0];
-          const args = _t15348[1];
-          let _t15352;
-          const _t15351 = base.expr;
-          _t15353: {
-            if (_t15351._tag === 7) {
-              const name = _t15351._val;
+    let _t15393;
+    const _t15392 = te.expr;
+    _t15394: {
+      if (_t15392._tag === 11) {
+        let _t15396;
+        const _t15395 = collect(te, null);
+        _t15397: {
+          const base = _t15395[0];
+          const args = _t15395[1];
+          let _t15399;
+          const _t15398 = base.expr;
+          _t15400: {
+            if (_t15398._tag === 7) {
+              const name = _t15398._val;
               if (Ir_analysis$needs_cps(base.ty)) {
-                const name = _t15351._val;
-                let _t15355;
-                const _t15354 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, ctx.twinnable, Js_codegen$lookup_var(ctx, name)]);
-                _t15356: {
-                  if (_t15354._tag === 0) {
-                    _t15355 = false;
-                    break _t15356;
+                const name = _t15398._val;
+                const jsn_15401 = Js_codegen$lookup_var(ctx, name);
+                let _t15404;
+                const _t15403 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, ctx.twinnable, jsn_15401]);
+                _t15405: {
+                  if (_t15403._tag === 0) {
+                    _t15404 = (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, ctx.cps_form_vars, jsn_15401]) && _eq(Js_codegen$count_arrows(base.ty), ({_tag: 1, _name: "Some", _val: List$length(args)})));
+                    break _t15405;
                   }
-                  if (_t15354._tag === 1) {
-                    const js_params = _t15354._val[1];
-                    _t15355 = (List$length(js_params) === List$length(args));
-                    break _t15356;
+                  if (_t15403._tag === 1) {
+                    const js_params = _t15403._val[1];
+                    _t15404 = (List$length(js_params) === List$length(args));
+                    break _t15405;
                   }
                   _match_fail("line 0");
                 }
-                _t15352 = _t15355;
-                break _t15353;
+                const _t15402 = _t15404;
+                _t15399 = _t15402;
+                break _t15400;
               } else {
-                _t15352 = false;
-                break _t15353;
+                _t15399 = false;
+                break _t15400;
               }
             }
-            _t15352 = false;
-            break _t15353;
+            _t15399 = false;
+            break _t15400;
           }
-          _t15349 = _t15352;
-          break _t15350;
+          _t15396 = _t15399;
+          break _t15397;
         }
-        _t15346 = _t15349;
-        break _t15347;
+        _t15393 = _t15396;
+        break _t15394;
       }
-      _t15346 = false;
-      break _t15347;
+      _t15393 = false;
+      break _t15394;
     }
-    const _t15344 = _t15346;
-    _t15338 = _t15344;
+    const _t15391 = _t15393;
+    _t15385 = _t15391;
   }
-  return _t15338;
+  return _t15385;
 }
 function Js_codegen$compile_cps(ctx, te, cont) {
   while (true) {
-    let _t15358;
-    const _t15357 = Js_codegen$anf_lift_effects(ctx, te);
-    _t15359: {
-      if (_t15357._tag === 0) {
-        _t15358 = _call(Js_codegen$compile_cps_dispatch, [ctx, te, cont]);
-        break _t15359;
+    let _t15407;
+    const _t15406 = Js_codegen$anf_lift_effects(ctx, te);
+    _t15408: {
+      if (_t15406._tag === 0) {
+        _t15407 = _call(Js_codegen$compile_cps_dispatch, [ctx, te, cont]);
+        break _t15408;
       }
-      if (_t15357._tag === 1) {
-        const lifted = _t15357._val;
-        const _t15360 = ctx;
-        const _t15361 = lifted;
-        const _t15362 = cont;
-        ctx = _t15360;
-        te = _t15361;
-        cont = _t15362;
+      if (_t15406._tag === 1) {
+        const lifted = _t15406._val;
+        const _t15409 = ctx;
+        const _t15410 = lifted;
+        const _t15411 = cont;
+        ctx = _t15409;
+        te = _t15410;
+        cont = _t15411;
         continue;
-        _t15358 = undefined;
-        break _t15359;
+        _t15407 = undefined;
+        break _t15408;
       }
       _match_fail("line 0");
     }
-    return _t15358;
+    return _t15407;
   }
 }
 function Js_codegen$compile_cps_dispatch(ctx, te, cont) {
-  let _t15364;
-  const _t15363 = te.expr;
-  _t15365: {
-    if (_t15363._tag === 11) {
+  let _t15413;
+  const _t15412 = te.expr;
+  _t15414: {
+    if (_t15412._tag === 11) {
       if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-        function _t15366(_) {
+        function _t15415(_) {
           return Js_codegen$compile_non_tail(ctx, te);
         }
-        const v_15367 = Js_codegen$with_in_cps(ctx, false, _t15366);
-        const _t15368 = cont(v_15367);
-        _t15364 = _t15368;
-        break _t15365;
+        const v_15416 = Js_codegen$with_in_cps(ctx, false, _t15415);
+        const _t15417 = cont(v_15416);
+        _t15413 = _t15417;
+        break _t15414;
       } else {
         if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-          const v_15369 = Js_codegen$compile_non_tail(ctx, te);
-          const _t15370 = cont(v_15369);
-          _t15364 = _t15370;
-          break _t15365;
+          const v_15418 = Js_codegen$compile_non_tail(ctx, te);
+          const _t15419 = cont(v_15418);
+          _t15413 = _t15419;
+          break _t15414;
         } else {
-          if (_t15363._val[0].expr._tag === 10) {
-            if (!_t15363._val[0].expr._val[2]) {
-              const param = _t15363._val[0].expr._val[0];
-              const body = _t15363._val[0].expr._val[1];
-              const arg = _t15363._val[1];
-              _t15364 = _call(Js_codegen$compile_let_cps, [ctx, param, arg, body, cont]);
-              break _t15365;
+          if (_t15412._val[0].expr._tag === 10) {
+            if (!_t15412._val[0].expr._val[2]) {
+              const param = _t15412._val[0].expr._val[0];
+              const body = _t15412._val[0].expr._val[1];
+              const arg = _t15412._val[1];
+              _t15413 = _call(Js_codegen$compile_let_cps, [ctx, param, arg, body, cont]);
+              break _t15414;
             }
-            const fn_ = _t15363._val[0];
-            const arg = _t15363._val[1];
-            _t15364 = _call(Js_codegen$compile_app_cps, [ctx, te, fn_, arg, cont]);
-            break _t15365;
+            const fn_ = _t15412._val[0];
+            const arg = _t15412._val[1];
+            _t15413 = _call(Js_codegen$compile_app_cps, [ctx, te, fn_, arg, cont]);
+            break _t15414;
           }
-          const fn_ = _t15363._val[0];
-          const arg = _t15363._val[1];
-          _t15364 = _call(Js_codegen$compile_app_cps, [ctx, te, fn_, arg, cont]);
-          break _t15365;
+          const fn_ = _t15412._val[0];
+          const arg = _t15412._val[1];
+          _t15413 = _call(Js_codegen$compile_app_cps, [ctx, te, fn_, arg, cont]);
+          break _t15414;
         }
       }
     }
-    if (_t15363._tag === 33) {
-      const value_te = _t15363._val;
-      const v_15371 = Js_codegen$compile_non_tail(ctx, value_te);
-      const _t15372 = Js_codegen$emit_line(ctx, (("return _throw_break(" + __dict_Show_string.show(v_15371)) + ");"));
-      _t15364 = _t15372;
-      break _t15365;
+    if (_t15412._tag === 33) {
+      const value_te = _t15412._val;
+      const v_15420 = Js_codegen$compile_non_tail(ctx, value_te);
+      const _t15421 = Js_codegen$emit_line(ctx, (("return _throw_break(" + __dict_Show_string.show(v_15420)) + ");"));
+      _t15413 = _t15421;
+      break _t15414;
     }
-    if (_t15363._tag === 34) {
-      _t15364 = Js_codegen$emit_line(ctx, "return _throw_continue();");
-      break _t15365;
+    if (_t15412._tag === 34) {
+      _t15413 = Js_codegen$emit_line(ctx, "return _throw_continue();");
+      break _t15414;
     }
-    if (_t15363._tag === 35) {
-      const value_te = _t15363._val;
-      const v_15373 = Js_codegen$compile_non_tail(ctx, value_te);
-      const _t15374 = Js_codegen$emit_line(ctx, (("return _throw_fold_cont(" + __dict_Show_string.show(v_15373)) + ");"));
-      _t15364 = _t15374;
-      break _t15365;
+    if (_t15412._tag === 35) {
+      const value_te = _t15412._val;
+      const v_15422 = Js_codegen$compile_non_tail(ctx, value_te);
+      const _t15423 = Js_codegen$emit_line(ctx, (("return _throw_fold_cont(" + __dict_Show_string.show(v_15422)) + ");"));
+      _t15413 = _t15423;
+      break _t15414;
     }
-    if (_t15363._tag === 36) {
-      const fold_app = _t15363._val;
+    if (_t15412._tag === 36) {
+      const fold_app = _t15412._val;
       if (Ir_analysis$expr_has_perform(te)) {
-        const fold_app = _t15363._val;
-        _t15364 = _call(Js_codegen$compile_forloop_cps, [ctx, te, fold_app, cont]);
-        break _t15365;
+        const fold_app = _t15412._val;
+        _t15413 = _call(Js_codegen$compile_forloop_cps, [ctx, te, fold_app, cont]);
+        break _t15414;
       } else {
         if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-          const v_15375 = Js_codegen$compile_non_tail(ctx, te);
-          const _t15376 = cont(v_15375);
-          _t15364 = _t15376;
-          break _t15365;
+          const v_15424 = Js_codegen$compile_non_tail(ctx, te);
+          const _t15425 = cont(v_15424);
+          _t15413 = _t15425;
+          break _t15414;
         } else {
-          const v_15377 = Js_codegen$compile_non_tail(ctx, te);
-          const _t15378 = cont(v_15377);
-          _t15364 = _t15378;
-          break _t15365;
+          const v_15426 = Js_codegen$compile_non_tail(ctx, te);
+          const _t15427 = cont(v_15426);
+          _t15413 = _t15427;
+          break _t15414;
         }
       }
     }
-    if (_t15363._tag === 30) {
+    if (_t15412._tag === 30) {
       if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-        const v_15379 = Js_codegen$compile_non_tail(ctx, te);
-        const _t15380 = cont(v_15379);
-        _t15364 = _t15380;
-        break _t15365;
+        const v_15428 = Js_codegen$compile_non_tail(ctx, te);
+        const _t15429 = cont(v_15428);
+        _t15413 = _t15429;
+        break _t15414;
       } else {
-        const v_15381 = Js_codegen$compile_non_tail(ctx, te);
-        const _t15382 = cont(v_15381);
-        _t15364 = _t15382;
-        break _t15365;
+        const v_15430 = Js_codegen$compile_non_tail(ctx, te);
+        const _t15431 = cont(v_15430);
+        _t15413 = _t15431;
+        break _t15414;
       }
     }
-    if (_t15363._tag === 12) {
-      const cond = _t15363._val[0];
-      const then_e = _t15363._val[1];
-      const else_e = _t15363._val[2];
-      _t15364 = _call(Js_codegen$compile_if_cps, [ctx, cond, then_e, else_e, cont]);
-      break _t15365;
+    if (_t15412._tag === 12) {
+      const cond = _t15412._val[0];
+      const then_e = _t15412._val[1];
+      const else_e = _t15412._val[2];
+      _t15413 = _call(Js_codegen$compile_if_cps, [ctx, cond, then_e, else_e, cont]);
+      break _t15414;
     }
-    if (_t15363._tag === 8) {
-      const name = _t15363._val[0];
-      const e1 = _t15363._val[2];
-      const e2 = _t15363._val[3];
-      _t15364 = _call(Js_codegen$compile_let_cps, [ctx, name, e1, e2, cont]);
-      break _t15365;
+    if (_t15412._tag === 8) {
+      const name = _t15412._val[0];
+      const e1 = _t15412._val[2];
+      const e2 = _t15412._val[3];
+      _t15413 = _call(Js_codegen$compile_let_cps, [ctx, name, e1, e2, cont]);
+      break _t15414;
     }
-    if (_t15363._tag === 25) {
-      const name = _t15363._val[0];
-      const init = _t15363._val[1];
-      const body = _t15363._val[2];
-      let _t15383;
+    if (_t15412._tag === 25) {
+      const name = _t15412._val[0];
+      const init = _t15412._val[1];
+      const body = _t15412._val[2];
+      let _t15432;
       if (Ir_analysis$eval_invokes_effect(init)) {
-        function _t15384(init_v) {
-          const js_name_15385 = Js_codegen$mangle_name(name);
-          const actual_name_15387 = (js_name_15385 + ("_" + string_of_int(ctx.tmp_counter)));
+        function _t15433(init_v) {
+          const js_name_15434 = Js_codegen$mangle_name(name);
+          const actual_name_15436 = (js_name_15434 + ("_" + string_of_int(ctx.tmp_counter)));
           (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
           Js_codegen$push_scope(ctx);
-          Js_codegen$bind_var(ctx, name, actual_name_15387);
-          Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(actual_name_15387)) + " = _resolve(") + __dict_Show_string.show(init_v)) + ");"));
+          Js_codegen$bind_var(ctx, name, actual_name_15436);
+          Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(actual_name_15436)) + " = _resolve(") + __dict_Show_string.show(init_v)) + ");"));
           Js_codegen$compile_cps(ctx, body, cont);
-          const _t15388 = Js_codegen$pop_scope(ctx);
-          const _t15386 = _t15388;
-          return _t15386;
+          const _t15437 = Js_codegen$pop_scope(ctx);
+          const _t15435 = _t15437;
+          return _t15435;
         }
-        _t15383 = Js_codegen$compile_cps(ctx, init, _t15384);
+        _t15432 = Js_codegen$compile_cps(ctx, init, _t15433);
       } else {
-        const v_15389 = Js_codegen$compile_non_tail(ctx, init);
-        const js_name_15391 = Js_codegen$mangle_name(name);
-        const actual_name_15393 = (js_name_15391 + ("_" + string_of_int(ctx.tmp_counter)));
+        const v_15438 = Js_codegen$compile_non_tail(ctx, init);
+        const js_name_15440 = Js_codegen$mangle_name(name);
+        const actual_name_15442 = (js_name_15440 + ("_" + string_of_int(ctx.tmp_counter)));
         (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
         Js_codegen$push_scope(ctx);
-        Js_codegen$bind_var(ctx, name, actual_name_15393);
-        Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(actual_name_15393)) + " = _resolve(") + __dict_Show_string.show(v_15389)) + ");"));
+        Js_codegen$bind_var(ctx, name, actual_name_15442);
+        Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(actual_name_15442)) + " = _resolve(") + __dict_Show_string.show(v_15438)) + ");"));
         Js_codegen$compile_cps(ctx, body, cont);
-        const _t15394 = Js_codegen$pop_scope(ctx);
-        const _t15392 = _t15394;
-        const _t15390 = _t15392;
-        _t15383 = _t15390;
+        const _t15443 = Js_codegen$pop_scope(ctx);
+        const _t15441 = _t15443;
+        const _t15439 = _t15441;
+        _t15432 = _t15439;
       }
-      _t15364 = _t15383;
-      break _t15365;
+      _t15413 = _t15432;
+      break _t15414;
     }
-    if (_t15363._tag === 9) {
-      const name = _t15363._val[0];
-      const fn_expr = _t15363._val[2];
-      const body = _t15363._val[3];
-      _t15364 = _call(Js_codegen$compile_letrec_cps, [ctx, name, fn_expr, body, cont]);
-      break _t15365;
+    if (_t15412._tag === 9) {
+      const name = _t15412._val[0];
+      const fn_expr = _t15412._val[2];
+      const body = _t15412._val[3];
+      _t15413 = _call(Js_codegen$compile_letrec_cps, [ctx, name, fn_expr, body, cont]);
+      break _t15414;
     }
-    if (_t15363._tag === 37) {
-      const bindings = _t15363._val[0];
-      const body = _t15363._val[1];
-      _t15364 = _call(Js_codegen$compile_letrec_and_cps, [ctx, bindings, body, cont]);
-      break _t15365;
+    if (_t15412._tag === 37) {
+      const bindings = _t15412._val[0];
+      const body = _t15412._val[1];
+      _t15413 = _call(Js_codegen$compile_letrec_and_cps, [ctx, bindings, body, cont]);
+      break _t15414;
     }
-    if (_t15363._tag === 24) {
-      const scrut = _t15363._val[0];
-      const arms = _t15363._val[1];
-      const _partial = _t15363._val[2];
-      _t15364 = _call(Js_codegen$compile_match_cps, [ctx, scrut, arms, te.loc, cont]);
-      break _t15365;
+    if (_t15412._tag === 24) {
+      const scrut = _t15412._val[0];
+      const arms = _t15412._val[1];
+      const _partial = _t15412._val[2];
+      _t15413 = _call(Js_codegen$compile_match_cps, [ctx, scrut, arms, te.loc, cont]);
+      break _t15414;
     }
-    if (_t15363._tag === 40) {
-      const cm = _t15363._val;
-      _t15364 = Js_codegen$compile_js_match_tree_cps(ctx, cm, cont);
-      break _t15365;
+    if (_t15412._tag === 40) {
+      const cm = _t15412._val;
+      _t15413 = Js_codegen$compile_js_match_tree_cps(ctx, cm, cont);
+      break _t15414;
     }
-    if (_t15363._tag === 29) {
+    if (_t15412._tag === 29) {
       if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-        const v_15395 = Js_codegen$compile_non_tail(ctx, te);
-        const _t15396 = cont(v_15395);
-        _t15364 = _t15396;
-        break _t15365;
+        const v_15444 = Js_codegen$compile_non_tail(ctx, te);
+        const _t15445 = cont(v_15444);
+        _t15413 = _t15445;
+        break _t15414;
       } else {
-        const op_name = _t15363._val[0];
-        const arg = _t15363._val[1];
-        _t15364 = _call(Js_codegen$compile_perform_cps, [ctx, op_name, arg, cont]);
-        break _t15365;
+        const op_name = _t15412._val[0];
+        const arg = _t15412._val[1];
+        _t15413 = _call(Js_codegen$compile_perform_cps, [ctx, op_name, arg, cont]);
+        break _t15414;
       }
     }
-    if (_t15363._tag === 31) {
+    if (_t15412._tag === 31) {
       if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-        const v_15397 = Js_codegen$compile_non_tail(ctx, te);
-        const _t15398 = cont(v_15397);
-        _t15364 = _t15398;
-        break _t15365;
+        const v_15446 = Js_codegen$compile_non_tail(ctx, te);
+        const _t15447 = cont(v_15446);
+        _t15413 = _t15447;
+        break _t15414;
       } else {
-        const k_expr = _t15363._val[0];
-        const val_expr = _t15363._val[1];
-        const k_js_15399 = Js_codegen$compile_non_tail(ctx, k_expr);
-        const v_js_15401 = Js_codegen$compile_non_tail(ctx, val_expr);
-        const result_var_15403 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (((((("const " + __dict_Show_string.show(result_var_15403)) + " = _trampoline(function() { return ") + __dict_Show_string.show(k_js_15399)) + "(") + __dict_Show_string.show(v_js_15401)) + "); });"));
-        const _t15404 = cont(result_var_15403);
-        const _t15402 = _t15404;
-        const _t15400 = _t15402;
-        _t15364 = _t15400;
-        break _t15365;
+        const k_expr = _t15412._val[0];
+        const val_expr = _t15412._val[1];
+        const k_js_15448 = Js_codegen$compile_non_tail(ctx, k_expr);
+        const v_js_15450 = Js_codegen$compile_non_tail(ctx, val_expr);
+        const result_var_15452 = Js_codegen$fresh_tmp(ctx);
+        Js_codegen$emit_line(ctx, (((((("const " + __dict_Show_string.show(result_var_15452)) + " = _trampoline(function() { return ") + __dict_Show_string.show(k_js_15448)) + "(") + __dict_Show_string.show(v_js_15450)) + "); });"));
+        const _t15453 = cont(result_var_15452);
+        const _t15451 = _t15453;
+        const _t15449 = _t15451;
+        _t15413 = _t15449;
+        break _t15414;
       }
     }
-    if (_t15363._tag === 28) {
-      const e1 = _t15363._val[0];
-      const e2 = _t15363._val[1];
-      _t15364 = _call(Js_codegen$compile_seq_cps, [ctx, e1, e2, cont]);
-      break _t15365;
+    if (_t15412._tag === 28) {
+      const e1 = _t15412._val[0];
+      const e2 = _t15412._val[1];
+      _t15413 = _call(Js_codegen$compile_seq_cps, [ctx, e1, e2, cont]);
+      break _t15414;
     }
-    if (_t15363._tag === 32) {
-      const tw_cond = _t15363._val.tw_cond;
-      const tw_body = _t15363._val.tw_body;
-      const tw_step = _t15363._val.tw_step;
-      _t15364 = _call(Js_codegen$compile_while_cps, [ctx, tw_cond, tw_body, tw_step, cont]);
-      break _t15365;
+    if (_t15412._tag === 32) {
+      const tw_cond = _t15412._val.tw_cond;
+      const tw_body = _t15412._val.tw_body;
+      const tw_step = _t15412._val.tw_step;
+      _t15413 = _call(Js_codegen$compile_while_cps, [ctx, tw_cond, tw_body, tw_step, cont]);
+      break _t15414;
     }
     if (((!Js_codegen$is_twin_call(ctx, te)) && (!Ir_analysis$expr_has_perform(te)))) {
-      const v_15405 = Js_codegen$compile_non_tail(ctx, te);
-      const _t15406 = cont(v_15405);
-      _t15364 = _t15406;
-      break _t15365;
+      const v_15454 = Js_codegen$compile_non_tail(ctx, te);
+      const _t15455 = cont(v_15454);
+      _t15413 = _t15455;
+      break _t15414;
     } else {
-      const v_15407 = Js_codegen$compile_non_tail(ctx, te);
-      const _t15408 = cont(v_15407);
-      _t15364 = _t15408;
-      break _t15365;
+      const v_15456 = Js_codegen$compile_non_tail(ctx, te);
+      const _t15457 = cont(v_15456);
+      _t15413 = _t15457;
+      break _t15414;
     }
   }
-  return _t15364;
+  return _t15413;
 }
 function Js_codegen$compile_letrec_and_cps(ctx, bindings, body, cont) {
   Js_codegen$push_scope(ctx);
-  function _t15409(__p403) {
-    let _t15411;
-    const _t15410 = __p403;
-    _t15412: {
-      const name = _t15410[0];
-      const te = _t15410[1];
-      const js_name_15413 = Js_codegen$mangle_name(name);
-      Js_codegen$bind_var(ctx, name, js_name_15413);
-      let _t15416;
-      const _t15415 = te.expr;
-      _t15417: {
-        if (_t15415._tag === 10) {
-          _t15416 = undefined;
-          break _t15417;
+  function _t15458(__p403) {
+    let _t15460;
+    const _t15459 = __p403;
+    _t15461: {
+      const name = _t15459[0];
+      const te = _t15459[1];
+      const js_name_15462 = Js_codegen$mangle_name(name);
+      Js_codegen$bind_var(ctx, name, js_name_15462);
+      let _t15465;
+      const _t15464 = te.expr;
+      _t15466: {
+        if (_t15464._tag === 10) {
+          _t15465 = undefined;
+          break _t15466;
         }
-        _t15416 = Js_codegen$emit_js_placeholder(ctx, js_name_15413, te);
-        break _t15417;
+        _t15465 = Js_codegen$emit_js_placeholder(ctx, js_name_15462, te);
+        break _t15466;
       }
-      const _t15414 = _t15416;
-      _t15411 = _t15414;
-      break _t15412;
+      const _t15463 = _t15465;
+      _t15460 = _t15463;
+      break _t15461;
     }
-    return _t15411;
+    return _t15460;
   }
-  List$iter(_t15409, bindings);
-  function _t15418(__p404) {
-    let _t15420;
-    const _t15419 = __p404;
-    _t15421: {
-      const name = _t15419[0];
-      const fn_expr = _t15419[1];
-      const js_name_15422 = Js_codegen$mangle_name(name);
-      let _t15425;
-      const _t15424 = fn_expr.expr;
-      _t15426: {
-        if (_t15424._tag === 10) {
-          _t15425 = Js_codegen$compile_named_function(ctx, js_name_15422, fn_expr);
-          break _t15426;
+  List$iter(_t15458, bindings);
+  function _t15467(__p404) {
+    let _t15469;
+    const _t15468 = __p404;
+    _t15470: {
+      const name = _t15468[0];
+      const fn_expr = _t15468[1];
+      const js_name_15471 = Js_codegen$mangle_name(name);
+      let _t15474;
+      const _t15473 = fn_expr.expr;
+      _t15475: {
+        if (_t15473._tag === 10) {
+          _t15474 = Js_codegen$compile_named_function(ctx, js_name_15471, fn_expr);
+          break _t15475;
         }
-        _t15425 = undefined;
-        break _t15426;
+        _t15474 = undefined;
+        break _t15475;
       }
-      const _t15423 = _t15425;
-      _t15420 = _t15423;
-      break _t15421;
+      const _t15472 = _t15474;
+      _t15469 = _t15472;
+      break _t15470;
     }
-    return _t15420;
+    return _t15469;
   }
-  List$iter(_t15418, bindings);
-  function _t15427(__p405) {
-    let _t15429;
-    const _t15428 = __p405;
-    _t15430: {
-      const name = _t15428[0];
-      const te = _t15428[1];
-      const js_name_15431 = Js_codegen$mangle_name(name);
-      let _t15434;
-      const _t15433 = te.expr;
-      _t15435: {
-        if (_t15433._tag === 10) {
-          _t15434 = undefined;
-          break _t15435;
+  List$iter(_t15467, bindings);
+  function _t15476(__p405) {
+    let _t15478;
+    const _t15477 = __p405;
+    _t15479: {
+      const name = _t15477[0];
+      const te = _t15477[1];
+      const js_name_15480 = Js_codegen$mangle_name(name);
+      let _t15483;
+      const _t15482 = te.expr;
+      _t15484: {
+        if (_t15482._tag === 10) {
+          _t15483 = undefined;
+          break _t15484;
         }
-        _t15434 = Js_codegen$emit_js_backpatch(ctx, js_name_15431, te);
-        break _t15435;
+        _t15483 = Js_codegen$emit_js_backpatch(ctx, js_name_15480, te);
+        break _t15484;
       }
-      const _t15432 = _t15434;
-      _t15429 = _t15432;
-      break _t15430;
+      const _t15481 = _t15483;
+      _t15478 = _t15481;
+      break _t15479;
     }
-    return _t15429;
+    return _t15478;
   }
-  List$iter(_t15427, bindings);
+  List$iter(_t15476, bindings);
   Js_codegen$compile_cps(ctx, body, cont);
   return Js_codegen$pop_scope(ctx);
 }
 function Js_codegen$compile_while_cps(ctx, cond, body, step, cont) {
-  const loop_fn_15436 = Js_codegen$fresh_tmp(ctx);
-  const break_flag_15438 = Js_codegen$fresh_tmp(ctx);
-  const break_val_15440 = Js_codegen$fresh_tmp(ctx);
-  function _t15442(_) {
-    Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(break_flag_15438)) + " = false, ") + __dict_Show_string.show(break_val_15440)) + ";"));
-    let _t15444;
-    const _t15443 = step;
-    _t15445: {
-      if (_t15443._tag === 0) {
-        _t15444 = ({_tag: 0, _name: "None"});
-        break _t15445;
+  const loop_fn_15485 = Js_codegen$fresh_tmp(ctx);
+  const break_flag_15487 = Js_codegen$fresh_tmp(ctx);
+  const break_val_15489 = Js_codegen$fresh_tmp(ctx);
+  function _t15491(_) {
+    Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(break_flag_15487)) + " = false, ") + __dict_Show_string.show(break_val_15489)) + ";"));
+    let _t15493;
+    const _t15492 = step;
+    _t15494: {
+      if (_t15492._tag === 0) {
+        _t15493 = ({_tag: 0, _name: "None"});
+        break _t15494;
       }
-      if (_t15443._tag === 1) {
-        const f_15446 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(f_15446)) + " = false;"));
-        const _t15447 = ({_tag: 1, _name: "Some", _val: f_15446});
-        _t15444 = _t15447;
-        break _t15445;
+      if (_t15492._tag === 1) {
+        const f_15495 = Js_codegen$fresh_tmp(ctx);
+        Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(f_15495)) + " = false;"));
+        const _t15496 = ({_tag: 1, _name: "Some", _val: f_15495});
+        _t15493 = _t15496;
+        break _t15494;
       }
       _match_fail("line 0");
     }
-    const step_flag_15448 = _t15444;
-    Js_codegen$emit_line(ctx, (("function " + __dict_Show_string.show(loop_fn_15436)) + "() {"));
+    const step_flag_15497 = _t15493;
+    Js_codegen$emit_line(ctx, (("function " + __dict_Show_string.show(loop_fn_15485)) + "() {"));
     (ctx.indent = (ctx.indent + 1), undefined);
-    let _t15451;
-    const _t15450 = [step, step_flag_15448];
-    _t15452: {
-      if (_t15450[0]._tag === 1) {
-        if (_t15450[1]._tag === 1) {
-          const step_te = _t15450[0]._val;
-          const sf = _t15450[1]._val;
+    let _t15500;
+    const _t15499 = [step, step_flag_15497];
+    _t15501: {
+      if (_t15499[0]._tag === 1) {
+        if (_t15499[1]._tag === 1) {
+          const step_te = _t15499[0]._val;
+          const sf = _t15499[1]._val;
           Js_codegen$emit_line(ctx, (((("if (" + __dict_Show_string.show(sf)) + ") { ") + __dict_Show_string.show(Js_codegen$compile_non_tail(ctx, step_te))) + "; }"));
-          _t15451 = Js_codegen$emit_line(ctx, (__dict_Show_string.show(sf) + " = true;"));
-          break _t15452;
+          _t15500 = Js_codegen$emit_line(ctx, (__dict_Show_string.show(sf) + " = true;"));
+          break _t15501;
         }
-        _t15451 = undefined;
-        break _t15452;
+        _t15500 = undefined;
+        break _t15501;
       }
-      _t15451 = undefined;
-      break _t15452;
+      _t15500 = undefined;
+      break _t15501;
     }
-    _t15451;
-    function _t15453(c) {
+    _t15500;
+    function _t15502(c) {
       Js_codegen$emit_line(ctx, (("if (!(" + __dict_Show_string.show(c)) + ")) {"));
       (ctx.indent = (ctx.indent + 1), undefined);
       cont("undefined");
       (ctx.indent = (ctx.indent - 1), undefined);
       Js_codegen$emit_line(ctx, "}");
-      function _t15454(body_val) {
+      function _t15503(body_val) {
         Js_codegen$emit_line(ctx, (__dict_Show_string.show(body_val) + ";"));
-        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(break_flag_15438)) + ") {"));
+        Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(break_flag_15487)) + ") {"));
         (ctx.indent = (ctx.indent + 1), undefined);
-        cont(break_val_15440);
+        cont(break_val_15489);
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "}");
-        return Js_codegen$emit_line(ctx, (("return _bounce(" + __dict_Show_string.show(loop_fn_15436)) + ");"));
+        return Js_codegen$emit_line(ctx, (("return _bounce(" + __dict_Show_string.show(loop_fn_15485)) + ");"));
       }
-      return Js_codegen$compile_cps(ctx, body, _t15454);
+      return Js_codegen$compile_cps(ctx, body, _t15503);
     }
-    Js_codegen$compile_cps(ctx, cond, _t15453);
+    Js_codegen$compile_cps(ctx, cond, _t15502);
     (ctx.indent = (ctx.indent - 1), undefined);
     Js_codegen$emit_line(ctx, "}");
-    const _t15449 = Js_codegen$emit_line(ctx, (("return _bounce(" + __dict_Show_string.show(loop_fn_15436)) + ");"));
-    return _t15449;
+    const _t15498 = Js_codegen$emit_line(ctx, (("return _bounce(" + __dict_Show_string.show(loop_fn_15485)) + ");"));
+    return _t15498;
   }
-  const _t15441 = Js_codegen$with_loop_ctx(ctx, break_flag_15438, break_val_15440, false, _t15442);
-  const _t15439 = _t15441;
-  const _t15437 = _t15439;
-  return _t15437;
+  const _t15490 = Js_codegen$with_loop_ctx(ctx, break_flag_15487, break_val_15489, false, _t15491);
+  const _t15488 = _t15490;
+  const _t15486 = _t15488;
+  return _t15486;
 }
 function Js_codegen$compile_forloop_cps(ctx, te, fold_app, cont) {
-  function _t15455(_) {
-    const v_15456 = Js_codegen$compile_non_tail(ctx, te);
-    const _t15457 = cont(v_15456);
-    return _t15457;
+  function _t15504(_) {
+    const v_15505 = Js_codegen$compile_non_tail(ctx, te);
+    const _t15506 = cont(v_15505);
+    return _t15506;
   }
-  const fallback_15458 = _t15455;
+  const fallback_15507 = _t15504;
   function collect(expr, acc) {
     while (true) {
-      let _t15461;
-      const _t15460 = expr.expr;
-      _t15462: {
-        if (_t15460._tag === 11) {
-          const f = _t15460._val[0];
-          const a = _t15460._val[1];
-          const _t15463 = f;
-          const _t15464 = ({_hd: a, _tl: acc});
-          expr = _t15463;
-          acc = _t15464;
+      let _t15510;
+      const _t15509 = expr.expr;
+      _t15511: {
+        if (_t15509._tag === 11) {
+          const f = _t15509._val[0];
+          const a = _t15509._val[1];
+          const _t15512 = f;
+          const _t15513 = ({_hd: a, _tl: acc});
+          expr = _t15512;
+          acc = _t15513;
           continue;
-          _t15461 = undefined;
-          break _t15462;
+          _t15510 = undefined;
+          break _t15511;
         }
-        _t15461 = [expr, acc];
-        break _t15462;
+        _t15510 = [expr, acc];
+        break _t15511;
       }
-      return _t15461;
+      return _t15510;
     }
   }
-  let _t15467;
-  const _t15466 = collect(fold_app, null);
-  _t15468: {
-    const _fold_fn = _t15466[0];
-    const fold_args = _t15466[1];
-    let _t15470;
-    const _t15469 = fold_args;
-    _t15471: {
-      if (_t15469 !== null) {
-        if (_t15469._tl !== null) {
-          if (_t15469._tl._tl !== null) {
-            if (_t15469._tl._tl._tl === null) {
-              const callback = _t15469._hd;
-              const init = _t15469._tl._hd;
-              const coll = _t15469._tl._tl._hd;
-              let _t15473;
-              const _t15472 = Types$repr(coll.ty);
-              _t15474: {
-                if (_t15472._tag === 13) {
-                  _t15473 = ({_tag: 1, _name: "Some", _val: "array"});
-                  break _t15474;
+  let _t15516;
+  const _t15515 = collect(fold_app, null);
+  _t15517: {
+    const _fold_fn = _t15515[0];
+    const fold_args = _t15515[1];
+    let _t15519;
+    const _t15518 = fold_args;
+    _t15520: {
+      if (_t15518 !== null) {
+        if (_t15518._tl !== null) {
+          if (_t15518._tl._tl !== null) {
+            if (_t15518._tl._tl._tl === null) {
+              const callback = _t15518._hd;
+              const init = _t15518._tl._hd;
+              const coll = _t15518._tl._tl._hd;
+              let _t15522;
+              const _t15521 = Types$repr(coll.ty);
+              _t15523: {
+                if (_t15521._tag === 13) {
+                  _t15522 = ({_tag: 1, _name: "Some", _val: "array"});
+                  break _t15523;
                 }
-                if (_t15472._tag === 10) {
-                  _t15473 = ({_tag: 1, _name: "Some", _val: "list"});
-                  break _t15474;
+                if (_t15521._tag === 10) {
+                  _t15522 = ({_tag: 1, _name: "Some", _val: "list"});
+                  break _t15523;
                 }
-                if (_t15472._tag === 12) {
-                  const name = _t15472._val[0];
+                if (_t15521._tag === 12) {
+                  const name = _t15521._val[0];
                   if (_call(List$mem, [__dict_Eq_string, name, ctx.type_env.newtypes])) {
-                    const name = _t15472._val[0];
-                    function _t15475(__p406) {
-                      let _t15477;
-                      const _t15476 = __p406;
-                      _t15478: {
-                        const info = _t15476[1];
-                        _t15477 = (info.ctor_type_name === name);
-                        break _t15478;
+                    const name = _t15521._val[0];
+                    function _t15524(__p406) {
+                      let _t15526;
+                      const _t15525 = __p406;
+                      _t15527: {
+                        const info = _t15525[1];
+                        _t15526 = (info.ctor_type_name === name);
+                        break _t15527;
                       }
-                      return _t15477;
+                      return _t15526;
                     }
-                    const ctors_15479 = List$filter(_t15475, ctx.type_env.constructors);
-                    let _t15482;
-                    const _t15481 = ctors_15479;
-                    _t15483: {
-                      if (_t15481 !== null) {
-                        if (_t15481._hd[1].ctor_arg_ty._tag === 1) {
-                          if (_t15481._tl === null) {
-                            const underlying = _t15481._hd[1].ctor_arg_ty._val;
-                            let _t15485;
-                            const _t15484 = Types$repr(underlying);
-                            _t15486: {
-                              if (_t15484._tag === 10) {
-                                _t15485 = ({_tag: 1, _name: "Some", _val: "list"});
-                                break _t15486;
+                    const ctors_15528 = List$filter(_t15524, ctx.type_env.constructors);
+                    let _t15531;
+                    const _t15530 = ctors_15528;
+                    _t15532: {
+                      if (_t15530 !== null) {
+                        if (_t15530._hd[1].ctor_arg_ty._tag === 1) {
+                          if (_t15530._tl === null) {
+                            const underlying = _t15530._hd[1].ctor_arg_ty._val;
+                            let _t15534;
+                            const _t15533 = Types$repr(underlying);
+                            _t15535: {
+                              if (_t15533._tag === 10) {
+                                _t15534 = ({_tag: 1, _name: "Some", _val: "list"});
+                                break _t15535;
                               }
-                              _t15485 = ({_tag: 0, _name: "None"});
-                              break _t15486;
+                              _t15534 = ({_tag: 0, _name: "None"});
+                              break _t15535;
                             }
-                            _t15482 = _t15485;
-                            break _t15483;
+                            _t15531 = _t15534;
+                            break _t15532;
                           }
-                          _t15482 = ({_tag: 0, _name: "None"});
-                          break _t15483;
+                          _t15531 = ({_tag: 0, _name: "None"});
+                          break _t15532;
                         }
-                        _t15482 = ({_tag: 0, _name: "None"});
-                        break _t15483;
+                        _t15531 = ({_tag: 0, _name: "None"});
+                        break _t15532;
                       }
-                      _t15482 = ({_tag: 0, _name: "None"});
-                      break _t15483;
+                      _t15531 = ({_tag: 0, _name: "None"});
+                      break _t15532;
                     }
-                    const _t15480 = _t15482;
-                    _t15473 = _t15480;
-                    break _t15474;
+                    const _t15529 = _t15531;
+                    _t15522 = _t15529;
+                    break _t15523;
                   } else {
-                    _t15473 = ({_tag: 0, _name: "None"});
-                    break _t15474;
+                    _t15522 = ({_tag: 0, _name: "None"});
+                    break _t15523;
                   }
                 }
-                _t15473 = ({_tag: 0, _name: "None"});
-                break _t15474;
+                _t15522 = ({_tag: 0, _name: "None"});
+                break _t15523;
               }
-              const coll_kind_15487 = _t15473;
-              let _t15490;
-              const _t15489 = callback.expr;
-              _t15491: {
-                if (_t15489._tag === 10) {
-                  const acc_param = _t15489._val[0];
-                  const inner = _t15489._val[1];
-                  let _t15493;
-                  const _t15492 = inner.expr;
-                  _t15494: {
-                    if (_t15492._tag === 10) {
-                      const elem_param = _t15492._val[0];
-                      const body = _t15492._val[1];
-                      _t15493 = ({_tag: 1, _name: "Some", _val: [acc_param, elem_param, body]});
-                      break _t15494;
+              const coll_kind_15536 = _t15522;
+              let _t15539;
+              const _t15538 = callback.expr;
+              _t15540: {
+                if (_t15538._tag === 10) {
+                  const acc_param = _t15538._val[0];
+                  const inner = _t15538._val[1];
+                  let _t15542;
+                  const _t15541 = inner.expr;
+                  _t15543: {
+                    if (_t15541._tag === 10) {
+                      const elem_param = _t15541._val[0];
+                      const body = _t15541._val[1];
+                      _t15542 = ({_tag: 1, _name: "Some", _val: [acc_param, elem_param, body]});
+                      break _t15543;
                     }
-                    _t15493 = ({_tag: 0, _name: "None"});
-                    break _t15494;
+                    _t15542 = ({_tag: 0, _name: "None"});
+                    break _t15543;
                   }
-                  _t15490 = _t15493;
-                  break _t15491;
+                  _t15539 = _t15542;
+                  break _t15540;
                 }
-                _t15490 = ({_tag: 0, _name: "None"});
-                break _t15491;
+                _t15539 = ({_tag: 0, _name: "None"});
+                break _t15540;
               }
-              const callback_params_15495 = _t15490;
-              let _t15498;
-              const _t15497 = [coll_kind_15487, callback_params_15495];
-              _t15499: {
-                if (_t15497[0]._tag === 1) {
-                  if (_t15497[1]._tag === 1) {
-                    const kind = _t15497[0]._val;
-                    const acc_param = _t15497[1]._val[0];
-                    const elem_param = _t15497[1]._val[1];
-                    const body = _t15497[1]._val[2];
-                    _t15498 = _call(Js_codegen$emit_forloop_cps_native, [ctx, kind, acc_param, elem_param, body, init, coll, cont]);
-                    break _t15499;
+              const callback_params_15544 = _t15539;
+              let _t15547;
+              const _t15546 = [coll_kind_15536, callback_params_15544];
+              _t15548: {
+                if (_t15546[0]._tag === 1) {
+                  if (_t15546[1]._tag === 1) {
+                    const kind = _t15546[0]._val;
+                    const acc_param = _t15546[1]._val[0];
+                    const elem_param = _t15546[1]._val[1];
+                    const body = _t15546[1]._val[2];
+                    _t15547 = _call(Js_codegen$emit_forloop_cps_native, [ctx, kind, acc_param, elem_param, body, init, coll, cont]);
+                    break _t15548;
                   }
-                  _t15498 = fallback_15458(undefined);
-                  break _t15499;
+                  _t15547 = fallback_15507(undefined);
+                  break _t15548;
                 }
-                _t15498 = fallback_15458(undefined);
-                break _t15499;
+                _t15547 = fallback_15507(undefined);
+                break _t15548;
               }
-              const _t15496 = _t15498;
-              const _t15488 = _t15496;
-              _t15470 = _t15488;
-              break _t15471;
+              const _t15545 = _t15547;
+              const _t15537 = _t15545;
+              _t15519 = _t15537;
+              break _t15520;
             }
-            _t15470 = fallback_15458(undefined);
-            break _t15471;
+            _t15519 = fallback_15507(undefined);
+            break _t15520;
           }
-          _t15470 = fallback_15458(undefined);
-          break _t15471;
+          _t15519 = fallback_15507(undefined);
+          break _t15520;
         }
-        _t15470 = fallback_15458(undefined);
-        break _t15471;
+        _t15519 = fallback_15507(undefined);
+        break _t15520;
       }
-      _t15470 = fallback_15458(undefined);
-      break _t15471;
+      _t15519 = fallback_15507(undefined);
+      break _t15520;
     }
-    _t15467 = _t15470;
-    break _t15468;
+    _t15516 = _t15519;
+    break _t15517;
   }
-  const _t15465 = _t15467;
-  const _t15459 = _t15465;
-  return _t15459;
+  const _t15514 = _t15516;
+  const _t15508 = _t15514;
+  return _t15508;
 }
 function Js_codegen$emit_forloop_cps_native(ctx, kind, acc_param, elem_param, body, init, coll, cont) {
-  const loop_fn_15500 = Js_codegen$fresh_tmp(ctx);
-  const pos_var_15502 = Js_codegen$fresh_tmp(ctx);
-  const acc_var_15504 = Js_codegen$fresh_tmp(ctx);
-  const coll_var_15506 = Js_codegen$fresh_tmp(ctx);
-  const init_js_15508 = Js_codegen$compile_non_tail(ctx, init);
-  const coll_js_15510 = Js_codegen$compile_non_tail(ctx, coll);
-  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(coll_var_15506)) + " = ") + __dict_Show_string.show(coll_js_15510)) + ";"));
-  Js_codegen$emit_line(ctx, (((((("function " + __dict_Show_string.show(loop_fn_15500)) + "(") + __dict_Show_string.show(pos_var_15502)) + ", ") + __dict_Show_string.show(acc_var_15504)) + ") {"));
+  const loop_fn_15549 = Js_codegen$fresh_tmp(ctx);
+  const pos_var_15551 = Js_codegen$fresh_tmp(ctx);
+  const acc_var_15553 = Js_codegen$fresh_tmp(ctx);
+  const coll_var_15555 = Js_codegen$fresh_tmp(ctx);
+  const init_js_15557 = Js_codegen$compile_non_tail(ctx, init);
+  const coll_js_15559 = Js_codegen$compile_non_tail(ctx, coll);
+  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(coll_var_15555)) + " = ") + __dict_Show_string.show(coll_js_15559)) + ";"));
+  Js_codegen$emit_line(ctx, (((((("function " + __dict_Show_string.show(loop_fn_15549)) + "(") + __dict_Show_string.show(pos_var_15551)) + ", ") + __dict_Show_string.show(acc_var_15553)) + ") {"));
   (ctx.indent = (ctx.indent + 1), undefined);
-  let _t15513;
-  const _t15512 = kind;
-  _t15514: {
-    if (_t15512 === "list") {
-      _t15513 = Js_codegen$emit_line(ctx, (((((("if (" + __dict_Show_string.show(pos_var_15502)) + " === null || typeof ") + __dict_Show_string.show(pos_var_15502)) + " !== \"object\" || !(\"_hd\" in ") + __dict_Show_string.show(pos_var_15502)) + ")) {"));
-      break _t15514;
+  let _t15562;
+  const _t15561 = kind;
+  _t15563: {
+    if (_t15561 === "list") {
+      _t15562 = Js_codegen$emit_line(ctx, (((((("if (" + __dict_Show_string.show(pos_var_15551)) + " === null || typeof ") + __dict_Show_string.show(pos_var_15551)) + " !== \"object\" || !(\"_hd\" in ") + __dict_Show_string.show(pos_var_15551)) + ")) {"));
+      break _t15563;
     }
-    _t15513 = Js_codegen$emit_line(ctx, (((("if (" + __dict_Show_string.show(pos_var_15502)) + " >= ") + __dict_Show_string.show(coll_var_15506)) + "._arr.length) {"));
-    break _t15514;
+    _t15562 = Js_codegen$emit_line(ctx, (((("if (" + __dict_Show_string.show(pos_var_15551)) + " >= ") + __dict_Show_string.show(coll_var_15555)) + "._arr.length) {"));
+    break _t15563;
   }
-  _t15513;
+  _t15562;
   (ctx.indent = (ctx.indent + 1), undefined);
-  cont(acc_var_15504);
+  cont(acc_var_15553);
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "}");
   Js_codegen$push_scope(ctx);
-  const n_15515 = Js_codegen$mangle_name(acc_param);
-  let _t15517;
-  if ((n_15515 === "_")) {
-    _t15517 = Js_codegen$fresh_tmp(ctx);
+  const n_15564 = Js_codegen$mangle_name(acc_param);
+  let _t15566;
+  if ((n_15564 === "_")) {
+    _t15566 = Js_codegen$fresh_tmp(ctx);
   } else {
-    const nm_15518 = (n_15515 + ("_" + string_of_int(ctx.tmp_counter)));
+    const nm_15567 = (n_15564 + ("_" + string_of_int(ctx.tmp_counter)));
     (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
-    const _t15519 = nm_15518;
-    _t15517 = _t15519;
+    const _t15568 = nm_15567;
+    _t15566 = _t15568;
   }
-  const _t15516 = _t15517;
-  const acc_js_15520 = _t15516;
-  const n_15522 = Js_codegen$mangle_name(elem_param);
-  let _t15524;
-  if ((n_15522 === "_")) {
-    _t15524 = Js_codegen$fresh_tmp(ctx);
+  const _t15565 = _t15566;
+  const acc_js_15569 = _t15565;
+  const n_15571 = Js_codegen$mangle_name(elem_param);
+  let _t15573;
+  if ((n_15571 === "_")) {
+    _t15573 = Js_codegen$fresh_tmp(ctx);
   } else {
-    const nm_15525 = (n_15522 + ("_" + string_of_int(ctx.tmp_counter)));
+    const nm_15574 = (n_15571 + ("_" + string_of_int(ctx.tmp_counter)));
     (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
-    const _t15526 = nm_15525;
-    _t15524 = _t15526;
+    const _t15575 = nm_15574;
+    _t15573 = _t15575;
   }
-  const _t15523 = _t15524;
-  const elem_js_15527 = _t15523;
-  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(acc_js_15520)) + " = ") + __dict_Show_string.show(acc_var_15504)) + ";"));
-  let _t15530;
-  const _t15529 = kind;
-  _t15531: {
-    if (_t15529 === "list") {
-      _t15530 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(elem_js_15527)) + " = ") + __dict_Show_string.show(pos_var_15502)) + "._hd;"));
-      break _t15531;
+  const _t15572 = _t15573;
+  const elem_js_15576 = _t15572;
+  Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(acc_js_15569)) + " = ") + __dict_Show_string.show(acc_var_15553)) + ";"));
+  let _t15579;
+  const _t15578 = kind;
+  _t15580: {
+    if (_t15578 === "list") {
+      _t15579 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(elem_js_15576)) + " = ") + __dict_Show_string.show(pos_var_15551)) + "._hd;"));
+      break _t15580;
     }
-    _t15530 = Js_codegen$emit_line(ctx, (((((("const " + __dict_Show_string.show(elem_js_15527)) + " = ") + __dict_Show_string.show(coll_var_15506)) + "._arr[") + __dict_Show_string.show(pos_var_15502)) + "];"));
-    break _t15531;
+    _t15579 = Js_codegen$emit_line(ctx, (((((("const " + __dict_Show_string.show(elem_js_15576)) + " = ") + __dict_Show_string.show(coll_var_15555)) + "._arr[") + __dict_Show_string.show(pos_var_15551)) + "];"));
+    break _t15580;
   }
-  _t15530;
-  Js_codegen$bind_var(ctx, acc_param, acc_js_15520);
-  Js_codegen$bind_var(ctx, elem_param, elem_js_15527);
-  let _t15533;
-  const _t15532 = kind;
-  _t15534: {
-    if (_t15532 === "list") {
-      _t15533 = (__dict_Show_string.show(pos_var_15502) + "._tl");
-      break _t15534;
+  _t15579;
+  Js_codegen$bind_var(ctx, acc_param, acc_js_15569);
+  Js_codegen$bind_var(ctx, elem_param, elem_js_15576);
+  let _t15582;
+  const _t15581 = kind;
+  _t15583: {
+    if (_t15581 === "list") {
+      _t15582 = (__dict_Show_string.show(pos_var_15551) + "._tl");
+      break _t15583;
     }
-    _t15533 = (("(" + __dict_Show_string.show(pos_var_15502)) + " + 1)");
-    break _t15534;
+    _t15582 = (("(" + __dict_Show_string.show(pos_var_15551)) + " + 1)");
+    break _t15583;
   }
-  const next_pos_15535 = _t15533;
+  const next_pos_15584 = _t15582;
   Js_codegen$emit_line(ctx, "try {");
   (ctx.indent = (ctx.indent + 1), undefined);
-  const saved_in_fold_15537 = ctx.in_fold_loop;
+  const saved_in_fold_15586 = ctx.in_fold_loop;
   (ctx.in_fold_loop = true, undefined);
-  function _t15539(_) {
-    function _t15540(v) {
-      return Js_codegen$emit_line(ctx, (((((("return _bounce(function() { return " + __dict_Show_string.show(loop_fn_15500)) + "(") + __dict_Show_string.show(next_pos_15535)) + ", ") + __dict_Show_string.show(v)) + "); });"));
+  function _t15588(_) {
+    function _t15589(v) {
+      return Js_codegen$emit_line(ctx, (((((("return _bounce(function() { return " + __dict_Show_string.show(loop_fn_15549)) + "(") + __dict_Show_string.show(next_pos_15584)) + ", ") + __dict_Show_string.show(v)) + "); });"));
     }
-    return Js_codegen$compile_cps(ctx, body, _t15540);
+    return Js_codegen$compile_cps(ctx, body, _t15589);
   }
-  const _protect_result_15541 = _t15539(undefined);
-  function _t15543(_) {
-    return (ctx.in_fold_loop = saved_in_fold_15537, undefined);
+  const _protect_result_15590 = _t15588(undefined);
+  function _t15592(_) {
+    return (ctx.in_fold_loop = saved_in_fold_15586, undefined);
   }
-  _t15543(undefined);
-  const _t15542 = _protect_result_15541;
-  _t15542;
+  _t15592(undefined);
+  const _t15591 = _protect_result_15590;
+  _t15591;
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "} catch (_e) {");
   (ctx.indent = (ctx.indent + 1), undefined);
-  Js_codegen$emit_line(ctx, (((("if (_e && _e._tag === \"_fold_cont\") return _bounce(function() { return " + __dict_Show_string.show(loop_fn_15500)) + "(") + __dict_Show_string.show(next_pos_15535)) + ", _e._val); });"));
+  Js_codegen$emit_line(ctx, (((("if (_e && _e._tag === \"_fold_cont\") return _bounce(function() { return " + __dict_Show_string.show(loop_fn_15549)) + "(") + __dict_Show_string.show(next_pos_15584)) + ", _e._val); });"));
   Js_codegen$emit_line(ctx, "if (_e && _e._tag === \"_break\") {");
   (ctx.indent = (ctx.indent + 1), undefined);
   cont("_e._val");
@@ -66444,159 +66628,159 @@ function Js_codegen$emit_forloop_cps_native(ctx, kind, acc_param, elem_param, bo
   Js_codegen$pop_scope(ctx);
   (ctx.indent = (ctx.indent - 1), undefined);
   Js_codegen$emit_line(ctx, "}");
-  let _t15545;
-  const _t15544 = kind;
-  _t15546: {
-    if (_t15544 === "list") {
-      _t15545 = coll_var_15506;
-      break _t15546;
+  let _t15594;
+  const _t15593 = kind;
+  _t15595: {
+    if (_t15593 === "list") {
+      _t15594 = coll_var_15555;
+      break _t15595;
     }
-    _t15545 = "0";
-    break _t15546;
+    _t15594 = "0";
+    break _t15595;
   }
-  const start_pos_15547 = _t15545;
-  const _t15548 = Js_codegen$emit_line(ctx, (((((("return _bounce(function() { return " + __dict_Show_string.show(loop_fn_15500)) + "(") + __dict_Show_string.show(start_pos_15547)) + ", ") + __dict_Show_string.show(init_js_15508)) + "); });"));
-  const _t15538 = _t15548;
-  const _t15536 = _t15538;
-  const _t15528 = _t15536;
-  const _t15521 = _t15528;
-  const _t15511 = _t15521;
-  const _t15509 = _t15511;
-  const _t15507 = _t15509;
-  const _t15505 = _t15507;
-  const _t15503 = _t15505;
-  const _t15501 = _t15503;
-  return _t15501;
+  const start_pos_15596 = _t15594;
+  const _t15597 = Js_codegen$emit_line(ctx, (((((("return _bounce(function() { return " + __dict_Show_string.show(loop_fn_15549)) + "(") + __dict_Show_string.show(start_pos_15596)) + ", ") + __dict_Show_string.show(init_js_15557)) + "); });"));
+  const _t15587 = _t15597;
+  const _t15585 = _t15587;
+  const _t15577 = _t15585;
+  const _t15570 = _t15577;
+  const _t15560 = _t15570;
+  const _t15558 = _t15560;
+  const _t15556 = _t15558;
+  const _t15554 = _t15556;
+  const _t15552 = _t15554;
+  const _t15550 = _t15552;
+  return _t15550;
 }
 function Js_codegen$compile_perform_cps(ctx, op_name, arg, cont) {
-  let _t15550;
-  const _t15549 = _call(List$assoc_opt, [__dict_Eq_string, op_name, ctx.direct_dispatch_ops]);
-  _t15551: {
-    if (_t15549._tag === 0) {
+  let _t15599;
+  const _t15598 = _call(List$assoc_opt, [__dict_Eq_string, op_name, ctx.direct_dispatch_ops]);
+  _t15600: {
+    if (_t15598._tag === 0) {
       if (_call(List$mem, [__dict_Eq_string, op_name, ctx.trywith_ops])) {
-        const arg_js_15552 = Js_codegen$compile_non_tail(ctx, arg);
-        const _t15553 = Js_codegen$emit_line(ctx, (((("throw {_e: \"" + __dict_Show_string.show(op_name)) + "\", _v: ") + __dict_Show_string.show(arg_js_15552)) + "};"));
-        _t15550 = _t15553;
-        break _t15551;
+        const arg_js_15601 = Js_codegen$compile_non_tail(ctx, arg);
+        const _t15602 = Js_codegen$emit_line(ctx, (((("throw {_e: \"" + __dict_Show_string.show(op_name)) + "\", _v: ") + __dict_Show_string.show(arg_js_15601)) + "};"));
+        _t15599 = _t15602;
+        break _t15600;
       } else {
-        const arg_js_15554 = Js_codegen$compile_non_tail(ctx, arg);
-        const result_var_15556 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (((((("return _h[\"" + __dict_Show_string.show(op_name)) + "\"](") + __dict_Show_string.show(arg_js_15554)) + ", function(") + __dict_Show_string.show(result_var_15556)) + ") {"));
+        const arg_js_15603 = Js_codegen$compile_non_tail(ctx, arg);
+        const result_var_15605 = Js_codegen$fresh_tmp(ctx);
+        Js_codegen$emit_line(ctx, (((((("return _h[\"" + __dict_Show_string.show(op_name)) + "\"](") + __dict_Show_string.show(arg_js_15603)) + ", function(") + __dict_Show_string.show(result_var_15605)) + ") {"));
         (ctx.indent = (ctx.indent + 1), undefined);
         Js_codegen$emit_line(ctx, "return _bounce(function() {");
         (ctx.indent = (ctx.indent + 1), undefined);
-        cont(result_var_15556);
+        cont(result_var_15605);
         (ctx.indent = (ctx.indent - 1), undefined);
         Js_codegen$emit_line(ctx, "});");
         (ctx.indent = (ctx.indent - 1), undefined);
-        const _t15557 = Js_codegen$emit_line(ctx, "});");
-        const _t15555 = _t15557;
-        _t15550 = _t15555;
-        break _t15551;
+        const _t15606 = Js_codegen$emit_line(ctx, "});");
+        const _t15604 = _t15606;
+        _t15599 = _t15604;
+        break _t15600;
       }
     }
-    if (_t15549._tag === 1) {
-      const direct_fn = _t15549._val;
-      const arg_js_15558 = Js_codegen$compile_non_tail(ctx, arg);
-      const result_var_15560 = Js_codegen$fresh_tmp(ctx);
-      Js_codegen$emit_line(ctx, (((((("const " + __dict_Show_string.show(result_var_15560)) + " = ") + __dict_Show_string.show(direct_fn)) + "(") + __dict_Show_string.show(arg_js_15558)) + ");"));
-      const _t15561 = cont(result_var_15560);
-      const _t15559 = _t15561;
-      _t15550 = _t15559;
-      break _t15551;
+    if (_t15598._tag === 1) {
+      const direct_fn = _t15598._val;
+      const arg_js_15607 = Js_codegen$compile_non_tail(ctx, arg);
+      const result_var_15609 = Js_codegen$fresh_tmp(ctx);
+      Js_codegen$emit_line(ctx, (((((("const " + __dict_Show_string.show(result_var_15609)) + " = ") + __dict_Show_string.show(direct_fn)) + "(") + __dict_Show_string.show(arg_js_15607)) + ");"));
+      const _t15610 = cont(result_var_15609);
+      const _t15608 = _t15610;
+      _t15599 = _t15608;
+      break _t15600;
     }
     _match_fail("line 0");
   }
-  return _t15550;
+  return _t15599;
 }
 function Js_codegen$compile_let_cps(ctx, name, e1, e2, cont) {
-  let _t15562;
+  let _t15611;
   if (Ir_analysis$eval_invokes_effect(e1)) {
-    function _t15563(v1) {
-      const js_name_15564 = Js_codegen$mangle_name(name);
-      let _t15566;
-      if ((js_name_15564 === "_")) {
-        _t15566 = Js_codegen$fresh_tmp(ctx);
+    function _t15612(v1) {
+      const js_name_15613 = Js_codegen$mangle_name(name);
+      let _t15615;
+      if ((js_name_15613 === "_")) {
+        _t15615 = Js_codegen$fresh_tmp(ctx);
       } else {
-        function _t15567(n) {
+        function _t15616(n) {
           (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
           return n;
         }
-        _t15566 = _call(_t15567, [(js_name_15564 + ("_" + string_of_int(ctx.tmp_counter)))]);
+        _t15615 = _call(_t15616, [(js_name_15613 + ("_" + string_of_int(ctx.tmp_counter)))]);
       }
-      const actual_name_15568 = _t15566;
+      const actual_name_15617 = _t15615;
       Js_codegen$push_scope(ctx);
-      Js_codegen$bind_var(ctx, name, actual_name_15568);
-      Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_name_15568)) + " = _resolve(") + __dict_Show_string.show(v1)) + ");"));
+      Js_codegen$bind_var(ctx, name, actual_name_15617);
+      Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_name_15617)) + " = _resolve(") + __dict_Show_string.show(v1)) + ");"));
       Js_codegen$compile_cps(ctx, e2, cont);
-      const _t15569 = Js_codegen$pop_scope(ctx);
-      const _t15565 = _t15569;
-      return _t15565;
+      const _t15618 = Js_codegen$pop_scope(ctx);
+      const _t15614 = _t15618;
+      return _t15614;
     }
-    _t15562 = Js_codegen$compile_cps(ctx, e1, _t15563);
+    _t15611 = Js_codegen$compile_cps(ctx, e1, _t15612);
   } else {
-    const v1_15570 = Js_codegen$compile_non_tail(ctx, e1);
-    const js_name_15572 = Js_codegen$mangle_name(name);
-    let _t15574;
-    if ((js_name_15572 === "_")) {
-      _t15574 = Js_codegen$fresh_tmp(ctx);
+    const v1_15619 = Js_codegen$compile_non_tail(ctx, e1);
+    const js_name_15621 = Js_codegen$mangle_name(name);
+    let _t15623;
+    if ((js_name_15621 === "_")) {
+      _t15623 = Js_codegen$fresh_tmp(ctx);
     } else {
-      function _t15575(n) {
+      function _t15624(n) {
         (ctx.tmp_counter = (ctx.tmp_counter + 1), undefined);
         return n;
       }
-      _t15574 = _call(_t15575, [(js_name_15572 + ("_" + string_of_int(ctx.tmp_counter)))]);
+      _t15623 = _call(_t15624, [(js_name_15621 + ("_" + string_of_int(ctx.tmp_counter)))]);
     }
-    const actual_name_15576 = _t15574;
+    const actual_name_15625 = _t15623;
     Js_codegen$push_scope(ctx);
-    Js_codegen$bind_var(ctx, name, actual_name_15576);
-    Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_name_15576)) + " = _resolve(") + __dict_Show_string.show(v1_15570)) + ");"));
+    Js_codegen$bind_var(ctx, name, actual_name_15625);
+    Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(actual_name_15625)) + " = _resolve(") + __dict_Show_string.show(v1_15619)) + ");"));
     Js_codegen$compile_cps(ctx, e2, cont);
-    const _t15577 = Js_codegen$pop_scope(ctx);
-    const _t15573 = _t15577;
-    const _t15571 = _t15573;
-    _t15562 = _t15571;
+    const _t15626 = Js_codegen$pop_scope(ctx);
+    const _t15622 = _t15626;
+    const _t15620 = _t15622;
+    _t15611 = _t15620;
   }
-  return _t15562;
+  return _t15611;
 }
 function Js_codegen$compile_letrec_cps(ctx, name, fn_expr, body, cont) {
-  const js_name_15578 = Js_codegen$mangle_name(name);
+  const js_name_15627 = Js_codegen$mangle_name(name);
   Js_codegen$push_scope(ctx);
-  Js_codegen$bind_var(ctx, name, js_name_15578);
-  let _t15581;
-  const _t15580 = fn_expr.expr;
-  _t15582: {
-    if (_t15580._tag === 10) {
-      _t15581 = Js_codegen$compile_named_function(ctx, js_name_15578, fn_expr);
-      break _t15582;
+  Js_codegen$bind_var(ctx, name, js_name_15627);
+  let _t15630;
+  const _t15629 = fn_expr.expr;
+  _t15631: {
+    if (_t15629._tag === 10) {
+      _t15630 = Js_codegen$compile_named_function(ctx, js_name_15627, fn_expr);
+      break _t15631;
     }
-    Js_codegen$emit_js_placeholder(ctx, js_name_15578, fn_expr);
-    _t15581 = Js_codegen$emit_js_backpatch(ctx, js_name_15578, fn_expr);
-    break _t15582;
+    Js_codegen$emit_js_placeholder(ctx, js_name_15627, fn_expr);
+    _t15630 = Js_codegen$emit_js_backpatch(ctx, js_name_15627, fn_expr);
+    break _t15631;
   }
-  _t15581;
+  _t15630;
   Js_codegen$compile_cps(ctx, body, cont);
-  const _t15579 = Js_codegen$pop_scope(ctx);
-  return _t15579;
+  const _t15628 = Js_codegen$pop_scope(ctx);
+  return _t15628;
 }
 function Js_codegen$compile_seq_cps(ctx, e1, e2, cont) {
-  let _t15583;
+  let _t15632;
   if (Ir_analysis$eval_invokes_effect(e1)) {
-    function _t15584(v1) {
+    function _t15633(v1) {
       Js_codegen$emit_line(ctx, (("_resolve(" + __dict_Show_string.show(v1)) + ");"));
       return Js_codegen$compile_cps(ctx, e2, cont);
     }
-    _t15583 = Js_codegen$compile_cps(ctx, e1, _t15584);
+    _t15632 = Js_codegen$compile_cps(ctx, e1, _t15633);
   } else {
-    const v1_15585 = Js_codegen$compile_non_tail(ctx, e1);
-    Js_codegen$emit_line(ctx, (("_resolve(" + __dict_Show_string.show(v1_15585)) + ");"));
-    const _t15586 = Js_codegen$compile_cps(ctx, e2, cont);
-    _t15583 = _t15586;
+    const v1_15634 = Js_codegen$compile_non_tail(ctx, e1);
+    Js_codegen$emit_line(ctx, (("_resolve(" + __dict_Show_string.show(v1_15634)) + ");"));
+    const _t15635 = Js_codegen$compile_cps(ctx, e2, cont);
+    _t15632 = _t15635;
   }
-  return _t15583;
+  return _t15632;
 }
 function Js_codegen$compile_if_cps(ctx, cond, then_e, else_e, cont) {
-  function _t15587(c) {
+  function _t15636(c) {
     Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(c)) + ") {"));
     (ctx.indent = (ctx.indent + 1), undefined);
     Js_codegen$compile_cps(ctx, then_e, cont);
@@ -66607,778 +66791,736 @@ function Js_codegen$compile_if_cps(ctx, cond, then_e, else_e, cont) {
     (ctx.indent = (ctx.indent - 1), undefined);
     return Js_codegen$emit_line(ctx, "}");
   }
-  return Js_codegen$compile_cps(ctx, cond, _t15587);
+  return Js_codegen$compile_cps(ctx, cond, _t15636);
 }
 function Js_codegen$compile_match_cps(ctx, scrut, arms, loc, cont) {
-  function _t15588(scrut_js) {
-    const scrut_tmp_15589 = Js_codegen$fresh_tmp(ctx);
-    Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_15589)) + " = ") + __dict_Show_string.show(scrut_js)) + ";"));
-    const matched_15591 = Js_codegen$fresh_tmp(ctx);
-    Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(matched_15591)) + " = false;"));
-    function _t15593(__p407) {
-      let _t15595;
-      const _t15594 = __p407;
-      _t15596: {
-        const pat = _t15594[0];
-        const guard = _t15594[1];
-        const body = _t15594[2];
-        let _t15598;
-        const _t15597 = Js_codegen$compile_pattern(ctx, scrut_tmp_15589, pat);
-        _t15599: {
-          const conds = _t15597[0];
-          const bindings = _t15597[1];
-          let _t15601;
-          const _t15600 = conds;
-          _t15602: {
-            if (_t15600 === null) {
-              _t15601 = "true";
-              break _t15602;
+  function _t15637(scrut_js) {
+    const scrut_tmp_15638 = Js_codegen$fresh_tmp(ctx);
+    Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(scrut_tmp_15638)) + " = ") + __dict_Show_string.show(scrut_js)) + ";"));
+    const matched_15640 = Js_codegen$fresh_tmp(ctx);
+    Js_codegen$emit_line(ctx, (("let " + __dict_Show_string.show(matched_15640)) + " = false;"));
+    function _t15642(__p407) {
+      let _t15644;
+      const _t15643 = __p407;
+      _t15645: {
+        const pat = _t15643[0];
+        const guard = _t15643[1];
+        const body = _t15643[2];
+        let _t15647;
+        const _t15646 = Js_codegen$compile_pattern(ctx, scrut_tmp_15638, pat);
+        _t15648: {
+          const conds = _t15646[0];
+          const bindings = _t15646[1];
+          let _t15650;
+          const _t15649 = conds;
+          _t15651: {
+            if (_t15649 === null) {
+              _t15650 = "true";
+              break _t15651;
             }
-            _t15601 = _call(String$concat, [" && ", conds]);
-            break _t15602;
+            _t15650 = _call(String$concat, [" && ", conds]);
+            break _t15651;
           }
-          const cond_str_15603 = _t15601;
-          Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched_15591)) + " && ") + __dict_Show_string.show(cond_str_15603)) + ") {"));
+          const cond_str_15652 = _t15650;
+          Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched_15640)) + " && ") + __dict_Show_string.show(cond_str_15652)) + ") {"));
           (ctx.indent = (ctx.indent + 1), undefined);
           Js_codegen$push_scope(ctx);
-          function _t15605(__p408) {
-            let _t15607;
-            const _t15606 = __p408;
-            _t15608: {
-              const mml_name = _t15606[0];
-              const js_expr = _t15606[1];
-              const js_nm_15609 = Js_codegen$mangle_name(mml_name);
-              Js_codegen$bind_var(ctx, mml_name, js_nm_15609);
-              const _t15610 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_nm_15609)) + " = ") + __dict_Show_string.show(js_expr)) + ";"));
-              _t15607 = _t15610;
-              break _t15608;
+          function _t15654(__p408) {
+            let _t15656;
+            const _t15655 = __p408;
+            _t15657: {
+              const mml_name = _t15655[0];
+              const js_expr = _t15655[1];
+              const js_nm_15658 = Js_codegen$mangle_name(mml_name);
+              Js_codegen$bind_var(ctx, mml_name, js_nm_15658);
+              const _t15659 = Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_nm_15658)) + " = ") + __dict_Show_string.show(js_expr)) + ";"));
+              _t15656 = _t15659;
+              break _t15657;
             }
-            return _t15607;
+            return _t15656;
           }
-          List$iter(_t15605, bindings);
-          let _t15612;
-          const _t15611 = guard;
-          _t15613: {
-            if (_t15611._tag === 0) {
-              Js_codegen$emit_line(ctx, (__dict_Show_string.show(matched_15591) + " = true;"));
-              _t15612 = Js_codegen$compile_cps(ctx, body, cont);
-              break _t15613;
+          List$iter(_t15654, bindings);
+          let _t15661;
+          const _t15660 = guard;
+          _t15662: {
+            if (_t15660._tag === 0) {
+              Js_codegen$emit_line(ctx, (__dict_Show_string.show(matched_15640) + " = true;"));
+              _t15661 = Js_codegen$compile_cps(ctx, body, cont);
+              break _t15662;
             }
-            if (_t15611._tag === 1) {
-              const g = _t15611._val;
-              const guard_js_15614 = Js_codegen$compile_non_tail(ctx, g);
-              Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(guard_js_15614)) + ") {"));
+            if (_t15660._tag === 1) {
+              const g = _t15660._val;
+              const guard_js_15663 = Js_codegen$compile_non_tail(ctx, g);
+              Js_codegen$emit_line(ctx, (("if (" + __dict_Show_string.show(guard_js_15663)) + ") {"));
               (ctx.indent = (ctx.indent + 1), undefined);
-              Js_codegen$emit_line(ctx, (__dict_Show_string.show(matched_15591) + " = true;"));
+              Js_codegen$emit_line(ctx, (__dict_Show_string.show(matched_15640) + " = true;"));
               Js_codegen$compile_cps(ctx, body, cont);
               (ctx.indent = (ctx.indent - 1), undefined);
-              const _t15615 = Js_codegen$emit_line(ctx, "}");
-              _t15612 = _t15615;
-              break _t15613;
+              const _t15664 = Js_codegen$emit_line(ctx, "}");
+              _t15661 = _t15664;
+              break _t15662;
             }
             _match_fail("line 0");
           }
-          _t15612;
+          _t15661;
           Js_codegen$pop_scope(ctx);
           (ctx.indent = (ctx.indent - 1), undefined);
-          const _t15604 = Js_codegen$emit_line(ctx, "}");
-          _t15598 = _t15604;
-          break _t15599;
+          const _t15653 = Js_codegen$emit_line(ctx, "}");
+          _t15647 = _t15653;
+          break _t15648;
         }
-        _t15595 = _t15598;
-        break _t15596;
+        _t15644 = _t15647;
+        break _t15645;
       }
-      return _t15595;
+      return _t15644;
     }
-    List$iter(_t15593, arms);
-    const _t15592 = Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched_15591)) + ") _match_fail(\"line ") + __dict_Show_int.show(loc.line)) + "\");"));
-    const _t15590 = _t15592;
-    return _t15590;
+    List$iter(_t15642, arms);
+    const _t15641 = Js_codegen$emit_line(ctx, (((("if (!" + __dict_Show_string.show(matched_15640)) + ") _match_fail(\"line ") + __dict_Show_int.show(loc.line)) + "\");"));
+    const _t15639 = _t15641;
+    return _t15639;
   }
-  return Js_codegen$compile_cps(ctx, scrut, _t15588);
+  return Js_codegen$compile_cps(ctx, scrut, _t15637);
 }
-function Js_codegen$compile_app_cps(ctx, _te, fn_, arg, cont) {
+function Js_codegen$compile_app_cps(ctx, te, fn_, arg, cont) {
   function collect_args(expr, acc) {
     while (true) {
-      let _t15617;
-      const _t15616 = expr.expr;
-      _t15618: {
-        if (_t15616._tag === 11) {
-          const inner_fn = _t15616._val[0];
-          const inner_arg = _t15616._val[1];
-          const _t15619 = inner_fn;
-          const _t15620 = ({_hd: inner_arg, _tl: acc});
-          expr = _t15619;
-          acc = _t15620;
+      let _t15666;
+      const _t15665 = expr.expr;
+      _t15667: {
+        if (_t15665._tag === 11) {
+          const inner_fn = _t15665._val[0];
+          const inner_arg = _t15665._val[1];
+          const _t15668 = inner_fn;
+          const _t15669 = ({_hd: inner_arg, _tl: acc});
+          expr = _t15668;
+          acc = _t15669;
           continue;
-          _t15617 = undefined;
-          break _t15618;
+          _t15666 = undefined;
+          break _t15667;
         }
-        _t15617 = [expr, acc];
-        break _t15618;
+        _t15666 = [expr, acc];
+        break _t15667;
       }
-      return _t15617;
+      return _t15666;
     }
   }
-  let _t15623;
-  const _t15622 = collect_args(fn_, ({_hd: arg, _tl: null}));
-  _t15624: {
-    const base_fn = _t15622[0];
-    const all_args = _t15622[1];
-    let _t15625;
-    if ((!ctx.in_full_handler)) {
-      _t15625 = ({_tag: 0, _name: "None"});
-    } else {
-      let _t15627;
-      const _t15626 = base_fn.expr;
-      _t15628: {
-        if (_t15626._tag === 7) {
-          const name = _t15626._val;
-          if (Ir_analysis$needs_cps(base_fn.ty)) {
-            const name = _t15626._val;
-            const jsn_15629 = Js_codegen$lookup_var(ctx, name);
-            let _t15632;
-            const _t15631 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, ctx.twinnable, jsn_15629]);
-            _t15633: {
-              if (_t15631._tag === 1) {
-                const js_params = _t15631._val[1];
-                if ((List$length(js_params) === List$length(all_args))) {
-                  const js_params = _t15631._val[1];
-                  _t15632 = ({_tag: 1, _name: "Some", _val: jsn_15629});
-                  break _t15633;
-                } else {
-                  _t15632 = ({_tag: 0, _name: "None"});
-                  break _t15633;
-                }
-              }
-              _t15632 = ({_tag: 0, _name: "None"});
-              break _t15633;
-            }
-            const _t15630 = _t15632;
-            _t15627 = _t15630;
-            break _t15628;
-          } else {
-            _t15627 = ({_tag: 0, _name: "None"});
-            break _t15628;
-          }
-        }
-        _t15627 = ({_tag: 0, _name: "None"});
-        break _t15628;
-      }
-      _t15625 = _t15627;
-    }
-    const twin_15634 = _t15625;
-    let _t15637;
-    const _t15636 = twin_15634;
-    _t15638: {
-      if (_t15636._tag === 0) {
-        const fn_js_15639 = Js_codegen$compile_non_tail(ctx, base_fn);
-        const args_js_15641 = List$map(_call(Js_codegen$compile_non_tail, [ctx]), all_args);
-        const n_15643 = List$length(all_args);
-        const known_arity_15645 = Js_codegen$count_arrows(base_fn.ty);
-        let _t15648;
-        const _t15647 = [base_fn.expr, all_args];
-        _t15649: {
-          if (_t15647[0]._tag === 7) {
-            if (_t15647[1] !== null) {
-              if (_t15647[1]._tl === null) {
-                const pname = _t15647[0]._val;
-                const a = _t15647[1]._hd;
-                if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
-                  const pname = _t15647[0]._val;
-                  const a = _t15647[1]._hd;
-                  _t15648 = Js_codegen$float_shape(ctx.type_env, a.ty);
-                  break _t15649;
-                } else {
-                  _t15648 = ({_tag: 0, _name: "None"});
-                  break _t15649;
-                }
-              }
-              _t15648 = ({_tag: 0, _name: "None"});
-              break _t15649;
-            }
-            _t15648 = ({_tag: 0, _name: "None"});
-            break _t15649;
-          }
-          _t15648 = ({_tag: 0, _name: "None"});
-          break _t15649;
-        }
-        const print_shape_15650 = _t15648;
-        let _t15652;
-        if (_eq(known_arity_15645, ({_tag: 1, _name: "Some", _val: n_15643}))) {
-          let _t15654;
-          const _t15653 = print_shape_15650;
-          _t15655: {
-            if (_t15653._tag === 0) {
-              _t15654 = args_js_15641;
-              break _t15655;
-            }
-            if (_t15653._tag === 1) {
-              const s = _t15653._val;
-              _t15654 = List$concat(args_js_15641, ({_hd: s, _tl: null}));
-              break _t15655;
-            }
-            _match_fail("line 0");
-          }
-          const args_js_15656 = _t15654;
-          const _t15657 = (fn_js_15639 + ("(" + (_call(String$concat, [", ", args_js_15656]) + ")")));
-          _t15652 = _t15657;
+  let _t15672;
+  const _t15671 = collect_args(fn_, ({_hd: arg, _tl: null}));
+  _t15673: {
+    const base_fn = _t15671[0];
+    const all_args = _t15671[1];
+    let _t15674;
+    if (Js_codegen$is_twin_call(ctx, te)) {
+      const fn_cps_15675 = Js_codegen$compile_cps_value(ctx, base_fn);
+      function _t15677(a) {
+        let _t15678;
+        if (Ir_analysis$needs_cps(a.ty)) {
+          _t15678 = Js_codegen$compile_cps_value(ctx, a);
         } else {
-          _t15652 = ("_call(" + (fn_js_15639 + (", [" + (_call(String$concat, [", ", args_js_15641]) + "])"))));
+          _t15678 = Js_codegen$compile_non_tail(ctx, a);
         }
-        const call_expr_15658 = _t15652;
-        const result_var_15660 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(result_var_15660)) + " = _resolve(") + __dict_Show_string.show(call_expr_15658)) + ");"));
-        const _t15661 = cont(result_var_15660);
-        const _t15659 = _t15661;
-        const _t15651 = _t15659;
-        const _t15646 = _t15651;
-        const _t15644 = _t15646;
-        const _t15642 = _t15644;
-        const _t15640 = _t15642;
-        _t15637 = _t15640;
-        break _t15638;
+        return _t15678;
       }
-      if (_t15636._tag === 1) {
-        const jsn = _t15636._val;
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, ctx.twins_requested, jsn, undefined]);
-        const args_js_15662 = List$map(_call(Js_codegen$compile_non_tail, [ctx]), all_args);
-        const result_var_15664 = Js_codegen$fresh_tmp(ctx);
-        Js_codegen$emit_line(ctx, (((((("return " + __dict_Show_string.show(jsn)) + "$cps(") + __dict_Show_string.show(_call(String$concat, [", ", args_js_15662]))) + ", function(") + __dict_Show_string.show(result_var_15664)) + ") {"));
-        (ctx.indent = (ctx.indent + 1), undefined);
-        Js_codegen$emit_line(ctx, "return _bounce(function() {");
-        (ctx.indent = (ctx.indent + 1), undefined);
-        cont(result_var_15664);
-        (ctx.indent = (ctx.indent - 1), undefined);
-        Js_codegen$emit_line(ctx, "});");
-        (ctx.indent = (ctx.indent - 1), undefined);
-        const _t15665 = Js_codegen$emit_line(ctx, "});");
-        const _t15663 = _t15665;
-        _t15637 = _t15663;
-        break _t15638;
+      const args_js_15679 = List$map(_t15677, all_args);
+      const result_var_15681 = Js_codegen$fresh_tmp(ctx);
+      Js_codegen$emit_line(ctx, (((((("return " + __dict_Show_string.show(fn_cps_15675)) + "(") + __dict_Show_string.show(_call(String$concat, [", ", args_js_15679]))) + ", function(") + __dict_Show_string.show(result_var_15681)) + ") {"));
+      (ctx.indent = (ctx.indent + 1), undefined);
+      Js_codegen$emit_line(ctx, "return _bounce(function() {");
+      (ctx.indent = (ctx.indent + 1), undefined);
+      cont(result_var_15681);
+      (ctx.indent = (ctx.indent - 1), undefined);
+      Js_codegen$emit_line(ctx, "});");
+      (ctx.indent = (ctx.indent - 1), undefined);
+      const _t15682 = Js_codegen$emit_line(ctx, "});");
+      const _t15680 = _t15682;
+      const _t15676 = _t15680;
+      _t15674 = _t15676;
+    } else {
+      const fn_js_15683 = Js_codegen$compile_non_tail(ctx, base_fn);
+      const args_js_15685 = List$map(_call(Js_codegen$compile_non_tail, [ctx]), all_args);
+      const n_15687 = List$length(all_args);
+      const known_arity_15689 = Js_codegen$count_arrows(base_fn.ty);
+      let _t15692;
+      const _t15691 = [base_fn.expr, all_args];
+      _t15693: {
+        if (_t15691[0]._tag === 7) {
+          if (_t15691[1] !== null) {
+            if (_t15691[1]._tl === null) {
+              const pname = _t15691[0]._val;
+              const a = _t15691[1]._hd;
+              if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+                const pname = _t15691[0]._val;
+                const a = _t15691[1]._hd;
+                _t15692 = Js_codegen$float_shape(ctx.type_env, a.ty);
+                break _t15693;
+              } else {
+                _t15692 = ({_tag: 0, _name: "None"});
+                break _t15693;
+              }
+            }
+            _t15692 = ({_tag: 0, _name: "None"});
+            break _t15693;
+          }
+          _t15692 = ({_tag: 0, _name: "None"});
+          break _t15693;
+        }
+        _t15692 = ({_tag: 0, _name: "None"});
+        break _t15693;
       }
-      _match_fail("line 0");
+      const print_shape_15694 = _t15692;
+      let _t15696;
+      if (_eq(known_arity_15689, ({_tag: 1, _name: "Some", _val: n_15687}))) {
+        let _t15698;
+        const _t15697 = print_shape_15694;
+        _t15699: {
+          if (_t15697._tag === 0) {
+            _t15698 = args_js_15685;
+            break _t15699;
+          }
+          if (_t15697._tag === 1) {
+            const s = _t15697._val;
+            _t15698 = List$concat(args_js_15685, ({_hd: s, _tl: null}));
+            break _t15699;
+          }
+          _match_fail("line 0");
+        }
+        const args_js_15700 = _t15698;
+        const _t15701 = (fn_js_15683 + ("(" + (_call(String$concat, [", ", args_js_15700]) + ")")));
+        _t15696 = _t15701;
+      } else {
+        _t15696 = ("_call(" + (fn_js_15683 + (", [" + (_call(String$concat, [", ", args_js_15685]) + "])"))));
+      }
+      const call_expr_15702 = _t15696;
+      const result_var_15704 = Js_codegen$fresh_tmp(ctx);
+      Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(result_var_15704)) + " = _resolve(") + __dict_Show_string.show(call_expr_15702)) + ");"));
+      const _t15705 = cont(result_var_15704);
+      const _t15703 = _t15705;
+      const _t15695 = _t15703;
+      const _t15690 = _t15695;
+      const _t15688 = _t15690;
+      const _t15686 = _t15688;
+      const _t15684 = _t15686;
+      _t15674 = _t15684;
     }
-    const _t15635 = _t15637;
-    _t15623 = _t15635;
-    break _t15624;
+    _t15672 = _t15674;
+    break _t15673;
   }
-  const _t15621 = _t15623;
-  return _t15621;
+  const _t15670 = _t15672;
+  return _t15670;
 }
 function Js_codegen$compile_decl(ctx, decl) {
-  let _t15667;
-  const _t15666 = decl;
-  _t15668: {
-    if (_t15666._tag === 6) {
-      _t15667 = undefined;
-      break _t15668;
+  let _t15707;
+  const _t15706 = decl;
+  _t15708: {
+    if (_t15706._tag === 6) {
+      _t15707 = undefined;
+      break _t15708;
     }
-    if (_t15666._tag === 7) {
-      _t15667 = undefined;
-      break _t15668;
+    if (_t15706._tag === 7) {
+      _t15707 = undefined;
+      break _t15708;
     }
-    if (_t15666._tag === 5) {
-      const te = _t15666._val;
-      const v_15669 = Js_codegen$compile_expr(ctx, te);
-      Js_codegen$emit_line(ctx, (("_last_val = " + __dict_Show_string.show(v_15669)) + ";"));
-      let _t15672;
-      const _t15671 = Types$repr(te.ty);
-      _t15673: {
-        if (_t15671._tag === 4) {
-          _t15672 = "\"byte\"";
-          break _t15673;
+    if (_t15706._tag === 5) {
+      const te = _t15706._val;
+      const v_15709 = Js_codegen$compile_expr(ctx, te);
+      Js_codegen$emit_line(ctx, (("_last_val = " + __dict_Show_string.show(v_15709)) + ";"));
+      let _t15712;
+      const _t15711 = Types$repr(te.ty);
+      _t15713: {
+        if (_t15711._tag === 4) {
+          _t15712 = "\"byte\"";
+          break _t15713;
         }
-        if (_t15671._tag === 1) {
-          _t15672 = "\"float\"";
-          break _t15673;
+        if (_t15711._tag === 1) {
+          _t15712 = "\"float\"";
+          break _t15713;
         }
-        _t15672 = "null";
-        break _t15673;
+        _t15712 = "null";
+        break _t15713;
       }
-      const ty_tag_15674 = _t15672;
-      Js_codegen$emit_line(ctx, (("_last_ty = " + __dict_Show_string.show(ty_tag_15674)) + ";"));
-      let _t15677;
-      const _t15676 = Js_codegen$float_shape(ctx.type_env, te.ty);
-      _t15678: {
-        if (_t15676._tag === 0) {
-          _t15677 = "null";
-          break _t15678;
+      const ty_tag_15714 = _t15712;
+      Js_codegen$emit_line(ctx, (("_last_ty = " + __dict_Show_string.show(ty_tag_15714)) + ";"));
+      let _t15717;
+      const _t15716 = Js_codegen$float_shape(ctx.type_env, te.ty);
+      _t15718: {
+        if (_t15716._tag === 0) {
+          _t15717 = "null";
+          break _t15718;
         }
-        if (_t15676._tag === 1) {
-          const s = _t15676._val;
-          _t15677 = s;
-          break _t15678;
+        if (_t15716._tag === 1) {
+          const s = _t15716._val;
+          _t15717 = s;
+          break _t15718;
         }
         _match_fail("line 0");
       }
-      const shape_15679 = _t15677;
-      const _t15680 = Js_codegen$emit_line(ctx, (("_last_shape = " + __dict_Show_string.show(shape_15679)) + ";"));
-      const _t15675 = _t15680;
-      const _t15670 = _t15675;
-      _t15667 = _t15670;
-      break _t15668;
+      const shape_15719 = _t15717;
+      const _t15720 = Js_codegen$emit_line(ctx, (("_last_shape = " + __dict_Show_string.show(shape_15719)) + ";"));
+      const _t15715 = _t15720;
+      const _t15710 = _t15715;
+      _t15707 = _t15710;
+      break _t15708;
     }
-    if (_t15666._tag === 8) {
-      const name = _t15666._val[0];
-      const _scheme = _t15666._val[1];
-      const js_name_15681 = Js_codegen$mangle_name(name);
-      Js_codegen$emit_line(ctx, (((((((((("if (typeof " + __dict_Show_string.show(js_name_15681)) + " === \"undefined\") { if (globalThis._mmlExterns && globalThis._mmlExterns[") + __dict_Show_string.show(Js_codegen$escape_js_string(name))) + "]) var ") + __dict_Show_string.show(js_name_15681)) + " = globalThis._mmlExterns[") + __dict_Show_string.show(Js_codegen$escape_js_string(name))) + "]; else throw new Error(\"extern \" + ") + __dict_Show_string.show(Js_codegen$escape_js_string(name))) + " + \" not provided\"); }"));
-      const _t15682 = Js_codegen$bind_var(ctx, name, js_name_15681);
-      _t15667 = _t15682;
-      break _t15668;
+    if (_t15706._tag === 8) {
+      const name = _t15706._val[0];
+      const _scheme = _t15706._val[1];
+      const js_name_15721 = Js_codegen$mangle_name(name);
+      Js_codegen$emit_line(ctx, (((((((((("if (typeof " + __dict_Show_string.show(js_name_15721)) + " === \"undefined\") { if (globalThis._mmlExterns && globalThis._mmlExterns[") + __dict_Show_string.show(Js_codegen$escape_js_string(name))) + "]) var ") + __dict_Show_string.show(js_name_15721)) + " = globalThis._mmlExterns[") + __dict_Show_string.show(Js_codegen$escape_js_string(name))) + "]; else throw new Error(\"extern \" + ") + __dict_Show_string.show(Js_codegen$escape_js_string(name))) + " + \" not provided\"); }"));
+      const _t15722 = Js_codegen$bind_var(ctx, name, js_name_15721);
+      _t15707 = _t15722;
+      break _t15708;
     }
-    if (_t15666._tag === 0) {
-      const name = _t15666._val[0];
-      const te = _t15666._val[1];
-      let _t15683;
+    if (_t15706._tag === 0) {
+      const name = _t15706._val[0];
+      const te = _t15706._val[1];
+      let _t15723;
       if ((name === "_")) {
-        const v_15684 = Js_codegen$compile_expr(ctx, te);
-        const _t15685 = Js_codegen$emit_line(ctx, (__dict_Show_string.show(v_15684) + ";"));
-        _t15683 = _t15685;
+        const v_15724 = Js_codegen$compile_expr(ctx, te);
+        const _t15725 = Js_codegen$emit_line(ctx, (__dict_Show_string.show(v_15724) + ";"));
+        _t15723 = _t15725;
       } else {
-        const base_name_15686 = Js_codegen$mangle_name(name);
-        function _t15688(tbl) {
+        const base_name_15726 = Js_codegen$mangle_name(name);
+        function _t15728(tbl) {
           return _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, tbl, name]);
         }
-        let _t15689;
-        if (List$exists(_t15688, ctx.scopes)) {
-          _t15689 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15686));
+        let _t15729;
+        if (List$exists(_t15728, ctx.scopes)) {
+          _t15729 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15726));
         } else {
-          _t15689 = base_name_15686;
+          _t15729 = base_name_15726;
         }
-        const js_name_15690 = _t15689;
-        let _t15693;
-        const _t15692 = te.expr;
-        _t15694: {
-          if (_t15692._tag === 10) {
-            Js_codegen$compile_named_function(ctx, js_name_15690, te);
-            _t15693 = Js_codegen$bind_var(ctx, name, js_name_15690);
-            break _t15694;
+        const js_name_15730 = _t15729;
+        let _t15733;
+        const _t15732 = te.expr;
+        _t15734: {
+          if (_t15732._tag === 10) {
+            Js_codegen$compile_named_function(ctx, js_name_15730, te);
+            _t15733 = Js_codegen$bind_var(ctx, name, js_name_15730);
+            break _t15734;
           }
-          const v_15695 = Js_codegen$compile_expr(ctx, te);
-          Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_name_15690)) + " = ") + __dict_Show_string.show(v_15695)) + ";"));
-          const _t15696 = Js_codegen$bind_var(ctx, name, js_name_15690);
-          _t15693 = _t15696;
-          break _t15694;
+          const v_15735 = Js_codegen$compile_expr(ctx, te);
+          Js_codegen$emit_line(ctx, (((("const " + __dict_Show_string.show(js_name_15730)) + " = ") + __dict_Show_string.show(v_15735)) + ";"));
+          const _t15736 = Js_codegen$bind_var(ctx, name, js_name_15730);
+          _t15733 = _t15736;
+          break _t15734;
         }
-        _t15693;
-        let _t15697;
+        _t15733;
+        let _t15737;
         if (((List$length(ctx.scopes) === 1) && Js_codegen$is_exportable_name(name))) {
-          _t15697 = (ctx.top_level_exports = ({_hd: [name, js_name_15690], _tl: ctx.top_level_exports}), undefined);
+          _t15737 = (ctx.top_level_exports = ({_hd: [name, js_name_15730], _tl: ctx.top_level_exports}), undefined);
         } else {
-          _t15697 = undefined;
+          _t15737 = undefined;
         }
-        const _t15691 = _t15697;
-        const _t15687 = _t15691;
-        _t15683 = _t15687;
+        const _t15731 = _t15737;
+        const _t15727 = _t15731;
+        _t15723 = _t15727;
       }
-      _t15667 = _t15683;
-      break _t15668;
+      _t15707 = _t15723;
+      break _t15708;
     }
-    if (_t15666._tag === 1) {
-      const name = _t15666._val[0];
-      const te = _t15666._val[1];
-      const base_name_15698 = Js_codegen$mangle_name(name);
-      function _t15700(tbl) {
+    if (_t15706._tag === 1) {
+      const name = _t15706._val[0];
+      const te = _t15706._val[1];
+      const base_name_15738 = Js_codegen$mangle_name(name);
+      function _t15740(tbl) {
         return _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, tbl, name]);
       }
-      let _t15701;
-      if (List$exists(_t15700, ctx.scopes)) {
-        _t15701 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15698));
+      let _t15741;
+      if (List$exists(_t15740, ctx.scopes)) {
+        _t15741 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15738));
       } else {
-        _t15701 = base_name_15698;
+        _t15741 = base_name_15738;
       }
-      const js_name_15702 = _t15701;
-      const v_15704 = Js_codegen$compile_expr(ctx, te);
-      Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(js_name_15702)) + " = ") + __dict_Show_string.show(v_15704)) + ";"));
-      Js_codegen$bind_var(ctx, name, js_name_15702);
-      let _t15706;
+      const js_name_15742 = _t15741;
+      const v_15744 = Js_codegen$compile_expr(ctx, te);
+      Js_codegen$emit_line(ctx, (((("let " + __dict_Show_string.show(js_name_15742)) + " = ") + __dict_Show_string.show(v_15744)) + ";"));
+      Js_codegen$bind_var(ctx, name, js_name_15742);
+      let _t15746;
       if (((List$length(ctx.scopes) === 1) && Js_codegen$is_exportable_name(name))) {
-        _t15706 = (ctx.top_level_exports = ({_hd: [name, js_name_15702], _tl: ctx.top_level_exports}), undefined);
+        _t15746 = (ctx.top_level_exports = ({_hd: [name, js_name_15742], _tl: ctx.top_level_exports}), undefined);
       } else {
-        _t15706 = undefined;
+        _t15746 = undefined;
       }
-      const _t15705 = _t15706;
-      const _t15703 = _t15705;
-      const _t15699 = _t15703;
-      _t15667 = _t15699;
-      break _t15668;
+      const _t15745 = _t15746;
+      const _t15743 = _t15745;
+      const _t15739 = _t15743;
+      _t15707 = _t15739;
+      break _t15708;
     }
-    if (_t15666._tag === 2) {
-      const name = _t15666._val[0];
-      const te = _t15666._val[1];
-      const base_name_15707 = Js_codegen$mangle_name(name);
-      function _t15709(tbl) {
+    if (_t15706._tag === 2) {
+      const name = _t15706._val[0];
+      const te = _t15706._val[1];
+      const base_name_15747 = Js_codegen$mangle_name(name);
+      function _t15749(tbl) {
         return _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, tbl, name]);
       }
-      let _t15710;
-      if (List$exists(_t15709, ctx.scopes)) {
-        _t15710 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15707));
+      let _t15750;
+      if (List$exists(_t15749, ctx.scopes)) {
+        _t15750 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15747));
       } else {
-        _t15710 = base_name_15707;
+        _t15750 = base_name_15747;
       }
-      const js_name_15711 = _t15710;
-      Js_codegen$bind_var(ctx, name, js_name_15711);
-      let _t15714;
-      const _t15713 = te.expr;
-      _t15715: {
-        if (_t15713._tag === 10) {
-          _t15714 = Js_codegen$compile_named_function(ctx, js_name_15711, te);
-          break _t15715;
+      const js_name_15751 = _t15750;
+      Js_codegen$bind_var(ctx, name, js_name_15751);
+      let _t15754;
+      const _t15753 = te.expr;
+      _t15755: {
+        if (_t15753._tag === 10) {
+          _t15754 = Js_codegen$compile_named_function(ctx, js_name_15751, te);
+          break _t15755;
         }
-        Js_codegen$emit_js_placeholder(ctx, js_name_15711, te);
-        _t15714 = Js_codegen$emit_js_backpatch(ctx, js_name_15711, te);
-        break _t15715;
+        Js_codegen$emit_js_placeholder(ctx, js_name_15751, te);
+        _t15754 = Js_codegen$emit_js_backpatch(ctx, js_name_15751, te);
+        break _t15755;
       }
-      _t15714;
-      let _t15716;
+      _t15754;
+      let _t15756;
       if (((List$length(ctx.scopes) === 1) && Js_codegen$is_exportable_name(name))) {
-        _t15716 = (ctx.top_level_exports = ({_hd: [name, js_name_15711], _tl: ctx.top_level_exports}), undefined);
+        _t15756 = (ctx.top_level_exports = ({_hd: [name, js_name_15751], _tl: ctx.top_level_exports}), undefined);
       } else {
-        _t15716 = undefined;
+        _t15756 = undefined;
       }
-      const _t15712 = _t15716;
-      const _t15708 = _t15712;
-      _t15667 = _t15708;
-      break _t15668;
+      const _t15752 = _t15756;
+      const _t15748 = _t15752;
+      _t15707 = _t15748;
+      break _t15708;
     }
-    if (_t15666._tag === 3) {
-      const bindings = _t15666._val;
-      function _t15717(__p409) {
-        let _t15719;
-        const _t15718 = __p409;
-        _t15720: {
-          const name = _t15718[0];
-          const te = _t15718[1];
-          const base_name_15721 = Js_codegen$mangle_name(name);
-          let _t15724;
-          const _t15723 = ctx.scopes;
-          _t15725: {
-            if (_t15723 !== null) {
-              const tbl = _t15723._hd;
+    if (_t15706._tag === 3) {
+      const bindings = _t15706._val;
+      function _t15757(__p409) {
+        let _t15759;
+        const _t15758 = __p409;
+        _t15760: {
+          const name = _t15758[0];
+          const te = _t15758[1];
+          const base_name_15761 = Js_codegen$mangle_name(name);
+          let _t15764;
+          const _t15763 = ctx.scopes;
+          _t15765: {
+            if (_t15763 !== null) {
+              const tbl = _t15763._hd;
               if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, tbl, name])) {
-                const tbl = _t15723._hd;
-                _t15724 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15721));
-                break _t15725;
+                const tbl = _t15763._hd;
+                _t15764 = (Js_codegen$fresh_tmp(ctx) + ("_" + base_name_15761));
+                break _t15765;
               } else {
-                _t15724 = base_name_15721;
-                break _t15725;
+                _t15764 = base_name_15761;
+                break _t15765;
               }
             }
-            _t15724 = base_name_15721;
-            break _t15725;
+            _t15764 = base_name_15761;
+            break _t15765;
           }
-          const js_name_15726 = _t15724;
-          const _t15727 = [name, js_name_15726, te];
-          const _t15722 = _t15727;
-          _t15719 = _t15722;
-          break _t15720;
+          const js_name_15766 = _t15764;
+          const _t15767 = [name, js_name_15766, te];
+          const _t15762 = _t15767;
+          _t15759 = _t15762;
+          break _t15760;
         }
-        return _t15719;
+        return _t15759;
       }
-      const named_bindings_15728 = List$map(_t15717, bindings);
-      function _t15730(__p410) {
-        let _t15732;
-        const _t15731 = __p410;
-        _t15733: {
-          const name = _t15731[0];
-          const js_name = _t15731[1];
-          const te = _t15731[2];
+      const named_bindings_15768 = List$map(_t15757, bindings);
+      function _t15770(__p410) {
+        let _t15772;
+        const _t15771 = __p410;
+        _t15773: {
+          const name = _t15771[0];
+          const js_name = _t15771[1];
+          const te = _t15771[2];
           Js_codegen$bind_var(ctx, name, js_name);
-          let _t15734;
+          let _t15774;
           if (((List$length(ctx.scopes) === 1) && Js_codegen$is_exportable_name(name))) {
-            _t15734 = (ctx.top_level_exports = ({_hd: [name, js_name], _tl: ctx.top_level_exports}), undefined);
+            _t15774 = (ctx.top_level_exports = ({_hd: [name, js_name], _tl: ctx.top_level_exports}), undefined);
           } else {
-            _t15734 = undefined;
+            _t15774 = undefined;
           }
-          _t15734;
-          let _t15736;
-          const _t15735 = te.expr;
-          _t15737: {
-            if (_t15735._tag === 10) {
-              _t15736 = undefined;
-              break _t15737;
+          _t15774;
+          let _t15776;
+          const _t15775 = te.expr;
+          _t15777: {
+            if (_t15775._tag === 10) {
+              _t15776 = undefined;
+              break _t15777;
             }
-            _t15736 = Js_codegen$emit_js_placeholder(ctx, js_name, te);
-            break _t15737;
+            _t15776 = Js_codegen$emit_js_placeholder(ctx, js_name, te);
+            break _t15777;
           }
-          _t15732 = _t15736;
-          break _t15733;
+          _t15772 = _t15776;
+          break _t15773;
         }
-        return _t15732;
+        return _t15772;
       }
-      List$iter(_t15730, named_bindings_15728);
-      function _t15738(__p411) {
-        let _t15740;
-        const _t15739 = __p411;
-        _t15741: {
-          const _name = _t15739[0];
-          const js_name = _t15739[1];
-          const fn_expr = _t15739[2];
-          let _t15743;
-          const _t15742 = fn_expr.expr;
-          _t15744: {
-            if (_t15742._tag === 10) {
-              _t15743 = Js_codegen$compile_named_function(ctx, js_name, fn_expr);
-              break _t15744;
+      List$iter(_t15770, named_bindings_15768);
+      function _t15778(__p411) {
+        let _t15780;
+        const _t15779 = __p411;
+        _t15781: {
+          const _name = _t15779[0];
+          const js_name = _t15779[1];
+          const fn_expr = _t15779[2];
+          let _t15783;
+          const _t15782 = fn_expr.expr;
+          _t15784: {
+            if (_t15782._tag === 10) {
+              _t15783 = Js_codegen$compile_named_function(ctx, js_name, fn_expr);
+              break _t15784;
             }
-            _t15743 = undefined;
-            break _t15744;
+            _t15783 = undefined;
+            break _t15784;
           }
-          _t15740 = _t15743;
-          break _t15741;
+          _t15780 = _t15783;
+          break _t15781;
         }
-        return _t15740;
+        return _t15780;
       }
-      List$iter(_t15738, named_bindings_15728);
-      function _t15745(__p412) {
-        let _t15747;
-        const _t15746 = __p412;
-        _t15748: {
-          const _name = _t15746[0];
-          const js_name = _t15746[1];
-          const te = _t15746[2];
-          let _t15750;
-          const _t15749 = te.expr;
-          _t15751: {
-            if (_t15749._tag === 10) {
-              _t15750 = undefined;
-              break _t15751;
+      List$iter(_t15778, named_bindings_15768);
+      function _t15785(__p412) {
+        let _t15787;
+        const _t15786 = __p412;
+        _t15788: {
+          const _name = _t15786[0];
+          const js_name = _t15786[1];
+          const te = _t15786[2];
+          let _t15790;
+          const _t15789 = te.expr;
+          _t15791: {
+            if (_t15789._tag === 10) {
+              _t15790 = undefined;
+              break _t15791;
             }
-            _t15750 = Js_codegen$emit_js_backpatch(ctx, js_name, te);
-            break _t15751;
+            _t15790 = Js_codegen$emit_js_backpatch(ctx, js_name, te);
+            break _t15791;
           }
-          _t15747 = _t15750;
-          break _t15748;
+          _t15787 = _t15790;
+          break _t15788;
         }
-        return _t15747;
+        return _t15787;
       }
-      const _t15729 = List$iter(_t15745, named_bindings_15728);
-      _t15667 = _t15729;
-      break _t15668;
+      const _t15769 = List$iter(_t15785, named_bindings_15768);
+      _t15707 = _t15769;
+      break _t15708;
     }
-    if (_t15666._tag === 9) {
-      const mod_name = _t15666._val[0];
-      const decls = _t15666._val[1];
-      function _t15752(_) {
+    if (_t15706._tag === 9) {
+      const mod_name = _t15706._val[0];
+      const decls = _t15706._val[1];
+      function _t15792(_) {
         Js_codegen$push_scope(ctx);
         return List$iter(_call(Js_codegen$compile_decl, [ctx]), decls);
       }
-      Js_codegen$with_current_module(6, ctx, ({_tag: 1, _name: "Some", _val: mod_name}), _t15752);
-      let _t15754;
-      const _t15753 = ctx.scopes;
-      _t15755: {
-        if (_t15753 === null) {
-          _t15754 = undefined;
-          break _t15755;
+      Js_codegen$with_current_module(7, ctx, ({_tag: 1, _name: "Some", _val: mod_name}), _t15792);
+      let _t15794;
+      const _t15793 = ctx.scopes;
+      _t15795: {
+        if (_t15793 === null) {
+          _t15794 = undefined;
+          break _t15795;
         }
-        if (_t15753 !== null) {
-          const current = _t15753._hd;
-          function _t15756(mml_name, js_name) {
-            let _t15758;
-            const _t15757 = ctx.scopes;
-            _t15759: {
-              if (_t15757 !== null) {
-                if (_t15757._tl !== null) {
-                  const parent = _t15757._tl._hd;
+        if (_t15793 !== null) {
+          const current = _t15793._hd;
+          function _t15796(mml_name, js_name) {
+            let _t15798;
+            const _t15797 = ctx.scopes;
+            _t15799: {
+              if (_t15797 !== null) {
+                if (_t15797._tl !== null) {
+                  const parent = _t15797._tl._hd;
                   _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, parent, (mod_name + ("." + mml_name)), js_name]);
-                  _t15758 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, parent, mml_name, js_name]);
-                  break _t15759;
+                  _t15798 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, parent, mml_name, js_name]);
+                  break _t15799;
                 }
-                _t15758 = undefined;
-                break _t15759;
+                _t15798 = undefined;
+                break _t15799;
               }
-              _t15758 = undefined;
-              break _t15759;
+              _t15798 = undefined;
+              break _t15799;
             }
-            return _t15758;
+            return _t15798;
           }
-          _t15754 = Hashtbl$iter(_t15756, current);
-          break _t15755;
+          _t15794 = Hashtbl$iter(_t15796, current);
+          break _t15795;
         }
         _match_fail("line 0");
       }
-      _t15754;
-      _t15667 = Js_codegen$pop_scope(ctx);
-      break _t15668;
+      _t15794;
+      _t15707 = Js_codegen$pop_scope(ctx);
+      break _t15708;
     }
-    if (_t15666._tag === 10) {
-      const aliases = _t15666._val;
-      function _t15760(__p413) {
-        let _t15762;
-        const _t15761 = __p413;
-        _t15763: {
-          const short_name = _t15761[0];
-          const qualified_name = _t15761[1];
-          const js_name_15764 = Js_codegen$lookup_var(ctx, qualified_name);
-          const _t15765 = Js_codegen$bind_var(ctx, short_name, js_name_15764);
-          _t15762 = _t15765;
-          break _t15763;
+    if (_t15706._tag === 10) {
+      const aliases = _t15706._val;
+      function _t15800(__p413) {
+        let _t15802;
+        const _t15801 = __p413;
+        _t15803: {
+          const short_name = _t15801[0];
+          const qualified_name = _t15801[1];
+          const js_name_15804 = Js_codegen$lookup_var(ctx, qualified_name);
+          const _t15805 = Js_codegen$bind_var(ctx, short_name, js_name_15804);
+          _t15802 = _t15805;
+          break _t15803;
         }
-        return _t15762;
+        return _t15802;
       }
-      _t15667 = List$iter(_t15760, aliases);
-      break _t15668;
+      _t15707 = List$iter(_t15800, aliases);
+      break _t15708;
     }
-    if (_t15666._tag === 4) {
-      _t15667 = undefined;
-      break _t15668;
+    if (_t15706._tag === 4) {
+      _t15707 = undefined;
+      break _t15708;
     }
     _match_fail("line 0");
   }
-  return _t15667;
+  return _t15707;
 }
 const Js_codegen$js_builtins = "// --- Builtins ---\nlet _output_count = 0;\n// `print v` outputs pp(v) followed by a newline (the spec: OCaml print_endline;\n// native printf \"%s\\n\"; JS VM console.log). The _jsOutput callback contract is\n// \"one call per print, string WITHOUT the newline — the sink adds framing\"\n// (same as the VM's output_fn), so only the stdout path appends it here.\n// The optional second arg is the compile-time float shape (see _pp). The\n// default keeps print.length === 1 so _call's partial application and\n// first-class uses (List.iter print xs) behave exactly as before — those\n// just get no shape and fall back to heuristic display.\nfunction print(v, _s = null) {\n  _output_count++;\n  const s = (typeof v === \"string\") ? v : _pp(v, _s);\n  if (typeof globalThis._jsOutput === \"function\") globalThis._jsOutput(s);\n  else if (typeof process !== \"undefined\") process.stdout.write(s + \"\\n\");\n  return undefined;\n}\nfunction println(v) {\n  _output_count++;\n  const s = (typeof v === \"string\") ? v : _pp(v);\n  if (typeof globalThis._jsOutput === \"function\") globalThis._jsOutput(s + \"\\n\");\n  else if (typeof process !== \"undefined\") process.stdout.write(s + \"\\n\");\n  return undefined;\n}\nfunction string_of_int(n) { return String(n); }\n// OCaml int_of_string semantics: optional sign, 0x/0o/0b prefixes, _ separators.\n// All backends must agree (the self-host LEXER parses hex/binary literals with this).\nfunction __parse_int(s0) {\n  let s = s0.replace(/_/g, \"\");\n  let sign = 1;\n  if (s[0] === \"-\") { sign = -1; s = s.slice(1); }\n  else if (s[0] === \"+\") { s = s.slice(1); }\n  let n;\n  if (/^0[xX][0-9a-fA-F]+$/.test(s)) n = parseInt(s.slice(2), 16);\n  else if (/^0[oO][0-7]+$/.test(s)) n = parseInt(s.slice(2), 8);\n  else if (/^0[bB][01]+$/.test(s)) n = parseInt(s.slice(2), 2);\n  else if (/^[0-9]+$/.test(s)) n = parseInt(s, 10);\n  else return null;\n  return sign * n;\n}\nfunction int_of_string(s) { const n = __parse_int(s); if (n === null) throw new Error(\"int_of_string: \" + s); return n; }\nfunction float_of_int(n) { return n; }\nfunction int_of_float(f) { return Math.trunc(f); }\nfunction float_of_string(s) { const f = parseFloat(s); if (isNaN(f)) throw new Error(\"float_of_string: \" + s); return f; }\nfunction string_of_float(f) { return __format_g(f); }\nfunction string_of_bool(b) { return String(b); }\nfunction failwith(msg) { throw new Error(msg); }\n// Operator builtins as first-class values. Declared as function/var (not const)\n// so the extern declarations from stdlib/builtins.mml (`var <name> = ...` guarded\n// by a typeof check) can legally coexist in the same scope.\nfunction not(b) { return !b; }\nfunction $caret(a, b) { return a + b; }\nfunction $mod(a, b) { if (b === 0) throw new Error(\"modulo by zero\"); return a % b; }\nvar mod = $mod;\nfunction $amp$amp(a, b) { return a && b; }\nfunction $bar$bar(a, b) { return a || b; }\nfunction __show_value(v) { return _pp(v); }\nfunction copy_continuation(k) {\n  if (k._k_raw) {\n    if (k._used) throw new Error(\"cannot copy an already resumed continuation\");\n    const w = function(_v) { if (w._used) throw new Error(\"Effect continuation already resumed\"); w._used = true; return k._k_raw(_v); };\n    w._used = false;\n    w._k_raw = k._k_raw;\n    return w;\n  }\n  return k;\n}\nfunction phys_equal(a, b) { return a === b; }\nconst ignore = (_) => undefined;\nfunction fst(t) { return t[0]; }\nfunction snd(t) { return t[1]; }\nfunction string_length(s) { return s.length; }\nfunction string_sub(s, start, len) { return s.substring(start, start + len); }\nfunction string_get(s, i) { return s.charCodeAt(i); }\nfunction string_contains(s, sub) { return s.includes(sub); }\nfunction string_concat(sep, parts) {\n  const arr = [];\n  let c = parts;\n  while (c !== null) { arr.push(c._hd); c = c._tl; }\n  return arr.join(sep);\n}\nfunction array_length(a) { return a._arr.length; }\nfunction array_get(a, i) { const ar = a._arr; if (!Number.isInteger(i) || i < 0 || i >= ar.length) throw new Error(\"array index out of bounds: \" + i + \" (length \" + ar.length + \")\"); return ar[i]; }\nfunction array_set(a, i, v) { a._arr[i] = v; return undefined; }\nfunction array_make(n, v) { return {_arr: new Array(n).fill(v)}; }\nfunction array_of_list(lst) {\n  const arr = [];\n  let c = lst;\n  while (c !== null) { arr.push(c._hd); c = c._tl; }\n  return {_arr: arr};\n}\nfunction array_to_list(arr) {\n  const a = arr._arr;\n  let result = null;\n  for (let i = a.length - 1; i >= 0; i--) result = {_hd: a[i], _tl: result};\n  return result;\n}\nfunction array_copy(a) { return {_arr: a._arr.slice()}; }\nfunction array_sub(a, start, len) { return {_arr: a._arr.slice(start, start + len)}; }\nfunction __math_pow(a, b) { return Math.pow(a, b); }\nfunction __math_sqrt(x) { return Math.sqrt(x); }\nfunction __math_floor(x) { return Math.floor(x); }\nfunction __math_ceil(x) { return Math.ceil(x); }\nfunction __math_round(x) { return Math.round(x); }\nfunction __math_abs(x) { return Math.abs(x); }\nfunction __math_sin(x) { return Math.sin(x); }\nfunction __math_cos(x) { return Math.cos(x); }\nfunction __math_abs_float(x) { return Math.abs(x); }\nfunction __byte_to_char(b) { return String.fromCharCode(b); }\nfunction __byte_to_int(b) { return b; }\nfunction __byte_of_int(n) { return n & 0xFF; }\nfunction __byte_to_string(b) { return String.fromCharCode(b); }\nfunction __char_to_byte(s) { return s.charCodeAt(0); }\nfunction __rune_to_string(cp) {\n  return String.fromCodePoint(cp);\n}\nfunction __string_to_runes(s) {\n  const cps = Array.from(s).map(c => c.codePointAt(0));\n  let result = null;\n  for (let i = cps.length - 1; i >= 0; i--) result = {_hd: cps[i], _tl: result};\n  return result;\n}\nfunction __rune_to_int(r) { return r; }\nfunction __rune_of_int(n) { return n; }\nfunction __int_to_hex(n) { return n.toString(16); }\nfunction __int_to_oct(n) { return n.toString(8); }\nfunction __int_to_bin(n) { return n.toString(2); }\nfunction __fmt_float(prec, f) { return f.toFixed(prec); }\nfunction __fmt_hex(n) { return n.toString(16); }\nfunction __fmt_hex_upper(n) { return n.toString(16).toUpperCase(); }\nfunction __fmt_oct(n) { return n.toString(8); }\nfunction __fmt_bin(n) { return n.toString(2); }\nfunction __fmt_zero_pad(width, s) { return s.padStart(width, \"0\"); }\nfunction __fmt_pad_left(width, s) { return s.padStart(width, \" \"); }\nfunction __fmt_pad_right(width, s) { return s.padEnd(width, \" \"); }\nfunction __sys_time() { return Date.now() / 1000.0; }\nfunction __sys_exit(code) { if (typeof process !== \"undefined\") process.exit(code); throw new Error(\"exit: \" + code); }\n// --- Module extern stubs ---\n// String module\nfunction String$length(s) { return s.length; }\nfunction String$sub(s, start, len) {\n  if (start < 0 || len < 0 || start + len > s.length)\n    throw new Error(\"String.sub: index out of bounds\");\n  return s.substring(start, start + len);\n}\nfunction String$split(delim, input) {\n  if (delim.length === 0) {\n    let r = null;\n    for (let i = input.length - 1; i >= 0; i--) r = {_hd: input[i], _tl: r};\n    return r;\n  }\n  const parts = input.split(delim);\n  let r = null;\n  for (let i = parts.length - 1; i >= 0; i--) r = {_hd: parts[i], _tl: r};\n  return r;\n}\nfunction String$trim(s) { return s.trim(); }\nfunction String$starts_with(prefix, s) { return s.startsWith(prefix); }\nfunction String$contains(sub, s) { return s.includes(sub); }\nfunction String$replace(old_s, new_s, input) {\n  if (old_s.length === 0) return input;\n  return input.split(old_s).join(new_s);\n}\nfunction String$to_int(s) { const n = __parse_int(s); return n === null ? {_tag:0,_name:\"None\"} : {_tag:1,_name:\"Some\",_val:n}; }\nfunction String$to_float(s) { const f = parseFloat(s); return isNaN(f) ? {_tag:0,_name:\"None\"} : {_tag:1,_name:\"Some\",_val:f}; }\nfunction String$uppercase(s) { return s.toUpperCase(); }\nfunction String$lowercase(s) { return s.toLowerCase(); }\nfunction String$get(s, i) {\n  if (i < 0 || i >= s.length) throw new Error(\"String.get: index \" + i + \" out of bounds (length \" + s.length + \")\");\n  return s.charCodeAt(i);\n}\nfunction String$to_bytes(s) {\n  let r = null;\n  for (let i = s.length - 1; i >= 0; i--) r = {_hd: s.charCodeAt(i), _tl: r};\n  return r;\n}\nfunction String$of_bytes(lst) {\n  let r = \"\";\n  let c = lst;\n  while (c !== null) { r += String.fromCharCode(c._hd); c = c._tl; }\n  return r;\n}\nfunction String$to_byte_array(s) {\n  const a = new Array(s.length);\n  for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);\n  return {_arr: a};\n}\nfunction String$of_byte_array(a) {\n  let r = \"\";\n  for (let i = 0; i < a._arr.length; i++) r += String.fromCharCode(a._arr[i]);\n  return r;\n}\nfunction String$to_runes(s) { return __string_to_runes(s); }\nfunction String$of_runes(lst) {\n  let r = \"\";\n  let c = lst;\n  while (c !== null) { r += String.fromCodePoint(c._hd); c = c._tl; }\n  return r;\n}\nfunction String$get_rune(s, n) {\n  const cps = Array.from(s);\n  if (n < 0 || n >= cps.length) throw new Error(\"String.get_rune: index \" + n + \" out of bounds\");\n  return cps[n].codePointAt(0);\n}\nfunction String$of_byte(b) { return String.fromCharCode(b); }\nfunction String$rune_length(s) { return Array.from(s).length; }\nfunction String$make(n, b) {\n  if (n < 0) throw new Error(\"String.make: negative length\");\n  return String.fromCharCode(b).repeat(n);\n}\nfunction String$index_opt(s, b) { const i=s.indexOf(String.fromCharCode(b)); return i<0?{_tag:0,_name:\"None\"}:{_tag:1,_name:\"Some\",_val:i}; }\nfunction String$rindex_opt(s, b) { const i=s.lastIndexOf(String.fromCharCode(b)); return i<0?{_tag:0,_name:\"None\"}:{_tag:1,_name:\"Some\",_val:i}; }\nfunction String$concat(sep, lst) { return string_concat(sep, lst); }\nfunction String$compare(a, b) { return a < b ? -1 : a > b ? 1 : 0; }\n// Array module\nfunction Array$make(n, v) { return array_make(n, v); }\nfunction Array$get(a, i) { return array_get(a, i); }\nfunction Array$set(a, i, v) { return array_set(a, i, v); }\nfunction Array$length(a) { return array_length(a); }\nfunction Array$to_list(a) { return array_to_list(a); }\nfunction Array$of_list(l) { return array_of_list(l); }\nfunction Array$copy(a) { return array_copy(a); }\nfunction Array$sub(a, s, l) { return array_sub(a, s, l); }\n// IO module\nfunction IO$read_file(path) {\n  if (typeof globalThis._jsReadFile === \"function\") return globalThis._jsReadFile(path);\n  if (typeof require !== \"undefined\") return require(\"fs\").readFileSync(path,\"utf8\");\n  throw new Error(\"IO.read_file: not available in this environment\");\n}\nfunction IO$write_file(path, data) {\n  if (typeof require !== \"undefined\") { require(\"fs\").writeFileSync(path,data); return undefined; }\n  throw new Error(\"IO.write_file: not available in this environment\");\n}\nfunction IO$append_file(path, data) {\n  if (typeof require !== \"undefined\") { require(\"fs\").appendFileSync(path,data); return undefined; }\n  throw new Error(\"IO.append_file: not available in this environment\");\n}\nfunction IO$read_line(u) {\n  if (typeof require !== \"undefined\") {\n    const buf = Buffer.alloc(1);\n    let line = \"\";\n    const fd = require(\"fs\").openSync(\"/dev/stdin\", \"rs\");\n    while (true) {\n      const n = require(\"fs\").readSync(fd, buf, 0, 1);\n      if (n === 0 || buf[0] === 10) break;\n      line += String.fromCharCode(buf[0]);\n    }\n    return line;\n  }\n  return \"\";\n}\nfunction IO$file_exists(path) {\n  if (typeof require !== \"undefined\") return require(\"fs\").existsSync(path);\n  return false;\n}\n// Sys module\nfunction Sys$args(u) {\n  if (globalThis._jsSysArgs) {\n    const a = globalThis._jsSysArgs;\n    let r = null;\n    for (let i = a.length - 1; i >= 0; i--) r = {_hd: a[i], _tl: r};\n    return r;\n  }\n  if (typeof process !== \"undefined\") {\n    const a = process.argv.slice(1);\n    let r = null;\n    for (let i = a.length - 1; i >= 0; i--) r = {_hd: a[i], _tl: r};\n    return r;\n  }\n  return null;\n}\nfunction Sys$getenv(name) {\n  if (typeof process !== \"undefined\") {\n    const v = process.env[name];\n    return v === undefined ? {_tag:0,_name:\"None\"} : {_tag:1,_name:\"Some\",_val:v};\n  }\n  return {_tag:0,_name:\"None\"};\n}\nfunction Sys$exit(code) { __sys_exit(code); }\nfunction Sys$time(u) { return __sys_time(); }\n// Runtime module (stubs — eval not supported in compiled JS)\nfunction Runtime$eval(s) { throw new Error(\"Runtime.eval: not supported in compiled JS\"); }\nfunction Runtime$eval_file(s) { throw new Error(\"Runtime.eval_file: not supported in compiled JS\"); }\n// --- Typeclass primitive externs ---\nfunction __num_add_int(a, b) { return a + b; }\nfunction __num_sub_int(a, b) { return a - b; }\nfunction __num_mul_int(a, b) { return a * b; }\nfunction __num_div_int(a, b) { if (b === 0) throw new Error(\"division by zero\"); return (a / b) | 0; }\nfunction __num_neg_int(a) { return -a; }\nfunction __num_add_float(a, b) { return a + b; }\nfunction __num_sub_float(a, b) { return a - b; }\nfunction __num_mul_float(a, b) { return a * b; }\nfunction __num_div_float(a, b) { return a / b; }\nfunction __num_neg_float(a) { return -a; }\nfunction __eq_int(a, b) { return a === b; }\nfunction __neq_int(a, b) { return a !== b; }\nfunction __eq_float(a, b) { return a === b; }\nfunction __neq_float(a, b) { return a !== b; }\nfunction __eq_string(a, b) { return a === b; }\nfunction __neq_string(a, b) { return a !== b; }\nfunction __eq_bool(a, b) { return a === b; }\nfunction __neq_bool(a, b) { return a !== b; }\nfunction __eq_byte(a, b) { return a === b; }\nfunction __neq_byte(a, b) { return a !== b; }\nfunction __eq_rune(a, b) { return a === b; }\nfunction __neq_rune(a, b) { return a !== b; }\nfunction __lt_int(a, b) { return a < b; }\nfunction __gt_int(a, b) { return a > b; }\nfunction __le_int(a, b) { return a <= b; }\nfunction __ge_int(a, b) { return a >= b; }\nfunction __lt_float(a, b) { return a < b; }\nfunction __gt_float(a, b) { return a > b; }\nfunction __le_float(a, b) { return a <= b; }\nfunction __ge_float(a, b) { return a >= b; }\nfunction __lt_string(a, b) { return a < b; }\nfunction __gt_string(a, b) { return a > b; }\nfunction __le_string(a, b) { return a <= b; }\nfunction __ge_string(a, b) { return a >= b; }\nfunction __lt_byte(a, b) { return a < b; }\nfunction __gt_byte(a, b) { return a > b; }\nfunction __le_byte(a, b) { return a <= b; }\nfunction __ge_byte(a, b) { return a >= b; }\nfunction __lt_rune(a, b) { return a < b; }\nfunction __gt_rune(a, b) { return a > b; }\nfunction __le_rune(a, b) { return a <= b; }\nfunction __ge_rune(a, b) { return a >= b; }\nfunction __band_int(a, b) { return a & b; }\nfunction __bor_int(a, b) { return a | b; }\nfunction __bxor_int(a, b) { return a ^ b; }\nfunction __bshl_int(a, b) { return a << b; }\nfunction __bshr_int(a, b) { return a >> b; }\nfunction __bnot_int(a) { return ~a; }\nfunction __show_int(a) { return String(a); }\nfunction __show_float(a) { return string_of_float(a); }\nfunction __show_bool(a) { return String(a); }\nfunction __show_string(a) { return a; }\nfunction __show_unit(_) { return \"()\"; }\nfunction __show_byte(a) { return \"#\" + a.toString(16).padStart(2, \"0\"); }\nfunction __show_rune(a) { return \"'\" + String.fromCodePoint(a) + \"'\"; }\nfunction __eq(a, b) {\n  if (a === b) return true;\n  if (a === null || b === null || a === undefined || b === undefined) return a === b;\n  if (typeof a !== typeof b) return false;\n  if (typeof a !== \"object\") return a === b;\n  if (Array.isArray(a)) {\n    if (!Array.isArray(b) || a.length !== b.length) return false;\n    for (let i = 0; i < a.length; i++) if (!__eq(a[i], b[i])) return false;\n    return true;\n  }\n  if (\"_hd\" in a && \"_hd\" in b) {\n    let ca = a, cb = b;\n    while (ca !== null && cb !== null && typeof ca === \"object\" && typeof cb === \"object\" && \"_hd\" in ca && \"_hd\" in cb) {\n      if (!__eq(ca._hd, cb._hd)) return false;\n      ca = ca._tl; cb = cb._tl;\n    }\n    return ca === cb;\n  }\n  if (\"_tag\" in a && \"_tag\" in b) {\n    if (a._tag !== b._tag) return false;\n    if (a._val === undefined && b._val === undefined) return true;\n    return __eq(a._val, b._val);\n  }\n  if (\"_arr\" in a && \"_arr\" in b) {\n    if (a._arr.length !== b._arr.length) return false;\n    for (let i = 0; i < a._arr.length; i++) if (!__eq(a._arr[i], b._arr[i])) return false;\n    return true;\n  }\n  if (\"_ref\" in a && \"_ref\" in b) return __eq(a._ref, b._ref);\n  const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();\n  if (ka.length !== kb.length) return false;\n  for (let i = 0; i < ka.length; i++) {\n    if (ka[i] !== kb[i] || !__eq(a[ka[i]], b[kb[i]])) return false;\n  }\n  return true;\n}\nfunction __compare(a, b) {\n  if (a === b) return 0;\n  if (typeof a === \"number\" && typeof b === \"number\") return a < b ? -1 : a > b ? 1 : 0;\n  if (typeof a === \"string\" && typeof b === \"string\") return a < b ? -1 : a > b ? 1 : 0;\n  if (typeof a === \"boolean\" && typeof b === \"boolean\") return a === b ? 0 : a ? 1 : -1;\n  if (Array.isArray(a) && Array.isArray(b)) {\n    for (let i = 0; i < Math.min(a.length, b.length); i++) {\n      const c = __compare(a[i], b[i]); if (c !== 0) return c;\n    }\n    return a.length - b.length;\n  }\n  if (a !== null && b !== null && typeof a === \"object\" && typeof b === \"object\") {\n    if (\"_hd\" in a && \"_hd\" in b) {\n      let ca = a, cb = b;\n      while (ca !== null && cb !== null && typeof ca === \"object\" && typeof cb === \"object\" && \"_hd\" in ca && \"_hd\" in cb) {\n        const c = __compare(ca._hd, cb._hd); if (c !== 0) return c;\n        ca = ca._tl; cb = cb._tl;\n      }\n      if (ca === null && cb === null) return 0;\n      return ca === null ? -1 : 1;\n    }\n    if (\"_tag\" in a && \"_tag\" in b) {\n      if (a._tag !== b._tag) return a._tag < b._tag ? -1 : 1;\n      if (a._val === undefined && b._val === undefined) return 0;\n      if (a._val === undefined) return -1;\n      if (b._val === undefined) return 1;\n      return __compare(a._val, b._val);\n    }\n    if (\"_arr\" in a && \"_arr\" in b) {\n      for (let i = 0; i < Math.min(a._arr.length, b._arr.length); i++) {\n        const c = __compare(a._arr[i], b._arr[i]); if (c !== 0) return c;\n      }\n      return a._arr.length - b._arr.length;\n    }\n    const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();\n    for (let i = 0; i < Math.min(ka.length, kb.length); i++) {\n      if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;\n      const c = __compare(a[ka[i]], b[kb[i]]); if (c !== 0) return c;\n    }\n    return ka.length - kb.length;\n  }\n  return 0;\n}\nfunction __hash(v) {\n  let h = 0x811c9dc5;\n  function mix(x) { h = Math.imul(h ^ x, 0x01000193) | 0; }\n  function mixInt(n) { mix(n & 0xff); mix((n >>> 8) & 0xff); mix((n >>> 16) & 0xff); mix((n >>> 24) & 0xff); }\n  function go(v) {\n    if (v === null || v === undefined) { mix(0); return; }\n    if (typeof v === \"number\") { mixInt(v); return; }\n    if (typeof v === \"boolean\") { mix(v ? 1 : 0); return; }\n    if (typeof v === \"string\") { for (let i = 0; i < v.length; i++) mix(v.charCodeAt(i)); return; }\n    if (Array.isArray(v)) { mix(1); for (let i = 0; i < v.length; i++) go(v[i]); return; }\n    if (\"_hd\" in v) { mix(2); let c = v; while (c !== null && typeof c === \"object\" && \"_hd\" in c) { go(c._hd); c = c._tl; } return; }\n    if (\"_tag\" in v) { mixInt(v._tag); if (v._val !== undefined) go(v._val); return; }\n    if (\"_arr\" in v) { mix(4); for (let i = 0; i < v._arr.length; i++) go(v._arr[i]); return; }\n    mix(3); const ks = Object.keys(v).sort(); for (let i = 0; i < ks.length; i++) go(v[ks[i]]);\n  }\n  go(v);\n  return h;\n}\nfunction __poly_hash(v) { return __hash(v); }\nfunction __structural_eq(a, b) { return __eq(a, b); }\nfunction __structural_neq(a, b) { return !__eq(a, b); }\nfunction __structural_lt(a, b) { return __compare(a, b) < 0; }\nfunction __structural_gt(a, b) { return __compare(a, b) > 0; }\nfunction __structural_le(a, b) { return __compare(a, b) <= 0; }\nfunction __structural_ge(a, b) { return __compare(a, b) >= 0; }\nfunction __index_at_array(i, arr) { const a = arr._arr; if (!Number.isInteger(i) || i < 0 || i >= a.length) throw new Error(\"array index out of bounds: \" + i + \" (length \" + a.length + \")\"); return a[i]; }\nfunction __index_at_string(i, s) { if (i < 0 || i >= s.length) throw new Error(\"string index out of bounds: \" + i + \" (length \" + s.length + \")\"); return s.charCodeAt(i); }\n// --- Canvas builtins (browser only) ---\nfunction Canvas$init(w, h) {\n  if (typeof globalThis._canvasInit === \"function\") globalThis._canvasInit(w, h);\n  return undefined;\n}\nfunction Canvas$clear(color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); }\n  return undefined;\n}\nfunction Canvas$fill_rect(x, y, w, h, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); }\n  return undefined;\n}\nfunction Canvas$stroke_rect(x, y, w, h, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.strokeRect(x, y, w, h); }\n  return undefined;\n}\nfunction Canvas$fill_circle(x, y, r, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 2*Math.PI); ctx.fill(); }\n  return undefined;\n}\nfunction Canvas$draw_text(text, x, y, color) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.fillStyle = color; ctx.textBaseline = \"top\"; ctx.fillText(text, x, y); }\n  return undefined;\n}\nfunction Canvas$set_font(font) {\n  const ctx = globalThis._canvasCtx;\n  if (ctx) { ctx.font = font; }\n  return undefined;\n}\nfunction Canvas$mouse_x(_) { return globalThis._canvasMouseX || 0; }\nfunction Canvas$mouse_y(_) { return globalThis._canvasMouseY || 0; }\nfunction Canvas$mouse_down(_) { return !!globalThis._canvasMouseDown; }\nfunction Canvas$mouse_clicked(_) { return !!globalThis._canvasMouseClicked; }\nfunction Canvas$key_down(key) { return !!(globalThis._canvasKeysDown && globalThis._canvasKeysDown[key]); }\nfunction Canvas$key_pressed(key) { return !!(globalThis._canvasKeysPressed && globalThis._canvasKeysPressed[key]); }\nfunction Canvas$start_app(init_fn, frame_fn) {\n  globalThis._canvasApp = { initFn: init_fn, frameFn: frame_fn, jsMode: true, call: _call };\n  return undefined;\n}\n// Compiler setup cache — allows self-hosted compiler to skip expensive\n// setup_modules/setup_classes on subsequent compilations in the browser\nfunction __cache_has(key) {\n  return !!(globalThis._mmlCompilerCache && key in globalThis._mmlCompilerCache);\n}\nfunction __cache_get(key) {\n  return globalThis._mmlCompilerCache[key];\n}\nfunction __cache_set(key, val) {\n  if (!globalThis._mmlCompilerCache) globalThis._mmlCompilerCache = {};\n  globalThis._mmlCompilerCache[key] = val;\n  return undefined;\n}\n";
 function Js_codegen$emit_exports(ctx) {
   Js_codegen$emit(ctx, "var _mml_exports = {\"_result\": _last_val, \"_call\": _call, \"_pp\": _pp");
-  function _t15766(__p414) {
-    let _t15768;
-    const _t15767 = __p414;
-    _t15769: {
-      const mml_name = _t15767[0];
-      const js_name = _t15767[1];
-      _t15768 = Js_codegen$emit(ctx, (((", " + __dict_Show_string.show(Js_codegen$escape_js_string(mml_name))) + ": ") + __dict_Show_string.show(js_name)));
-      break _t15769;
+  function _t15806(__p414) {
+    let _t15808;
+    const _t15807 = __p414;
+    _t15809: {
+      const mml_name = _t15807[0];
+      const js_name = _t15807[1];
+      _t15808 = Js_codegen$emit(ctx, (((", " + __dict_Show_string.show(Js_codegen$escape_js_string(mml_name))) + ": ") + __dict_Show_string.show(js_name)));
+      break _t15809;
     }
-    return _t15768;
+    return _t15808;
   }
-  List$iter(_t15766, List$rev(ctx.top_level_exports));
+  List$iter(_t15806, List$rev(ctx.top_level_exports));
   Js_codegen$emit(ctx, "};\n");
   return Js_codegen$emit(ctx, "if (typeof globalThis !== \"undefined\") globalThis._mmlExports = _mml_exports;\n");
 }
 function Js_codegen$compile_program(type_env, program) {
-  const ctx_15770 = Js_codegen$create_ctx(type_env);
-  Js_codegen$emit(ctx_15770, Js_codegen$js_runtime);
-  Js_codegen$emit(ctx_15770, Js_codegen$js_builtins);
-  Js_codegen$emit(ctx_15770, "// --- Compiled MiniML ---\n");
-  Js_codegen$emit(ctx_15770, "let _last_val;\n");
-  Js_codegen$emit(ctx_15770, "let _last_ty = null;\n");
-  Js_codegen$emit(ctx_15770, "let _last_shape = null;\n");
-  List$iter(_call(Js_codegen$compile_decl, [ctx_15770]), program);
-  Js_codegen$drain_cps_twins(ctx_15770);
-  Js_codegen$emit(ctx_15770, "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n");
-  Js_codegen$emit_exports(ctx_15770);
-  const _t15771 = Buffer$contents(ctx_15770.buf);
-  return _t15771;
+  const ctx_15810 = Js_codegen$create_ctx(type_env);
+  Js_codegen$emit(ctx_15810, Js_codegen$js_runtime);
+  Js_codegen$emit(ctx_15810, Js_codegen$js_builtins);
+  Js_codegen$emit(ctx_15810, "// --- Compiled MiniML ---\n");
+  Js_codegen$emit(ctx_15810, "let _last_val;\n");
+  Js_codegen$emit(ctx_15810, "let _last_ty = null;\n");
+  Js_codegen$emit(ctx_15810, "let _last_shape = null;\n");
+  List$iter(_call(Js_codegen$compile_decl, [ctx_15810]), program);
+  Js_codegen$drain_cps_twins(ctx_15810);
+  Js_codegen$emit(ctx_15810, "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n");
+  Js_codegen$emit_exports(ctx_15810);
+  const _t15811 = Buffer$contents(ctx_15810.buf);
+  return _t15811;
 }
 function Js_codegen$compile_program_with_stdlib(type_env, stdlib_programs, user_program) {
-  const ctx_15772 = Js_codegen$create_ctx(type_env);
-  Js_codegen$emit(ctx_15772, Js_codegen$js_runtime);
-  Js_codegen$emit(ctx_15772, Js_codegen$js_builtins);
-  Js_codegen$emit(ctx_15772, "// --- Stdlib ---\n");
-  function _t15774(__p415) {
-    let _t15776;
-    const _t15775 = __p415;
-    _t15777: {
-      const _te = _t15775[0];
-      const prog = _t15775[1];
-      function _t15778(decl) {
-        const saved_pos_15779 = Buffer$length(ctx_15772.buf);
-        const saved_indent_15781 = ctx_15772.indent;
-        const _t15783 = (function() {
-          const _t15784 = _h;
-          _h = Object.assign({}, _t15784, {
+  const ctx_15812 = Js_codegen$create_ctx(type_env);
+  Js_codegen$emit(ctx_15812, Js_codegen$js_runtime);
+  Js_codegen$emit(ctx_15812, Js_codegen$js_builtins);
+  Js_codegen$emit(ctx_15812, "// --- Stdlib ---\n");
+  function _t15814(__p415) {
+    let _t15816;
+    const _t15815 = __p415;
+    _t15817: {
+      const _te = _t15815[0];
+      const prog = _t15815[1];
+      function _t15818(decl) {
+        const saved_pos_15819 = Buffer$length(ctx_15812.buf);
+        const saved_indent_15821 = ctx_15812.indent;
+        const _t15823 = (function() {
+          const _t15824 = _h;
+          _h = Object.assign({}, _t15824, {
             "codegen_error": function(_, __k_try) { throw {_e: "codegen_error", _v: _}; },
           });
           try {
-            const __x_15785 = Js_codegen$compile_decl(ctx_15772, decl);
-            return __x_15785;
+            const __x_15825 = Js_codegen$compile_decl(ctx_15812, decl);
+            return __x_15825;
           } catch (_exc) {
             if (_exc && _exc._e === "codegen_error") {
               const _ = _exc._v;
-              const full_15786 = Buffer$contents(ctx_15772.buf);
-              Buffer$clear(ctx_15772.buf);
-              Buffer$add_string(ctx_15772.buf, _call(String$sub, [full_15786, 0, saved_pos_15779]));
-              const _t15787 = (ctx_15772.indent = saved_indent_15781, undefined);
-              return _t15787;
+              const full_15826 = Buffer$contents(ctx_15812.buf);
+              Buffer$clear(ctx_15812.buf);
+              Buffer$add_string(ctx_15812.buf, _call(String$sub, [full_15826, 0, saved_pos_15819]));
+              const _t15827 = (ctx_15812.indent = saved_indent_15821, undefined);
+              return _t15827;
             } else { throw _exc; }
-          } finally { _h = _t15784; }
+          } finally { _h = _t15824; }
         })();
-        const _t15782 = _t15783;
-        const _t15780 = _t15782;
-        return _t15780;
+        const _t15822 = _t15823;
+        const _t15820 = _t15822;
+        return _t15820;
       }
-      _t15776 = List$iter(_t15778, prog);
-      break _t15777;
+      _t15816 = List$iter(_t15818, prog);
+      break _t15817;
     }
-    return _t15776;
+    return _t15816;
   }
-  List$iter(_t15774, stdlib_programs);
-  Js_codegen$emit(ctx_15772, "// --- Compiled MiniML ---\n");
-  Js_codegen$emit(ctx_15772, "let _last_val;\n");
-  Js_codegen$emit(ctx_15772, "let _last_ty = null;\n");
-  Js_codegen$emit(ctx_15772, "let _last_shape = null;\n");
-  const stdlib_exports_15788 = ctx_15772.top_level_exports;
-  (ctx_15772.top_level_exports = null, undefined);
-  List$iter(_call(Js_codegen$compile_decl, [ctx_15772]), user_program);
-  Js_codegen$drain_cps_twins(ctx_15772);
-  Js_codegen$emit(ctx_15772, "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n");
-  const user_exports_15790 = ctx_15772.top_level_exports;
-  (ctx_15772.top_level_exports = user_exports_15790, undefined);
-  stdlib_exports_15788;
+  List$iter(_t15814, stdlib_programs);
+  Js_codegen$emit(ctx_15812, "// --- Compiled MiniML ---\n");
+  Js_codegen$emit(ctx_15812, "let _last_val;\n");
+  Js_codegen$emit(ctx_15812, "let _last_ty = null;\n");
+  Js_codegen$emit(ctx_15812, "let _last_shape = null;\n");
+  const stdlib_exports_15828 = ctx_15812.top_level_exports;
+  (ctx_15812.top_level_exports = null, undefined);
+  List$iter(_call(Js_codegen$compile_decl, [ctx_15812]), user_program);
+  Js_codegen$drain_cps_twins(ctx_15812);
+  Js_codegen$emit(ctx_15812, "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n");
+  const user_exports_15830 = ctx_15812.top_level_exports;
+  (ctx_15812.top_level_exports = user_exports_15830, undefined);
+  stdlib_exports_15828;
   undefined;
-  Js_codegen$emit_exports(ctx_15772);
-  const _t15791 = Buffer$contents(ctx_15772.buf);
-  const _t15789 = _t15791;
-  const _t15773 = _t15789;
-  return _t15773;
+  Js_codegen$emit_exports(ctx_15812);
+  const _t15831 = Buffer$contents(ctx_15812.buf);
+  const _t15829 = _t15831;
+  const _t15813 = _t15829;
+  return _t15813;
 }
 if (typeof __cache_has === "undefined") { if (globalThis._mmlExterns && globalThis._mmlExterns["__cache_has"]) var __cache_has = globalThis._mmlExterns["__cache_has"]; else throw new Error("extern " + "__cache_has" + " not provided"); }
 if (typeof __cache_get === "undefined") { if (globalThis._mmlExterns && globalThis._mmlExterns["__cache_get"]) var __cache_get = globalThis._mmlExterns["__cache_get"]; else throw new Error("extern " + "__cache_get" + " not provided"); }
 if (typeof __cache_set === "undefined") { if (globalThis._mmlExterns && globalThis._mmlExterns["__cache_set"]) var __cache_set = globalThis._mmlExterns["__cache_set"]; else throw new Error("extern " + "__cache_set" + " not provided"); }
 function Main$list_iter(f, xs) {
   while (true) {
-    let _t15793;
-    const _t15792 = xs;
-    _t15794: {
-      if (_t15792 === null) {
-        _t15793 = undefined;
-        break _t15794;
+    let _t15833;
+    const _t15832 = xs;
+    _t15834: {
+      if (_t15832 === null) {
+        _t15833 = undefined;
+        break _t15834;
       }
-      if (_t15792 !== null) {
-        const x = _t15792._hd;
-        const rest = _t15792._tl;
+      if (_t15832 !== null) {
+        const x = _t15832._hd;
+        const rest = _t15832._tl;
         f(x);
-        const _t15795 = f;
-        const _t15796 = rest;
-        f = _t15795;
-        xs = _t15796;
+        const _t15835 = f;
+        const _t15836 = rest;
+        f = _t15835;
+        xs = _t15836;
         continue;
-        _t15793 = undefined;
-        break _t15794;
+        _t15833 = undefined;
+        break _t15834;
       }
       _match_fail("line 0");
     }
-    return _t15793;
+    return _t15833;
   }
 }
 function Main$list_iteri_aux(f, i, xs) {
   while (true) {
-    let _t15798;
-    const _t15797 = xs;
-    _t15799: {
-      if (_t15797 === null) {
-        _t15798 = undefined;
-        break _t15799;
+    let _t15838;
+    const _t15837 = xs;
+    _t15839: {
+      if (_t15837 === null) {
+        _t15838 = undefined;
+        break _t15839;
       }
-      if (_t15797 !== null) {
-        const x = _t15797._hd;
-        const rest = _t15797._tl;
+      if (_t15837 !== null) {
+        const x = _t15837._hd;
+        const rest = _t15837._tl;
         _call(f, [i, x]);
-        const _t15800 = f;
-        const _t15801 = (i + 1);
-        const _t15802 = rest;
-        f = _t15800;
-        i = _t15801;
-        xs = _t15802;
+        const _t15840 = f;
+        const _t15841 = (i + 1);
+        const _t15842 = rest;
+        f = _t15840;
+        i = _t15841;
+        xs = _t15842;
         continue;
-        _t15798 = undefined;
-        break _t15799;
+        _t15838 = undefined;
+        break _t15839;
       }
       _match_fail("line 0");
     }
-    return _t15798;
+    return _t15838;
   }
 }
 function Main$list_iteri(f, xs) {
@@ -67391,233 +67533,233 @@ function Main$register_native_ext(__dict_Show_0, idx, name, arity) {
 function Main$register_native_dict(__dict_Show_0, idx, fields) {
   return (Main$native_global_entries = ({_hd: _call(Serialize$serialize_native_dict, [__dict_Show_0, idx, fields]), _tl: Main$native_global_entries}), undefined);
 }
-function _t15803_Main$build_native_globals_json(_) {
+function _t15843_Main$build_native_globals_json(_) {
   return _call(String$concat, [",", List$rev(Main$native_global_entries)]);
 }
 function Main$add_global(global_names, name) {
-  const idx_15804 = Dynarray$length(global_names);
+  const idx_15844 = Dynarray$length(global_names);
   Dynarray$push(global_names, name);
-  const _t15805 = idx_15804;
-  return _t15805;
+  const _t15845 = idx_15844;
+  return _t15845;
 }
 function Main$register_module_fn(__dict_Show_0, ctx, global_names, mod_name, fn_name, ty, arity) {
-  const qualified_15806 = ((mod_name + ".") + fn_name);
-  const idx_15808 = Main$add_global(global_names, qualified_15806);
-  _call(Main$register_native_ext, [__dict_Show_0, idx_15808, qualified_15806, arity]);
-  const max_gen_15810 = Typechecker$max_tgen_in_ty(ty);
-  let _t15812;
-  if ((max_gen_15810 >= 0)) {
-    _t15812 = ({body: ty, constraints: null, equant: 0, pvquant: 0, quant: (max_gen_15810 + 1), record_evidences: null, rquant: 0});
+  const qualified_15846 = ((mod_name + ".") + fn_name);
+  const idx_15848 = Main$add_global(global_names, qualified_15846);
+  _call(Main$register_native_ext, [__dict_Show_0, idx_15848, qualified_15846, arity]);
+  const max_gen_15850 = Typechecker$max_tgen_in_ty(ty);
+  let _t15852;
+  if ((max_gen_15850 >= 0)) {
+    _t15852 = ({body: ty, constraints: null, equant: 0, pvquant: 0, quant: (max_gen_15850 + 1), record_evidences: null, rquant: 0});
   } else {
-    _t15812 = Types$mono(ty);
+    _t15852 = Types$mono(ty);
   }
-  const scheme_15813 = _t15812;
-  const vars_15815 = ({_hd: [qualified_15806, scheme_15813], _tl: ctx.vars});
-  const __rec_upd_15817 = ctx;
-  const _t15818 = ({constraint_tvars: __rec_upd_15817.constraint_tvars, current_eff: __rec_upd_15817.current_eff, current_module: __rec_upd_15817.current_module, inside_handler: __rec_upd_15817.inside_handler, loc: __rec_upd_15817.loc, loop_info: __rec_upd_15817.loop_info, mutable_vars: __rec_upd_15817.mutable_vars, return_type: __rec_upd_15817.return_type, return_used: __rec_upd_15817.return_used, type_env: __rec_upd_15817.type_env, vars: vars_15815});
-  const _t15816 = [[fn_name, scheme_15813], _t15818];
-  const _t15814 = _t15816;
-  const _t15811 = _t15814;
-  const _t15809 = _t15811;
-  const _t15807 = _t15809;
-  return _t15807;
+  const scheme_15853 = _t15852;
+  const vars_15855 = ({_hd: [qualified_15846, scheme_15853], _tl: ctx.vars});
+  const __rec_upd_15857 = ctx;
+  const _t15858 = ({constraint_tvars: __rec_upd_15857.constraint_tvars, current_eff: __rec_upd_15857.current_eff, current_module: __rec_upd_15857.current_module, inside_handler: __rec_upd_15857.inside_handler, loc: __rec_upd_15857.loc, loop_info: __rec_upd_15857.loop_info, mutable_vars: __rec_upd_15857.mutable_vars, return_type: __rec_upd_15857.return_type, return_used: __rec_upd_15857.return_used, type_env: __rec_upd_15857.type_env, vars: vars_15855});
+  const _t15856 = [[fn_name, scheme_15853], _t15858];
+  const _t15854 = _t15856;
+  const _t15851 = _t15854;
+  const _t15849 = _t15851;
+  const _t15847 = _t15849;
+  return _t15847;
 }
 function Main$register_class_in_ctx(ctx, name, tyvars, methods) {
-  const num_params_15819 = List$length(tyvars);
-  function _t15821(vars, __p416) {
-    let _t15823;
-    const _t15822 = __p416;
-    _t15824: {
-      const mname = _t15822[0];
-      const mty = _t15822[1];
-      const max_gen_15825 = Typechecker$max_tgen_in_ty(mty);
-      let _t15827;
-      if (((max_gen_15825 + 1) > num_params_15819)) {
-        _t15827 = (max_gen_15825 + 1);
+  const num_params_15859 = List$length(tyvars);
+  function _t15861(vars, __p416) {
+    let _t15863;
+    const _t15862 = __p416;
+    _t15864: {
+      const mname = _t15862[0];
+      const mty = _t15862[1];
+      const max_gen_15865 = Typechecker$max_tgen_in_ty(mty);
+      let _t15867;
+      if (((max_gen_15865 + 1) > num_params_15859)) {
+        _t15867 = (max_gen_15865 + 1);
       } else {
-        _t15827 = num_params_15819;
+        _t15867 = num_params_15859;
       }
-      const quant_15828 = _t15827;
-      const _t15829 = ({_hd: [mname, ({body: mty, constraints: null, equant: 0, pvquant: 0, quant: quant_15828, record_evidences: null, rquant: 0})], _tl: vars});
-      const _t15826 = _t15829;
-      _t15823 = _t15826;
-      break _t15824;
+      const quant_15868 = _t15867;
+      const _t15869 = ({_hd: [mname, ({body: mty, constraints: null, equant: 0, pvquant: 0, quant: quant_15868, record_evidences: null, rquant: 0})], _tl: vars});
+      const _t15866 = _t15869;
+      _t15863 = _t15866;
+      break _t15864;
     }
-    return _t15823;
+    return _t15863;
   }
-  const new_vars_15830 = List$fold(_t15821, ctx.vars, methods);
-  const __rec_upd_15832 = ctx.type_env;
-  const _t15833 = ({classes: ({_hd: ({class_fundeps: null, class_methods: methods, class_name: name, class_params: tyvars}), _tl: ctx.type_env.classes}), constructors: __rec_upd_15832.constructors, effects: __rec_upd_15832.effects, hidden_ctor_types: __rec_upd_15832.hidden_ctor_types, hidden_types: __rec_upd_15832.hidden_types, instances: __rec_upd_15832.instances, modules: __rec_upd_15832.modules, mutable_fields: __rec_upd_15832.mutable_fields, newtypes: __rec_upd_15832.newtypes, records: __rec_upd_15832.records, type_aliases: __rec_upd_15832.type_aliases, type_synonyms: __rec_upd_15832.type_synonyms, variants: __rec_upd_15832.variants});
-  const type_env_15834 = _t15833;
-  const __rec_upd_15836 = ctx;
-  const _t15837 = ({constraint_tvars: __rec_upd_15836.constraint_tvars, current_eff: __rec_upd_15836.current_eff, current_module: __rec_upd_15836.current_module, inside_handler: __rec_upd_15836.inside_handler, loc: __rec_upd_15836.loc, loop_info: __rec_upd_15836.loop_info, mutable_vars: __rec_upd_15836.mutable_vars, return_type: __rec_upd_15836.return_type, return_used: __rec_upd_15836.return_used, type_env: type_env_15834, vars: new_vars_15830});
-  const _t15835 = _t15837;
-  const _t15831 = _t15835;
-  const _t15820 = _t15831;
-  return _t15820;
+  const new_vars_15870 = List$fold(_t15861, ctx.vars, methods);
+  const __rec_upd_15872 = ctx.type_env;
+  const _t15873 = ({classes: ({_hd: ({class_fundeps: null, class_methods: methods, class_name: name, class_params: tyvars}), _tl: ctx.type_env.classes}), constructors: __rec_upd_15872.constructors, effects: __rec_upd_15872.effects, hidden_ctor_types: __rec_upd_15872.hidden_ctor_types, hidden_types: __rec_upd_15872.hidden_types, instances: __rec_upd_15872.instances, modules: __rec_upd_15872.modules, mutable_fields: __rec_upd_15872.mutable_fields, newtypes: __rec_upd_15872.newtypes, records: __rec_upd_15872.records, type_aliases: __rec_upd_15872.type_aliases, type_synonyms: __rec_upd_15872.type_synonyms, variants: __rec_upd_15872.variants});
+  const type_env_15874 = _t15873;
+  const __rec_upd_15876 = ctx;
+  const _t15877 = ({constraint_tvars: __rec_upd_15876.constraint_tvars, current_eff: __rec_upd_15876.current_eff, current_module: __rec_upd_15876.current_module, inside_handler: __rec_upd_15876.inside_handler, loc: __rec_upd_15876.loc, loop_info: __rec_upd_15876.loop_info, mutable_vars: __rec_upd_15876.mutable_vars, return_type: __rec_upd_15876.return_type, return_used: __rec_upd_15876.return_used, type_env: type_env_15874, vars: new_vars_15870});
+  const _t15875 = _t15877;
+  const _t15871 = _t15875;
+  const _t15860 = _t15871;
+  return _t15860;
 }
 function Main$register_native_instance(__dict_Show_0, ctx, global_names, class_name, tys, methods) {
-  const dname_15838 = _call(Types$dict_name, [__dict_Show_string, class_name, tys]);
-  const idx_15840 = Main$add_global(global_names, dname_15838);
-  function _t15842(__p417) {
-    let _t15844;
-    const _t15843 = __p417;
-    _t15845: {
-      const mname = _t15843[0];
-      const ext_name = _t15843[1];
-      const arity = _t15843[2];
-      _t15844 = [mname, ext_name, arity];
-      break _t15845;
+  const dname_15878 = _call(Types$dict_name, [__dict_Show_string, class_name, tys]);
+  const idx_15880 = Main$add_global(global_names, dname_15878);
+  function _t15882(__p417) {
+    let _t15884;
+    const _t15883 = __p417;
+    _t15885: {
+      const mname = _t15883[0];
+      const ext_name = _t15883[1];
+      const arity = _t15883[2];
+      _t15884 = [mname, ext_name, arity];
+      break _t15885;
     }
-    return _t15844;
+    return _t15884;
   }
-  const dict_fields_15846 = List$map(_t15842, methods);
-  _call(Main$register_native_dict, [__dict_Show_0, idx_15840, dict_fields_15846]);
-  function _t15848(__p418, __p419) {
-    let _t15850;
-    const _t15849 = __p418;
-    _t15851: {
-      const a = _t15849[0];
-      let _t15853;
-      const _t15852 = __p419;
-      _t15854: {
-        const b = _t15852[0];
-        _t15853 = _call(String$compare, [a, b]);
-        break _t15854;
+  const dict_fields_15886 = List$map(_t15882, methods);
+  _call(Main$register_native_dict, [__dict_Show_0, idx_15880, dict_fields_15886]);
+  function _t15888(__p418, __p419) {
+    let _t15890;
+    const _t15889 = __p418;
+    _t15891: {
+      const a = _t15889[0];
+      let _t15893;
+      const _t15892 = __p419;
+      _t15894: {
+        const b = _t15892[0];
+        _t15893 = _call(String$compare, [a, b]);
+        break _t15894;
       }
-      _t15850 = _t15853;
-      break _t15851;
+      _t15890 = _t15893;
+      break _t15891;
     }
-    return _t15850;
+    return _t15890;
   }
-  const sorted_15855 = List$sort(_t15848, methods);
-  function _t15857(__p420) {
-    let _t15859;
-    const _t15858 = __p420;
-    _t15860: {
-      const mname = _t15858[0];
-      const ext_name = _t15858[1];
-      const arity = _t15858[2];
-      const midx_15861 = Main$add_global(global_names, ((dname_15838 + "$") + mname));
-      const _t15862 = _call(Main$register_native_ext, [__dict_Show_0, midx_15861, ext_name, arity]);
-      _t15859 = _t15862;
-      break _t15860;
+  const sorted_15895 = List$sort(_t15888, methods);
+  function _t15897(__p420) {
+    let _t15899;
+    const _t15898 = __p420;
+    _t15900: {
+      const mname = _t15898[0];
+      const ext_name = _t15898[1];
+      const arity = _t15898[2];
+      const midx_15901 = Main$add_global(global_names, ((dname_15878 + "$") + mname));
+      const _t15902 = _call(Main$register_native_ext, [__dict_Show_0, midx_15901, ext_name, arity]);
+      _t15899 = _t15902;
+      break _t15900;
     }
-    return _t15859;
+    return _t15899;
   }
-  List$iter(_t15857, sorted_15855);
-  const __rec_upd_15863 = ctx.type_env;
-  const _t15864 = ({classes: __rec_upd_15863.classes, constructors: __rec_upd_15863.constructors, effects: __rec_upd_15863.effects, hidden_ctor_types: __rec_upd_15863.hidden_ctor_types, hidden_types: __rec_upd_15863.hidden_types, instances: ({_hd: ({inst_class: class_name, inst_constraints: null, inst_dict_name: dname_15838, inst_tys: tys}), _tl: ctx.type_env.instances}), modules: __rec_upd_15863.modules, mutable_fields: __rec_upd_15863.mutable_fields, newtypes: __rec_upd_15863.newtypes, records: __rec_upd_15863.records, type_aliases: __rec_upd_15863.type_aliases, type_synonyms: __rec_upd_15863.type_synonyms, variants: __rec_upd_15863.variants});
-  const type_env_15865 = _t15864;
-  const __rec_upd_15867 = ctx;
-  const _t15868 = ({constraint_tvars: __rec_upd_15867.constraint_tvars, current_eff: __rec_upd_15867.current_eff, current_module: __rec_upd_15867.current_module, inside_handler: __rec_upd_15867.inside_handler, loc: __rec_upd_15867.loc, loop_info: __rec_upd_15867.loop_info, mutable_vars: __rec_upd_15867.mutable_vars, return_type: __rec_upd_15867.return_type, return_used: __rec_upd_15867.return_used, type_env: type_env_15865, vars: __rec_upd_15867.vars});
-  const _t15866 = _t15868;
-  const _t15856 = _t15866;
-  const _t15847 = _t15856;
-  const _t15841 = _t15847;
-  const _t15839 = _t15841;
-  return _t15839;
+  List$iter(_t15897, sorted_15895);
+  const __rec_upd_15903 = ctx.type_env;
+  const _t15904 = ({classes: __rec_upd_15903.classes, constructors: __rec_upd_15903.constructors, effects: __rec_upd_15903.effects, hidden_ctor_types: __rec_upd_15903.hidden_ctor_types, hidden_types: __rec_upd_15903.hidden_types, instances: ({_hd: ({inst_class: class_name, inst_constraints: null, inst_dict_name: dname_15878, inst_tys: tys}), _tl: ctx.type_env.instances}), modules: __rec_upd_15903.modules, mutable_fields: __rec_upd_15903.mutable_fields, newtypes: __rec_upd_15903.newtypes, records: __rec_upd_15903.records, type_aliases: __rec_upd_15903.type_aliases, type_synonyms: __rec_upd_15903.type_synonyms, variants: __rec_upd_15903.variants});
+  const type_env_15905 = _t15904;
+  const __rec_upd_15907 = ctx;
+  const _t15908 = ({constraint_tvars: __rec_upd_15907.constraint_tvars, current_eff: __rec_upd_15907.current_eff, current_module: __rec_upd_15907.current_module, inside_handler: __rec_upd_15907.inside_handler, loc: __rec_upd_15907.loc, loop_info: __rec_upd_15907.loop_info, mutable_vars: __rec_upd_15907.mutable_vars, return_type: __rec_upd_15907.return_type, return_used: __rec_upd_15907.return_used, type_env: type_env_15905, vars: __rec_upd_15907.vars});
+  const _t15906 = _t15908;
+  const _t15896 = _t15906;
+  const _t15887 = _t15896;
+  const _t15881 = _t15887;
+  const _t15879 = _t15881;
+  return _t15879;
 }
 let Main$js_capture_mode = false;
 let Main$captured_typed_setups = null;
 function Main$arity_of_type(ty) {
-  let _t15870;
-  const _t15869 = ty;
-  _t15871: {
-    if (_t15869._tag === 7) {
-      const ret = _t15869._val[2];
-      _t15870 = (1 + Main$arity_of_type(ret));
-      break _t15871;
+  let _t15910;
+  const _t15909 = ty;
+  _t15911: {
+    if (_t15909._tag === 7) {
+      const ret = _t15909._val[2];
+      _t15910 = (1 + Main$arity_of_type(ret));
+      break _t15911;
     }
-    _t15870 = 0;
-    break _t15871;
+    _t15910 = 0;
+    break _t15911;
   }
-  return _t15870;
+  return _t15910;
 }
 function Main$find_global_index(__dict_Eq_0, global_names, name) {
-  const len_15872 = Dynarray$length(global_names);
+  const len_15912 = Dynarray$length(global_names);
   function find(i) {
     while (true) {
-      let _t15874;
-      if ((i >= len_15872)) {
-        _t15874 = (-1);
+      let _t15914;
+      if ((i >= len_15912)) {
+        _t15914 = (-1);
       } else {
-        let _t15875;
+        let _t15915;
         if (_call(__dict_Eq_0.$eq, [Dynarray$get(global_names, i), name])) {
-          _t15875 = i;
+          _t15915 = i;
         } else {
-          const _t15876 = (i + 1);
-          i = _t15876;
+          const _t15916 = (i + 1);
+          i = _t15916;
           continue;
-          _t15875 = undefined;
+          _t15915 = undefined;
         }
-        _t15874 = _t15875;
+        _t15914 = _t15915;
       }
-      return _t15874;
+      return _t15914;
     }
   }
-  const _t15877 = find(0);
-  const _t15873 = _t15877;
-  return _t15873;
+  const _t15917 = find(0);
+  const _t15913 = _t15917;
+  return _t15913;
 }
 function Main$register_externs_from_program(typed_program, global_names) {
-  function _t15878(decl) {
-    let _t15880;
-    const _t15879 = decl;
-    _t15881: {
-      if (_t15879._tag === 8) {
-        const name = _t15879._val[0];
-        const scheme = _t15879._val[1];
-        const idx_15882 = _call(Main$find_global_index, [__dict_Eq_string, global_names, name]);
-        let _t15884;
-        if ((idx_15882 >= 0)) {
-          const arity_15885 = Main$arity_of_type(scheme.body);
-          const _t15886 = _call(Main$register_native_ext, [__dict_Show_int, idx_15882, name, arity_15885]);
-          _t15884 = _t15886;
+  function _t15918(decl) {
+    let _t15920;
+    const _t15919 = decl;
+    _t15921: {
+      if (_t15919._tag === 8) {
+        const name = _t15919._val[0];
+        const scheme = _t15919._val[1];
+        const idx_15922 = _call(Main$find_global_index, [__dict_Eq_string, global_names, name]);
+        let _t15924;
+        if ((idx_15922 >= 0)) {
+          const arity_15925 = Main$arity_of_type(scheme.body);
+          const _t15926 = _call(Main$register_native_ext, [__dict_Show_int, idx_15922, name, arity_15925]);
+          _t15924 = _t15926;
         } else {
-          _t15884 = undefined;
+          _t15924 = undefined;
         }
-        const _t15883 = _t15884;
-        _t15880 = _t15883;
-        break _t15881;
+        const _t15923 = _t15924;
+        _t15920 = _t15923;
+        break _t15921;
       }
-      _t15880 = undefined;
-      break _t15881;
+      _t15920 = undefined;
+      break _t15921;
     }
-    return _t15880;
+    return _t15920;
   }
-  return List$iter(_t15878, typed_program);
+  return List$iter(_t15918, typed_program);
 }
 function Main$compile_setup(ctx, global_names, mutable_globals, source) {
-  const tokens_15887 = Lexer$tokenize(source);
-  const program_15889 = Parser$parse_program(tokens_15887);
-  let _t15892;
-  const _t15891 = Typechecker$check_program_in_ctx(ctx, program_15889);
-  _t15893: {
-    const ctx2 = _t15891[0];
-    const typed_program = _t15891[1];
-    const typed_program2_15894 = Typechecker$transform_constraints(ctx2, typed_program);
-    const typed_program2_15896 = Typechecker$classify_handlers(typed_program2_15894);
-    const typed_program2_15898 = Match_tree$lower_program(ctx2.type_env, typed_program2_15896);
-    let _t15900;
+  const tokens_15927 = Lexer$tokenize(source);
+  const program_15929 = Parser$parse_program(tokens_15927);
+  let _t15932;
+  const _t15931 = Typechecker$check_program_in_ctx(ctx, program_15929);
+  _t15933: {
+    const ctx2 = _t15931[0];
+    const typed_program = _t15931[1];
+    const typed_program2_15934 = Typechecker$transform_constraints(ctx2, typed_program);
+    const typed_program2_15936 = Typechecker$classify_handlers(typed_program2_15934);
+    const typed_program2_15938 = Match_tree$lower_program(ctx2.type_env, typed_program2_15936);
+    let _t15940;
     if (Main$js_capture_mode) {
-      (Main$captured_typed_setups = List$concat(Main$captured_typed_setups, ({_hd: [ctx2.type_env, typed_program2_15898], _tl: null})), undefined);
-      _t15900 = [ctx2, ({arity: 0, code: Array$of_list(null), constants: Array$of_list(null), line_table: Array$of_list(null), name: "", num_locals: 0}), typed_program2_15898];
+      (Main$captured_typed_setups = List$concat(Main$captured_typed_setups, ({_hd: [ctx2.type_env, typed_program2_15938], _tl: null})), undefined);
+      _t15940 = [ctx2, ({arity: 0, code: Array$of_list(null), constants: Array$of_list(null), line_table: Array$of_list(null), name: "", num_locals: 0}), typed_program2_15938];
     } else {
-      const compiled_15901 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_15898);
-      Main$register_externs_from_program(typed_program2_15898, global_names);
-      const _t15902 = [ctx2, compiled_15901.main, typed_program2_15898];
-      _t15900 = _t15902;
+      const compiled_15941 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_15938);
+      Main$register_externs_from_program(typed_program2_15938, global_names);
+      const _t15942 = [ctx2, compiled_15941.main, typed_program2_15938];
+      _t15940 = _t15942;
     }
-    const _t15899 = _t15900;
-    const _t15897 = _t15899;
-    const _t15895 = _t15897;
-    _t15892 = _t15895;
-    break _t15893;
+    const _t15939 = _t15940;
+    const _t15937 = _t15939;
+    const _t15935 = _t15937;
+    _t15932 = _t15935;
+    break _t15933;
   }
-  const _t15890 = _t15892;
-  const _t15888 = _t15890;
-  return _t15888;
+  const _t15930 = _t15932;
+  const _t15928 = _t15930;
+  return _t15928;
 }
 function Main$arr(a, b) {
   return ({_tag: 7, _name: "TArrow", _val: [a, ({_tag: 1, _name: "EffEmpty"}), b]});
@@ -67629,259 +67771,259 @@ function Main$arr3(a, b, c, d) {
   return Main$arr(a, Main$arr(b, Main$arr(c, d)));
 }
 function Main$setup_builtins(_) {
-  const global_names_15903 = Dynarray$create(256, "");
-  const mutable_globals_15905 = Hashtbl$create(8);
-  const _t15906 = [Typechecker$empty_ctx, global_names_15903, mutable_globals_15905];
-  const _t15904 = _t15906;
-  return _t15904;
+  const global_names_15943 = Dynarray$create(256, "");
+  const mutable_globals_15945 = Hashtbl$create(8);
+  const _t15946 = [Typechecker$empty_ctx, global_names_15943, mutable_globals_15945];
+  const _t15944 = _t15946;
+  return _t15944;
 }
 function Main$setup_classes(ctx, global_names, mutable_globals) {
-  let ctx_15907 = ctx;
-  let setup_protos_15909 = null;
-  function _t15911(name) {
-    let _t15913;
-    const _t15912 = Main$compile_setup(ctx_15907, global_names, mutable_globals, IO$read_file((("stdlib/" + name) + ".mml")));
-    _t15914: {
-      const ctx2 = _t15912[0];
-      const proto = _t15912[1];
-      (ctx_15907 = ctx2, undefined);
-      _t15913 = (setup_protos_15909 = ({_hd: proto, _tl: setup_protos_15909}), undefined);
-      break _t15914;
+  let ctx_15947 = ctx;
+  let setup_protos_15949 = null;
+  function _t15951(name) {
+    let _t15953;
+    const _t15952 = Main$compile_setup(ctx_15947, global_names, mutable_globals, IO$read_file((("stdlib/" + name) + ".mml")));
+    _t15954: {
+      const ctx2 = _t15952[0];
+      const proto = _t15952[1];
+      (ctx_15947 = ctx2, undefined);
+      _t15953 = (setup_protos_15949 = ({_hd: proto, _tl: setup_protos_15949}), undefined);
+      break _t15954;
     }
-    return _t15913;
+    return _t15953;
   }
-  const load_15915 = _t15911;
-  let _t15918;
-  const _t15917 = Main$compile_setup(ctx_15907, global_names, mutable_globals, IO$read_file("stdlib/builtins.mml"));
-  _t15919: {
-    const ctx2 = _t15917[0];
-    const builtins_proto = _t15917[1];
-    const builtins_program = _t15917[2];
-    (ctx_15907 = ctx2, undefined);
-    (setup_protos_15909 = ({_hd: builtins_proto, _tl: setup_protos_15909}), undefined);
-    function _t15920(decl) {
-      let _t15922;
-      const _t15921 = decl;
-      _t15923: {
-        if (_t15921._tag === 8) {
-          const name = _t15921._val[0];
-          const scheme = _t15921._val[1];
-          _t15922 = ({_tag: 1, _name: "Some", _val: [name, scheme]});
-          break _t15923;
+  const load_15955 = _t15951;
+  let _t15958;
+  const _t15957 = Main$compile_setup(ctx_15947, global_names, mutable_globals, IO$read_file("stdlib/builtins.mml"));
+  _t15959: {
+    const ctx2 = _t15957[0];
+    const builtins_proto = _t15957[1];
+    const builtins_program = _t15957[2];
+    (ctx_15947 = ctx2, undefined);
+    (setup_protos_15949 = ({_hd: builtins_proto, _tl: setup_protos_15949}), undefined);
+    function _t15960(decl) {
+      let _t15962;
+      const _t15961 = decl;
+      _t15963: {
+        if (_t15961._tag === 8) {
+          const name = _t15961._val[0];
+          const scheme = _t15961._val[1];
+          _t15962 = ({_tag: 1, _name: "Some", _val: [name, scheme]});
+          break _t15963;
         }
-        _t15922 = ({_tag: 0, _name: "None"});
-        break _t15923;
+        _t15962 = ({_tag: 0, _name: "None"});
+        break _t15963;
       }
-      return _t15922;
+      return _t15962;
     }
-    const stdlib_pub_vars_15924 = List$filter_map(_t15920, builtins_program);
-    function _t15926(__p421) {
-      let _t15928;
-      const _t15927 = __p421;
-      _t15929: {
-        const name = _t15927[0];
-        const scheme = _t15927[1];
-        const stdlib_name_15930 = ("Stdlib." + name);
-        const sidx_15932 = Main$add_global(global_names, stdlib_name_15930);
-        _call(Main$register_native_ext, [__dict_Show_int, sidx_15932, name, Main$arity_of_type(scheme.body)]);
-        const __rec_upd_15934 = ctx_15907;
-        const _t15935 = ({constraint_tvars: __rec_upd_15934.constraint_tvars, current_eff: __rec_upd_15934.current_eff, current_module: __rec_upd_15934.current_module, inside_handler: __rec_upd_15934.inside_handler, loc: __rec_upd_15934.loc, loop_info: __rec_upd_15934.loop_info, mutable_vars: __rec_upd_15934.mutable_vars, return_type: __rec_upd_15934.return_type, return_used: __rec_upd_15934.return_used, type_env: __rec_upd_15934.type_env, vars: ({_hd: [stdlib_name_15930, scheme], _tl: ctx_15907.vars})});
-        const _t15933 = (ctx_15907 = _t15935, undefined);
-        const _t15931 = _t15933;
-        _t15928 = _t15931;
-        break _t15929;
+    const stdlib_pub_vars_15964 = List$filter_map(_t15960, builtins_program);
+    function _t15966(__p421) {
+      let _t15968;
+      const _t15967 = __p421;
+      _t15969: {
+        const name = _t15967[0];
+        const scheme = _t15967[1];
+        const stdlib_name_15970 = ("Stdlib." + name);
+        const sidx_15972 = Main$add_global(global_names, stdlib_name_15970);
+        _call(Main$register_native_ext, [__dict_Show_int, sidx_15972, name, Main$arity_of_type(scheme.body)]);
+        const __rec_upd_15974 = ctx_15947;
+        const _t15975 = ({constraint_tvars: __rec_upd_15974.constraint_tvars, current_eff: __rec_upd_15974.current_eff, current_module: __rec_upd_15974.current_module, inside_handler: __rec_upd_15974.inside_handler, loc: __rec_upd_15974.loc, loop_info: __rec_upd_15974.loop_info, mutable_vars: __rec_upd_15974.mutable_vars, return_type: __rec_upd_15974.return_type, return_used: __rec_upd_15974.return_used, type_env: __rec_upd_15974.type_env, vars: ({_hd: [stdlib_name_15970, scheme], _tl: ctx_15947.vars})});
+        const _t15973 = (ctx_15947 = _t15975, undefined);
+        const _t15971 = _t15973;
+        _t15968 = _t15971;
+        break _t15969;
       }
-      return _t15928;
+      return _t15968;
     }
-    Main$list_iter(_t15926, stdlib_pub_vars_15924);
-    load_15915("classes");
-    load_15915("option_type");
-    load_15915("iter");
-    load_15915("map_class");
-    load_15915("show");
-    function _t15936(__p422) {
-      let _t15938;
-      const _t15937 = __p422;
-      _t15939: {
-        const name = _t15937[0];
-        _t15938 = ((name === "None") || (name === "Some"));
-        break _t15939;
+    Main$list_iter(_t15966, stdlib_pub_vars_15964);
+    load_15955("classes");
+    load_15955("option_type");
+    load_15955("iter");
+    load_15955("map_class");
+    load_15955("show");
+    function _t15976(__p422) {
+      let _t15978;
+      const _t15977 = __p422;
+      _t15979: {
+        const name = _t15977[0];
+        _t15978 = ((name === "None") || (name === "Some"));
+        break _t15979;
       }
-      return _t15938;
+      return _t15978;
     }
-    const stdlib_constructors_15940 = List$filter(_t15936, ctx_15907.type_env.constructors);
-    const __rec_upd_15942 = ctx_15907;
-    const __rec_upd_15944 = ctx_15907.type_env;
-    const _t15945 = ({classes: __rec_upd_15944.classes, constructors: __rec_upd_15944.constructors, effects: __rec_upd_15944.effects, hidden_ctor_types: __rec_upd_15944.hidden_ctor_types, hidden_types: __rec_upd_15944.hidden_types, instances: __rec_upd_15944.instances, modules: ({_hd: ["Stdlib", ({mod_instances: null, mod_name: "Stdlib", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: stdlib_constructors_15940, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: stdlib_pub_vars_15924, mod_submodules: null})], _tl: ctx_15907.type_env.modules}), mutable_fields: __rec_upd_15944.mutable_fields, newtypes: __rec_upd_15944.newtypes, records: __rec_upd_15944.records, type_aliases: __rec_upd_15944.type_aliases, type_synonyms: __rec_upd_15944.type_synonyms, variants: __rec_upd_15944.variants});
-    const _t15943 = ({constraint_tvars: __rec_upd_15942.constraint_tvars, current_eff: __rec_upd_15942.current_eff, current_module: __rec_upd_15942.current_module, inside_handler: __rec_upd_15942.inside_handler, loc: __rec_upd_15942.loc, loop_info: __rec_upd_15942.loop_info, mutable_vars: __rec_upd_15942.mutable_vars, return_type: __rec_upd_15942.return_type, return_used: __rec_upd_15942.return_used, type_env: _t15945, vars: __rec_upd_15942.vars});
-    (ctx_15907 = _t15943, undefined);
-    const _t15941 = [ctx_15907, List$rev(setup_protos_15909)];
-    const _t15925 = _t15941;
-    _t15918 = _t15925;
-    break _t15919;
+    const stdlib_constructors_15980 = List$filter(_t15976, ctx_15947.type_env.constructors);
+    const __rec_upd_15982 = ctx_15947;
+    const __rec_upd_15984 = ctx_15947.type_env;
+    const _t15985 = ({classes: __rec_upd_15984.classes, constructors: __rec_upd_15984.constructors, effects: __rec_upd_15984.effects, hidden_ctor_types: __rec_upd_15984.hidden_ctor_types, hidden_types: __rec_upd_15984.hidden_types, instances: __rec_upd_15984.instances, modules: ({_hd: ["Stdlib", ({mod_instances: null, mod_name: "Stdlib", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: stdlib_constructors_15980, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: stdlib_pub_vars_15964, mod_submodules: null})], _tl: ctx_15947.type_env.modules}), mutable_fields: __rec_upd_15984.mutable_fields, newtypes: __rec_upd_15984.newtypes, records: __rec_upd_15984.records, type_aliases: __rec_upd_15984.type_aliases, type_synonyms: __rec_upd_15984.type_synonyms, variants: __rec_upd_15984.variants});
+    const _t15983 = ({constraint_tvars: __rec_upd_15982.constraint_tvars, current_eff: __rec_upd_15982.current_eff, current_module: __rec_upd_15982.current_module, inside_handler: __rec_upd_15982.inside_handler, loc: __rec_upd_15982.loc, loop_info: __rec_upd_15982.loop_info, mutable_vars: __rec_upd_15982.mutable_vars, return_type: __rec_upd_15982.return_type, return_used: __rec_upd_15982.return_used, type_env: _t15985, vars: __rec_upd_15982.vars});
+    (ctx_15947 = _t15983, undefined);
+    const _t15981 = [ctx_15947, List$rev(setup_protos_15949)];
+    const _t15965 = _t15981;
+    _t15958 = _t15965;
+    break _t15959;
   }
-  const _t15916 = _t15918;
-  const _t15910 = _t15916;
-  const _t15908 = _t15910;
-  return _t15908;
+  const _t15956 = _t15958;
+  const _t15950 = _t15956;
+  const _t15948 = _t15950;
+  return _t15948;
 }
 function Main$setup_modules(ctx, global_names, mutable_globals) {
-  let pub_vars_15946 = null;
-  let ctx_15948 = ctx;
-  let setup_protos_15950 = null;
-  function _t15952(__dict_Show_0, mod_name, fn_name, ty, arity) {
-    let _t15954;
-    const _t15953 = _call(Main$register_module_fn, [__dict_Show_0, ctx_15948, global_names, mod_name, fn_name, ty, arity]);
-    _t15955: {
-      const pv = _t15953[0];
-      const ctx2 = _t15953[1];
-      (pub_vars_15946 = ({_hd: pv, _tl: pub_vars_15946}), undefined);
-      _t15954 = (ctx_15948 = ctx2, undefined);
-      break _t15955;
+  let pub_vars_15986 = null;
+  let ctx_15988 = ctx;
+  let setup_protos_15990 = null;
+  function _t15992(__dict_Show_0, mod_name, fn_name, ty, arity) {
+    let _t15994;
+    const _t15993 = _call(Main$register_module_fn, [__dict_Show_0, ctx_15988, global_names, mod_name, fn_name, ty, arity]);
+    _t15995: {
+      const pv = _t15993[0];
+      const ctx2 = _t15993[1];
+      (pub_vars_15986 = ({_hd: pv, _tl: pub_vars_15986}), undefined);
+      _t15994 = (ctx_15988 = ctx2, undefined);
+      break _t15995;
     }
-    return _t15954;
+    return _t15994;
   }
-  const register_fn_15956 = _t15952;
-  function _t15958(name) {
-    let _t15960;
-    const _t15959 = Main$compile_setup(ctx_15948, global_names, mutable_globals, IO$read_file((("stdlib/" + name) + ".mml")));
-    _t15961: {
-      const ctx2 = _t15959[0];
-      const proto = _t15959[1];
-      (ctx_15948 = ctx2, undefined);
-      _t15960 = (setup_protos_15950 = ({_hd: proto, _tl: setup_protos_15950}), undefined);
-      break _t15961;
+  const register_fn_15996 = _t15992;
+  function _t15998(name) {
+    let _t16000;
+    const _t15999 = Main$compile_setup(ctx_15988, global_names, mutable_globals, IO$read_file((("stdlib/" + name) + ".mml")));
+    _t16001: {
+      const ctx2 = _t15999[0];
+      const proto = _t15999[1];
+      (ctx_15988 = ctx2, undefined);
+      _t16000 = (setup_protos_15990 = ({_hd: proto, _tl: setup_protos_15990}), undefined);
+      break _t16001;
     }
-    return _t15960;
+    return _t16000;
   }
-  const load_15962 = _t15958;
-  (pub_vars_15946 = null, undefined);
-  _call(register_fn_15956, [__dict_Show_int, "String", "length", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "sub", Main$arr3(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 3, _name: "TString"})), 3]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "split", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "trim", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "starts_with", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "contains", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "replace", Main$arr3(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 3]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "to_int", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "to_float", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 1, _name: "TFloat"}), _tl: null})]})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "uppercase", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "lowercase", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "get", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "to_bytes", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "of_bytes", Main$arr(({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "to_byte_array", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "of_byte_array", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "to_runes", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "of_runes", Main$arr(({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "get_rune", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 5, _name: "TRune"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "of_byte", Main$arr(({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "rune_length", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "make", Main$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "index_opt", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "rindex_opt", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "concat", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})}), ({_tag: 3, _name: "TString"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "String", "compare", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 2]);
-  const string_info_15964 = ({mod_instances: null, mod_name: "String", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15946, mod_submodules: null});
-  const __rec_upd_15966 = ctx_15948;
-  const __rec_upd_15968 = ctx_15948.type_env;
-  const _t15969 = ({classes: __rec_upd_15968.classes, constructors: __rec_upd_15968.constructors, effects: __rec_upd_15968.effects, hidden_ctor_types: __rec_upd_15968.hidden_ctor_types, hidden_types: __rec_upd_15968.hidden_types, instances: __rec_upd_15968.instances, modules: ({_hd: ["String", string_info_15964], _tl: ctx_15948.type_env.modules}), mutable_fields: __rec_upd_15968.mutable_fields, newtypes: __rec_upd_15968.newtypes, records: __rec_upd_15968.records, type_aliases: __rec_upd_15968.type_aliases, type_synonyms: __rec_upd_15968.type_synonyms, variants: __rec_upd_15968.variants});
-  const _t15967 = ({constraint_tvars: __rec_upd_15966.constraint_tvars, current_eff: __rec_upd_15966.current_eff, current_module: __rec_upd_15966.current_module, inside_handler: __rec_upd_15966.inside_handler, loc: __rec_upd_15966.loc, loop_info: __rec_upd_15966.loop_info, mutable_vars: __rec_upd_15966.mutable_vars, return_type: __rec_upd_15966.return_type, return_used: __rec_upd_15966.return_used, type_env: _t15969, vars: __rec_upd_15966.vars});
-  (ctx_15948 = _t15967, undefined);
-  function _t15970(source) {
-    let _t15972;
-    const _t15971 = Main$compile_setup(ctx_15948, global_names, mutable_globals, source);
-    _t15973: {
-      const ctx2 = _t15971[0];
-      const proto = _t15971[1];
-      (ctx_15948 = ctx2, undefined);
-      _t15972 = (setup_protos_15950 = ({_hd: proto, _tl: setup_protos_15950}), undefined);
-      break _t15973;
+  const load_16002 = _t15998;
+  (pub_vars_15986 = null, undefined);
+  _call(register_fn_15996, [__dict_Show_int, "String", "length", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "sub", Main$arr3(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 3, _name: "TString"})), 3]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "split", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "trim", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "starts_with", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "contains", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "replace", Main$arr3(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 3]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "to_int", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "to_float", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 1, _name: "TFloat"}), _tl: null})]})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "uppercase", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "lowercase", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "get", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "to_bytes", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "of_bytes", Main$arr(({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "to_byte_array", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "of_byte_array", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "to_runes", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "of_runes", Main$arr(({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "get_rune", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 5, _name: "TRune"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "of_byte", Main$arr(({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "rune_length", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "make", Main$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "index_opt", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "rindex_opt", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "concat", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})}), ({_tag: 3, _name: "TString"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "String", "compare", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 2]);
+  const string_info_16004 = ({mod_instances: null, mod_name: "String", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15986, mod_submodules: null});
+  const __rec_upd_16006 = ctx_15988;
+  const __rec_upd_16008 = ctx_15988.type_env;
+  const _t16009 = ({classes: __rec_upd_16008.classes, constructors: __rec_upd_16008.constructors, effects: __rec_upd_16008.effects, hidden_ctor_types: __rec_upd_16008.hidden_ctor_types, hidden_types: __rec_upd_16008.hidden_types, instances: __rec_upd_16008.instances, modules: ({_hd: ["String", string_info_16004], _tl: ctx_15988.type_env.modules}), mutable_fields: __rec_upd_16008.mutable_fields, newtypes: __rec_upd_16008.newtypes, records: __rec_upd_16008.records, type_aliases: __rec_upd_16008.type_aliases, type_synonyms: __rec_upd_16008.type_synonyms, variants: __rec_upd_16008.variants});
+  const _t16007 = ({constraint_tvars: __rec_upd_16006.constraint_tvars, current_eff: __rec_upd_16006.current_eff, current_module: __rec_upd_16006.current_module, inside_handler: __rec_upd_16006.inside_handler, loc: __rec_upd_16006.loc, loop_info: __rec_upd_16006.loop_info, mutable_vars: __rec_upd_16006.mutable_vars, return_type: __rec_upd_16006.return_type, return_used: __rec_upd_16006.return_used, type_env: _t16009, vars: __rec_upd_16006.vars});
+  (ctx_15988 = _t16007, undefined);
+  function _t16010(source) {
+    let _t16012;
+    const _t16011 = Main$compile_setup(ctx_15988, global_names, mutable_globals, source);
+    _t16013: {
+      const ctx2 = _t16011[0];
+      const proto = _t16011[1];
+      (ctx_15988 = ctx2, undefined);
+      _t16012 = (setup_protos_15990 = ({_hd: proto, _tl: setup_protos_15990}), undefined);
+      break _t16013;
     }
-    return _t15972;
+    return _t16012;
   }
-  _t15970("module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end");
-  load_15962("list");
-  (pub_vars_15946 = null, undefined);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "make", Main$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "get", Main$arr2(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "set", Main$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 6, _name: "TUnit"})), 3]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "length", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "to_list", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "of_list", Main$arr(({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "copy", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Array", "sub", Main$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 3]);
-  const array_info_15974 = ({mod_instances: null, mod_name: "Array", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15946, mod_submodules: null});
-  const __rec_upd_15976 = ctx_15948;
-  const __rec_upd_15978 = ctx_15948.type_env;
-  const _t15979 = ({classes: __rec_upd_15978.classes, constructors: __rec_upd_15978.constructors, effects: __rec_upd_15978.effects, hidden_ctor_types: __rec_upd_15978.hidden_ctor_types, hidden_types: __rec_upd_15978.hidden_types, instances: __rec_upd_15978.instances, modules: ({_hd: ["Array", array_info_15974], _tl: ctx_15948.type_env.modules}), mutable_fields: __rec_upd_15978.mutable_fields, newtypes: __rec_upd_15978.newtypes, records: __rec_upd_15978.records, type_aliases: __rec_upd_15978.type_aliases, type_synonyms: __rec_upd_15978.type_synonyms, variants: __rec_upd_15978.variants});
-  const _t15977 = ({constraint_tvars: __rec_upd_15976.constraint_tvars, current_eff: __rec_upd_15976.current_eff, current_module: __rec_upd_15976.current_module, inside_handler: __rec_upd_15976.inside_handler, loc: __rec_upd_15976.loc, loop_info: __rec_upd_15976.loop_info, mutable_vars: __rec_upd_15976.mutable_vars, return_type: __rec_upd_15976.return_type, return_used: __rec_upd_15976.return_used, type_env: _t15979, vars: __rec_upd_15976.vars});
-  (ctx_15948 = _t15977, undefined);
-  load_15962("array_extra");
-  (pub_vars_15946 = null, undefined);
-  _call(register_fn_15956, [__dict_Show_int, "IO", "read_file", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "IO", "write_file", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "IO", "append_file", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
-  _call(register_fn_15956, [__dict_Show_int, "IO", "read_line", Main$arr(({_tag: 6, _name: "TUnit"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "IO", "file_exists", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 1]);
-  const io_info_15980 = ({mod_instances: null, mod_name: "IO", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15946, mod_submodules: null});
-  const __rec_upd_15982 = ctx_15948;
-  const __rec_upd_15984 = ctx_15948.type_env;
-  const _t15985 = ({classes: __rec_upd_15984.classes, constructors: __rec_upd_15984.constructors, effects: __rec_upd_15984.effects, hidden_ctor_types: __rec_upd_15984.hidden_ctor_types, hidden_types: __rec_upd_15984.hidden_types, instances: __rec_upd_15984.instances, modules: ({_hd: ["IO", io_info_15980], _tl: ctx_15948.type_env.modules}), mutable_fields: __rec_upd_15984.mutable_fields, newtypes: __rec_upd_15984.newtypes, records: __rec_upd_15984.records, type_aliases: __rec_upd_15984.type_aliases, type_synonyms: __rec_upd_15984.type_synonyms, variants: __rec_upd_15984.variants});
-  const _t15983 = ({constraint_tvars: __rec_upd_15982.constraint_tvars, current_eff: __rec_upd_15982.current_eff, current_module: __rec_upd_15982.current_module, inside_handler: __rec_upd_15982.inside_handler, loc: __rec_upd_15982.loc, loop_info: __rec_upd_15982.loop_info, mutable_vars: __rec_upd_15982.mutable_vars, return_type: __rec_upd_15982.return_type, return_used: __rec_upd_15982.return_used, type_env: _t15985, vars: __rec_upd_15982.vars});
-  (ctx_15948 = _t15983, undefined);
-  (pub_vars_15946 = null, undefined);
-  _call(register_fn_15956, [__dict_Show_int, "Sys", "args", Main$arr(({_tag: 6, _name: "TUnit"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Sys", "getenv", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 3, _name: "TString"}), _tl: null})]})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Sys", "exit", Main$arr(({_tag: 0, _name: "TInt"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Sys", "time", Main$arr(({_tag: 6, _name: "TUnit"}), ({_tag: 1, _name: "TFloat"})), 1]);
-  const sys_info_15986 = ({mod_instances: null, mod_name: "Sys", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15946, mod_submodules: null});
-  const __rec_upd_15988 = ctx_15948;
-  const __rec_upd_15990 = ctx_15948.type_env;
-  const _t15991 = ({classes: __rec_upd_15990.classes, constructors: __rec_upd_15990.constructors, effects: __rec_upd_15990.effects, hidden_ctor_types: __rec_upd_15990.hidden_ctor_types, hidden_types: __rec_upd_15990.hidden_types, instances: __rec_upd_15990.instances, modules: ({_hd: ["Sys", sys_info_15986], _tl: ctx_15948.type_env.modules}), mutable_fields: __rec_upd_15990.mutable_fields, newtypes: __rec_upd_15990.newtypes, records: __rec_upd_15990.records, type_aliases: __rec_upd_15990.type_aliases, type_synonyms: __rec_upd_15990.type_synonyms, variants: __rec_upd_15990.variants});
-  const _t15989 = ({constraint_tvars: __rec_upd_15988.constraint_tvars, current_eff: __rec_upd_15988.current_eff, current_module: __rec_upd_15988.current_module, inside_handler: __rec_upd_15988.inside_handler, loc: __rec_upd_15988.loc, loop_info: __rec_upd_15988.loop_info, mutable_vars: __rec_upd_15988.mutable_vars, return_type: __rec_upd_15988.return_type, return_used: __rec_upd_15988.return_used, type_env: _t15991, vars: __rec_upd_15988.vars});
-  (ctx_15948 = _t15989, undefined);
-  load_15962("math");
-  load_15962("result");
-  load_15962("byte");
-  load_15962("rune");
-  load_15962("map");
-  load_15962("set");
-  load_15962("enum");
-  load_15962("seq");
-  load_15962("option");
-  load_15962("buffer");
-  load_15962("fmt");
-  load_15962("hash");
-  load_15962("hashtbl");
-  load_15962("ref");
-  load_15962("dynarray");
-  load_15962("compat");
-  (pub_vars_15946 = null, undefined);
-  _call(register_fn_15956, [__dict_Show_int, "Runtime", "eval", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_15956, [__dict_Show_int, "Runtime", "eval_file", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  const runtime_info_15992 = ({mod_instances: null, mod_name: "Runtime", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15946, mod_submodules: null});
-  const __rec_upd_15994 = ctx_15948;
-  const __rec_upd_15996 = ctx_15948.type_env;
-  const _t15997 = ({classes: __rec_upd_15996.classes, constructors: __rec_upd_15996.constructors, effects: __rec_upd_15996.effects, hidden_ctor_types: __rec_upd_15996.hidden_ctor_types, hidden_types: __rec_upd_15996.hidden_types, instances: __rec_upd_15996.instances, modules: ({_hd: ["Runtime", runtime_info_15992], _tl: ctx_15948.type_env.modules}), mutable_fields: __rec_upd_15996.mutable_fields, newtypes: __rec_upd_15996.newtypes, records: __rec_upd_15996.records, type_aliases: __rec_upd_15996.type_aliases, type_synonyms: __rec_upd_15996.type_synonyms, variants: __rec_upd_15996.variants});
-  const _t15995 = ({constraint_tvars: __rec_upd_15994.constraint_tvars, current_eff: __rec_upd_15994.current_eff, current_module: __rec_upd_15994.current_module, inside_handler: __rec_upd_15994.inside_handler, loc: __rec_upd_15994.loc, loop_info: __rec_upd_15994.loop_info, mutable_vars: __rec_upd_15994.mutable_vars, return_type: __rec_upd_15994.return_type, return_used: __rec_upd_15994.return_used, type_env: _t15997, vars: __rec_upd_15994.vars});
-  (ctx_15948 = _t15995, undefined);
-  const _t15993 = [ctx_15948, List$rev(setup_protos_15950)];
-  const _t15987 = _t15993;
-  const _t15981 = _t15987;
-  const _t15975 = _t15981;
-  const _t15965 = _t15975;
-  const _t15963 = _t15965;
-  const _t15957 = _t15963;
-  const _t15951 = _t15957;
-  const _t15949 = _t15951;
-  const _t15947 = _t15949;
-  return _t15947;
+  _t16010("module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end");
+  load_16002("list");
+  (pub_vars_15986 = null, undefined);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "make", Main$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "get", Main$arr2(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "set", Main$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 6, _name: "TUnit"})), 3]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "length", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "to_list", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "of_list", Main$arr(({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "copy", Main$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Array", "sub", Main$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 3]);
+  const array_info_16014 = ({mod_instances: null, mod_name: "Array", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15986, mod_submodules: null});
+  const __rec_upd_16016 = ctx_15988;
+  const __rec_upd_16018 = ctx_15988.type_env;
+  const _t16019 = ({classes: __rec_upd_16018.classes, constructors: __rec_upd_16018.constructors, effects: __rec_upd_16018.effects, hidden_ctor_types: __rec_upd_16018.hidden_ctor_types, hidden_types: __rec_upd_16018.hidden_types, instances: __rec_upd_16018.instances, modules: ({_hd: ["Array", array_info_16014], _tl: ctx_15988.type_env.modules}), mutable_fields: __rec_upd_16018.mutable_fields, newtypes: __rec_upd_16018.newtypes, records: __rec_upd_16018.records, type_aliases: __rec_upd_16018.type_aliases, type_synonyms: __rec_upd_16018.type_synonyms, variants: __rec_upd_16018.variants});
+  const _t16017 = ({constraint_tvars: __rec_upd_16016.constraint_tvars, current_eff: __rec_upd_16016.current_eff, current_module: __rec_upd_16016.current_module, inside_handler: __rec_upd_16016.inside_handler, loc: __rec_upd_16016.loc, loop_info: __rec_upd_16016.loop_info, mutable_vars: __rec_upd_16016.mutable_vars, return_type: __rec_upd_16016.return_type, return_used: __rec_upd_16016.return_used, type_env: _t16019, vars: __rec_upd_16016.vars});
+  (ctx_15988 = _t16017, undefined);
+  load_16002("array_extra");
+  (pub_vars_15986 = null, undefined);
+  _call(register_fn_15996, [__dict_Show_int, "IO", "read_file", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "IO", "write_file", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "IO", "append_file", Main$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
+  _call(register_fn_15996, [__dict_Show_int, "IO", "read_line", Main$arr(({_tag: 6, _name: "TUnit"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "IO", "file_exists", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 1]);
+  const io_info_16020 = ({mod_instances: null, mod_name: "IO", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15986, mod_submodules: null});
+  const __rec_upd_16022 = ctx_15988;
+  const __rec_upd_16024 = ctx_15988.type_env;
+  const _t16025 = ({classes: __rec_upd_16024.classes, constructors: __rec_upd_16024.constructors, effects: __rec_upd_16024.effects, hidden_ctor_types: __rec_upd_16024.hidden_ctor_types, hidden_types: __rec_upd_16024.hidden_types, instances: __rec_upd_16024.instances, modules: ({_hd: ["IO", io_info_16020], _tl: ctx_15988.type_env.modules}), mutable_fields: __rec_upd_16024.mutable_fields, newtypes: __rec_upd_16024.newtypes, records: __rec_upd_16024.records, type_aliases: __rec_upd_16024.type_aliases, type_synonyms: __rec_upd_16024.type_synonyms, variants: __rec_upd_16024.variants});
+  const _t16023 = ({constraint_tvars: __rec_upd_16022.constraint_tvars, current_eff: __rec_upd_16022.current_eff, current_module: __rec_upd_16022.current_module, inside_handler: __rec_upd_16022.inside_handler, loc: __rec_upd_16022.loc, loop_info: __rec_upd_16022.loop_info, mutable_vars: __rec_upd_16022.mutable_vars, return_type: __rec_upd_16022.return_type, return_used: __rec_upd_16022.return_used, type_env: _t16025, vars: __rec_upd_16022.vars});
+  (ctx_15988 = _t16023, undefined);
+  (pub_vars_15986 = null, undefined);
+  _call(register_fn_15996, [__dict_Show_int, "Sys", "args", Main$arr(({_tag: 6, _name: "TUnit"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Sys", "getenv", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 3, _name: "TString"}), _tl: null})]})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Sys", "exit", Main$arr(({_tag: 0, _name: "TInt"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Sys", "time", Main$arr(({_tag: 6, _name: "TUnit"}), ({_tag: 1, _name: "TFloat"})), 1]);
+  const sys_info_16026 = ({mod_instances: null, mod_name: "Sys", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15986, mod_submodules: null});
+  const __rec_upd_16028 = ctx_15988;
+  const __rec_upd_16030 = ctx_15988.type_env;
+  const _t16031 = ({classes: __rec_upd_16030.classes, constructors: __rec_upd_16030.constructors, effects: __rec_upd_16030.effects, hidden_ctor_types: __rec_upd_16030.hidden_ctor_types, hidden_types: __rec_upd_16030.hidden_types, instances: __rec_upd_16030.instances, modules: ({_hd: ["Sys", sys_info_16026], _tl: ctx_15988.type_env.modules}), mutable_fields: __rec_upd_16030.mutable_fields, newtypes: __rec_upd_16030.newtypes, records: __rec_upd_16030.records, type_aliases: __rec_upd_16030.type_aliases, type_synonyms: __rec_upd_16030.type_synonyms, variants: __rec_upd_16030.variants});
+  const _t16029 = ({constraint_tvars: __rec_upd_16028.constraint_tvars, current_eff: __rec_upd_16028.current_eff, current_module: __rec_upd_16028.current_module, inside_handler: __rec_upd_16028.inside_handler, loc: __rec_upd_16028.loc, loop_info: __rec_upd_16028.loop_info, mutable_vars: __rec_upd_16028.mutable_vars, return_type: __rec_upd_16028.return_type, return_used: __rec_upd_16028.return_used, type_env: _t16031, vars: __rec_upd_16028.vars});
+  (ctx_15988 = _t16029, undefined);
+  load_16002("math");
+  load_16002("result");
+  load_16002("byte");
+  load_16002("rune");
+  load_16002("map");
+  load_16002("set");
+  load_16002("enum");
+  load_16002("seq");
+  load_16002("option");
+  load_16002("buffer");
+  load_16002("fmt");
+  load_16002("hash");
+  load_16002("hashtbl");
+  load_16002("ref");
+  load_16002("dynarray");
+  load_16002("compat");
+  (pub_vars_15986 = null, undefined);
+  _call(register_fn_15996, [__dict_Show_int, "Runtime", "eval", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_15996, [__dict_Show_int, "Runtime", "eval_file", Main$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  const runtime_info_16032 = ({mod_instances: null, mod_name: "Runtime", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_15986, mod_submodules: null});
+  const __rec_upd_16034 = ctx_15988;
+  const __rec_upd_16036 = ctx_15988.type_env;
+  const _t16037 = ({classes: __rec_upd_16036.classes, constructors: __rec_upd_16036.constructors, effects: __rec_upd_16036.effects, hidden_ctor_types: __rec_upd_16036.hidden_ctor_types, hidden_types: __rec_upd_16036.hidden_types, instances: __rec_upd_16036.instances, modules: ({_hd: ["Runtime", runtime_info_16032], _tl: ctx_15988.type_env.modules}), mutable_fields: __rec_upd_16036.mutable_fields, newtypes: __rec_upd_16036.newtypes, records: __rec_upd_16036.records, type_aliases: __rec_upd_16036.type_aliases, type_synonyms: __rec_upd_16036.type_synonyms, variants: __rec_upd_16036.variants});
+  const _t16035 = ({constraint_tvars: __rec_upd_16034.constraint_tvars, current_eff: __rec_upd_16034.current_eff, current_module: __rec_upd_16034.current_module, inside_handler: __rec_upd_16034.inside_handler, loc: __rec_upd_16034.loc, loop_info: __rec_upd_16034.loop_info, mutable_vars: __rec_upd_16034.mutable_vars, return_type: __rec_upd_16034.return_type, return_used: __rec_upd_16034.return_used, type_env: _t16037, vars: __rec_upd_16034.vars});
+  (ctx_15988 = _t16035, undefined);
+  const _t16033 = [ctx_15988, List$rev(setup_protos_15990)];
+  const _t16027 = _t16033;
+  const _t16021 = _t16027;
+  const _t16015 = _t16021;
+  const _t16005 = _t16015;
+  const _t16003 = _t16005;
+  const _t15997 = _t16003;
+  const _t15991 = _t15997;
+  const _t15989 = _t15991;
+  const _t15987 = _t15989;
+  return _t15987;
 }
 function Main$run_batch(manifest_file) {
-  const _t15998 = (function() {
-    const _t15999 = _h;
-    _h = Object.assign({}, _t15999, {
+  const _t16038 = (function() {
+    const _t16039 = _h;
+    _h = Object.assign({}, _t16039, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -67889,50 +68031,50 @@ function Main$run_batch(manifest_file) {
       "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
     });
     try {
-      const manifest_16000 = IO$read_file(manifest_file);
-      function _t16002(s) {
+      const manifest_16040 = IO$read_file(manifest_file);
+      function _t16042(s) {
         return (s !== "");
       }
-      const files_16003 = List$filter(_t16002, _call(String$split, ["\n", manifest_16000]));
-      let _t16006;
-      const _t16005 = Main$setup_builtins(undefined);
-      _t16007: {
-        const ctx = _t16005[0];
-        const global_names = _t16005[1];
-        const mutable_globals = _t16005[2];
-        let _t16009;
-        const _t16008 = Main$setup_classes(ctx, global_names, mutable_globals);
-        _t16010: {
-          const ctx = _t16008[0];
-          const class_protos = _t16008[1];
-          let _t16012;
-          const _t16011 = Main$setup_modules(ctx, global_names, mutable_globals);
-          _t16013: {
-            const ctx = _t16011[0];
-            const module_protos = _t16011[1];
-            const setup_protos_16014 = List$concat(class_protos, module_protos);
-            const base_gn_len_16016 = Dynarray$length(global_names);
-            const base_native_16018 = Main$native_global_entries;
-            const base_mutable_16020 = Hashtbl$to_list(mutable_globals);
-            function _t16022(filename) {
-              (global_names.count = base_gn_len_16016, undefined);
-              (Main$native_global_entries = base_native_16018, undefined);
+      const files_16043 = List$filter(_t16042, _call(String$split, ["\n", manifest_16040]));
+      let _t16046;
+      const _t16045 = Main$setup_builtins(undefined);
+      _t16047: {
+        const ctx = _t16045[0];
+        const global_names = _t16045[1];
+        const mutable_globals = _t16045[2];
+        let _t16049;
+        const _t16048 = Main$setup_classes(ctx, global_names, mutable_globals);
+        _t16050: {
+          const ctx = _t16048[0];
+          const class_protos = _t16048[1];
+          let _t16052;
+          const _t16051 = Main$setup_modules(ctx, global_names, mutable_globals);
+          _t16053: {
+            const ctx = _t16051[0];
+            const module_protos = _t16051[1];
+            const setup_protos_16054 = List$concat(class_protos, module_protos);
+            const base_gn_len_16056 = Dynarray$length(global_names);
+            const base_native_16058 = Main$native_global_entries;
+            const base_mutable_16060 = Hashtbl$to_list(mutable_globals);
+            function _t16062(filename) {
+              (global_names.count = base_gn_len_16056, undefined);
+              (Main$native_global_entries = base_native_16058, undefined);
               Hashtbl$clear(mutable_globals);
-              function _t16023(__p423) {
-                let _t16025;
-                const _t16024 = __p423;
-                _t16026: {
-                  const k = _t16024[0];
-                  const v = _t16024[1];
-                  _t16025 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
-                  break _t16026;
+              function _t16063(__p423) {
+                let _t16065;
+                const _t16064 = __p423;
+                _t16066: {
+                  const k = _t16064[0];
+                  const v = _t16064[1];
+                  _t16065 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
+                  break _t16066;
                 }
-                return _t16025;
+                return _t16065;
               }
-              Main$list_iter(_t16023, base_mutable_16020);
-              const _t16027 = (function() {
-                const _t16028 = _h;
-                _h = Object.assign({}, _t16028, {
+              Main$list_iter(_t16063, base_mutable_16060);
+              const _t16067 = (function() {
+                const _t16068 = _h;
+                _h = Object.assign({}, _t16068, {
                   "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                   "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                   "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -67940,73 +68082,73 @@ function Main$run_batch(manifest_file) {
                   "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                 });
                 try {
-                  const source_16029 = IO$read_file(filename);
-                  const tokens_16031 = Lexer$tokenize(source_16029);
-                  const program_16033 = Parser$parse_program(tokens_16031);
-                  let _t16036;
-                  const _t16035 = Typechecker$check_program_in_ctx(ctx, program_16033);
-                  _t16037: {
-                    const ctx2 = _t16035[0];
-                    const typed_program = _t16035[1];
-                    const typed_program2_16038 = Typechecker$transform_constraints(ctx2, typed_program);
-                    const typed_program2_16040 = Typechecker$classify_handlers(typed_program2_16038);
-                    const typed_program2_16042 = Match_tree$lower_program(ctx2.type_env, typed_program2_16040);
-                    const compiled_16044 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_16042);
-                    Main$register_externs_from_program(typed_program2_16042, global_names);
-                    const ng_json_16046 = _t15803_Main$build_native_globals_json(undefined);
-                    const json_16048 = Serialize$serialize_bundle(global_names, ng_json_16046, setup_protos_16014, compiled_16044.main);
-                    print(json_16048);
-                    const _t16049 = print("===BATCH-SEP===");
-                    const _t16047 = _t16049;
-                    const _t16045 = _t16047;
-                    const _t16043 = _t16045;
-                    const _t16041 = _t16043;
-                    const _t16039 = _t16041;
-                    _t16036 = _t16039;
-                    break _t16037;
+                  const source_16069 = IO$read_file(filename);
+                  const tokens_16071 = Lexer$tokenize(source_16069);
+                  const program_16073 = Parser$parse_program(tokens_16071);
+                  let _t16076;
+                  const _t16075 = Typechecker$check_program_in_ctx(ctx, program_16073);
+                  _t16077: {
+                    const ctx2 = _t16075[0];
+                    const typed_program = _t16075[1];
+                    const typed_program2_16078 = Typechecker$transform_constraints(ctx2, typed_program);
+                    const typed_program2_16080 = Typechecker$classify_handlers(typed_program2_16078);
+                    const typed_program2_16082 = Match_tree$lower_program(ctx2.type_env, typed_program2_16080);
+                    const compiled_16084 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_16082);
+                    Main$register_externs_from_program(typed_program2_16082, global_names);
+                    const ng_json_16086 = _t15843_Main$build_native_globals_json(undefined);
+                    const json_16088 = Serialize$serialize_bundle(global_names, ng_json_16086, setup_protos_16054, compiled_16084.main);
+                    print(json_16088);
+                    const _t16089 = print("===BATCH-SEP===");
+                    const _t16087 = _t16089;
+                    const _t16085 = _t16087;
+                    const _t16083 = _t16085;
+                    const _t16081 = _t16083;
+                    const _t16079 = _t16081;
+                    _t16076 = _t16079;
+                    break _t16077;
                   }
-                  const _t16034 = _t16036;
-                  const _t16032 = _t16034;
-                  const _t16030 = _t16032;
-                  const x_16050 = _t16030;
-                  return x_16050;
+                  const _t16074 = _t16076;
+                  const _t16072 = _t16074;
+                  const _t16070 = _t16072;
+                  const x_16090 = _t16070;
+                  return x_16090;
                 } catch (_exc) {
                   if (_exc && _exc._e === "lex_error") {
                     const arg = _exc._v;
-                    let _t16052;
-                    const _t16051 = arg;
-                    _t16053: {
-                      const msg = _t16051[0];
-                      const _loc = _t16051[1];
+                    let _t16092;
+                    const _t16091 = arg;
+                    _t16093: {
+                      const msg = _t16091[0];
+                      const _loc = _t16091[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t16052 = print("===BATCH-SEP===");
-                      break _t16053;
+                      _t16092 = print("===BATCH-SEP===");
+                      break _t16093;
                     }
-                    return _t16052;
+                    return _t16092;
                   } else if (_exc && _exc._e === "parse_error") {
                     const arg = _exc._v;
-                    let _t16055;
-                    const _t16054 = arg;
-                    _t16056: {
-                      const msg = _t16054[0];
-                      const _loc = _t16054[1];
+                    let _t16095;
+                    const _t16094 = arg;
+                    _t16096: {
+                      const msg = _t16094[0];
+                      const _loc = _t16094[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t16055 = print("===BATCH-SEP===");
-                      break _t16056;
+                      _t16095 = print("===BATCH-SEP===");
+                      break _t16096;
                     }
-                    return _t16055;
+                    return _t16095;
                   } else if (_exc && _exc._e === "type_error") {
                     const arg = _exc._v;
-                    let _t16058;
-                    const _t16057 = arg;
-                    _t16059: {
-                      const msg = _t16057[0];
-                      const _loc = _t16057[1];
+                    let _t16098;
+                    const _t16097 = arg;
+                    _t16099: {
+                      const msg = _t16097[0];
+                      const _loc = _t16097[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t16058 = print("===BATCH-SEP===");
-                      break _t16059;
+                      _t16098 = print("===BATCH-SEP===");
+                      break _t16099;
                     }
-                    return _t16058;
+                    return _t16098;
                   } else if (_exc && _exc._e === "compile_error") {
                     const msg = _exc._v;
                     print(("COMPILE-ERROR:" + msg));
@@ -68016,61 +68158,61 @@ function Main$run_batch(manifest_file) {
                     print(("COMPILE-ERROR:" + msg));
                     return print("===BATCH-SEP===");
                   } else { throw _exc; }
-                } finally { _h = _t16028; }
+                } finally { _h = _t16068; }
               })();
-              return _t16027;
+              return _t16067;
             }
-            const _t16021 = Main$list_iter(_t16022, files_16003);
-            const _t16019 = _t16021;
-            const _t16017 = _t16019;
-            const _t16015 = _t16017;
-            _t16012 = _t16015;
-            break _t16013;
+            const _t16061 = Main$list_iter(_t16062, files_16043);
+            const _t16059 = _t16061;
+            const _t16057 = _t16059;
+            const _t16055 = _t16057;
+            _t16052 = _t16055;
+            break _t16053;
           }
-          _t16009 = _t16012;
-          break _t16010;
+          _t16049 = _t16052;
+          break _t16050;
         }
-        _t16006 = _t16009;
-        break _t16007;
+        _t16046 = _t16049;
+        break _t16047;
       }
-      const _t16004 = _t16006;
-      const _t16001 = _t16004;
-      const x_16060 = _t16001;
-      return x_16060;
+      const _t16044 = _t16046;
+      const _t16041 = _t16044;
+      const x_16100 = _t16041;
+      return x_16100;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t16062;
-        const _t16061 = arg;
-        _t16063: {
-          const msg = _t16061[0];
-          const _loc = _t16061[1];
-          _t16062 = failwith(msg);
-          break _t16063;
+        let _t16102;
+        const _t16101 = arg;
+        _t16103: {
+          const msg = _t16101[0];
+          const _loc = _t16101[1];
+          _t16102 = failwith(msg);
+          break _t16103;
         }
-        return _t16062;
+        return _t16102;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t16065;
-        const _t16064 = arg;
-        _t16066: {
-          const msg = _t16064[0];
-          const _loc = _t16064[1];
-          _t16065 = failwith(msg);
-          break _t16066;
+        let _t16105;
+        const _t16104 = arg;
+        _t16106: {
+          const msg = _t16104[0];
+          const _loc = _t16104[1];
+          _t16105 = failwith(msg);
+          break _t16106;
         }
-        return _t16065;
+        return _t16105;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t16068;
-        const _t16067 = arg;
-        _t16069: {
-          const msg = _t16067[0];
-          const _loc = _t16067[1];
-          _t16068 = failwith(msg);
-          break _t16069;
+        let _t16108;
+        const _t16107 = arg;
+        _t16109: {
+          const msg = _t16107[0];
+          const _loc = _t16107[1];
+          _t16108 = failwith(msg);
+          break _t16109;
         }
-        return _t16068;
+        return _t16108;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -68078,14 +68220,14 @@ function Main$run_batch(manifest_file) {
         const msg = _exc._v;
         return failwith(msg);
       } else { throw _exc; }
-    } finally { _h = _t15999; }
+    } finally { _h = _t16039; }
   })();
-  return _t15998;
+  return _t16038;
 }
 function Main$run_emit_js(args) {
-  const _t16070 = (function() {
-    const _t16071 = _h;
-    _h = Object.assign({}, _t16071, {
+  const _t16110 = (function() {
+    const _t16111 = _h;
+    _h = Object.assign({}, _t16111, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -68096,133 +68238,133 @@ function Main$run_emit_js(args) {
     try {
       (Main$js_capture_mode = true, undefined);
       (Main$captured_typed_setups = null, undefined);
-      let _t16072;
+      let _t16112;
       if (__cache_has("emit_js")) {
-        let _t16074;
-        const _t16073 = __cache_get("emit_js");
-        _t16075: {
-          const c = _t16073[0];
-          const gn = _t16073[1];
-          const mg = _t16073[2];
-          const cts = _t16073[3];
+        let _t16114;
+        const _t16113 = __cache_get("emit_js");
+        _t16115: {
+          const c = _t16113[0];
+          const gn = _t16113[1];
+          const mg = _t16113[2];
+          const cts = _t16113[3];
           (Main$captured_typed_setups = cts, undefined);
-          _t16074 = [c, gn, mg];
-          break _t16075;
+          _t16114 = [c, gn, mg];
+          break _t16115;
         }
-        _t16072 = _t16074;
+        _t16112 = _t16114;
       } else {
-        let _t16077;
-        const _t16076 = Main$setup_builtins(undefined);
-        _t16078: {
-          const ctx = _t16076[0];
-          const global_names = _t16076[1];
-          const mutable_globals = _t16076[2];
-          let _t16080;
-          const _t16079 = Main$setup_classes(ctx, global_names, mutable_globals);
-          _t16081: {
-            const ctx = _t16079[0];
-            const _class_protos = _t16079[1];
-            let _t16083;
-            const _t16082 = Main$setup_modules(ctx, global_names, mutable_globals);
-            _t16084: {
-              const ctx = _t16082[0];
-              const _module_protos = _t16082[1];
+        let _t16117;
+        const _t16116 = Main$setup_builtins(undefined);
+        _t16118: {
+          const ctx = _t16116[0];
+          const global_names = _t16116[1];
+          const mutable_globals = _t16116[2];
+          let _t16120;
+          const _t16119 = Main$setup_classes(ctx, global_names, mutable_globals);
+          _t16121: {
+            const ctx = _t16119[0];
+            const _class_protos = _t16119[1];
+            let _t16123;
+            const _t16122 = Main$setup_modules(ctx, global_names, mutable_globals);
+            _t16124: {
+              const ctx = _t16122[0];
+              const _module_protos = _t16122[1];
               _call(__cache_set, ["emit_js", [ctx, global_names, mutable_globals, Main$captured_typed_setups]]);
-              _t16083 = [ctx, global_names, mutable_globals];
-              break _t16084;
+              _t16123 = [ctx, global_names, mutable_globals];
+              break _t16124;
             }
-            _t16080 = _t16083;
-            break _t16081;
+            _t16120 = _t16123;
+            break _t16121;
           }
-          _t16077 = _t16080;
-          break _t16078;
+          _t16117 = _t16120;
+          break _t16118;
         }
-        _t16072 = _t16077;
+        _t16112 = _t16117;
       }
-      let _t16086;
-      const _t16085 = _t16072;
-      _t16087: {
-        const ctx = _t16085[0];
-        const global_names = _t16085[1];
-        const mutable_globals = _t16085[2];
-        let _t16089;
-        const _t16088 = args;
-        _t16090: {
-          if (_t16088 !== null) {
-            if (_t16088._tl !== null) {
-              const file = _t16088._tl._hd;
-              _t16089 = file;
-              break _t16090;
+      let _t16126;
+      const _t16125 = _t16112;
+      _t16127: {
+        const ctx = _t16125[0];
+        const global_names = _t16125[1];
+        const mutable_globals = _t16125[2];
+        let _t16129;
+        const _t16128 = args;
+        _t16130: {
+          if (_t16128 !== null) {
+            if (_t16128._tl !== null) {
+              const file = _t16128._tl._hd;
+              _t16129 = file;
+              break _t16130;
             }
-            _t16089 = failwith("Usage: compiler --emit-js <source-file>");
-            break _t16090;
+            _t16129 = failwith("Usage: compiler --emit-js <source-file>");
+            break _t16130;
           }
-          _t16089 = failwith("Usage: compiler --emit-js <source-file>");
-          break _t16090;
+          _t16129 = failwith("Usage: compiler --emit-js <source-file>");
+          break _t16130;
         }
-        const filename_16091 = _t16089;
-        const source_16093 = IO$read_file(filename_16091);
-        const tokens_16095 = Lexer$tokenize(source_16093);
-        const program_16097 = Parser$parse_program(tokens_16095);
-        let _t16100;
-        const _t16099 = Typechecker$check_program_in_ctx(ctx, program_16097);
-        _t16101: {
-          const ctx2 = _t16099[0];
-          const typed_program = _t16099[1];
-          const typed_program2_16102 = Typechecker$transform_constraints(ctx2, typed_program);
-          const typed_program2_16104 = Typechecker$classify_handlers(typed_program2_16102);
-          const typed_program2_16106 = Match_tree$lower_program(ctx2.type_env, typed_program2_16104);
-          const js_16108 = Js_codegen$compile_program_with_stdlib(ctx2.type_env, Main$captured_typed_setups, typed_program2_16106);
-          const _t16109 = print(js_16108);
-          const _t16107 = _t16109;
-          const _t16105 = _t16107;
-          const _t16103 = _t16105;
-          _t16100 = _t16103;
-          break _t16101;
+        const filename_16131 = _t16129;
+        const source_16133 = IO$read_file(filename_16131);
+        const tokens_16135 = Lexer$tokenize(source_16133);
+        const program_16137 = Parser$parse_program(tokens_16135);
+        let _t16140;
+        const _t16139 = Typechecker$check_program_in_ctx(ctx, program_16137);
+        _t16141: {
+          const ctx2 = _t16139[0];
+          const typed_program = _t16139[1];
+          const typed_program2_16142 = Typechecker$transform_constraints(ctx2, typed_program);
+          const typed_program2_16144 = Typechecker$classify_handlers(typed_program2_16142);
+          const typed_program2_16146 = Match_tree$lower_program(ctx2.type_env, typed_program2_16144);
+          const js_16148 = Js_codegen$compile_program_with_stdlib(ctx2.type_env, Main$captured_typed_setups, typed_program2_16146);
+          const _t16149 = print(js_16148);
+          const _t16147 = _t16149;
+          const _t16145 = _t16147;
+          const _t16143 = _t16145;
+          _t16140 = _t16143;
+          break _t16141;
         }
-        const _t16098 = _t16100;
-        const _t16096 = _t16098;
-        const _t16094 = _t16096;
-        const _t16092 = _t16094;
-        _t16086 = _t16092;
-        break _t16087;
+        const _t16138 = _t16140;
+        const _t16136 = _t16138;
+        const _t16134 = _t16136;
+        const _t16132 = _t16134;
+        _t16126 = _t16132;
+        break _t16127;
       }
-      const x_16110 = _t16086;
-      return x_16110;
+      const x_16150 = _t16126;
+      return x_16150;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t16112;
-        const _t16111 = arg;
-        _t16113: {
-          const msg = _t16111[0];
-          const _loc = _t16111[1];
-          _t16112 = failwith(msg);
-          break _t16113;
+        let _t16152;
+        const _t16151 = arg;
+        _t16153: {
+          const msg = _t16151[0];
+          const _loc = _t16151[1];
+          _t16152 = failwith(msg);
+          break _t16153;
         }
-        return _t16112;
+        return _t16152;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t16115;
-        const _t16114 = arg;
-        _t16116: {
-          const msg = _t16114[0];
-          const _loc = _t16114[1];
-          _t16115 = failwith(msg);
-          break _t16116;
+        let _t16155;
+        const _t16154 = arg;
+        _t16156: {
+          const msg = _t16154[0];
+          const _loc = _t16154[1];
+          _t16155 = failwith(msg);
+          break _t16156;
         }
-        return _t16115;
+        return _t16155;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t16118;
-        const _t16117 = arg;
-        _t16119: {
-          const msg = _t16117[0];
-          const _loc = _t16117[1];
-          _t16118 = failwith(msg);
-          break _t16119;
+        let _t16158;
+        const _t16157 = arg;
+        _t16159: {
+          const msg = _t16157[0];
+          const _loc = _t16157[1];
+          _t16158 = failwith(msg);
+          break _t16159;
         }
-        return _t16118;
+        return _t16158;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -68233,65 +68375,65 @@ function Main$run_emit_js(args) {
         const msg = _exc._v;
         return failwith(("JS codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t16071; }
+    } finally { _h = _t16111; }
   })();
-  return _t16070;
+  return _t16110;
 }
-const args_16120 = Sys$args(undefined);
-let _t16123;
-const _t16122 = args_16120;
-_t16124: {
-  if (_t16122 !== null) {
-    if (_t16122._tl !== null) {
-      if (_t16122._tl._hd === "--batch") {
-        if (_t16122._tl._tl !== null) {
-          const f = _t16122._tl._tl._hd;
-          _t16123 = ({_tag: 1, _name: "Some", _val: f});
-          break _t16124;
+const args_16160 = Sys$args(undefined);
+let _t16163;
+const _t16162 = args_16160;
+_t16164: {
+  if (_t16162 !== null) {
+    if (_t16162._tl !== null) {
+      if (_t16162._tl._hd === "--batch") {
+        if (_t16162._tl._tl !== null) {
+          const f = _t16162._tl._tl._hd;
+          _t16163 = ({_tag: 1, _name: "Some", _val: f});
+          break _t16164;
         }
-        _t16123 = ({_tag: 0, _name: "None"});
-        break _t16124;
+        _t16163 = ({_tag: 0, _name: "None"});
+        break _t16164;
       }
-      _t16123 = ({_tag: 0, _name: "None"});
-      break _t16124;
+      _t16163 = ({_tag: 0, _name: "None"});
+      break _t16164;
     }
-    _t16123 = ({_tag: 0, _name: "None"});
-    break _t16124;
+    _t16163 = ({_tag: 0, _name: "None"});
+    break _t16164;
   }
-  _t16123 = ({_tag: 0, _name: "None"});
-  break _t16124;
+  _t16163 = ({_tag: 0, _name: "None"});
+  break _t16164;
 }
-const batch_file_16125 = _t16123;
-function _t16127(a) {
+const batch_file_16165 = _t16163;
+function _t16167(a) {
   return (a === "--emit-js");
 }
-const emit_js_16128 = List$exists(_t16127, args_16120);
-function _t16130(a) {
+const emit_js_16168 = List$exists(_t16167, args_16160);
+function _t16170(a) {
   return (a === "--no-optimize");
 }
-const no_optimize_16131 = List$exists(_t16130, args_16120);
-let _t16133;
-if (no_optimize_16131) {
-  _t16133 = Ref$set(Compiler$optimize_enabled, false);
+const no_optimize_16171 = List$exists(_t16170, args_16160);
+let _t16173;
+if (no_optimize_16171) {
+  _t16173 = Ref$set(Compiler$optimize_enabled, false);
 } else {
-  _t16133 = undefined;
+  _t16173 = undefined;
 }
-_t16133;
-function _t16134(a) {
+_t16173;
+function _t16174(a) {
   return ((a !== "--no-optimize") && (a !== "--emit-js"));
 }
-const args_16135 = List$filter(_t16134, args_16120);
-let _t16138;
-const _t16137 = batch_file_16125;
-_t16139: {
-  if (_t16137._tag === 0) {
-    let _t16140;
-    if (emit_js_16128) {
-      _t16140 = Main$run_emit_js(args_16135);
+const args_16175 = List$filter(_t16174, args_16160);
+let _t16178;
+const _t16177 = batch_file_16165;
+_t16179: {
+  if (_t16177._tag === 0) {
+    let _t16180;
+    if (emit_js_16168) {
+      _t16180 = Main$run_emit_js(args_16175);
     } else {
-      const _t16141 = (function() {
-        const _t16142 = _h;
-        _h = Object.assign({}, _t16142, {
+      const _t16181 = (function() {
+        const _t16182 = _h;
+        _h = Object.assign({}, _t16182, {
           "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
           "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
           "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -68299,164 +68441,164 @@ _t16139: {
           "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
         });
         try {
-          let _t16144;
-          const _t16143 = args_16135;
-          _t16145: {
-            if (_t16143 !== null) {
-              if (_t16143._tl !== null) {
-                if (_t16143._tl._hd === "--emit-json") {
-                  if (_t16143._tl._tl !== null) {
-                    const file = _t16143._tl._tl._hd;
-                    _t16144 = file;
-                    break _t16145;
+          let _t16184;
+          const _t16183 = args_16175;
+          _t16185: {
+            if (_t16183 !== null) {
+              if (_t16183._tl !== null) {
+                if (_t16183._tl._hd === "--emit-json") {
+                  if (_t16183._tl._tl !== null) {
+                    const file = _t16183._tl._tl._hd;
+                    _t16184 = file;
+                    break _t16185;
                   }
-                  const file = _t16143._tl._hd;
-                  _t16144 = file;
-                  break _t16145;
+                  const file = _t16183._tl._hd;
+                  _t16184 = file;
+                  break _t16185;
                 }
-                const file = _t16143._tl._hd;
-                _t16144 = file;
-                break _t16145;
+                const file = _t16183._tl._hd;
+                _t16184 = file;
+                break _t16185;
               }
-              _t16144 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-              break _t16145;
+              _t16184 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+              break _t16185;
             }
-            _t16144 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-            break _t16145;
+            _t16184 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+            break _t16185;
           }
-          const filename_16146 = _t16144;
-          const source_16148 = IO$read_file(filename_16146);
-          let _t16150;
+          const filename_16186 = _t16184;
+          const source_16188 = IO$read_file(filename_16186);
+          let _t16190;
           if (__cache_has("emit_json")) {
-            _t16150 = __cache_get("emit_json");
+            _t16190 = __cache_get("emit_json");
           } else {
-            let _t16152;
-            const _t16151 = Main$setup_builtins(undefined);
-            _t16153: {
-              const ctx = _t16151[0];
-              const global_names = _t16151[1];
-              const mutable_globals = _t16151[2];
-              let _t16155;
-              const _t16154 = Main$setup_classes(ctx, global_names, mutable_globals);
-              _t16156: {
-                const ctx = _t16154[0];
-                const class_protos = _t16154[1];
-                let _t16158;
-                const _t16157 = Main$setup_modules(ctx, global_names, mutable_globals);
-                _t16159: {
-                  const ctx = _t16157[0];
-                  const module_protos = _t16157[1];
-                  const setup_protos_16160 = List$concat(class_protos, module_protos);
-                  const base_gn_len_16162 = Dynarray$length(global_names);
-                  const base_native_16164 = Main$native_global_entries;
-                  const base_mutable_16166 = Hashtbl$to_list(mutable_globals);
-                  _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_16160, base_gn_len_16162, base_native_16164, base_mutable_16166]]);
-                  const _t16167 = [ctx, global_names, mutable_globals, setup_protos_16160, base_gn_len_16162, base_native_16164, base_mutable_16166];
-                  const _t16165 = _t16167;
-                  const _t16163 = _t16165;
-                  const _t16161 = _t16163;
-                  _t16158 = _t16161;
-                  break _t16159;
+            let _t16192;
+            const _t16191 = Main$setup_builtins(undefined);
+            _t16193: {
+              const ctx = _t16191[0];
+              const global_names = _t16191[1];
+              const mutable_globals = _t16191[2];
+              let _t16195;
+              const _t16194 = Main$setup_classes(ctx, global_names, mutable_globals);
+              _t16196: {
+                const ctx = _t16194[0];
+                const class_protos = _t16194[1];
+                let _t16198;
+                const _t16197 = Main$setup_modules(ctx, global_names, mutable_globals);
+                _t16199: {
+                  const ctx = _t16197[0];
+                  const module_protos = _t16197[1];
+                  const setup_protos_16200 = List$concat(class_protos, module_protos);
+                  const base_gn_len_16202 = Dynarray$length(global_names);
+                  const base_native_16204 = Main$native_global_entries;
+                  const base_mutable_16206 = Hashtbl$to_list(mutable_globals);
+                  _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_16200, base_gn_len_16202, base_native_16204, base_mutable_16206]]);
+                  const _t16207 = [ctx, global_names, mutable_globals, setup_protos_16200, base_gn_len_16202, base_native_16204, base_mutable_16206];
+                  const _t16205 = _t16207;
+                  const _t16203 = _t16205;
+                  const _t16201 = _t16203;
+                  _t16198 = _t16201;
+                  break _t16199;
                 }
-                _t16155 = _t16158;
-                break _t16156;
+                _t16195 = _t16198;
+                break _t16196;
               }
-              _t16152 = _t16155;
-              break _t16153;
+              _t16192 = _t16195;
+              break _t16193;
             }
-            _t16150 = _t16152;
+            _t16190 = _t16192;
           }
-          let _t16169;
-          const _t16168 = _t16150;
-          _t16170: {
-            const ctx = _t16168[0];
-            const global_names = _t16168[1];
-            const mutable_globals = _t16168[2];
-            const setup_protos = _t16168[3];
-            const base_gn_len = _t16168[4];
-            const base_native = _t16168[5];
-            const base_mutable = _t16168[6];
+          let _t16209;
+          const _t16208 = _t16190;
+          _t16210: {
+            const ctx = _t16208[0];
+            const global_names = _t16208[1];
+            const mutable_globals = _t16208[2];
+            const setup_protos = _t16208[3];
+            const base_gn_len = _t16208[4];
+            const base_native = _t16208[5];
+            const base_mutable = _t16208[6];
             (global_names.count = base_gn_len, undefined);
             (Main$native_global_entries = base_native, undefined);
             Hashtbl$clear(mutable_globals);
-            function _t16171(__p424) {
-              let _t16173;
-              const _t16172 = __p424;
-              _t16174: {
-                const k = _t16172[0];
-                const v = _t16172[1];
-                _t16173 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
-                break _t16174;
+            function _t16211(__p424) {
+              let _t16213;
+              const _t16212 = __p424;
+              _t16214: {
+                const k = _t16212[0];
+                const v = _t16212[1];
+                _t16213 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
+                break _t16214;
               }
-              return _t16173;
+              return _t16213;
             }
-            Main$list_iter(_t16171, base_mutable);
-            const tokens_16175 = Lexer$tokenize(source_16148);
-            const program_16177 = Parser$parse_program(tokens_16175);
-            let _t16180;
-            const _t16179 = Typechecker$check_program_in_ctx(ctx, program_16177);
-            _t16181: {
-              const ctx2 = _t16179[0];
-              const typed_program = _t16179[1];
-              const typed_program2_16182 = Typechecker$transform_constraints(ctx2, typed_program);
-              const typed_program2_16184 = Typechecker$classify_handlers(typed_program2_16182);
-              const typed_program2_16186 = Match_tree$lower_program(ctx2.type_env, typed_program2_16184);
-              const compiled_16188 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_16186);
-              Main$register_externs_from_program(typed_program2_16186, global_names);
-              const ng_json_16190 = _t15803_Main$build_native_globals_json(undefined);
-              const json_16192 = Serialize$serialize_bundle(global_names, ng_json_16190, setup_protos, compiled_16188.main);
-              const _t16193 = print(json_16192);
-              const _t16191 = _t16193;
-              const _t16189 = _t16191;
-              const _t16187 = _t16189;
-              const _t16185 = _t16187;
-              const _t16183 = _t16185;
-              _t16180 = _t16183;
-              break _t16181;
+            Main$list_iter(_t16211, base_mutable);
+            const tokens_16215 = Lexer$tokenize(source_16188);
+            const program_16217 = Parser$parse_program(tokens_16215);
+            let _t16220;
+            const _t16219 = Typechecker$check_program_in_ctx(ctx, program_16217);
+            _t16221: {
+              const ctx2 = _t16219[0];
+              const typed_program = _t16219[1];
+              const typed_program2_16222 = Typechecker$transform_constraints(ctx2, typed_program);
+              const typed_program2_16224 = Typechecker$classify_handlers(typed_program2_16222);
+              const typed_program2_16226 = Match_tree$lower_program(ctx2.type_env, typed_program2_16224);
+              const compiled_16228 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_16226);
+              Main$register_externs_from_program(typed_program2_16226, global_names);
+              const ng_json_16230 = _t15843_Main$build_native_globals_json(undefined);
+              const json_16232 = Serialize$serialize_bundle(global_names, ng_json_16230, setup_protos, compiled_16228.main);
+              const _t16233 = print(json_16232);
+              const _t16231 = _t16233;
+              const _t16229 = _t16231;
+              const _t16227 = _t16229;
+              const _t16225 = _t16227;
+              const _t16223 = _t16225;
+              _t16220 = _t16223;
+              break _t16221;
             }
-            const _t16178 = _t16180;
-            const _t16176 = _t16178;
-            _t16169 = _t16176;
-            break _t16170;
+            const _t16218 = _t16220;
+            const _t16216 = _t16218;
+            _t16209 = _t16216;
+            break _t16210;
           }
-          const _t16149 = _t16169;
-          const _t16147 = _t16149;
-          const x_16194 = _t16147;
-          return x_16194;
+          const _t16189 = _t16209;
+          const _t16187 = _t16189;
+          const x_16234 = _t16187;
+          return x_16234;
         } catch (_exc) {
           if (_exc && _exc._e === "lex_error") {
             const arg = _exc._v;
-            let _t16196;
-            const _t16195 = arg;
-            _t16197: {
-              const msg = _t16195[0];
-              const _loc = _t16195[1];
-              _t16196 = failwith(msg);
-              break _t16197;
+            let _t16236;
+            const _t16235 = arg;
+            _t16237: {
+              const msg = _t16235[0];
+              const _loc = _t16235[1];
+              _t16236 = failwith(msg);
+              break _t16237;
             }
-            return _t16196;
+            return _t16236;
           } else if (_exc && _exc._e === "parse_error") {
             const arg = _exc._v;
-            let _t16199;
-            const _t16198 = arg;
-            _t16200: {
-              const msg = _t16198[0];
-              const _loc = _t16198[1];
-              _t16199 = failwith(msg);
-              break _t16200;
+            let _t16239;
+            const _t16238 = arg;
+            _t16240: {
+              const msg = _t16238[0];
+              const _loc = _t16238[1];
+              _t16239 = failwith(msg);
+              break _t16240;
             }
-            return _t16199;
+            return _t16239;
           } else if (_exc && _exc._e === "type_error") {
             const arg = _exc._v;
-            let _t16202;
-            const _t16201 = arg;
-            _t16203: {
-              const msg = _t16201[0];
-              const _loc = _t16201[1];
-              _t16202 = failwith(msg);
-              break _t16203;
+            let _t16242;
+            const _t16241 = arg;
+            _t16243: {
+              const msg = _t16241[0];
+              const _loc = _t16241[1];
+              _t16242 = failwith(msg);
+              break _t16243;
             }
-            return _t16202;
+            return _t16242;
           } else if (_exc && _exc._e === "compile_error") {
             const msg = _exc._v;
             return failwith(msg);
@@ -68464,26 +68606,26 @@ _t16139: {
             const msg = _exc._v;
             return failwith(msg);
           } else { throw _exc; }
-        } finally { _h = _t16142; }
+        } finally { _h = _t16182; }
       })();
-      _t16140 = _t16141;
+      _t16180 = _t16181;
     }
-    _t16138 = _t16140;
-    break _t16139;
+    _t16178 = _t16180;
+    break _t16179;
   }
-  if (_t16137._tag === 1) {
-    const f = _t16137._val;
-    _t16138 = Main$run_batch(f);
-    break _t16139;
+  if (_t16177._tag === 1) {
+    const f = _t16177._val;
+    _t16178 = Main$run_batch(f);
+    break _t16179;
   }
   _match_fail("line 0");
 }
-const _t16136 = _t16138;
-const _t16132 = _t16136;
-const _t16129 = _t16132;
-const _t16126 = _t16129;
-const _t16121 = _t16126;
-const Main$__destruct = _t16121;
+const _t16176 = _t16178;
+const _t16172 = _t16176;
+const _t16169 = _t16172;
+const _t16166 = _t16169;
+const _t16161 = _t16166;
+const Main$__destruct = _t16161;
 { const _r = _last_ty === "float" ? __display_float(_last_val) : _last_ty === "byte" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === "()")) println(_r); }
 var _mml_exports = {"_result": _last_val, "_call": _call, "_pp": _pp};
 if (typeof globalThis !== "undefined") globalThis._mmlExports = _mml_exports;

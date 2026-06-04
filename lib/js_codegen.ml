@@ -316,14 +316,16 @@ type ctx = {
       (* (mml_name, js_name) pairs for harness *)
   function_arities : (string, int) Hashtbl.t;
       (* JS name -> actual parameter count *)
-  twinnable : (string, string list * string list * Typechecker.texpr) Hashtbl.t;
-      (* JS name -> (mml params, js params, body) for every needs_cps named
-         function: the info needed to emit its `$cps` twin (a CPS variant
+  twinnable :
+    (string, string list * string list * Typechecker.texpr * Types.ty) Hashtbl.t;
+      (* JS name -> (mml params, js params, body, fn type) for every needs_cps
+         named function: the info needed to emit its `$cps` twin (a CPS variant
          `name$cps(args, $k)` taking a trailing continuation; docs/effect-
          lowering.md §12). Recorded at the definition, but the twin is emitted
          ON DEMAND (§12.6) — only for functions actually twin-called — to avoid
          the size explosion eager emission caused (the self-host compiler grew
-         77x). *)
+         77x). The fn type identifies which params are themselves effectful
+         functions (CPS-form, §12.2) — needed for HOFs like List.map. *)
   twins_requested : (string, unit) Hashtbl.t;
       (* JS names whose `$cps` twin a call site has requested. *)
   twins_emitted : (string, unit) Hashtbl.t;
@@ -336,6 +338,13 @@ type ctx = {
          reified, so no twin is needed. This is what keeps the self-host
          compiler (whose only effect, codegen_error, is handled try-style) from
          generating any twins. *)
+  cps_form_vars : (string, unit) Hashtbl.t;
+      (* JS names of variables currently bound to a CPS-form function value (a
+         function taking a trailing $k) — i.e. effectful-function PARAMETERS of
+         the twin / CPS-lambda being compiled. A call `f h` to such a value is a
+         CPS-call `f(h, k')`; this is how a HOF twin (List$map$cps) calls its
+         callback parameter (§12.2). Manually added/removed around twin and
+         CPS-lambda bodies. *)
 }
 
 let create_ctx type_env =
@@ -367,6 +376,7 @@ let create_ctx type_env =
     twins_requested = Hashtbl.create 64;
     twins_emitted = Hashtbl.create 64;
     in_full_handler = false;
+    cps_form_vars = Hashtbl.create 16;
   }
 
 (* --- Save/restore helpers using Fun.protect for exception safety --- *)
@@ -1581,7 +1591,7 @@ and compile_named_function ctx js_name fn_expr =
          escape — such a function keeps its current (non-twin) compilation. *)
       if needs_cps fn_expr.Typechecker.ty && not has_return then
         Hashtbl.replace ctx.twinnable js_name
-          (all_params, js_params, final_body)
+          (all_params, js_params, final_body, fn_expr.Typechecker.ty)
   | _ ->
       let v = compile_expr ctx fn_expr in
       emit_line ctx (Printf.sprintf "const %s = %s;" js_name v)
@@ -1593,7 +1603,7 @@ and compile_named_function ctx js_name fn_expr =
 and emit_cps_twin ctx js_name =
   match Hashtbl.find_opt ctx.twinnable js_name with
   | None -> ()
-  | Some (all_params, js_params, final_body) ->
+  | Some (all_params, js_params, final_body, fn_ty) ->
       Hashtbl.replace ctx.twins_emitted js_name ();
       let k_param = "$k" in
       let saved_ifh = ctx.in_full_handler in
@@ -1608,6 +1618,10 @@ and emit_cps_twin ctx js_name =
       List.iter2
         (fun mml_name js_nm -> bind_var ctx mml_name js_nm)
         all_params js_params;
+      (* Params that are themselves effectful functions arrive in CPS form
+         (§12.2), so a call to one inside the body is a CPS-call. *)
+      let cps_ps = cps_form_param_names fn_ty js_params in
+      List.iter (fun p -> Hashtbl.replace ctx.cps_form_vars p ()) cps_ps;
       let _ =
         with_handler_tail_resume ctx false (fun () ->
             with_function_ctx ctx ~fn_name:None ~fn_params:[] ~ddo:[] ~two:[]
@@ -1619,10 +1633,78 @@ and emit_cps_twin ctx js_name =
                              "return _bounce(function() { return %s(%s); });"
                              k_param v)))))
       in
+      List.iter (fun p -> Hashtbl.remove ctx.cps_form_vars p) cps_ps;
       pop_scope ctx;
       ctx.indent <- ctx.indent - 1;
       emit_line ctx "}";
       ctx.in_full_handler <- saved_ifh
+
+(* The js-param names (among [js_params]) whose corresponding parameter type is
+   itself an effectful function — those params arrive in CPS form (§12.2). *)
+and cps_form_param_names fn_ty js_params =
+  let rec param_types ty =
+    match Types.repr ty with
+    | Types.TArrow (a, _, r) | Types.TCont (a, _, r) -> a :: param_types r
+    | _ -> []
+  in
+  let ptys = param_types fn_ty in
+  let rec zip ps tys =
+    match (ps, tys) with
+    | p :: ps', t :: tys' ->
+        if needs_cps t then p :: zip ps' tys' else zip ps' tys'
+    | _ -> []
+  in
+  zip js_params ptys
+
+(* Produce a CPS-form function value (a JS function taking a trailing $k) for an
+   effectful-function-typed expression, used when passing it to / calling it from
+   a full-handler region (§12.2). Returns the JS expression naming the value. *)
+and compile_cps_value ctx te =
+  match te.Typechecker.expr with
+  | Typechecker.TEFun (param, body, false) ->
+      let rec collect_params params b =
+        match b.Typechecker.expr with
+        | Typechecker.TEFun (p, inner, false) -> collect_params (p :: params) inner
+        | _ -> (List.rev params, b)
+      in
+      let all_params, final_body = collect_params [ param ] body in
+      let js_params = dedup_js_params (List.map mangle_name all_params) in
+      let fn_name = fresh_tmp ctx in
+      let k_param = "$k" in
+      emit_indent ctx;
+      emit ctx
+        (Printf.sprintf "function %s(%s) " fn_name
+           (String.concat ", " (js_params @ [ k_param ])));
+      emit ctx "{\n";
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      List.iter2 (fun m j -> bind_var ctx m j) all_params js_params;
+      let cps_ps = cps_form_param_names te.Typechecker.ty js_params in
+      List.iter (fun p -> Hashtbl.replace ctx.cps_form_vars p ()) cps_ps;
+      let _ =
+        with_handler_tail_resume ctx false (fun () ->
+            with_function_ctx ctx ~fn_name:None ~fn_params:[] ~ddo:[] ~two:[]
+              ~in_fold:false (fun () ->
+                with_in_cps ctx true (fun () ->
+                    compile_cps ctx final_body (fun v ->
+                        emit_line ctx
+                          (Printf.sprintf
+                             "return _bounce(function() { return %s(%s); });"
+                             k_param v)))))
+      in
+      List.iter (fun p -> Hashtbl.remove ctx.cps_form_vars p) cps_ps;
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      fn_name
+  | Typechecker.TEVar name -> (
+      let jsn = lookup_var ctx name in
+      if Hashtbl.mem ctx.twinnable jsn then begin
+        Hashtbl.replace ctx.twins_requested jsn ();
+        jsn ^ "$cps"
+      end
+      else jsn (* a param/local already holding a CPS-form value *))
+  | _ -> compile_non_tail ctx te
 
 (* Emit every requested twin, to fixpoint (a twin body may request more). Twins
    are function declarations, so emitting them at the end of the program is fine
@@ -2955,9 +3037,15 @@ and is_twin_call ctx te =
         let base, args = collect te [] in
         match base.Typechecker.expr with
         | Typechecker.TEVar name when needs_cps base.Typechecker.ty -> (
-            match Hashtbl.find_opt ctx.twinnable (lookup_var ctx name) with
-            | Some (_, js_params, _) -> List.length js_params = List.length args
-            | None -> false)
+            let jsn = lookup_var ctx name in
+            match Hashtbl.find_opt ctx.twinnable jsn with
+            | Some (_, js_params, _, _) ->
+                List.length js_params = List.length args
+            | None ->
+                (* A CPS-form value (an effectful-function parameter of the
+                   enclosing twin/CPS-lambda): saturated call -> CPS-call it. *)
+                Hashtbl.mem ctx.cps_form_vars jsn
+                && count_arrows base.Typechecker.ty = Some (List.length args))
         | _ -> false)
     | _ -> false
 
@@ -3487,7 +3575,7 @@ and compile_match_cps ctx scrut arms loc cont =
         (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched
            loc.Token.line))
 
-and compile_app_cps ctx _te fn arg cont =
+and compile_app_cps ctx te fn arg cont =
   (* For function application in CPS context:
      If the arguments or function contain inline performs, CPS them first.
      Otherwise, compile the app directly. *)
@@ -3502,62 +3590,59 @@ and compile_app_cps ctx _te fn arg cont =
      emitted `$cps` twin calls the twin with the current continuation reified as
      $k, so a perform inside the callee captures a continuation spanning this
      call site's rest (cont) — not just the callee's own body. *)
-  let twin =
-    if not ctx.in_full_handler then None
-    else
-      match base_fn.Typechecker.expr with
-      | Typechecker.TEVar name when needs_cps base_fn.Typechecker.ty -> (
-          let jsn = lookup_var ctx name in
-          match Hashtbl.find_opt ctx.twinnable jsn with
-          | Some (_, js_params, _) when List.length js_params = List.length all_args
-            ->
-              Some jsn
-          | _ -> None)
+  if is_twin_call ctx te then begin
+    (* CPS-call: the callee's CPS form (a $cps twin, a CPS-form param value, or
+       an inline CPS lambda) receives the args plus the current continuation as
+       $k. An effectful-function argument is itself passed in CPS form (§12.2),
+       so a HOF's twin can call its callback parameter CPS-style. *)
+    let fn_cps = compile_cps_value ctx base_fn in
+    let args_js =
+      List.map
+        (fun a ->
+          if needs_cps a.Typechecker.ty then compile_cps_value ctx a
+          else compile_non_tail ctx a)
+        all_args
+    in
+    let result_var = fresh_tmp ctx in
+    emit_line ctx
+      (Printf.sprintf "return %s(%s, function(%s) {" fn_cps
+         (String.concat ", " args_js) result_var);
+    ctx.indent <- ctx.indent + 1;
+    emit_line ctx "return _bounce(function() {";
+    ctx.indent <- ctx.indent + 1;
+    cont result_var;
+    ctx.indent <- ctx.indent - 1;
+    emit_line ctx "});";
+    ctx.indent <- ctx.indent - 1;
+    emit_line ctx "});"
+  end
+  else begin
+    let fn_js = compile_non_tail ctx base_fn in
+    let args_js = List.map (compile_non_tail ctx) all_args in
+    let n = List.length all_args in
+    let known_arity = count_arrows base_fn.ty in
+    (* BUG-3: builtin print gets the argument's float shape (see compile_app) *)
+    let print_shape =
+      match (base_fn.Typechecker.expr, all_args) with
+      | Typechecker.TEVar (("print" | "Stdlib.print") as pname), [ a ]
+        when String.equal (lookup_var ctx pname) "print" ->
+          float_shape ctx.type_env a.Typechecker.ty
       | _ -> None
-  in
-  match twin with
-  | Some jsn ->
-      (* Request the twin's emission (drained after the program). *)
-      Hashtbl.replace ctx.twins_requested jsn ();
-      let args_js = List.map (compile_non_tail ctx) all_args in
-      let result_var = fresh_tmp ctx in
-      emit_line ctx
-        (Printf.sprintf "return %s$cps(%s, function(%s) {" jsn
-           (String.concat ", " args_js) result_var);
-      ctx.indent <- ctx.indent + 1;
-      emit_line ctx "return _bounce(function() {";
-      ctx.indent <- ctx.indent + 1;
-      cont result_var;
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "});";
-      ctx.indent <- ctx.indent - 1;
-      emit_line ctx "});"
-  | None ->
-      let fn_js = compile_non_tail ctx base_fn in
-      let args_js = List.map (compile_non_tail ctx) all_args in
-      let n = List.length all_args in
-      let known_arity = count_arrows base_fn.ty in
-      (* BUG-3: builtin print gets the argument's float shape (see compile_app) *)
-      let print_shape =
-        match (base_fn.Typechecker.expr, all_args) with
-        | Typechecker.TEVar (("print" | "Stdlib.print") as pname), [ a ]
-          when String.equal (lookup_var ctx pname) "print" ->
-            float_shape ctx.type_env a.Typechecker.ty
-        | _ -> None
-      in
-      let call_expr =
-        if known_arity = Some n then begin
-          let args_js =
-            match print_shape with Some s -> args_js @ [ s ] | None -> args_js
-          in
-          fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
-        end
-        else "_call(" ^ fn_js ^ ", [" ^ String.concat ", " args_js ^ "])"
-      in
-      let result_var = fresh_tmp ctx in
-      emit_line ctx
-        (Printf.sprintf "const %s = _resolve(%s);" result_var call_expr);
-      cont result_var
+    in
+    let call_expr =
+      if known_arity = Some n then begin
+        let args_js =
+          match print_shape with Some s -> args_js @ [ s ] | None -> args_js
+        in
+        fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
+      end
+      else "_call(" ^ fn_js ^ ", [" ^ String.concat ", " args_js ^ "])"
+    in
+    let result_var = fresh_tmp ctx in
+    emit_line ctx
+      (Printf.sprintf "const %s = _resolve(%s);" result_var call_expr);
+    cont result_var
+  end
 
 (* ---- Top-level declarations ---- *)
 
