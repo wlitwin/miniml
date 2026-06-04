@@ -43,6 +43,7 @@ module Ir_analysis =
         go body
       else
         false
+    | Typechecker.TEApp (({expr = Typechecker.TEFun ((_, fbody, _)); _}, arg)) -> (go fbody) || (go arg)
     | Typechecker.TEApp ((fn_, arg)) -> (go fn_) || (go arg)
     | Typechecker.TEHandle ((body, arms)) -> (go body) || (List.exists (fn arm ->
       do

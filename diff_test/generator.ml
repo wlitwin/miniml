@@ -204,22 +204,25 @@ and gen_int_call ctx =
       Printf.sprintf "(%s %s)" name (String.concat " " args)
 
 and gen_int_lambda_app ctx =
-  (* Immediately-applied lambda: closure creation + capture.
-     AVOIDANCE (bugs/BUG-11): no performs inside the lambda body — emit-js
-     compiles every lambda as a JS function with its own trampoline, so a
-     continuation captured inside it does not extend past the call boundary.
-     Re-allow (drop in_handler = false) once BUG-11 is fixed. *)
+  (* Immediately-applied lambda: closure creation + capture. Performs in the
+     lambda body are now ALLOWED inside a handler — js_codegen beta-reduces an
+     immediately-applied lambda to `let x = arg in body` in CPS context, so a
+     continuation captured inside it threads through the enclosing region
+     (BUG-11 immediately-applied-lambda slice fixed; docs/effect-lowering.md §7
+     step 2). Performs inside OPAQUE-HOF callbacks (List.map/fold etc.) remain
+     avoided — the general selective-CPS gap, BUG-11 steps 3+. *)
   let x = fresh ctx "p" in
-  let ctx' = { ctx with vars = (x, TInt) :: ctx.vars; in_handler = false } in
+  let ctx' = { ctx with vars = (x, TInt) :: ctx.vars } in
   Printf.sprintf "((fn %s -> %s) %s)" x (gen_int ctx') (gen_int ctx)
 
 and gen_int_fold ctx =
   (* for-in fold over a list: exercises fold-callback lowering, continue/break,
      and (when inside a handle body) the for-in CPS loop — performs allowed
      since the BUG-11 for-in slice was fixed (native CPS lowering of for-in
-     bodies on emit-js). Performs inside OTHER lambdas (List.map/fold
-     callbacks, immediately-applied lambdas) remain avoided — that is the
-     general selective-CPS gap still tracked as BUG-11. *)
+     bodies on emit-js). Performs inside OPAQUE-HOF callbacks (List.map/fold
+     callbacks) remain avoided — that is the general selective-CPS gap still
+     tracked as BUG-11 (immediately-applied lambdas are now allowed, see
+     gen_int_lambda_app). *)
   let x = fresh ctx "i" in
   let acc = fresh ctx "a" in
   let ctx' =

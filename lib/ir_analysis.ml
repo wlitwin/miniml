@@ -78,6 +78,15 @@ let rec expr_has_perform_with ~check_perform ~enter_funs
   | Typechecker.TELetRecAnd (bindings, body) ->
       List.exists (fun (_, e) -> go e) bindings || go body
   | Typechecker.TEFun (_, body, _) -> if enter_funs then go body else false
+  | Typechecker.TEApp ({ expr = Typechecker.TEFun (_, fbody, _); _ }, arg) ->
+      (* Immediately-applied lambda: its body runs as part of evaluating this
+         expression (it is not a first-class closure left unapplied), so a
+         perform inside it is an evaluation effect even under ~enter_funs:false
+         — the same reasoning as TEForLoop below. Without this, eval_can_perform
+         misses the perform, ANF lifting never threads it, and the lambda falls
+         to direct-style compilation with its own trampoline (the nested
+         immediately-applied-lambda slice of BUG-11). *)
+      go fbody || go arg
   | Typechecker.TEApp (fn, arg) -> go fn || go arg
   | Typechecker.TEHandle (body, arms) ->
       go body

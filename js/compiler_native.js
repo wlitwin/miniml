@@ -46879,6 +46879,12 @@ function Ir_analysis$expr_has_perform_with(check_perform, enter_funs, te) {
     const _t10728 = te.expr;
     _t10730: {
       if (_t10728._tag === 11) {
+        if (_t10728._val[0].expr._tag === 10) {
+          const fbody = _t10728._val[0].expr._val[1];
+          const arg = _t10728._val[1];
+          _t10729 = (go_10726(fbody) || go_10726(arg));
+          break _t10730;
+        }
         const fn_ = _t10728._val[0];
         const arg = _t10728._val[1];
         _t10729 = (go_10726(fn_) || go_10726(arg));
@@ -64471,6 +64477,19 @@ function Js_codegen$compile_cps_dispatch(ctx, te, cont) {
           _t15060 = _t15066;
           break _t15061;
         } else {
+          if (_t15059._val[0].expr._tag === 10) {
+            if (!_t15059._val[0].expr._val[2]) {
+              const param = _t15059._val[0].expr._val[0];
+              const body = _t15059._val[0].expr._val[1];
+              const arg = _t15059._val[1];
+              _t15060 = _call(Js_codegen$compile_let_cps, [ctx, param, arg, body, cont]);
+              break _t15061;
+            }
+            const fn_ = _t15059._val[0];
+            const arg = _t15059._val[1];
+            _t15060 = _call(Js_codegen$compile_app_cps, [ctx, te, fn_, arg, cont]);
+            break _t15061;
+          }
           const fn_ = _t15059._val[0];
           const arg = _t15059._val[1];
           _t15060 = _call(Js_codegen$compile_app_cps, [ctx, te, fn_, arg, cont]);
