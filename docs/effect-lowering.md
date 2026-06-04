@@ -513,6 +513,17 @@ No HOF is special-cased — `List.map`'s twin falls out of CPS-compiling its
 ordinary `match`/recursion body, because the callback call `f x` inside it is a
 `needs_cps` call and lowers per §12.3.
 
+> **On-demand is REQUIRED, not an optimization** (learned from the first 3a
+> attempt, branch `wip-phase3-cps-3a`). Emitting a twin eagerly for *every*
+> `needs_cps` function exploded the self-host compiler **77×** (2.4 MB → 185 MB)
+> from just 37 twins — the compiler's own codegen functions are large and
+> effectful (they `perform codegen_error`), and CPS-compiling them wholesale is
+> enormous. A twin must only be emitted for a function that is actually
+> twin-*called*. Note also that many of those functions are `needs_cps` solely
+> because of a *try-style* (non-resuming) effect like `codegen_error`, which
+> never needs a multishot continuation — a refinement could skip twins whose
+> only effects are handled try-style, narrowing `needs_cps` for this purpose.
+
 ### 12.7 Increment order (each independently gated)
 
 - **3a.** `compile_app_cps`: add the §12.3 CPS-call branch for a `needs_cps`
