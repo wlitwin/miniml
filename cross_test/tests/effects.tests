@@ -954,6 +954,48 @@ with
 | flip () k -> let k2 = copy_continuation k in ((resume k true) + (resume k2 false))
 --- expect: 30
 
+--- test: effectful callback in user-defined HOF, multishot
+effect Choose =
+  pick : unit -> bool
+end
+let apply2 f x = f x
+handle
+  let r = apply2 (fn e -> if perform pick () do e else (e + 100)) 5 in
+  r
+with
+| pick () k -> let k2 = copy_continuation k in ((resume k true) + (resume k2 false))
+--- expect: 110
+
+--- test: effectful callback in List.map, single resume
+effect Choose =
+  pick : unit -> bool
+end
+handle
+  List.map (fn e -> if perform pick () do e else (e * 10)) [1; 2]
+with
+| pick () k -> resume k true
+--- expect: [1; 2]
+
+--- test: effectful callback in List.fold
+effect Add =
+  inc : int -> int
+end
+handle
+  List.fold (fn acc e -> acc + (perform inc e)) 0 [1; 2; 3]
+with
+| inc n k -> resume k (n + 1)
+--- expect: 9
+
+--- test: effectful callback in List.filter
+effect P =
+  keep : int -> bool
+end
+handle
+  List.filter (fn e -> perform keep e) [1; 2; 3; 4]
+with
+| keep n k -> resume k (n mod 2 = 0)
+--- expect: [2; 4]
+
 --- test: immediately-applied lambda with perform nested in perform argument
 effect E2 =
   op0 : int -> int
