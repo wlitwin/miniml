@@ -281,11 +281,14 @@ valuable. Stop-anywhere ordering, smallest first:
    consumes `Ir_analysis.needs_cps`. No behavior change yet — pure refactor
    establishing the property. *(This is the concrete, non-speculative content of
    [#11], now that [#12]'s design names exactly what it must compute.)*
-2. **Thread `k` across direct effectful calls.** Make an effectful function call
-   in CPS context call the callee's CPS twin with the current continuation,
-   instead of wrapping the callee in its own trampoline. Move the trampoline to
-   the handler boundary. Re-enable the fuzzer's *immediately-applied-lambda*
-   avoidance (`gen_int_lambda_app`) — the simplest cross-frame case.
+2. **Immediately-applied lambdas — DONE (merge 1592b2d).** An immediately-applied
+   lambda `(fn x -> ... perform ...) arg` is *inlined*, not CPS'd: you don't CPS
+   what you can beta-reduce. `compile_cps_dispatch` rewrites
+   `TEApp(TEFun(p, body, false), arg)` to `let p = arg in body`; a companion arm
+   in `Ir_analysis.expr_has_perform_with` makes the lambda body visible under
+   `~enter_funs:false` so the effect is seen (and ANF-lifted) even in argument
+   position. Re-enabled `gen_int_lambda_app`. This subcase needs no calling-
+   convention change — the real CPS work below is for the *opaque* HOF case.
 3. **Dual-compile effect-polymorphic HOFs + call-site selection (§5).** The twin
    worklist; select direct vs `$cps` by the argument's instantiated row.
    Re-enable the `List.map` / `List.filter` / `List.fold` avoidance entries one
@@ -377,6 +380,157 @@ After step 5, BUG-11 has no remaining general case and the tracker item closes.
 - **No new skip markers.** The whole point is to *remove* avoidance; any test
   that must be skipped on emit-js after this work indicates the design is
   incomplete, not that a skip is warranted.
+
+---
+
+## 12. The CPS calling convention (implementation spec for steps 3–5)
+
+This section pins down the mechanics steps 3–5 implement, grounded in the
+current `lib/js_codegen.ml`. It is the "design the arity protocol first"
+artifact §9 calls for. Everything here is emit-js-internal; no other backend and
+no semantics change.
+
+### 12.1 The severing point, exactly
+
+In CPS context an effectful application is lowered by `compile_app_cps`
+(`js_codegen.ml:3345`) as:
+
+```ocaml
+let result_var = fresh_tmp ctx in
+emit_line ctx (Printf.sprintf "const %s = _resolve(%s);" result_var call_expr);
+cont result_var          (* the caller's rest, emitted INLINE here *)
+```
+
+i.e. `const v = _resolve(f(args)); «caller's rest»`. The callee `f` is called as
+a **value producer**: it runs to a value (under its own per-function trampoline,
+emitted at `js_codegen.ml:1373`/`1487`), and the caller's continuation (`cont`)
+is emitted *after* the call, in the caller's frame. A `perform` inside `f`
+therefore captures a continuation bounded by `f`'s trampoline — it never reaches
+`cont`. That is the entire bug.
+
+Contrast `compile_perform_cps`, which already does the right thing — it reifies
+`cont` as a runtime JS closure and tail-calls with it:
+
+```js
+return _h["op"](arg, function(_r) { return _bounce(function() { «cont _r» }); });
+```
+
+The fix is to make an effectful **call** look like a `perform`: hand the callee
+the reified continuation.
+
+### 12.2 Representation of an effectful function value
+
+An effectful function (one whose type satisfies `Ir_analysis.needs_cps`) is
+represented, in CPS context, as a JS function taking a **trailing continuation
+parameter** `$k`:
+
+```js
+function f$cps(a1, …, an, $k) { /* body; every tail position calls $k(value) */ }
+```
+
+- It does **not** install its own trampoline. It runs under the *caller's*
+  trampoline (ultimately the one at the handler boundary, §12.5).
+- Every tail position emits `return _bounce(function() { return $k(v); });`
+  instead of `return v;`. (Concretely: the `cont` passed to `compile_cps` for a
+  CPS function body is `fun v -> emit "return _bounce(function(){ return $k(" ^ v
+  ^ "); });"`.)
+- A `perform` inside it is unchanged (`_h["op"](arg, …)`); because the body's
+  tail calls `$k`, the continuation the handler captures now chains through `$k`
+  into the caller. Span solved.
+
+### 12.3 The CPS call form
+
+`compile_app_cps` gains a branch: when `Ir_analysis.needs_cps base_fn.ty`, emit a
+CPS call instead of the value call — the `perform` template applied to an
+ordinary callee:
+
+```js
+return f$cps(a1, …, an, function(_r) { return _bounce(function() { «cont _r» }); });
+```
+
+`cont` (the caller's rest) becomes the body of `$k`. The call is in tail
+position of the current bounce and returns a bounce the trampoline drives. Pure
+callees keep the existing value-call path unchanged — **pure code never sees
+`$k`**.
+
+### 12.4 Arity protocol (the crux)
+
+A CPS function has JS arity `n+1`. The bookkeeping rules, chosen to keep CPS
+strictly off the `_call`/`_partial` path:
+
+1. **CPS calls are always emitted as direct, fully-applied calls** —
+   `f$cps(a1,…,an,$k)` — never through `_call`. The call site knows `n`
+   (`count_arrows base_fn.ty`, already computed at `js_codegen.ml:3360`), so it
+   can emit the direct form. This is why CPS and the runtime arity helpers never
+   interact.
+2. **A function value passed as a callback IS its CPS form.** When a CPS HOF twin
+   calls its callback parameter, the parameter already has arity `n+1`; the twin
+   calls it via the §12.3 CPS-call form (the callback's type is `needs_cps`).
+   No `_call`, no arity inference — direct.
+3. **`function_arities` is not consulted for `$cps` calls** and `$cps` twins are
+   not registered there (registering `n+1` would corrupt any accidental
+   value-call). Twins live in a separate name space (`name + "$cps"`).
+4. **Partial application of an effectful function is the one residual gap.**
+   `let g = f a in … g b …` where `f : α → β -[ρ]-> γ`: the partial `f a` is
+   pure (currying builds a closure, performs nothing), so it flows through normal
+   value code as a `_partial` closure; the effectful call is `g b`, where `g` is
+   a *runtime* closure with no statically-known `$cps` twin. Steps 3–4 do **not**
+   cover this — the HOF-callback cases are all fully-applied (`List.map f xs`
+   calls `f x` fully). If the fuzzer surfaces it, the conservative fallback is to
+   keep such a call on the current (single-resume-correct, multishot-lossy) path
+   and `log` it, or to box effectful partials as CPS closures — decide when it
+   actually appears, not speculatively.
+
+### 12.5 Trampoline placement
+
+The single trampoline lives at the **handler boundary** — the `handle` body is
+already wrapped in `_trampoline` when it needs CPS (`js_codegen.ml:2544`/`2781`).
+CPS functions reached from there run under it and return bounces it drives. The
+**per-function trampolines** at `js_codegen.ml:1373`/`1487` are *removed for CPS
+(`$cps`) functions*: a `$cps` function never self-trampolines (that is what
+severed continuations). This is the highest-risk edit — every effectful function
+is only ever *entered* from within a trampolined region (a handler body, or a
+CPS callee of one; an effectful call outside any handler is an unhandled-effect
+type error), so removing the self-trampoline is safe, but it touches the hot
+path of all effect code and must be gated carefully.
+
+### 12.6 Generating `$cps` twins (effect-polymorphic HOFs)
+
+A directly-effectful function (concrete non-empty row) is only ever CPS-called,
+so it can be compiled **once** in `$cps` form. An effect-*polymorphic* function
+(`List.map : (α -[e]-> β) → α list -[e]-> β list`) is called both purely (the
+common case — keep today's direct compile) and effectfully (needs a `$cps`
+twin). Twins are generated **on demand**:
+
+1. When `compile_app_cps` needs a `$cps` call to a named function `g` whose twin
+   does not yet exist, enqueue `g` for twin emission.
+2. Emitting `g$cps` = compiling `g`'s body in CPS form (§12.2); callback/effectful
+   calls inside it become CPS calls (§12.3), which may enqueue further twins.
+3. Fixpoint over the worklist (a "twin requested" set breaks cycles, e.g.
+   mutual recursion through HOFs). Pure-only functions never get a twin.
+
+No HOF is special-cased — `List.map`'s twin falls out of CPS-compiling its
+ordinary `match`/recursion body, because the callback call `f x` inside it is a
+`needs_cps` call and lowers per §12.3.
+
+### 12.7 Increment order (each independently gated)
+
+- **3a.** `compile_app_cps`: add the §12.3 CPS-call branch for a `needs_cps`
+  callee that is a **lambda passed inline** (the callback itself), with the
+  callback compiled in `$cps` form and its self-trampoline suppressed. Target a
+  *user-defined, fully-applied* HOF first (`let apply f x = f x`), so no stdlib
+  twin is needed yet — `apply`'s own body is CPS-compiled on demand. Re-enable a
+  minimal user-HOF fuzzer case; add the multishot `effects.tests` cases (§10).
+- **3b.** On-demand twin generation (§12.6) for named functions; re-enable
+  `List.map`, then `List.filter`, then `List.fold` avoidance entries one at a
+  time, each behind a green `make test-fuzz` + a larger `make fuzz COUNT=…`.
+- **4.** Route the for-in user-`Iter` fallback (`js_codegen.ml:3099`) through the
+  same twin mechanism.
+- **5.** Delete the avoidance ledger; the fuzzer now covers effectful callbacks.
+
+Each increment must keep every existing effect test green (the per-function-
+trampoline removal in §12.5 is the thing most likely to regress them) and add no
+skip markers.
 
 ---
 
