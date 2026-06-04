@@ -15,8 +15,8 @@ module Ir_analysis =
     | _ -> false
 
 
-  pub let rec expr_has_perform_with check_perform enter_funs (te : Typechecker.texpr) =
-    let go = expr_has_perform_with check_perform enter_funs in
+  pub let rec expr_has_perform_with check_perform enter_funs on_app (te : Typechecker.texpr) =
+    let go = expr_has_perform_with check_perform enter_funs on_app in
     match te.expr with
     | Typechecker.TEPerform ((op_name, arg)) -> (check_perform op_name) || (go arg)
     | Typechecker.TEResume _ -> true
@@ -44,7 +44,7 @@ module Ir_analysis =
       else
         false
     | Typechecker.TEApp (({expr = Typechecker.TEFun ((_, fbody, _)); _}, arg)) -> (go fbody) || (go arg)
-    | Typechecker.TEApp ((fn_, arg)) -> (go fn_) || (go arg)
+    | Typechecker.TEApp ((fn_, arg)) -> (on_app fn_) || ((go fn_) || (go arg))
     | Typechecker.TEHandle ((body, arms)) -> (go body) || (List.exists (fn arm ->
       do
         match arm with
@@ -73,16 +73,20 @@ module Ir_analysis =
     | Typechecker.TEBreak e -> go e
     | Typechecker.TEReturn e -> go e
     | Typechecker.TEFoldContinue e -> go e
-    | Typechecker.TEForLoop e -> expr_has_perform_with check_perform true e
+    | Typechecker.TEForLoop e -> expr_has_perform_with check_perform true on_app e
     | Typechecker.TEContinueLoop -> false
     | ((((((((Typechecker.TEInt _ | Typechecker.TEFloat _) | Typechecker.TEBool _) | Typechecker.TEString _) | Typechecker.TEByte _) | Typechecker.TERune _) | Typechecker.TEUnit) | Typechecker.TENil) | Typechecker.TEVar _) -> false
 
 
-  pub let expr_has_perform te = expr_has_perform_with (fn _ -> true) true te
+  pub let no_app _ = false
 
-  pub let expr_has_unhandled_perform handled_ops te = expr_has_perform_with (fn op -> not (List.mem op handled_ops)) true te
+  pub let expr_has_perform te = expr_has_perform_with (fn _ -> true) true no_app te
 
-  pub let eval_can_perform te = expr_has_perform_with (fn _ -> true) false te
+  pub let expr_has_unhandled_perform handled_ops te = expr_has_perform_with (fn op -> not (List.mem op handled_ops)) true no_app te
+
+  pub let eval_can_perform te = expr_has_perform_with (fn _ -> true) false no_app te
+
+  pub let eval_invokes_effect te = expr_has_perform_with (fn _ -> true) true (fn fn_ -> needs_cps fn_.ty) te
 
   pub let rec loop_ctl_escapes_handler in_handler (te : Typechecker.texpr) =
     let go = loop_ctl_escapes_handler in_handler in

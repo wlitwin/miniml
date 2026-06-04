@@ -917,6 +917,43 @@ with
 | ask n k -> resume k (n + 100)
 --- expect: 214
 
+--- test: multishot resume across a directly-effectful named function call
+effect Choose =
+  pick : unit -> bool
+end
+let helper u = perform pick ()
+handle
+  let a = helper () in
+  if a do 10 else 20
+with
+| pick () k -> let k2 = copy_continuation k in ((resume k true) + (resume k2 false))
+--- expect: 30
+
+--- test: effectful named function call in let, single resume
+effect Ask3 =
+  get3 : int -> int
+end
+let dbl u = (perform get3 u) * 2
+handle
+  let a = dbl 5 in
+  a + 1
+with
+| get3 n k -> resume k (n + 100)
+--- expect: 211
+
+--- test: nested effectful named function calls multishot
+effect Coin =
+  flip : unit -> bool
+end
+let inner u = perform flip ()
+let outer u = if inner () do 1 else 2
+handle
+  let a = outer () in
+  a * 10
+with
+| flip () k -> let k2 = copy_continuation k in ((resume k true) + (resume k2 false))
+--- expect: 30
+
 --- test: immediately-applied lambda with perform nested in perform argument
 effect E2 =
   op0 : int -> int

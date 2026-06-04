@@ -316,6 +316,26 @@ type ctx = {
       (* (mml_name, js_name) pairs for harness *)
   function_arities : (string, int) Hashtbl.t;
       (* JS name -> actual parameter count *)
+  twinnable : (string, string list * string list * Typechecker.texpr) Hashtbl.t;
+      (* JS name -> (mml params, js params, body) for every needs_cps named
+         function: the info needed to emit its `$cps` twin (a CPS variant
+         `name$cps(args, $k)` taking a trailing continuation; docs/effect-
+         lowering.md §12). Recorded at the definition, but the twin is emitted
+         ON DEMAND (§12.6) — only for functions actually twin-called — to avoid
+         the size explosion eager emission caused (the self-host compiler grew
+         77x). *)
+  twins_requested : (string, unit) Hashtbl.t;
+      (* JS names whose `$cps` twin a call site has requested. *)
+  twins_emitted : (string, unit) Hashtbl.t;
+      (* JS names whose `$cps` twin has been emitted (drain dedup / fixpoint). *)
+  mutable in_full_handler : bool;
+      (* True while compiling code in the dynamic extent of a FULL (THOp,
+         multishot-capable) handler — the only place a continuation must thread
+         across a function call. Twin-calls are gated on this: under try-style
+         (abort) or provide-style (tail-resume) handlers no continuation is
+         reified, so no twin is needed. This is what keeps the self-host
+         compiler (whose only effect, codegen_error, is handled try-style) from
+         generating any twins. *)
 }
 
 let create_ctx type_env =
@@ -343,6 +363,10 @@ let create_ctx type_env =
     fold_cont_pending = false;
     top_level_exports = [];
     function_arities = Hashtbl.create 64;
+    twinnable = Hashtbl.create 64;
+    twins_requested = Hashtbl.create 64;
+    twins_emitted = Hashtbl.create 64;
+    in_full_handler = false;
   }
 
 (* --- Save/restore helpers using Fun.protect for exception safety --- *)
@@ -1543,10 +1567,81 @@ and compile_named_function ctx js_name fn_expr =
           body_lines;
         Buffer.add_string ctx.buf (indent_str ^ "}\n")
       end;
-      emit_line ctx "}"
+      emit_line ctx "}";
+      (* Record (don't emit) the info to build a `$cps` twin on demand
+         (docs/effect-lowering.md §12, §12.6). The twin is a CPS variant
+         `name$cps(params, $k)` taking a trailing continuation, with NO
+         self-trampoline, tail-calling $k — so a continuation captured inside it
+         threads through the call rather than being severed at the callee's own
+         trampoline (BUG-11 opaque-named-call slice). It is emitted only if a
+         call site actually requests it (§12.6: eager emission exploded the
+         self-host compiler 77x).
+         has_return is deferred: a `return` inside a twin would throw `_return`
+         with no trampoline of its own to host a spanning catch, so it would
+         escape — such a function keeps its current (non-twin) compilation. *)
+      if needs_cps fn_expr.Typechecker.ty && not has_return then
+        Hashtbl.replace ctx.twinnable js_name
+          (all_params, js_params, final_body)
   | _ ->
       let v = compile_expr ctx fn_expr in
       emit_line ctx (Printf.sprintf "const %s = %s;" js_name v)
+
+(* Emit the `$cps` twin for [js_name] (must be in [ctx.twinnable]). Compiles the
+   body in CPS, tail-calling the continuation $k; sets [in_full_handler] so any
+   effectful call inside the twin also threads its continuation (transitivity).
+   May request further twins, drained by the worklist below. *)
+and emit_cps_twin ctx js_name =
+  match Hashtbl.find_opt ctx.twinnable js_name with
+  | None -> ()
+  | Some (all_params, js_params, final_body) ->
+      Hashtbl.replace ctx.twins_emitted js_name ();
+      let k_param = "$k" in
+      let saved_ifh = ctx.in_full_handler in
+      ctx.in_full_handler <- true;
+      emit_indent ctx;
+      emit ctx
+        (Printf.sprintf "function %s$cps(%s) " js_name
+           (String.concat ", " (js_params @ [ k_param ])));
+      emit ctx "{\n";
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      List.iter2
+        (fun mml_name js_nm -> bind_var ctx mml_name js_nm)
+        all_params js_params;
+      let _ =
+        with_handler_tail_resume ctx false (fun () ->
+            with_function_ctx ctx ~fn_name:None ~fn_params:[] ~ddo:[] ~two:[]
+              ~in_fold:false (fun () ->
+                with_in_cps ctx true (fun () ->
+                    compile_cps ctx final_body (fun v ->
+                        emit_line ctx
+                          (Printf.sprintf
+                             "return _bounce(function() { return %s(%s); });"
+                             k_param v)))))
+      in
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      ctx.in_full_handler <- saved_ifh
+
+(* Emit every requested twin, to fixpoint (a twin body may request more). Twins
+   are function declarations, so emitting them at the end of the program is fine
+   — JS hoists them, and they run (when called) after all top-level bindings are
+   initialised. *)
+and drain_cps_twins ctx =
+  let pending () =
+    Hashtbl.fold
+      (fun n () acc -> if Hashtbl.mem ctx.twins_emitted n then acc else n :: acc)
+      ctx.twins_requested []
+  in
+  let rec loop () =
+    match pending () with
+    | [] -> ()
+    | names ->
+        List.iter (emit_cps_twin ctx) names;
+        loop ()
+  in
+  loop ()
 
 (* ---- Function application ---- *)
 
@@ -2769,9 +2864,16 @@ and compile_handle ctx body arms =
 
         (* Compile body — direct style if all performs are handled by simple ops *)
         let body_needs_cps =
-          if simple_ops = [] then expr_has_perform body
+          if simple_ops = [] then eval_invokes_effect body
           else expr_has_unhandled_perform simple_ops body
         in
+
+        (* A FULL (THOp) op arm makes this a multishot-capable handler, so the
+           body runs in a full-handler region: effectful calls inside it thread
+           their continuation through a twin (§12). Provide/try-only handlers
+           reify no continuation, so the body inherits the ambient flag. *)
+        let saved_ifh = ctx.in_full_handler in
+        ctx.in_full_handler <- full_ops <> [] || saved_ifh;
 
         emit_line ctx "try {";
         ctx.indent <- ctx.indent + 1;
@@ -2817,6 +2919,7 @@ and compile_handle ctx body arms =
               pop_scope ctx
           | None -> emit_line ctx (Printf.sprintf "return %s;" body_v)
         end;
+        ctx.in_full_handler <- saved_ifh;
 
         ctx.indent <- ctx.indent - 1;
         emit_line ctx (Printf.sprintf "} finally { _h = %s; }" h_saved));
@@ -2830,6 +2933,34 @@ and compile_handle ctx body arms =
 (* CPS compilation: compiles an expression and calls cont with the result variable.
    Emits JS code as statements. The cont function should emit code that uses the
    result (typically ending with 'return'). *)
+(* Is [te] a saturated call to a needs_cps named function that has an emitted
+   `$cps` twin? Such a call must thread its continuation through the twin
+   (compile_app_cps §12.3) rather than take the tail-bounce/value-call path,
+   which would sever the continuation at the callee boundary. A call to an
+   effectful function with NO twin (e.g. a local `let rec`) is NOT a twin-call —
+   it keeps the existing stack-safe bounce path. *)
+and is_twin_call ctx te =
+  (* Only under a FULL handler, and only a saturated call to a twinnable named
+     function. Outside a full-handler region no continuation is reified, so the
+     call keeps the normal (stack-safe bounce / value) path. *)
+  if not ctx.in_full_handler then false
+  else
+    let rec collect e acc =
+      match e.Typechecker.expr with
+      | Typechecker.TEApp (f, a) -> collect f (a :: acc)
+      | _ -> (e, acc)
+    in
+    match te.Typechecker.expr with
+    | Typechecker.TEApp _ -> (
+        let base, args = collect te [] in
+        match base.Typechecker.expr with
+        | Typechecker.TEVar name when needs_cps base.Typechecker.ty -> (
+            match Hashtbl.find_opt ctx.twinnable (lookup_var ctx name) with
+            | Some (_, js_params, _) -> List.length js_params = List.length args
+            | None -> false)
+        | _ -> false)
+    | _ -> false
+
 and compile_cps ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
   (* BUG-6: expressions with performs in value positions (binop operands,
      application arguments, tuple elements, ...) are first A-normalized so the
@@ -2850,6 +2981,20 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
      For TEApp and leaf expressions, keep the expr_has_perform guard so that
      tail-position calls return raw bounces to the trampoline (stack-safe). *)
   match te.expr with
+  (* Control-transfer nodes: in CPS the enclosing loop is a CPS loop
+     (compile_while_cps / compile_forloop_cps) that catches a thrown
+     break/continue at its iteration boundary. Emit the throw as a `return`
+     statement so it fires SYNCHRONOUSLY at this point and is caught — never
+     route its value through [cont], which would defer the throw inside a
+     _bounce, escaping the loop's catch (a fold_cont/break would then propagate
+     uncaught — the bug exposed when needs_cps routes more loops through CPS). *)
+  | Typechecker.TEBreak value_te ->
+      let v = compile_non_tail ctx value_te in
+      emit_line ctx (Printf.sprintf "return _throw_break(%s);" v)
+  | Typechecker.TEContinueLoop -> emit_line ctx "return _throw_continue();"
+  | Typechecker.TEFoldContinue value_te ->
+      let v = compile_non_tail ctx value_te in
+      emit_line ctx (Printf.sprintf "return _throw_fold_cont(%s);" v)
   (* Compound expressions: always recurse to ensure proper _resolve *)
   | Typechecker.TELet (name, _, e1, e2) -> compile_let_cps ctx name e1 e2 cont
   | Typechecker.TELetRec (name, _, fn_expr, body) ->
@@ -2863,7 +3008,7 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
       compile_match_cps ctx scrut arms te.loc cont
   | Typechecker.TEMatchTree cm -> compile_js_match_tree_cps ctx cm cont
   | Typechecker.TELetMut (name, init, body) ->
-      if expr_has_perform init then begin
+      if eval_invokes_effect init then begin
         compile_cps ctx init (fun init_v ->
             let js_name = mangle_name name in
             let actual_name = js_name ^ "_" ^ string_of_int ctx.tmp_counter in
@@ -2899,13 +3044,13 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
          gap, which needs selective CPS). *)
       compile_forloop_cps ctx te fold_app cont
   (* Non-compound expressions: use expr_has_perform guard *)
-  | Typechecker.TEApp _ when not (expr_has_perform te) ->
+  | Typechecker.TEApp _ when (not (is_twin_call ctx te)) && not (expr_has_perform te) ->
       (* Function call in potential tail position: temporarily clear in_cps
          so the call itself doesn't get _resolve (preserving trampoline stack safety).
          Arguments still get _resolve via compile_app's arg compilation. *)
       let v = with_in_cps ctx false (fun () -> compile_non_tail ctx te) in
       cont v
-  | _ when not (expr_has_perform te) ->
+  | _ when (not (is_twin_call ctx te)) && not (expr_has_perform te) ->
       let v = compile_non_tail ctx te in
       cont v
   | Typechecker.TEPerform (op_name, arg) ->
@@ -3224,7 +3369,7 @@ and compile_perform_cps ctx op_name (arg : Typechecker.texpr) cont =
       emit_line ctx "});"
 
 and compile_let_cps ctx name e1 e2 cont =
-  if expr_has_perform e1 then begin
+  if eval_invokes_effect e1 then begin
     (* e1 is effectful — CPS-compile it, then bind result and CPS-compile e2 *)
     compile_cps ctx e1 (fun v1 ->
         let js_name = mangle_name name in
@@ -3272,7 +3417,7 @@ and compile_letrec_cps ctx name fn_expr body cont =
   pop_scope ctx
 
 and compile_seq_cps ctx e1 e2 cont =
-  if expr_has_perform e1 then begin
+  if eval_invokes_effect e1 then begin
     compile_cps ctx e1 (fun v1 ->
         emit_line ctx (Printf.sprintf "_resolve(%s);" v1);
         compile_cps ctx e2 cont)
@@ -3353,31 +3498,66 @@ and compile_app_cps ctx _te fn arg cont =
     | _ -> (expr, acc)
   in
   let base_fn, all_args = collect_args fn [ arg ] in
-  (* For now, compile arguments and function directly, then call *)
-  let fn_js = compile_non_tail ctx base_fn in
-  let args_js = List.map (compile_non_tail ctx) all_args in
-  let n = List.length all_args in
-  let known_arity = count_arrows base_fn.ty in
-  (* BUG-3: builtin print gets the argument's float shape (see compile_app) *)
-  let print_shape =
-    match (base_fn.Typechecker.expr, all_args) with
-    | Typechecker.TEVar (("print" | "Stdlib.print") as pname), [ a ]
-      when String.equal (lookup_var ctx pname) "print" ->
-        float_shape ctx.type_env a.Typechecker.ty
-    | _ -> None
+  (* CPS call (§12.3): a saturated call to a needs_cps named function that has an
+     emitted `$cps` twin calls the twin with the current continuation reified as
+     $k, so a perform inside the callee captures a continuation spanning this
+     call site's rest (cont) — not just the callee's own body. *)
+  let twin =
+    if not ctx.in_full_handler then None
+    else
+      match base_fn.Typechecker.expr with
+      | Typechecker.TEVar name when needs_cps base_fn.Typechecker.ty -> (
+          let jsn = lookup_var ctx name in
+          match Hashtbl.find_opt ctx.twinnable jsn with
+          | Some (_, js_params, _) when List.length js_params = List.length all_args
+            ->
+              Some jsn
+          | _ -> None)
+      | _ -> None
   in
-  let call_expr =
-    if known_arity = Some n then begin
-      let args_js =
-        match print_shape with Some s -> args_js @ [ s ] | None -> args_js
+  match twin with
+  | Some jsn ->
+      (* Request the twin's emission (drained after the program). *)
+      Hashtbl.replace ctx.twins_requested jsn ();
+      let args_js = List.map (compile_non_tail ctx) all_args in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx
+        (Printf.sprintf "return %s$cps(%s, function(%s) {" jsn
+           (String.concat ", " args_js) result_var);
+      ctx.indent <- ctx.indent + 1;
+      emit_line ctx "return _bounce(function() {";
+      ctx.indent <- ctx.indent + 1;
+      cont result_var;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "});";
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "});"
+  | None ->
+      let fn_js = compile_non_tail ctx base_fn in
+      let args_js = List.map (compile_non_tail ctx) all_args in
+      let n = List.length all_args in
+      let known_arity = count_arrows base_fn.ty in
+      (* BUG-3: builtin print gets the argument's float shape (see compile_app) *)
+      let print_shape =
+        match (base_fn.Typechecker.expr, all_args) with
+        | Typechecker.TEVar (("print" | "Stdlib.print") as pname), [ a ]
+          when String.equal (lookup_var ctx pname) "print" ->
+            float_shape ctx.type_env a.Typechecker.ty
+        | _ -> None
       in
-      fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
-    end
-    else "_call(" ^ fn_js ^ ", [" ^ String.concat ", " args_js ^ "])"
-  in
-  let result_var = fresh_tmp ctx in
-  emit_line ctx (Printf.sprintf "const %s = _resolve(%s);" result_var call_expr);
-  cont result_var
+      let call_expr =
+        if known_arity = Some n then begin
+          let args_js =
+            match print_shape with Some s -> args_js @ [ s ] | None -> args_js
+          in
+          fn_js ^ "(" ^ String.concat ", " args_js ^ ")"
+        end
+        else "_call(" ^ fn_js ^ ", [" ^ String.concat ", " args_js ^ "])"
+      in
+      let result_var = fresh_tmp ctx in
+      emit_line ctx
+        (Printf.sprintf "const %s = _resolve(%s);" result_var call_expr);
+      cont result_var
 
 (* ---- Top-level declarations ---- *)
 
@@ -4063,6 +4243,8 @@ let compile_program type_env (program : Typechecker.tprogram) : string =
   emit ctx "let _last_shape = null;\n";
   (* Compile all declarations *)
   List.iter (compile_decl ctx) program;
+  (* Emit any requested CPS twins (on demand, §12.6) *)
+  drain_cps_twins ctx;
   (* Print last value — suppress unit only when there was explicit output *)
   emit ctx
     "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
@@ -4103,6 +4285,7 @@ let compile_program_with_stdlib type_env
   let stdlib_exports = ctx.top_level_exports in
   ctx.top_level_exports <- [];
   List.iter (compile_decl ctx) user_program;
+  drain_cps_twins ctx;
   emit ctx
     "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
      _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, \
