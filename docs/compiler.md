@@ -67,6 +67,14 @@ The pipeline branches after typechecking into three backends:
 - Bytecode.opcode — stack-based instructions (CONST, ADD, CALL, CLOSURE, JUMP_IF_FALSE, etc.)
 - LLVM IR text — emitted by native codegen, consumed by clang
 
+Between typechecking and the three backends, `Pipeline.lower` (`lib/pipeline.ml`)
+**normalizes** the typed AST: it classifies handler arms, lowers surface matches
+into decision trees (`TEMatchTree`), and runs the texpr optimizer. All three
+backends consume this single normalized `texpr` form. Its structure, invariants,
+and the guarantees a backend may assume are specified in
+[the backend IR contract](ir-contract.md) — the structural companion to
+[the operational semantics](semantics.md).
+
 ## Optimization Passes
 
 After stage 4a (bytecode compilation), the bytecode goes through a peephole optimizer (`lib/optimize.ml`) before being serialized or executed. The optimizer is enabled by default and can be disabled with `--no-optimize` in the self-hosted compiler.

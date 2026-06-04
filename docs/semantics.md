@@ -16,6 +16,14 @@ classification, match-tree lowering, and optimization. Backends implement
 Audience: backend authors, and anyone deciding "what is the right behavior?"
 when implementations disagree.
 
+The **structural** companion to this document is
+[the backend IR contract](ir-contract.md): where this document says what each
+construct *means*, the contract says what each IR node *is* — its fields,
+the post-conditions of `Pipeline.lower`, and the cross-cutting invariants
+(one-shot continuations, mutable-locals-as-heap-cells, the
+handler classification, pin-safety) that a backend may rely on without
+re-deriving. Read this for behavior, that for structure.
+
 ---
 
 ## 1. Values and the heap
