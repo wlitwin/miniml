@@ -71,12 +71,15 @@ module Js_codegen =
     twins_requested: (string, unit) Hashtbl.t;
     twins_emitted: (string, unit) Hashtbl.t;
     mut in_full_handler: bool;
-    cps_form_vars: (string, unit) Hashtbl.t
+    cps_form_vars: (string, unit) Hashtbl.t;
+    mut fold_cps_break_k: string option;
+    mut fold_cps_loop_fn: string option;
+    mut fold_cps_next_pos: string option
   }
 
   pub let create_ctx type_env =
     let tbl = Hashtbl.create 16 in
-    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16}
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None}
 
   pub let with_in_cps ctx value f =
     let saved = ctx.in_cps in
@@ -2143,12 +2146,22 @@ module Js_codegen =
   and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) : unit =
     match te.expr with
     | Typechecker.TEBreak value_te -> 
-      let v = compile_non_tail ctx value_te in
-      emit_line ctx ($"return _throw_break({v});")
+      do
+        let v = compile_non_tail ctx value_te in
+        match ctx.fold_cps_break_k with
+        | Some exit_k -> emit_line ctx ($"return {exit_k}({v});")
+        | None -> emit_line ctx ($"return _throw_break({v});")
+
+      end
     | Typechecker.TEContinueLoop -> emit_line ctx "return _throw_continue();"
     | Typechecker.TEFoldContinue value_te -> 
-      let v = compile_non_tail ctx value_te in
-      emit_line ctx ($"return _throw_fold_cont({v});")
+      do
+        let v = compile_non_tail ctx value_te in
+        match (ctx.fold_cps_loop_fn, ctx.fold_cps_next_pos) with
+        | (Some loop_fn, Some next_pos) -> emit_line ctx ($"return _bounce(function() \{ return {loop_fn}({next_pos}, {v}); \});")
+        | _ -> emit_line ctx ($"return _throw_fold_cont({v});")
+
+      end
     | Typechecker.TELet ((name, _, e1, e2)) -> compile_let_cps ctx name e1 e2 cont
     | Typechecker.TELetRec ((name, _, fn_expr, body)) -> compile_letrec_cps ctx name fn_expr body cont
     | Typechecker.TELetRecAnd ((bindings, body)) -> compile_letrec_and_cps ctx bindings body cont
@@ -2315,9 +2328,16 @@ module Js_codegen =
     let pos_var = fresh_tmp ctx in
     let acc_var = fresh_tmp ctx in
     let coll_var = fresh_tmp ctx in
+    let exit_k = fresh_tmp ctx in
+    let exit_v = fresh_tmp ctx in
     let init_js = compile_non_tail ctx init in
     let coll_js = compile_non_tail ctx coll in
     emit_line ctx ($"const {coll_var} = {coll_js};");
+    emit_line ctx ($"function {exit_k}({exit_v}) \{");
+    ctx.indent := ctx.indent + 1;
+    cont exit_v;
+    ctx.indent := ctx.indent - 1;
+    emit_line ctx "}";
     emit_line ctx ($"function {loop_fn}({pos_var}, {acc_var}) \{");
     ctx.indent := ctx.indent + 1;
     do
@@ -2327,7 +2347,7 @@ module Js_codegen =
 
     end;
     ctx.indent := ctx.indent + 1;
-    cont acc_var;
+    emit_line ctx ($"return {exit_k}({acc_var});");
     ctx.indent := ctx.indent - 1;
     emit_line ctx "}";
     push_scope ctx;
@@ -2366,17 +2386,22 @@ module Js_codegen =
     emit_line ctx "try {";
     ctx.indent := ctx.indent + 1;
     let saved_in_fold = ctx.in_fold_loop in
+    let saved_break_k = ctx.fold_cps_break_k in
+    let saved_loop_fn = ctx.fold_cps_loop_fn in
+    let saved_next_pos = ctx.fold_cps_next_pos in
     ctx.in_fold_loop := true;
-    (let _protect_result = (fn () -> compile_cps ctx body (fn v -> emit_line ctx ($"return _bounce(function() \{ return {loop_fn}({next_pos}, {v}); \});"))) () in (fn () -> ctx.in_fold_loop := saved_in_fold) (); _protect_result);
+    ctx.fold_cps_break_k := Some exit_k;
+    ctx.fold_cps_loop_fn := Some loop_fn;
+    ctx.fold_cps_next_pos := Some next_pos;
+    (let _protect_result = (fn () -> compile_cps ctx body (fn v -> emit_line ctx ($"return _bounce(function() \{ return {loop_fn}({next_pos}, {v}); \});"))) () in (fn () -> ctx.in_fold_loop := saved_in_fold;
+    ctx.fold_cps_break_k := saved_break_k;
+    ctx.fold_cps_loop_fn := saved_loop_fn;
+    ctx.fold_cps_next_pos := saved_next_pos) (); _protect_result);
     ctx.indent := ctx.indent - 1;
     emit_line ctx "} catch (_e) {";
     ctx.indent := ctx.indent + 1;
     emit_line ctx ($"if (_e && _e._tag === \"_fold_cont\") return _bounce(function() \{ return {loop_fn}({next_pos}, _e._val); \});");
-    emit_line ctx "if (_e && _e._tag === \"_break\") {";
-    ctx.indent := ctx.indent + 1;
-    cont "_e._val";
-    ctx.indent := ctx.indent - 1;
-    emit_line ctx "}";
+    emit_line ctx ($"if (_e && _e._tag === \"_break\") return {exit_k}(_e._val);");
     emit_line ctx "throw _e;";
     ctx.indent := ctx.indent - 1;
     emit_line ctx "}";

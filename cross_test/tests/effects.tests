@@ -733,6 +733,48 @@ with
 | op arg k -> let r = resume k (arg * 10) in r
 --- expect: 30
 
+=== Break-Value-Performs in a Full Handler (break-perform regression) ===
+# A `break` whose VALUE performs, with a NON-tail resume in a FULL (THOp)
+# handler arm: the loop's break must return the loop result through the resume,
+# not escape past the handler via a thrown _break the loop's catch intercepts.
+
+--- test: break value performs, non-tail resume returns arm value
+effect E = op0 : int -> int end
+handle
+  (let v0 = (for i in [1; 2] with a = 0 do break (perform op0 i) end) in 16)
+with
+| return x -> x
+| op0 arg k -> let r3 = resume k arg in 99
+--- expect: 99
+
+--- test: break value performs, resume result used by the arm
+effect E = op : int -> int end
+handle
+  (let v0 = (for i in [1; 2; 3] with a = 0 do break (perform op i) end) in v0 * 10)
+with
+| return x -> x
+| op arg k -> let r = resume k arg in r + 1
+--- expect: 11
+
+--- test: multishot break value performs sums both resumptions
+effect E = pick : int -> int end
+handle
+  (let v0 = (for i in [1; 2; 3] with a = 0 do break (perform pick i) end) in v0 * 10)
+with
+| return x -> x
+| pick arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 (arg + 100))
+--- expect: 1020
+
+--- test: break value performs guarded by a non-tail predicate
+effect E = op : int -> int end
+handle
+  (for x in [1; 2; 3; 4] with acc = 0 do
+    (if (perform op x) > 2 do break (acc * 100) else (acc + x)) end)
+with
+| return x -> x
+| op arg k -> resume k arg
+--- expect: 300
+
 === Try/With Tests ===
 
 --- test: try/with basic return
