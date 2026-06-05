@@ -25,7 +25,14 @@
    - AVOIDS known divergences so every disagreement is a NEW finding:
      no whole floats in display position (floats only flow through `show` —
      BUG-3), no nondeterminism (Sys.time), no Map/Set iteration-order
-     dependence, shallow recursion (no stack-limit differences).
+     dependence, shallow recursion (no stack-limit differences). The cleanly-
+     agreeing tier is --fast (oracle/vm/emit-js — the gate); --full additionally
+     runs native, which still has an OPEN multishot-copy_continuation bug (a
+     continuation copied mid fold-loop / HOF recursion diverges — see the bugs
+     list), so --full can surface that KNOWN native divergence independent of any
+     avoidance here. Performs inside opaque HOF callbacks (List.map/fold/filter)
+     are NO LONGER avoided — the emit-js BUG-11 gap they guarded is closed
+     (selective CPS [#12] steps 3b/3c) and --fast agrees on them.
 
    Generated program shape:
 
@@ -261,8 +268,9 @@ and gen_int_lambda_app ctx =
      immediately-applied lambda to `let x = arg in body` in CPS context, so a
      continuation captured inside it threads through the enclosing region
      (BUG-11 immediately-applied-lambda slice fixed; docs/effect-lowering.md §7
-     step 2). Performs inside OPAQUE-HOF callbacks (List.map/fold etc.) remain
-     avoided — the general selective-CPS gap, BUG-11 steps 3+. *)
+     step 2). Performs inside OPAQUE-HOF callbacks (List.map/fold/filter) are now
+     allowed too — selective CPS [#12] steps 3b/3c thread the continuation
+     through the HOF's $cps twin (single- and multishot). *)
   let x = fresh ctx "p" in
   let ctx' = { ctx with vars = (x, TInt) :: ctx.vars } in
   Printf.sprintf "((fn %s -> %s) %s)" x (gen_int ctx') (gen_int ctx)
@@ -271,10 +279,9 @@ and gen_int_fold ctx =
   (* for-in fold over a list: exercises fold-callback lowering, continue/break,
      and (when inside a handle body) the for-in CPS loop — performs allowed
      since the BUG-11 for-in slice was fixed (native CPS lowering of for-in
-     bodies on emit-js). Performs inside OPAQUE-HOF callbacks (List.map/fold
-     callbacks) remain avoided — that is the general selective-CPS gap still
-     tracked as BUG-11 (immediately-applied lambdas are now allowed, see
-     gen_int_lambda_app). *)
+     bodies on emit-js). Performs inside OPAQUE-HOF callbacks (List.map/fold/
+     filter) are now allowed too — selective CPS [#12] steps 3b/3c (see
+     gen_int_list_op / gen_int_list / gen_int_lambda_app). *)
   let x = fresh ctx "i" in
   let acc = fresh ctx "a" in
   let ctx' =
@@ -329,8 +336,11 @@ and gen_int_list_op ctx =
       (2, fun () -> Printf.sprintf "(String.length %s)" (gen_string ctx));
       ( 2,
         fun () ->
-          (* AVOIDANCE (bugs/BUG-11): no performs inside the List.fold callback
-             (same emit-js lambda-boundary limitation as gen_int_fold). *)
+          (* Performs ALLOWED inside the List.fold callback — the BUG-11
+             HOF-callback gap is closed (selective CPS [#12] steps 3b/3c thread
+             the continuation through the HOF's $cps twin, single- and
+             multishot). loop_mult is multiplied so a perform here is charged its
+             per-element fan-out under a multishot handler. *)
           let x = fresh ctx "e" in
           let ctx' =
             {
@@ -338,7 +348,7 @@ and gen_int_list_op ctx =
               vars = (x, TInt) :: ctx.vars;
               loop_depth = ctx.loop_depth + 1;
               loop_mult = nested_loop_mult ctx;
-              in_handler = false;
+              in_handler = ctx.in_handler;
             }
           in
           Printf.sprintf "(List.fold (fn %s %s -> (%s + %s)) %s %s)" "zz" x "zz"
@@ -459,7 +469,8 @@ and gen_int_list ctx : string =
         );
         ( 2,
           fun () ->
-            (* AVOIDANCE (bugs/BUG-11): no performs inside the List.map callback. *)
+            (* Performs ALLOWED inside the List.map callback (BUG-11 HOF-callback
+               gap closed, [#12] steps 3b/3c). *)
             let x = fresh ctx "e" in
             let ctx' =
               {
@@ -467,14 +478,15 @@ and gen_int_list ctx : string =
                 vars = (x, TInt) :: ctx.vars;
                 loop_depth = ctx.loop_depth + 1;
                 loop_mult = nested_loop_mult ctx;
-                in_handler = false;
+                in_handler = ctx.in_handler;
               }
             in
             Printf.sprintf "(List.map (fn %s -> %s) %s)" x (gen_int ctx')
               (gen_int_list ctx) );
         ( 1,
           fun () ->
-            (* AVOIDANCE (bugs/BUG-11): no performs inside the List.filter callback. *)
+            (* Performs ALLOWED inside the List.filter callback (BUG-11
+               HOF-callback gap closed, [#12] steps 3b/3c). *)
             let x = fresh ctx "e" in
             let ctx' =
               {
@@ -482,7 +494,7 @@ and gen_int_list ctx : string =
                 vars = (x, TInt) :: ctx.vars;
                 loop_depth = ctx.loop_depth + 1;
                 loop_mult = nested_loop_mult ctx;
-                in_handler = false;
+                in_handler = ctx.in_handler;
               }
             in
             Printf.sprintf "(List.filter (fn %s -> %s) %s)" x (gen_bool ctx')
