@@ -1203,6 +1203,19 @@ module Js_codegen =
       Some n
     else
       None
+  and compile_two_ordered ctx e1 e2 =
+    let a = compile_non_tail ctx e1 in
+    let mark = Buffer.length ctx.buf in
+    let b = compile_non_tail ctx e2 in
+    if ((Buffer.length ctx.buf) > mark) && (not (is_anf_atom e1)) do
+      let s2 = Buffer.sub ctx.buf mark ((Buffer.length ctx.buf) - mark) in
+      Buffer.truncate ctx.buf mark;
+      let t1 = fresh_tmp ctx in
+      emit_line ctx ($"const {t1} = {a};");
+      Buffer.add_string ctx.buf s2;
+      (t1, b)
+    else
+      (a, b)
   and compile_binop ctx op e1 e2 =
     match op with
     | Ast.And -> 
@@ -1256,8 +1269,7 @@ module Js_codegen =
         let resolved = Types.repr e1.ty in
         match resolved with
         | (Types.TInt | Types.TFloat) -> 
-          let a = compile_non_tail ctx e1 in
-          let b = compile_non_tail ctx e2 in
+          let (a, b) = compile_two_ordered ctx e1 e2 in
           let js_op =
             match op with
             | Ast.Add -> "+"
@@ -1283,8 +1295,7 @@ module Js_codegen =
 
       end
     | Ast.Mod -> 
-      let a = compile_non_tail ctx e1 in
-      let b = compile_non_tail ctx e2 in
+      let (a, b) = compile_two_ordered ctx e1 e2 in
       "$mod(" ^ (a ^ (", " ^ (b ^ ")")))
     | (Ast.Eq | Ast.Neq) -> 
       do
@@ -1295,8 +1306,7 @@ module Js_codegen =
           | _ -> false
          in
         if is_primitive do
-          let a = compile_non_tail ctx e1 in
-          let b = compile_non_tail ctx e2 in
+          let (a, b) = compile_two_ordered ctx e1 e2 in
           let js_op =
             if op = Ast.Eq do
               "==="
@@ -1341,12 +1351,10 @@ module Js_codegen =
               else
                 "<>" in
             let dict_access = (mangle_name inst.inst_dict_name) ^ ("." ^ (mangle_name method_name)) in
-            let a = compile_non_tail ctx e1 in
-            let b = compile_non_tail ctx e2 in
+            let (a, b) = compile_two_ordered ctx e1 e2 in
             "_call(" ^ (dict_access ^ (", [" ^ (a ^ (", " ^ (b ^ "])")))))
           | None -> 
-            let a = compile_non_tail ctx e1 in
-            let b = compile_non_tail ctx e2 in
+            let (a, b) = compile_two_ordered ctx e1 e2 in
             let eq_call = "_eq(" ^ (a ^ (", " ^ (b ^ ")"))) in
             if op = Ast.Eq do
               eq_call
@@ -1363,8 +1371,7 @@ module Js_codegen =
         | _ -> false
        in
       if is_builtin do
-        let a = compile_non_tail ctx e1 in
-        let b = compile_non_tail ctx e2 in
+        let (a, b) = compile_two_ordered ctx e1 e2 in
         let js_op =
           match op with
           | Ast.Lt -> "<"
@@ -1386,16 +1393,14 @@ module Js_codegen =
         compile_class_binop ctx "Ord" method_name e1 e2
       end
     | Ast.Concat -> 
-      let a = compile_non_tail ctx e1 in
-      let b = compile_non_tail ctx e2 in
+      let (a, b) = compile_two_ordered ctx e1 e2 in
       "(" ^ (a ^ (" + " ^ (b ^ ")")))
     | ((((Ast.Land | Ast.Lor) | Ast.Lxor) | Ast.Lsl) | Ast.Lsr) -> 
       do
         let resolved = Types.repr e1.ty in
         match resolved with
         | Types.TInt -> 
-          let a = compile_non_tail ctx e1 in
-          let b = compile_non_tail ctx e2 in
+          let (a, b) = compile_two_ordered ctx e1 e2 in
           let js_op =
             match op with
             | Ast.Land -> "&"
