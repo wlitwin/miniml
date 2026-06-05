@@ -775,6 +775,30 @@ with
 | op arg k -> resume k arg
 --- expect: 300
 
+=== Continue-Value-Performs (continue-perform regression) ===
+# A `continue EXPR` whose VALUE itself performs: the perform's reified
+# continuation ends in the control transfer (_throw_fold_cont), which surfaces
+# OUT of the iteration's trampoline when the handler resumes the continuation —
+# so the fold callback's _fold_cont catch must wrap the trampoline from outside.
+
+--- test: continue value performs under a tail-resumptive handler
+effect E = op : int -> int end
+handle
+  (for i in [1; 2; 3] with a = 0 do (if i = 2 do continue (perform op a) else (a + i)) end)
+with
+| return x -> x
+| op arg k -> resume k (arg + 10)
+--- expect: 14
+
+--- test: continue value performs under a multishot handler
+effect E = op : int -> int end
+handle
+  (for i in [1; 2; 3] with a = 0 do (if i = 2 do continue (perform op a) else (a + i)) end)
+with
+| return x -> x
+| op arg k -> let k2 = copy_continuation k in (resume k (arg + 10)) + (resume k2 (arg + 20))
+--- expect: 38
+
 === Try/With Tests ===
 
 --- test: try/with basic return
