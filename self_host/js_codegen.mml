@@ -2040,7 +2040,8 @@ module Js_codegen =
       let trywith_arms = List.map (fn (op, arg, body) -> (op, arg, "__k_try", body)) try_ops in
       compile_handle_trywith ctx body trywith_arms (Ref.get return_arm) result
     else do
-      let simple_ops = List.map (fn (op, _, _) -> op) provide_ops in
+      let try_op_names = List.map (fn (op, _, _) -> op) try_ops in
+      let simple_ops = List.concat (List.map (fn (op, _, _) -> op) provide_ops) try_op_names in
       emit_line ctx ($"const {result} = (function() \{");
       ctx.indent := ctx.indent + 1;
       let h_saved = fresh_tmp ctx in
@@ -2068,17 +2069,9 @@ module Js_codegen =
       let k_js = "_k" in
       let direct_fn = List.assoc op_name ctx.direct_dispatch_ops in
       emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{ return _bounce(function() \{ return {k_js}({direct_fn}({arg_js})); \}); \},")) provide_ops;
-      List.iter (fn (op_name, arg_name, fallback_body) -> let arg_js = mangle_name arg_name in
+      List.iter (fn (op_name, arg_name, _fallback_body) -> let arg_js = mangle_name arg_name in
       let k_js = "_k" in
-      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{");
-      ctx.indent := ctx.indent + 1;
-      push_scope ctx;
-      bind_var ctx arg_name arg_js;
-      let v = compile_non_tail ctx fallback_body in
-      emit_line ctx ($"return _bounce(function() \{ return {v}; \});");
-      pop_scope ctx;
-      ctx.indent := ctx.indent - 1;
-      emit_line ctx "},") try_ops;
+      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{ throw \{_e: \"{op_name}\", _v: {arg_js}\}; \},")) try_ops;
       List.iter (fn (op_name, arg_name, k_name, handler_body) -> let arg_js = mangle_name arg_name in
       let k_js = mangle_name k_name in
       let k_raw = "_k_raw" in
@@ -2104,6 +2097,8 @@ module Js_codegen =
           expr_has_unhandled_perform simple_ops body in
       let saved_ifh = ctx.in_full_handler in
       ctx.in_full_handler := (full_ops <> []) || saved_ifh;
+      let saved_two = ctx.trywith_ops in
+      ctx.trywith_ops := List.concat try_op_names ctx.trywith_ops;
       emit_line ctx "try {";
       ctx.indent := ctx.indent + 1;
       if body_needs_cps do
@@ -2144,7 +2139,31 @@ module Js_codegen =
 
       end;
       ctx.in_full_handler := saved_ifh;
+      ctx.trywith_ops := saved_two;
       ctx.indent := ctx.indent - 1;
+      if try_ops <> [] do
+        emit_line ctx "} catch (_exc) {";
+        ctx.indent := ctx.indent + 1;
+        let first = Ref.create true in
+        List.iter (fn (op_name, arg_name, arm_body) -> let prefix =
+          if Ref.get first do
+            "if"
+          else
+            "} else if" in
+        Ref.set first false;
+        emit_line ctx ($"{prefix} (_exc && _exc._e === \"{op_name}\") \{");
+        ctx.indent := ctx.indent + 1;
+        push_scope ctx;
+        let arg_js = mangle_name arg_name in
+        bind_var ctx arg_name arg_js;
+        emit_line ctx ($"const {arg_js} = _exc._v;");
+        let v = compile_non_tail ctx arm_body in
+        emit_line ctx ($"return {v};");
+        pop_scope ctx;
+        ctx.indent := ctx.indent - 1) try_ops;
+        emit_line ctx "} else { throw _exc; }";
+        ctx.indent := ctx.indent - 1
+      end;
       emit_line ctx ($"\} finally \{ _h = {h_saved}; \}")) () in (fn () -> ctx.direct_dispatch_ops := saved_direct_ops) (); _protect_result);
       ctx.indent := ctx.indent - 1;
       emit_line ctx "})();"
