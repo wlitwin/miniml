@@ -2714,21 +2714,44 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
             error ctx "break with value only allowed in fold loops";
           mk ctx (TEBreak (mk ctx TEUnit Types.TUnit)) Types.TUnit
       | Some (FoldLoop acc_name) ->
+          (* `break EXPR` ends the loop with EXPR as its result; the loop's
+             result type is the accumulator type, so EXPR must match it. *)
+          let acc_te = synth ctx level (Ast.EVar acc_name) in
           let v_te =
             match value_opt with
-            | Some e -> synth ctx level e
-            | None -> synth ctx level (Ast.EVar acc_name)
+            | Some e ->
+                let t = synth ctx level e in
+                try_unify ctx t.ty acc_te.ty;
+                t
+            | None -> acc_te
           in
           mk ctx (TEBreak v_te) (Types.new_tvar level))
-  | Ast.EContinueLoop -> (
+  | Ast.EContinueLoop value_opt -> (
       match ctx.loop_info with
       | None -> error ctx "continue outside of loop"
-      | Some WhileLoop -> mk ctx TEContinueLoop Types.TUnit
+      | Some WhileLoop ->
+          if value_opt <> None then
+            error ctx "continue with value only allowed in fold loops";
+          mk ctx TEContinueLoop Types.TUnit
       | Some UnitLoop ->
+          if value_opt <> None then
+            error ctx "continue with value only allowed in fold loops";
           mk ctx (TEFoldContinue (mk ctx TEUnit Types.TUnit)) Types.TUnit
       | Some (FoldLoop acc_name) ->
+          (* `continue EXPR` sets the accumulator to EXPR for the next
+             iteration (symmetric with `break EXPR`); plain `continue` carries
+             the current accumulator forward unchanged. The value becomes the
+             next accumulator, so it must have the accumulator's type. *)
           let acc_te = synth ctx level (Ast.EVar acc_name) in
-          mk ctx (TEFoldContinue acc_te) (Types.new_tvar level))
+          let v_te =
+            match value_opt with
+            | Some e ->
+                let t = synth ctx level e in
+                try_unify ctx t.ty acc_te.ty;
+                t
+            | None -> acc_te
+          in
+          mk ctx (TEFoldContinue v_te) (Types.new_tvar level))
   | Ast.EReturn e -> (
       match ctx.return_type with
       | None -> error ctx "return outside of function"

@@ -39,6 +39,7 @@ let is_selfhost_type_error msg =
   || contains_substring msg "break outside"
   || contains_substring msg "continue outside"
   || contains_substring msg "break with value"
+  || contains_substring msg "continue with value"
   || contains_substring msg "non-exhaustive"
      && contains_substring msg "missing"
   || contains_substring msg "expected constructor name"
