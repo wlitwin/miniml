@@ -2142,6 +2142,19 @@ end
 -- prints 1, 2, 4, 5
 ```
 
+In fold loops, plain `continue` carries the current accumulator forward
+unchanged, and `continue expr` sets the accumulator to `expr` for the next
+iteration (symmetric with `break expr`). `expr` must have the accumulator's
+type. `continue expr` is only allowed in fold loops.
+
+```
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 3 do continue 100   -- accumulator becomes 100
+  else acc + x
+end
+-- evaluates to 109  (1, 3, [skip to 100], 104, 109)
+```
+
 ### Return
 
 `return expr` performs an early return from the enclosing function. It uses the

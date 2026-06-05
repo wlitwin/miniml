@@ -2541,23 +2541,43 @@ module Typechecker =
           end;
           mk ctx (TEBreak (mk ctx TEUnit Types.TUnit)) Types.TUnit
         | Some (FoldLoop acc_name) -> 
+          let acc_te = synth ctx level (Ast.EVar acc_name) in
           let v_te =
             match value_opt with
-            | Some e -> synth ctx level e
-            | None -> synth ctx level (Ast.EVar acc_name)
+            | Some e -> 
+              let t = synth ctx level e in
+              try_unify ctx t.ty acc_te.ty;
+              t
+            | None -> acc_te
            in
           mk ctx (TEBreak v_te) (Types.new_tvar level)
 
       end
-    | Ast.EContinueLoop -> 
+    | Ast.EContinueLoop value_opt -> 
       do
         match ctx.loop_info with
         | None -> error ctx "continue outside of loop"
-        | Some WhileLoop -> mk ctx TEContinueLoop Types.TUnit
-        | Some UnitLoop -> mk ctx (TEFoldContinue (mk ctx TEUnit Types.TUnit)) Types.TUnit
+        | Some WhileLoop -> 
+          if value_opt <> None do
+            error ctx "continue with value only allowed in fold loops"
+          end;
+          mk ctx TEContinueLoop Types.TUnit
+        | Some UnitLoop -> 
+          if value_opt <> None do
+            error ctx "continue with value only allowed in fold loops"
+          end;
+          mk ctx (TEFoldContinue (mk ctx TEUnit Types.TUnit)) Types.TUnit
         | Some (FoldLoop acc_name) -> 
           let acc_te = synth ctx level (Ast.EVar acc_name) in
-          mk ctx (TEFoldContinue acc_te) (Types.new_tvar level)
+          let v_te =
+            match value_opt with
+            | Some e -> 
+              let t = synth ctx level e in
+              try_unify ctx t.ty acc_te.ty;
+              t
+            | None -> acc_te
+           in
+          mk ctx (TEFoldContinue v_te) (Types.new_tvar level)
 
       end
     | Ast.EReturn e -> 

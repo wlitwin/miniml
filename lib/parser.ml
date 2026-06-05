@@ -1154,7 +1154,8 @@ and parse_atom_inner p =
       else Ast.EBreak None
   | Token.CONTINUE ->
       ignore (advance p);
-      Ast.EContinueLoop
+      if at_atom_start p then Ast.EContinueLoop (Some (parse_atom p))
+      else Ast.EContinueLoop None
   | Token.RETURN ->
       ignore (advance p);
       Ast.EReturn (parse_expr_bp p 0)

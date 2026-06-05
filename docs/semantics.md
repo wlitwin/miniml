@@ -230,10 +230,12 @@ The semantics that make this transparent to the user:
   **fold callbacks** (the marking propagates through curried parameters).
 - `continue` inside the body produces the fold-continue signal, caught at the
   fold-callback boundary: the callback returns that value for the current
-  iteration.
+  iteration. Plain `continue` carries the current accumulator; `continue v`
+  carries `v` (it becomes the next iteration's accumulator). `v` must have the
+  accumulator's type; `continue v` is only valid in a fold loop.
 - `break v` inside the body propagates **through** the callback and the
   stdlib fold frames (they don't catch it) up to the for-loop itself, which
-  catches it and produces `v`.
+  catches it and produces `v`. `v` must have the accumulator (result) type.
 - `return v` propagates through everything up to the user's enclosing
   function (§5).
 

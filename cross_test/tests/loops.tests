@@ -237,6 +237,36 @@ for x in [1; 2; 3; 4; 5] with acc = 0 do
 end
 --- expect: 9
 
+--- test: fold continue with value sets the accumulator
+for x in [1; 2; 3; 4; 5] with acc = 0 do
+  if x = 3 do continue 100 else (acc + x)
+end
+--- expect: 109
+
+--- test: fold continue with value, all branches
+for x in [10; 20; 30] with acc = 0 do
+  continue (acc + x)
+end
+--- expect: 60
+
+--- test: continue with value outside fold loop is an error
+for x in [1; 2; 3] do
+  if x = 2 do continue 5 else ()
+end
+--- expect-type-error: continue with value only allowed in fold loops
+
+--- test: continue with value of wrong type is an error
+for x in [1; 2] with acc = 0 do
+  if x = 1 do continue "x" else acc
+end
+--- expect-type-error
+
+--- test: break with value of wrong type is an error
+for x in [1; 2] with acc = 0 do
+  if x = 1 do break "x" else acc
+end
+--- expect-type-error
+
 --- test: fold break with custom value
 for x in [1; 2; 3; 4; 5] with acc = 0 do
   if x = 3 do break 100 else acc + x

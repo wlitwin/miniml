@@ -1157,7 +1157,10 @@ module Parser =
         Ast.EBreak None
     | Token.CONTINUE -> 
       (advance p; ());
-      Ast.EContinueLoop
+      if at_atom_start p do
+        Ast.EContinueLoop (Some (parse_atom p))
+      else
+        Ast.EContinueLoop None
     | Token.RETURN -> 
       (advance p; ());
       Ast.EReturn (parse_expr_bp p 0)

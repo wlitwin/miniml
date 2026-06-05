@@ -128,7 +128,7 @@ type expr =
       fn_body : expr;
     }
   | EBreak of expr option
-  | EContinueLoop
+  | EContinueLoop of expr option
   | EReturn of expr
   | ELetRecAnd of (string * string list * expr) list * expr
   | EPerform of string * expr
