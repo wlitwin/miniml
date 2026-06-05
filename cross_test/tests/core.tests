@@ -40,6 +40,31 @@ let x = 5 in (10 / (x - 5))
 let f a b = a mod b in f 7 0
 --- expect-runtime-error: by zero
 
+# Left-to-right evaluation order: a throwing left operand (mod/div by zero) must
+# raise BEFORE a later operand's effect runs. emit-js compiled the binop's
+# second operand's statements (a try-op perform's `throw`) ahead of the first
+# operand's deferred expression, so the abort pre-empted the mod-by-zero error
+# (emit-js gave the abort value; every other backend errored). Found by the
+# differential fuzzer (seed 2145) when HOF-callback performs were relaxed.
+
+--- test: throwing left operand raises before an aborting perform on the right
+effect E = op0 : int -> int end
+let z = 0
+;;
+handle ((10 mod z) + (perform op0 1)) with
+| return x -> x
+| op0 arg k -> 99
+--- expect-runtime-error: by zero
+
+--- test: division by zero left of an aborting perform
+effect E = stop : int -> int end
+let z = 0
+;;
+handle ((100 / z) - (perform stop 0)) with
+| return x -> x
+| stop a k -> 7
+--- expect-runtime-error: by zero
+
 --- test: negation
 0 - 5
 --- expect: -5

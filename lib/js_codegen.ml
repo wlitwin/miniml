@@ -1963,6 +1963,29 @@ and count_arrows ty =
 
 (* ---- Binary operators ---- *)
 
+(* Compile two operands preserving strict left-to-right evaluation order, even
+   when the SECOND emits statements (e.g. a try-op perform lowered to a `throw`,
+   or any effectful sub-expression in the direct/non-CPS path). compile_non_tail
+   returns e1 as an expression STRING that the caller splices into the result —
+   so if compiling e2 then emits statements, e1's value would be evaluated AFTER
+   them, wrongly ordering e1's own side effects (a mod/div-by-zero throw, a
+   mutable-cell read) after e2. Force e1 into a temp before e2's statements;
+   pure atoms (literals/lambdas) need no temp. The CPS path is already ordered by
+   anf_lift_effects — this closes the same gap for the direct path. *)
+and compile_two_ordered ctx e1 e2 =
+  let a = compile_non_tail ctx e1 in
+  let mark = Buffer.length ctx.buf in
+  let b = compile_non_tail ctx e2 in
+  if Buffer.length ctx.buf > mark && not (is_anf_atom e1) then begin
+    let s2 = Buffer.sub ctx.buf mark (Buffer.length ctx.buf - mark) in
+    Buffer.truncate ctx.buf mark;
+    let t1 = fresh_tmp ctx in
+    emit_line ctx (Printf.sprintf "const %s = %s;" t1 a);
+    Buffer.add_string ctx.buf s2;
+    (t1, b)
+  end
+  else (a, b)
+
 and compile_binop ctx op e1 e2 =
   match op with
   | Ast.And ->
@@ -2023,8 +2046,7 @@ and compile_binop ctx op e1 e2 =
       let resolved = Types.repr e1.ty in
       match resolved with
       | Types.TInt | Types.TFloat ->
-          let a = compile_non_tail ctx e1 in
-          let b = compile_non_tail ctx e2 in
+          let a, b = compile_two_ordered ctx e1 e2 in
           let js_op =
             match op with
             | Ast.Add -> "+"
@@ -2052,8 +2074,7 @@ and compile_binop ctx op e1 e2 =
   | Ast.Mod ->
       (* Via the checked prelude fn: modulo by zero must be a runtime error
          (BUG-8) — raw JS a % b silently gives NaN. *)
-      let a = compile_non_tail ctx e1 in
-      let b = compile_non_tail ctx e2 in
+      let a, b = compile_two_ordered ctx e1 e2 in
       "$mod(" ^ a ^ ", " ^ b ^ ")"
   | Ast.Eq | Ast.Neq ->
       let resolved = Types.repr e1.ty in
@@ -2065,8 +2086,7 @@ and compile_binop ctx op e1 e2 =
         | _ -> false
       in
       if is_primitive then begin
-        let a = compile_non_tail ctx e1 in
-        let b = compile_non_tail ctx e2 in
+        let a, b = compile_two_ordered ctx e1 e2 in
         let js_op = if op = Ast.Eq then "===" else "!==" in
         "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
       end
@@ -2115,12 +2135,10 @@ and compile_binop ctx op e1 e2 =
               mangle_name inst.Types.inst_dict_name
               ^ "." ^ mangle_name method_name
             in
-            let a = compile_non_tail ctx e1 in
-            let b = compile_non_tail ctx e2 in
+            let a, b = compile_two_ordered ctx e1 e2 in
             "_call(" ^ dict_access ^ ", [" ^ a ^ ", " ^ b ^ "])"
         | None ->
-            let a = compile_non_tail ctx e1 in
-            let b = compile_non_tail ctx e2 in
+            let a, b = compile_two_ordered ctx e1 e2 in
             let eq_call = "_eq(" ^ a ^ ", " ^ b ^ ")" in
             if op = Ast.Eq then eq_call else "!" ^ eq_call
       end
@@ -2134,8 +2152,7 @@ and compile_binop ctx op e1 e2 =
         | _ -> false
       in
       if is_builtin then begin
-        let a = compile_non_tail ctx e1 in
-        let b = compile_non_tail ctx e2 in
+        let a, b = compile_two_ordered ctx e1 e2 in
         let js_op =
           match op with
           | Ast.Lt -> "<"
@@ -2158,15 +2175,13 @@ and compile_binop ctx op e1 e2 =
         compile_class_binop ctx "Ord" method_name e1 e2
       end
   | Ast.Concat ->
-      let a = compile_non_tail ctx e1 in
-      let b = compile_non_tail ctx e2 in
+      let a, b = compile_two_ordered ctx e1 e2 in
       "(" ^ a ^ " + " ^ b ^ ")"
   | Ast.Land | Ast.Lor | Ast.Lxor | Ast.Lsl | Ast.Lsr -> (
       let resolved = Types.repr e1.ty in
       match resolved with
       | Types.TInt ->
-          let a = compile_non_tail ctx e1 in
-          let b = compile_non_tail ctx e2 in
+          let a, b = compile_two_ordered ctx e1 e2 in
           let js_op =
             match op with
             | Ast.Land -> "&"
