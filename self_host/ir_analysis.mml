@@ -15,6 +15,17 @@ module Ir_analysis =
     | _ -> false
 
 
+  pub let rec may_need_cps (ty : Types.ty) =
+    let eff_maybe_effectful e =
+      match Types.eff_repr e with
+      | Types.EffEmpty -> false
+      | _ -> true
+     in
+    match Types.repr ty with
+    | (Types.TArrow ((_, eff, ret)) | Types.TCont ((_, eff, ret))) -> (eff_maybe_effectful eff) || (may_need_cps ret)
+    | _ -> false
+
+
   pub let rec expr_has_perform_with check_perform enter_funs on_app (te : Typechecker.texpr) =
     let go = expr_has_perform_with check_perform enter_funs on_app in
     match te.expr with

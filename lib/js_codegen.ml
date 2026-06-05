@@ -360,6 +360,18 @@ type ctx = {
       (* The CPS fold loop's iteration function name (for continue). *)
   mutable fold_cps_next_pos : string option;
       (* JS expression for the next iteration position (for continue). *)
+  local_twins : (string, unit) Hashtbl.t;
+      (* JS names of LOCAL recursive functions (a `let rec go` closing over an
+         effectful callback, e.g. List.map's worker) whose `$cps` twin is emitted
+         INLINE in the current scope rather than at top level. The top-level
+         drain (drain_cps_twins) emits twins as global function declarations,
+         which cannot capture a local closure's free variables (the callback f);
+         so such a worker's twin must be emitted where f is in scope. Any
+         saturated call to a local twin is a twin-call (it unconditionally
+         performs — it always calls the effectful callback it closes over),
+         resolved to the in-scope `go$cps` without touching the global
+         twins_requested / drain. Saved/restored around the worker's scope
+         (§12 step 3c, multishot through HOF recursion). *)
 }
 
 let create_ctx type_env =
@@ -395,6 +407,7 @@ let create_ctx type_env =
     fold_cps_break_k = None;
     fold_cps_loop_fn = None;
     fold_cps_next_pos = None;
+    local_twins = Hashtbl.create 16;
   }
 
 (* --- Save/restore helpers using Fun.protect for exception safety --- *)
@@ -886,6 +899,39 @@ let anf_decompose (te : Typechecker.texpr) =
       | _ -> None)
   | _ -> None
 
+(* on_app trigger for the ctx-aware effect checks: a call whose function is an
+   effectful function VALUE — a CPS-form parameter (a callback already taking a
+   trailing $k) or a twinnable named function passed an effectful argument —
+   invokes an effect (its continuation must thread), even when its own arrow
+   type carries only an unbound effect var. This is what lets an effectful call
+   in a VALUE position inside a HOF twin (e.g. `f x :: go (...) rest`, the cons
+   operands of List.map's worker) be lifted and threaded through CPS rather than
+   compiled as a severing value-call. *)
+let cps_call_on_app ctx (fn : Typechecker.texpr) =
+  match fn.Typechecker.expr with
+  | Typechecker.TEVar name ->
+      let jsn = lookup_var ctx name in
+      Hashtbl.mem ctx.cps_form_vars jsn
+      || (Hashtbl.mem ctx.twinnable jsn && may_need_cps fn.Typechecker.ty)
+  | _ -> false
+
+(* [eval_can_perform] / [eval_invokes_effect], but in a full-handler region also
+   accounting for calls to effectful function VALUES (CPS-form params / twinnable
+   fns), not just syntactic performs and needs_cps-typed calls. Outside a
+   full-handler region they are exactly the originals (no behavior change off the
+   selective-CPS path). *)
+let eval_can_perform_cps ctx (te : Typechecker.texpr) =
+  if not ctx.in_full_handler then eval_can_perform te
+  else
+    expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:false
+      ~on_app:(cps_call_on_app ctx) te
+
+let invokes_effect_cps ctx (te : Typechecker.texpr) =
+  if not ctx.in_full_handler then eval_invokes_effect te
+  else
+    expr_has_perform_with ~check_perform:(fun _ -> true) ~enter_funs:true
+      ~on_app:(cps_call_on_app ctx) te
+
 (* Lift the effectful value-position subexpressions of [te] into a let chain,
    so compile_cps can thread real continuations through them. Returns None
    when there is nothing to lift (te is then handled by compile_cps's normal
@@ -893,7 +939,7 @@ let anf_decompose (te : Typechecker.texpr) =
 let anf_lift_effects ctx (te : Typechecker.texpr) =
   match te.expr with
   | Typechecker.TEBinop (Ast.And, e1, e2)
-    when eval_can_perform e1 || eval_can_perform e2 ->
+    when eval_can_perform_cps ctx e1 || eval_can_perform_cps ctx e2 ->
       (* a && b  ==  if a do b else false end; keeps b conditionally evaluated *)
       Some
         {
@@ -910,7 +956,7 @@ let anf_lift_effects ctx (te : Typechecker.texpr) =
           loc = te.loc;
         }
   | Typechecker.TEBinop (Ast.Or, e1, e2)
-    when eval_can_perform e1 || eval_can_perform e2 ->
+    when eval_can_perform_cps ctx e1 || eval_can_perform_cps ctx e2 ->
       (* a || b  ==  if a do true else b end *)
       Some
         {
@@ -930,7 +976,7 @@ let anf_lift_effects ctx (te : Typechecker.texpr) =
       match anf_decompose te with
       | None -> None
       | Some (subs, rebuild) ->
-          if not (List.exists eval_can_perform subs) then None
+          if not (List.exists (eval_can_perform_cps ctx) subs) then None
           else begin
             (* Index of the last subexpression whose evaluation can perform.
                Everything up to it (atoms excepted) is lifted, preserving the
@@ -938,13 +984,36 @@ let anf_lift_effects ctx (te : Typechecker.texpr) =
                place (it evaluates after the performs either way). *)
             let last_eff = ref (-1) in
             List.iteri
-              (fun i sub -> if eval_can_perform sub then last_eff := i)
+              (fun i sub -> if eval_can_perform_cps ctx sub then last_eff := i)
               subs;
+            (* Never lift the application HEAD when it is a twin-callable
+               function var (a local twin / twinnable / CPS-form value):
+               hoisting it into a temp would erase the syntactic call shape that
+               twin-call recognition needs, severing the continuation across the
+               callee. These heads are immutable function bindings, so keeping
+               them in place is also semantically safe (the head reads the same
+               value whether captured now or at the call). *)
+            let protect_head =
+              match te.expr with
+              | Typechecker.TEApp _ -> (
+                  match subs with
+                  | { Typechecker.expr = Typechecker.TEVar n; _ } :: _ ->
+                      let jsn = lookup_var ctx n in
+                      Hashtbl.mem ctx.local_twins jsn
+                      || Hashtbl.mem ctx.twinnable jsn
+                      || Hashtbl.mem ctx.cps_form_vars jsn
+                  | _ -> false)
+              | _ -> false
+            in
             let bindings = ref [] in
             let parts =
               List.mapi
                 (fun i sub ->
-                  if i <= !last_eff && not (is_anf_atom sub) then begin
+                  if
+                    i <= !last_eff
+                    && not (is_anf_atom sub)
+                    && not (i = 0 && protect_head)
+                  then begin
                     let name =
                       Printf.sprintf "__anf%d" ctx.tmp_counter
                     in
@@ -1607,7 +1676,7 @@ and compile_named_function ctx js_name fn_expr =
          has_return is deferred: a `return` inside a twin would throw `_return`
          with no trampoline of its own to host a spanning catch, so it would
          escape — such a function keeps its current (non-twin) compilation. *)
-      if needs_cps fn_expr.Typechecker.ty && not has_return then
+      if may_need_cps fn_expr.Typechecker.ty && not has_return then
         Hashtbl.replace ctx.twinnable js_name
           (all_params, js_params, final_body, fn_expr.Typechecker.ty)
   | _ ->
@@ -1618,11 +1687,16 @@ and compile_named_function ctx js_name fn_expr =
    body in CPS, tail-calling the continuation $k; sets [in_full_handler] so any
    effectful call inside the twin also threads its continuation (transitivity).
    May request further twins, drained by the worklist below. *)
-and emit_cps_twin ctx js_name =
+and emit_cps_twin ctx js_name local =
   match Hashtbl.find_opt ctx.twinnable js_name with
   | None -> ()
   | Some (all_params, js_params, final_body, fn_ty) ->
-      Hashtbl.replace ctx.twins_emitted js_name ();
+      (* An inline (local-closure) twin must NOT mark the global twins_emitted:
+         that set dedups the top-level drain, and a local worker's name (e.g.
+         "go") can recur across unrelated HOFs — marking it would wrongly skip a
+         different function's drained twin. A local twin is never queued in
+         twins_requested, so the drain never reaches it regardless. *)
+      if not local then Hashtbl.replace ctx.twins_emitted js_name ();
       let k_param = "$k" in
       let saved_ifh = ctx.in_full_handler in
       ctx.in_full_handler <- true;
@@ -1669,7 +1743,7 @@ and cps_form_param_names fn_ty js_params =
   let rec zip ps tys =
     match (ps, tys) with
     | p :: ps', t :: tys' ->
-        if needs_cps t then p :: zip ps' tys' else zip ps' tys'
+        if may_need_cps t then p :: zip ps' tys' else zip ps' tys'
     | _ -> []
   in
   zip js_params ptys
@@ -1717,7 +1791,9 @@ and compile_cps_value ctx te =
       fn_name
   | Typechecker.TEVar name -> (
       let jsn = lookup_var ctx name in
-      if Hashtbl.mem ctx.twinnable jsn then begin
+      if Hashtbl.mem ctx.local_twins jsn then jsn ^ "$cps"
+        (* in-scope inline twin — already emitted, never drained *)
+      else if Hashtbl.mem ctx.twinnable jsn then begin
         Hashtbl.replace ctx.twins_requested jsn ();
         jsn ^ "$cps"
       end
@@ -1738,7 +1814,7 @@ and drain_cps_twins ctx =
     match pending () with
     | [] -> ()
     | names ->
-        List.iter (emit_cps_twin ctx) names;
+        List.iter (fun n -> emit_cps_twin ctx n false) names;
         loop ()
   in
   loop ()
@@ -2964,7 +3040,7 @@ and compile_handle ctx body arms =
 
         (* Compile body — direct style if all performs are handled by simple ops *)
         let body_needs_cps =
-          if simple_ops = [] then eval_invokes_effect body
+          if simple_ops = [] then invokes_effect_cps ctx body
           else expr_has_unhandled_perform simple_ops body
         in
 
@@ -3054,16 +3130,43 @@ and is_twin_call ctx te =
     | Typechecker.TEApp _ -> (
         let base, args = collect te [] in
         match base.Typechecker.expr with
-        | Typechecker.TEVar name when needs_cps base.Typechecker.ty -> (
+        | Typechecker.TEVar name -> (
             let jsn = lookup_var ctx name in
-            match Hashtbl.find_opt ctx.twinnable jsn with
-            | Some (_, js_params, _, _) ->
-                List.length js_params = List.length args
-            | None ->
-                (* A CPS-form value (an effectful-function parameter of the
-                   enclosing twin/CPS-lambda): saturated call -> CPS-call it. *)
-                Hashtbl.mem ctx.cps_form_vars jsn
-                && count_arrows base.Typechecker.ty = Some (List.length args))
+            if Hashtbl.mem ctx.local_twins jsn then
+              (* A local worker being CPS-compiled inline (List.map's `go`): it
+                 unconditionally performs (it closes over the effectful callback),
+                 so every saturated call threads $k via the in-scope go$cps —
+                 regardless of its unbound-effect-var type or pure-looking args. *)
+              count_arrows base.Typechecker.ty = Some (List.length args)
+            else if Hashtbl.mem ctx.cps_form_vars jsn then
+              (* A CPS-form value (an effectful-function parameter of the
+                 enclosing twin / CPS-lambda) already takes a trailing $k.
+                 Membership is the signal; its arrow type may carry only an
+                 unbound effect var, so don't gate on [needs_cps]. *)
+              count_arrows base.Typechecker.ty = Some (List.length args)
+            else
+              match Hashtbl.find_opt ctx.twinnable jsn with
+              | Some (_, js_params, _, _)
+                when List.length js_params = List.length args ->
+                  (* Twin-call iff this call is genuinely effectful HERE: the
+                     callee's instantiated type is effectful, OR it is passed an
+                     effectful function argument (a CPS-form value or an
+                     effectful-typed expr). The latter catches a recursive
+                     self-call threading the effectful callback (e.g.
+                     `go (f x :: acc) rest` inside List.map's worker), whose own
+                     type still shows only an unbound effect var — while NOT
+                     twin-calling a pure use like
+                     `List.fold (fn a b -> a + b) 0 xs`. *)
+                  let arg_effectful a =
+                    (match a.Typechecker.expr with
+                    | Typechecker.TEVar n ->
+                        Hashtbl.mem ctx.cps_form_vars (lookup_var ctx n)
+                    | _ -> false)
+                    || needs_cps a.Typechecker.ty
+                  in
+                  needs_cps base.Typechecker.ty
+                  || List.exists arg_effectful args
+              | _ -> false)
         | _ -> false)
     | _ -> false
 
@@ -3129,7 +3232,7 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
       compile_match_cps ctx scrut arms te.loc cont
   | Typechecker.TEMatchTree cm -> compile_js_match_tree_cps ctx cm cont
   | Typechecker.TELetMut (name, init, body) ->
-      if eval_invokes_effect init then begin
+      if invokes_effect_cps ctx init then begin
         compile_cps ctx init (fun init_v ->
             let js_name = mangle_name name in
             let actual_name = js_name ^ "_" ^ string_of_int ctx.tmp_counter in
@@ -3521,7 +3624,7 @@ and compile_perform_cps ctx op_name (arg : Typechecker.texpr) cont =
       emit_line ctx "});"
 
 and compile_let_cps ctx name e1 e2 cont =
-  if eval_invokes_effect e1 then begin
+  if invokes_effect_cps ctx e1 then begin
     (* e1 is effectful — CPS-compile it, then bind result and CPS-compile e2 *)
     compile_cps ctx e1 (fun v1 ->
         let js_name = mangle_name name in
@@ -3560,16 +3663,36 @@ and compile_letrec_cps ctx name fn_expr body cont =
   let js_name = mangle_name name in
   push_scope ctx;
   bind_var ctx name js_name;
+  let added_local_twin = ref false in
   (match fn_expr.Typechecker.expr with
-  | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+  | Typechecker.TEFun _ ->
+      compile_named_function ctx js_name fn_expr;
+      (* If this local worker is effectful (twinnable) and we're CPS-compiling
+         inside a full handler, emit its `$cps` twin INLINE — closing over the
+         effectful callback it captures — and register it as a local twin so
+         both its own recursion and the enclosing body call go$cps (threading
+         the continuation across the recursion) instead of severing at go's
+         boundary. This is what carries a captured continuation through a HOF's
+         per-element recursion (List.map/fold/filter); the top-level drain can't
+         (a global go$cps can't see the local callback). §12 step 3c. *)
+      if
+        ctx.in_full_handler
+        && Hashtbl.mem ctx.twinnable js_name
+        && not (Hashtbl.mem ctx.local_twins js_name)
+      then begin
+        Hashtbl.replace ctx.local_twins js_name ();
+        added_local_twin := true;
+        emit_cps_twin ctx js_name true
+      end
   | _ ->
       emit_js_placeholder ctx js_name fn_expr;
       emit_js_backpatch ctx js_name fn_expr);
   compile_cps ctx body cont;
+  if !added_local_twin then Hashtbl.remove ctx.local_twins js_name;
   pop_scope ctx
 
 and compile_seq_cps ctx e1 e2 cont =
-  if eval_invokes_effect e1 then begin
+  if invokes_effect_cps ctx e1 then begin
     compile_cps ctx e1 (fun v1 ->
         emit_line ctx (Printf.sprintf "_resolve(%s);" v1);
         compile_cps ctx e2 cont)
@@ -3639,6 +3762,71 @@ and compile_match_cps ctx scrut arms loc cont =
         (Printf.sprintf "if (!%s) _match_fail(\"line %d\");" matched
            loc.Token.line))
 
+(* For a twin-call to [base_fn], the per-argument flag list saying which
+   positions the callee's `$cps` twin expects in CPS form (a trailing $k). Read
+   from the callee's DEFINITION type (stored in [twinnable]) using the same
+   [may_need_cps] classification the twin was built with (cps_form_param_names) —
+   NOT the instantiated call-site type, which may have collapsed an effectful
+   param to a pure one. None when the callee is not a recorded twin (e.g. a
+   CPS-form parameter value), in which case the caller falls back to per-arg
+   [needs_cps]. *)
+and twin_cps_arg_flags ctx base_fn nargs =
+  match base_fn.Typechecker.expr with
+  | Typechecker.TEVar name -> (
+      let jsn = lookup_var ctx name in
+      match Hashtbl.find_opt ctx.twinnable jsn with
+      | Some (_, _, _, fn_ty) ->
+          let rec param_types ty =
+            match Types.repr ty with
+            | Types.TArrow (a, _, r) | Types.TCont (a, _, r) -> a :: param_types r
+            | _ -> []
+          in
+          let ptys = param_types fn_ty in
+          Some
+            (List.init nargs (fun i ->
+                 match List.nth_opt ptys i with
+                 | Some t -> may_need_cps t
+                 | None -> false))
+      | None -> None)
+  | _ -> None
+
+(* Produce a CPS-form value (taking a trailing $k) for an argument the callee
+   expects in CPS form. An effectful argument (or any lambda) goes through
+   [compile_cps_value], which CPS-compiles its body to tail-call $k. A pure
+   non-lambda function VALUE (e.g. the `(+)` dictionary method) is wrapped in a
+   trivial CPS adapter `(p1..pn, $k) => $k(f(p1..pn))` so it satisfies the twin's
+   calling convention — the monadic `return` embedding of a pure value. *)
+and compile_cps_form_arg ctx a =
+  let already_cps_form =
+    match a.Typechecker.expr with
+    | Typechecker.TEVar name ->
+        let jsn = lookup_var ctx name in
+        Hashtbl.mem ctx.cps_form_vars jsn
+        || Hashtbl.mem ctx.twinnable jsn
+        || Hashtbl.mem ctx.local_twins jsn
+    | _ -> false
+  in
+  match a.Typechecker.expr with
+  | Typechecker.TEFun _ -> compile_cps_value ctx a
+  | _ when already_cps_form -> compile_cps_value ctx a
+  | _ when needs_cps a.Typechecker.ty -> compile_cps_value ctx a
+  | _ ->
+      let raw = compile_non_tail ctx a in
+      let arity = match count_arrows a.Typechecker.ty with Some n when n > 0 -> n | _ -> 1 in
+      let params = List.init arity (fun _ -> fresh_tmp ctx) in
+      let k_param = "$k" in
+      let fn_name = fresh_tmp ctx in
+      emit_line ctx
+        (Printf.sprintf "function %s(%s) {" fn_name
+           (String.concat ", " (params @ [ k_param ])));
+      ctx.indent <- ctx.indent + 1;
+      emit_line ctx
+        (Printf.sprintf "return _bounce(function() { return %s(_call(%s, [%s])); });"
+           k_param raw (String.concat ", " params));
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      fn_name
+
 and compile_app_cps ctx te fn arg cont =
   (* For function application in CPS context:
      If the arguments or function contain inline performs, CPS them first.
@@ -3657,13 +3845,24 @@ and compile_app_cps ctx te fn arg cont =
   if is_twin_call ctx te then begin
     (* CPS-call: the callee's CPS form (a $cps twin, a CPS-form param value, or
        an inline CPS lambda) receives the args plus the current continuation as
-       $k. An effectful-function argument is itself passed in CPS form (§12.2),
-       so a HOF's twin can call its callback parameter CPS-style. *)
+       $k. A callback the twin expects in CPS form (§12.2) is passed in CPS form
+       — wrapped if it is a pure value (compile_cps_form_arg). This matters when
+       a HOF is twin-called with a PURE callback (e.g. `List.fold (+) 0 xs` in
+       the tail of an effectful map): the type unified fold's effect row with the
+       ambient handler effect (so it twin-calls), but its `$cps` twin still calls
+       the callback CPS-style — so even a pure `(+)` must arrive in CPS form or
+       its continuation ($k) would be dropped. *)
     let fn_cps = compile_cps_value ctx base_fn in
+    let cps_flags = twin_cps_arg_flags ctx base_fn (List.length all_args) in
     let args_js =
-      List.map
-        (fun a ->
-          if needs_cps a.Typechecker.ty then compile_cps_value ctx a
+      List.mapi
+        (fun i a ->
+          let expects_cps =
+            match cps_flags with
+            | Some fl -> ( match List.nth_opt fl i with Some b -> b | None -> false)
+            | None -> needs_cps a.Typechecker.ty
+          in
+          if expects_cps then compile_cps_form_arg ctx a
           else compile_non_tail ctx a)
         all_args
     in
