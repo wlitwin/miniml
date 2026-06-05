@@ -75,12 +75,13 @@ module Js_codegen =
     mut fold_cps_break_k: string option;
     mut fold_cps_loop_fn: string option;
     mut fold_cps_next_pos: string option;
-    local_twins: (string, unit) Hashtbl.t
+    local_twins: (string, unit) Hashtbl.t;
+    mut handler_try_arms: (string * string * Typechecker.texpr) list
   }
 
   pub let create_ctx type_env =
     let tbl = Hashtbl.create 16 in
-    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None; local_twins = Hashtbl.create 16}
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None; local_twins = Hashtbl.create 16; handler_try_arms = []}
 
   pub let with_in_cps ctx value f =
     let saved = ctx.in_cps in
@@ -725,7 +726,7 @@ module Js_codegen =
       if ctx.handler_tail_resume do
         k_js ^ ("(" ^ (v_js ^ ")"))
       else
-        "_trampoline(function() { return " ^ (k_js ^ ("(" ^ (v_js ^ "); })")))
+        compile_resume_trampoline ctx k_js v_js
 
   and compile_let ctx name e1 e2 =
     let v1 = compile_non_tail ctx e1 in
@@ -2013,6 +2014,43 @@ module Js_codegen =
     emit_line ctx ($"\} finally \{ _h = {h_saved}; \}");
     ctx.indent := ctx.indent - 1;
     emit_line ctx "})();"
+  and emit_abort_catch_arms ctx try_arms =
+    let first = Ref.create true in
+    List.iter (fn (op_name, arg_name, arm_body) -> let prefix =
+      if Ref.get first do
+        "if"
+      else
+        "} else if" in
+    Ref.set first false;
+    emit_line ctx ($"{prefix} (_exc && _exc._e === \"{op_name}\") \{");
+    ctx.indent := ctx.indent + 1;
+    push_scope ctx;
+    let arg_js = mangle_name arg_name in
+    bind_var ctx arg_name arg_js;
+    emit_line ctx ($"const {arg_js} = _exc._v;");
+    let v = compile_non_tail ctx arm_body in
+    emit_line ctx ($"return {v};");
+    pop_scope ctx;
+    ctx.indent := ctx.indent - 1) try_arms;
+    emit_line ctx "} else { throw _exc; }"
+  and compile_resume_trampoline ctx k_js v_js =
+    let tramp = $"_trampoline(function() \{ return {k_js}({v_js}); \})" in
+    match ctx.handler_try_arms with
+    | [] -> tramp
+    | try_arms -> 
+      let rv = fresh_tmp ctx in
+      emit_line ctx ($"const {rv} = (function() \{");
+      ctx.indent := ctx.indent + 1;
+      emit_line ctx ($"try \{ return {tramp}; \}");
+      emit_line ctx "catch (_exc) {";
+      ctx.indent := ctx.indent + 1;
+      emit_abort_catch_arms ctx try_arms;
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "}";
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "})();";
+      rv
+
   and compile_handle ctx body arms =
     let result = fresh_tmp ctx in
     let return_arm = Ref.create None in
@@ -2040,7 +2078,8 @@ module Js_codegen =
       let trywith_arms = List.map (fn (op, arg, body) -> (op, arg, "__k_try", body)) try_ops in
       compile_handle_trywith ctx body trywith_arms (Ref.get return_arm) result
     else do
-      let simple_ops = List.map (fn (op, _, _) -> op) provide_ops in
+      let try_op_names = List.map (fn (op, _, _) -> op) try_ops in
+      let simple_ops = List.concat (List.map (fn (op, _, _) -> op) provide_ops) try_op_names in
       emit_line ctx ($"const {result} = (function() \{");
       ctx.indent := ctx.indent + 1;
       let h_saved = fresh_tmp ctx in
@@ -2068,17 +2107,9 @@ module Js_codegen =
       let k_js = "_k" in
       let direct_fn = List.assoc op_name ctx.direct_dispatch_ops in
       emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{ return _bounce(function() \{ return {k_js}({direct_fn}({arg_js})); \}); \},")) provide_ops;
-      List.iter (fn (op_name, arg_name, fallback_body) -> let arg_js = mangle_name arg_name in
+      List.iter (fn (op_name, arg_name, _fallback_body) -> let arg_js = mangle_name arg_name in
       let k_js = "_k" in
-      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{");
-      ctx.indent := ctx.indent + 1;
-      push_scope ctx;
-      bind_var ctx arg_name arg_js;
-      let v = compile_non_tail ctx fallback_body in
-      emit_line ctx ($"return _bounce(function() \{ return {v}; \});");
-      pop_scope ctx;
-      ctx.indent := ctx.indent - 1;
-      emit_line ctx "},") try_ops;
+      emit_line ctx ($"\"{op_name}\": function({arg_js}, {k_js}) \{ throw \{_e: \"{op_name}\", _v: {arg_js}\}; \},")) try_ops;
       List.iter (fn (op_name, arg_name, k_name, handler_body) -> let arg_js = mangle_name arg_name in
       let k_js = mangle_name k_name in
       let k_raw = "_k_raw" in
@@ -2090,7 +2121,9 @@ module Js_codegen =
       push_scope ctx;
       bind_var ctx arg_name arg_js;
       bind_var ctx k_name k_js;
-      let v = with_handler_tail_resume ctx (all_resumes_are_tail handler_body) (fn () -> compile_non_tail ctx handler_body) in
+      let saved_try_arms = ctx.handler_try_arms in
+      ctx.handler_try_arms := try_ops;
+      let v = (let _protect_result = (fn () -> with_handler_tail_resume ctx (all_resumes_are_tail handler_body) (fn () -> compile_non_tail ctx handler_body)) () in (fn () -> ctx.handler_try_arms := saved_try_arms) (); _protect_result) in
       emit_line ctx ($"return _bounce(function() \{ return {v}; \});");
       pop_scope ctx;
       ctx.indent := ctx.indent - 1;
@@ -2104,6 +2137,8 @@ module Js_codegen =
           expr_has_unhandled_perform simple_ops body in
       let saved_ifh = ctx.in_full_handler in
       ctx.in_full_handler := (full_ops <> []) || saved_ifh;
+      let saved_two = ctx.trywith_ops in
+      ctx.trywith_ops := List.concat try_op_names ctx.trywith_ops;
       emit_line ctx "try {";
       ctx.indent := ctx.indent + 1;
       if body_needs_cps do
@@ -2144,7 +2179,14 @@ module Js_codegen =
 
       end;
       ctx.in_full_handler := saved_ifh;
+      ctx.trywith_ops := saved_two;
       ctx.indent := ctx.indent - 1;
+      if try_ops <> [] do
+        emit_line ctx "} catch (_exc) {";
+        ctx.indent := ctx.indent + 1;
+        emit_abort_catch_arms ctx try_ops;
+        ctx.indent := ctx.indent - 1
+      end;
       emit_line ctx ($"\} finally \{ _h = {h_saved}; \}")) () in (fn () -> ctx.direct_dispatch_ops := saved_direct_ops) (); _protect_result);
       ctx.indent := ctx.indent - 1;
       emit_line ctx "})();"
@@ -2256,7 +2298,7 @@ module Js_codegen =
       let k_js = compile_non_tail ctx k_expr in
       let v_js = compile_non_tail ctx val_expr in
       let result_var = fresh_tmp ctx in
-      emit_line ctx ($"const {result_var} = _trampoline(function() \{ return {k_js}({v_js}); \});");
+      emit_line ctx ($"const {result_var} = {compile_resume_trampoline ctx k_js v_js};");
       cont result_var
     | Typechecker.TEApp (({expr = Typechecker.TEFun ((param, body, false)); _}, arg)) -> compile_let_cps ctx param arg body cont
     | Typechecker.TEApp ((fn_, arg)) -> compile_app_cps ctx te fn_ arg cont

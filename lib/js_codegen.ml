@@ -372,6 +372,18 @@ type ctx = {
          resolved to the in-scope `go$cps` without touching the global
          twins_requested / drain. Saved/restored around the worker's scope
          (§12 step 3c, multishot through HOF recursion). *)
+  mutable handler_try_arms : (string * string * Typechecker.texpr) list;
+      (* (op_name, arg_name, arm_body) for the TRY (abort) ops of the FULL handler
+         whose arm body we are lexically inside. A try-op abort throws a tagged
+         {_e, _v}; it must unwind to the NEAREST ACTIVE handle delimiter. For a
+         perform reached during direct body evaluation that delimiter is the
+         handle body's trampoline (caught at compile_handle's body catch); but for
+         a perform reached inside a continuation RESUMED by a full op's arm, the
+         delimiter is that resume's trampoline. So every non-tail resume emitted
+         while this list is non-empty wraps its `_trampoline(() => k(v))` in a
+         catch dispatching these arms (the arm value becomes the resume's value),
+         re-throwing any other op so an outer handler catches it. Set lexically
+         around each full-op arm body in compile_handle (mixed-handler abort). *)
 }
 
 let create_ctx type_env =
@@ -408,6 +420,7 @@ let create_ctx type_env =
     fold_cps_loop_fn = None;
     fold_cps_next_pos = None;
     local_twins = Hashtbl.create 16;
+    handler_try_arms = [];
   }
 
 (* --- Save/restore helpers using Fun.protect for exception safety --- *)
@@ -1273,8 +1286,10 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
         (* Tail resume in handler — no trampoline, bounce wrapper handles it *)
         k_js ^ "(" ^ v_js ^ ")"
       else
-        (* Non-tail resume — trampoline to synchronously process k's bounces *)
-        "_trampoline(function() { return " ^ k_js ^ "(" ^ v_js ^ "); })"
+        (* Non-tail resume — trampoline to synchronously process k's bounces
+           (wrapped to catch try-op aborts surfacing from the resumed
+           continuation, see compile_resume_trampoline) *)
+        compile_resume_trampoline ctx k_js v_js
 
 (* ---- Let bindings ---- *)
 
@@ -2885,6 +2900,56 @@ and compile_handle_trywith ctx body op_arms return_arm result =
   ctx.indent <- ctx.indent - 1;
   emit_line ctx "})();"
 
+(* Emit the body of a `catch (_exc) { ... }` that dispatches try-op aborts:
+   run the matching arm (binding its arg to the thrown value; its value becomes
+   the result of the enclosing function via `return`), and re-throw anything
+   else so an outer handler (or a genuine exception) is unaffected. *)
+and emit_abort_catch_arms ctx try_arms =
+  let first = ref true in
+  List.iter
+    (fun (op_name, arg_name, arm_body) ->
+      let prefix = if !first then "if" else "} else if" in
+      first := false;
+      emit_line ctx
+        (Printf.sprintf "%s (_exc && _exc._e === \"%s\") {" prefix op_name);
+      ctx.indent <- ctx.indent + 1;
+      push_scope ctx;
+      let arg_js = mangle_name arg_name in
+      bind_var ctx arg_name arg_js;
+      emit_line ctx (Printf.sprintf "const %s = _exc._v;" arg_js);
+      let v = compile_non_tail ctx arm_body in
+      emit_line ctx (Printf.sprintf "return %s;" v);
+      pop_scope ctx;
+      ctx.indent <- ctx.indent - 1)
+    try_arms;
+  emit_line ctx "} else { throw _exc; }"
+
+(* `_trampoline(() => k(v))` for a non-tail resume. When the enclosing full op's
+   arm has try (abort) ops in scope (ctx.handler_try_arms), wrap the trampoline
+   in a catch that dispatches those aborts HERE: a perform of a try op reached
+   inside the resumed continuation must unwind to this resume (the nearest active
+   handle delimiter), with the arm's value becoming the resume's value. Returns a
+   JS expression (a var when wrapped, the bare trampoline otherwise). *)
+and compile_resume_trampoline ctx k_js v_js =
+  let tramp =
+    Printf.sprintf "_trampoline(function() { return %s(%s); })" k_js v_js
+  in
+  match ctx.handler_try_arms with
+  | [] -> tramp
+  | try_arms ->
+      let rv = fresh_tmp ctx in
+      emit_line ctx (Printf.sprintf "const %s = (function() {" rv);
+      ctx.indent <- ctx.indent + 1;
+      emit_line ctx (Printf.sprintf "try { return %s; }" tramp);
+      emit_line ctx "catch (_exc) {";
+      ctx.indent <- ctx.indent + 1;
+      emit_abort_catch_arms ctx try_arms;
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "}";
+      ctx.indent <- ctx.indent - 1;
+      emit_line ctx "})();";
+      rv
+
 and compile_handle ctx body arms =
   let result = fresh_tmp ctx in
   (* Partition arms by classified type *)
@@ -2922,8 +2987,13 @@ and compile_handle ctx body arms =
     compile_handle_trywith ctx body trywith_arms !return_arm result
   end
   else begin
-    (* Simple ops come from provide_ops (tail-resumptive, already stripped of TEResume) *)
-    let simple_ops = List.map (fun (op, _, _) -> op) provide_ops in
+    (* Ops handled WITHOUT putting the body in CPS: provide ops (direct dispatch,
+       tail-resumptive, TEResume stripped) and try ops (an inline perform throws
+       a tagged abort). Only FULL ops require the body in CPS. *)
+    let try_op_names = List.map (fun (op, _, _) -> op) try_ops in
+    let simple_ops =
+      List.map (fun (op, _, _) -> op) provide_ops @ try_op_names
+    in
 
     (* Emit: const _result = (function() { save/restore _h ... })(); *)
     emit_line ctx (Printf.sprintf "const %s = (function() {" result);
@@ -2987,22 +3057,26 @@ and compile_handle ctx body arms =
                  op_name arg_js k_js k_js direct_fn arg_js))
           provide_ops;
 
-        (* Emit try ops: handler body never resumes, just returns the fallback value *)
+        (* Emit try ops: the arm never resumes, so it ABORTS the handle. The op
+           throws a tagged exception; it is caught at the NEAREST ACTIVE handle
+           delimiter — the body catch below for a perform reached during direct
+           body evaluation, or a full op's resume trampoline for a perform
+           reached inside a resumed continuation (see compile_resume_trampoline /
+           handler_try_arms). The matching arm runs there, its value becoming the
+           result (discarding the abandoned computation). A bare `return <value>`
+           here would instead make the value the PERFORM's result and let the
+           computation continue (the mixed-handler abort bug); a throw also
+           correctly unwinds out through an opaque HOF call (e.g. List.map) that
+           the aborting perform sits inside. Mirrors the all-trywith fast path
+           (compile_handle_trywith) + the trywith_ops inline-throw path. *)
         List.iter
-          (fun (op_name, arg_name, fallback_body) ->
+          (fun (op_name, arg_name, _fallback_body) ->
             let arg_js = mangle_name arg_name in
             let k_js = "_k" in
             emit_line ctx
-              (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_js);
-            ctx.indent <- ctx.indent + 1;
-            push_scope ctx;
-            bind_var ctx arg_name arg_js;
-            let v = compile_non_tail ctx fallback_body in
-            emit_line ctx
-              (Printf.sprintf "return _bounce(function() { return %s; });" v);
-            pop_scope ctx;
-            ctx.indent <- ctx.indent - 1;
-            emit_line ctx "},")
+              (Printf.sprintf
+                 "\"%s\": function(%s, %s) { throw {_e: \"%s\", _v: %s}; },"
+                 op_name arg_js k_js op_name arg_js))
           try_ops;
 
         (* Emit full CPS ops *)
@@ -3029,9 +3103,19 @@ and compile_handle ctx body arms =
             push_scope ctx;
             bind_var ctx arg_name arg_js;
             bind_var ctx k_name k_js;
+            (* A non-tail resume in this arm runs a continuation under THIS
+               handler; a try-op abort surfacing from it must be caught at that
+               resume's trampoline (the nearest active delimiter), not unwind
+               past the arm to the body. Expose this handler's try arms to the
+               resumes lexically inside the arm body. *)
+            let saved_try_arms = ctx.handler_try_arms in
+            ctx.handler_try_arms <- try_ops;
             let v =
-              with_handler_tail_resume ctx (all_resumes_are_tail handler_body)
-                (fun () -> compile_non_tail ctx handler_body)
+              Fun.protect
+                ~finally:(fun () -> ctx.handler_try_arms <- saved_try_arms)
+                (fun () ->
+                  with_handler_tail_resume ctx (all_resumes_are_tail handler_body)
+                    (fun () -> compile_non_tail ctx handler_body))
             in
             emit_line ctx
               (Printf.sprintf "return _bounce(function() { return %s; });" v);
@@ -3055,6 +3139,12 @@ and compile_handle ctx body arms =
            reify no continuation, so the body inherits the ambient flag. *)
         let saved_ifh = ctx.in_full_handler in
         ctx.in_full_handler <- full_ops <> [] || saved_ifh;
+
+        (* While compiling the body, an inline `perform op` for a try op throws
+           the tagged abort (caught at the body boundary below); a called
+           function that performs it finds the throwing `_h` entry. *)
+        let saved_two = ctx.trywith_ops in
+        ctx.trywith_ops <- try_op_names @ ctx.trywith_ops;
 
         emit_line ctx "try {";
         ctx.indent <- ctx.indent + 1;
@@ -3101,8 +3191,20 @@ and compile_handle ctx body arms =
           | None -> emit_line ctx (Printf.sprintf "return %s;" body_v)
         end;
         ctx.in_full_handler <- saved_ifh;
+        ctx.trywith_ops <- saved_two;
 
         ctx.indent <- ctx.indent - 1;
+        (* Catch the try ops' tagged aborts reaching the body delimiter: run the
+           matching arm (its value is the handle result, discarding the body);
+           re-throw anything else (an outer handler's try op, or an unrelated
+           exception). Aborts surfacing inside a full op's resume are caught
+           earlier, at that resume's trampoline (compile_resume_trampoline). *)
+        if try_ops <> [] then begin
+          emit_line ctx "} catch (_exc) {";
+          ctx.indent <- ctx.indent + 1;
+          emit_abort_catch_arms ctx try_ops;
+          ctx.indent <- ctx.indent - 1
+        end;
         emit_line ctx (Printf.sprintf "} finally { _h = %s; }" h_saved));
 
     (* Fun.protect closes here — direct_dispatch_ops restored *)
@@ -3297,9 +3399,8 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
       let v_js = compile_non_tail ctx val_expr in
       let result_var = fresh_tmp ctx in
       emit_line ctx
-        (Printf.sprintf
-           "const %s = _trampoline(function() { return %s(%s); });" result_var
-           k_js v_js);
+        (Printf.sprintf "const %s = %s;" result_var
+           (compile_resume_trampoline ctx k_js v_js));
       cont result_var
   | Typechecker.TEApp
       ({ expr = Typechecker.TEFun (param, body, false); _ }, arg) ->
