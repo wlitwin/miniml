@@ -7962,10 +7962,17 @@ and xform_binop xctx op e1 e2 result_ty =
     | _ -> None
   in
   match class_info with
-  | Some (class_name, method_name) when xctx.xf_constrained <> [] -> (
+  | Some (class_name, method_name) -> (
       match Types.repr e1.ty with
       | Types.TVar { contents = Types.Unbound (id, _) } -> (
-          match find_constrained_dict xctx id class_name with
+          (* The operand type never got pinned to a concrete type, so the class
+             dictionary can only come from a constrained dict param in scope. *)
+          let dparam_opt =
+            if xctx.xf_constrained <> [] then
+              find_constrained_dict xctx id class_name
+            else None
+          in
+          match dparam_opt with
           | Some dparam ->
               let dict_ref = mk_xf xctx (TEVar dparam) Types.TUnit in
               let method_ref =
@@ -7973,7 +7980,26 @@ and xform_binop xctx op e1 e2 result_ty =
               in
               let app1 = mk_xf xctx (TEApp (method_ref, e1)) Types.TUnit in
               mk_xf xctx (TEApp (app1, e2)) result_ty
-          | None -> mk_xf xctx (TEBinop (op, e1, e2)) result_ty)
+          | None ->
+              (* No dict in scope and no concrete type. If more than one instance
+                 of the class could apply, the choice is genuinely ambiguous —
+                 reject here in the shared transform so EVERY backend (the oracle
+                 included) agrees, rather than the compilers failing at codegen
+                 while the oracle resolves lazily. A single-instance class (e.g.
+                 Bitwise → int) is not ambiguous: leave it for the backend to
+                 resolve to that one instance, exactly as before. *)
+              let num_instances =
+                List.length
+                  (List.filter
+                     (fun (inst : Types.instance_def) ->
+                       String.equal inst.inst_class class_name)
+                     xctx.xf_type_env.Types.instances)
+              in
+              if num_instances > 1 then
+                error_xf xctx
+                  (Printf.sprintf "ambiguous instance for %s method %s"
+                     class_name method_name)
+              else mk_xf xctx (TEBinop (op, e1, e2)) result_ty)
       | _ -> mk_xf xctx (TEBinop (op, e1, e2)) result_ty)
   | _ -> mk_xf xctx (TEBinop (op, e1, e2)) result_ty
 

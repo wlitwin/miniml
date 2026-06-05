@@ -6036,18 +6036,28 @@ module Typechecker =
       | _ -> None
      in
     match class_info with
-    | Some ((class_name, method_name)) when xctx.xf_constrained <> [] -> 
+    | Some ((class_name, method_name)) -> 
       do
         match Types.repr e1.ty with
         | Types.TVar {contents = Types.Unbound ((id, _))} -> 
           do
-            match find_constrained_dict xctx id class_name with
+            let dparam_opt =
+              if xctx.xf_constrained <> [] do
+                find_constrained_dict xctx id class_name
+              else
+                None in
+            match dparam_opt with
             | Some dparam -> 
               let dict_ref = mk_xf xctx (TEVar dparam) Types.TUnit in
               let method_ref = mk_xf xctx (TEField (dict_ref, method_name)) Types.TUnit in
               let app1 = mk_xf xctx (TEApp (method_ref, e1)) Types.TUnit in
               mk_xf xctx (TEApp (app1, e2)) result_ty
-            | None -> mk_xf xctx (TEBinop (op, e1, e2)) result_ty
+            | None -> 
+              let num_instances = List.length (List.filter (fn (inst : Types.instance_def) -> inst.inst_class = class_name) xctx.xf_type_env.instances) in
+              if num_instances > 1 do
+                error_xf xctx ($"ambiguous instance for {class_name} method {method_name}")
+              else
+                mk_xf xctx (TEBinop (op, e1, e2)) result_ty
 
           end
         | _ -> mk_xf xctx (TEBinop (op, e1, e2)) result_ty

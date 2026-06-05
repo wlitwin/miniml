@@ -1129,3 +1129,20 @@ instance Stringify int =
 end
 stringify 42
 --- expect: 42
+
+--- test: ambiguous Ord instance on a never-pinned type is rejected
+print (List.filter (fn e -> e > e) [])
+--- expect-type-error: ambiguous instance for Ord method >
+
+--- test: ambiguous Eq instance on a never-pinned type is rejected
+print (List.filter (fn e -> e = e) [])
+--- expect-type-error: ambiguous instance for Eq method =
+
+--- test: same comparison at a concrete element type is fine
+List.filter (fn e -> e > e) [1; 2; 3]
+--- expect: []
+
+--- test: generalized comparison function stays polymorphic
+let cmp x y = x > y;;
+(cmp 1 2, cmp 5 3)
+--- expect: (false, true)
