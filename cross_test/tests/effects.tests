@@ -3292,3 +3292,70 @@ match run () with
 | Ok v -> v
 | Err _ -> 0
 --- expect: 3
+
+# ============================================================================
+# Mixed-Handler Abort
+# ============================================================================
+# A handler mixing an ABORTING op (an arm that never resumes) with a RESUMING
+# op (provide- or full-style). Performing the aborting op discards the current
+# computation under the handler and makes the arm's value the result. The abort
+# must unwind to the NEAREST ACTIVE handle delimiter: the handle body for a
+# perform reached during direct body evaluation, but a full op's RESUME for a
+# perform reached inside that resume's continuation. emit-js lowers the abort to
+# a tagged throw caught at BOTH the body and each non-tail resume's trampoline.
+# (Found by the differential fuzzer, seed 920517626 / 293047163.)
+
+--- test: abort through a List.map callback in the body
+effect E = op0 : int -> int; op1 : int -> int end
+handle (List.length (List.map (fn e -> perform op0 e) [1; 2; 3])) with
+| op0 arg k -> 0
+| op1 arg k -> resume k arg
+--- expect: 0
+
+--- test: abort through a List.fold callback in the body
+effect E = op0 : int -> int; op1 : int -> int end
+handle (List.fold (fn acc e -> acc + (perform op0 e)) 0 [1; 2; 3]) with
+| op0 arg k -> 0
+| op1 arg k -> resume k arg
+--- expect: 0
+
+--- test: abort directly in body alongside a full op (CPS body)
+effect E = op0 : int -> int; op1 : int -> int end
+handle ((perform op1 5) + (perform op0 99) + 1000) with
+| op0 arg k -> arg
+| op1 arg k -> resume k arg
+--- expect: 99
+
+--- test: abort bypasses the return arm
+effect E = op0 : int -> int; op1 : int -> int end
+handle (100 + (perform op0 5)) with
+| return x -> x * 2
+| op0 arg k -> arg + 1
+| op1 arg k -> resume k arg
+--- expect: 6
+
+--- test: single-shot abort performed inside a resumed continuation
+effect E = op0 : int -> int; op1 : int -> int end
+handle (perform op0 (perform op1 11)) with
+| return x -> x
+| op0 arg k -> arg
+| op1 arg k -> resume k arg
+--- expect: 11
+
+--- test: multishot abort performed inside a resumed continuation
+effect E = op0 : int -> int; op1 : int -> int end
+handle (perform op0 (perform op1 11)) with
+| return x -> x
+| op0 arg k -> arg
+| op1 arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 100)
+--- skip-native: native segfaults on same-handler multishot copy_continuation + try-op abort inside the resumed continuation (tracked bugs list, 2026-06-05)
+--- expect: 111
+
+--- test: abort from inside an inner multishot resume caught by the outer handler
+effect E = a : int -> int; b : int -> int end
+handle
+  (handle (perform b (perform a 1)) with
+   | b arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 10))
+with
+| a arg k -> 7
+--- expect: 7
