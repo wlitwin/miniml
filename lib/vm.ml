@@ -1312,6 +1312,20 @@ let run vm =
         fiber.fiber_sp <- base_sp;
         fiber.fiber_frames <- List.tl fiber.fiber_frames;
         fiber.fiber_frame_depth <- fiber.fiber_frame_depth - 1;
+        (* If this `return` lands exactly at the depth where a provide arm was
+           entered, that arm is the frame we just returned through — it completed
+           via the return (its body tail-called the returning function), so
+           reinstall its lifted-off HProvide marker, exactly as complete_frame
+           does on a normal arm return. Without this the handler is lost and the
+           resumed body's next perform of the same op is "unhandled" (the markers
+           strictly above [target_depth] were already dropped by
+           drop_provide_resumes_above; the one at the landing depth survived). *)
+        (match vm.provide_resumes with
+        | (f, d, removed) :: rest
+          when f == fiber && d = fiber.fiber_frame_depth ->
+            vm.handler_stack <- removed @ vm.handler_stack;
+            vm.provide_resumes <- rest
+        | _ -> ());
         (* Clear any extra_args from over-applications within the unwound frames *)
         fiber.fiber_extra_args <- [];
         let result, entered = process_extra_args vm result in

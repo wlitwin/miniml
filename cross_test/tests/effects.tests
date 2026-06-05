@@ -3359,3 +3359,41 @@ handle
 with
 | a arg k -> 7
 --- expect: 7
+
+# ============================================================================
+# Return Through a Tail-Resume
+# ============================================================================
+# A tail-resumptive (provide-style) handler lifts its op marker off the handler
+# stack while the arm runs and reinstalls it when the arm returns. If the arm's
+# value tail-calls a function that exits via `return`, that `return` unwinds
+# THROUGH the arm's (reused) frame back to the perform site — the OCaml VM's
+# FUNC_RETURN path must reinstall the lifted marker (like a normal arm return),
+# else a later perform of the same op is "unhandled". (VM-only bug found by the
+# differential fuzzer, seed 20458; minimal repro vb2.)
+
+--- test: return inside a function called in a tail-resume value
+effect E = op0 : int -> int end
+let fn0 x = (if true do return 9 else x)
+;;
+handle ((perform op0 (perform op0 8)) mod 2) with
+| return x -> x
+| op0 arg k -> resume k (fn0 arg)
+--- expect: 1
+
+--- test: conditional return in a resumed function across two performs
+effect E = op0 : int -> int end
+let fn0 x = (if x > 5 do return 100 else x)
+;;
+handle ((perform op0 8) + (perform op0 2)) with
+| return v -> v
+| op0 arg k -> resume k (fn0 arg)
+--- expect: 102
+
+--- test: return out of a for-in loop inside a tail-resumed function
+effect E = tick : int -> int end
+let f x = (for i in [1; 2; 3] with a = 0 do (if i = 2 do return (x * 10) else a + i) end)
+;;
+handle (perform tick 3) with
+| return v -> v
+| tick n k -> resume k (f n)
+--- expect: 30
