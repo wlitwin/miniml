@@ -41,6 +41,10 @@
 
 type ty = TInt | TBool | TString | TIntList | TIntOption
 
+(* Resume shape of a handler arm (see render_arm). AMulti = copy_continuation +
+   two resumes is the only multi-replay shape, hence the fan-out driver. *)
+type arm_kind = ATail | ALet | ABinop | AMulti | AAbort
+
 type ctx = {
   rng : Random.State.t;
   budget : int ref; (* remaining expression-node fuel — SHARED by sub-contexts *)
@@ -55,7 +59,42 @@ type ctx = {
       (* nesting depth of loops (for-in / while). Nested loops over lists
          multiply iteration counts, so depth is capped to keep programs fast
          (a fuzz program that times out wastes a whole timeout per backend). *)
+  fanout : int ref option;
+      (* MULTISHOT FAN-OUT BOUND. `Some fuel` while lexically inside a handler
+         body whose handler has a MULTISHOT arm (copy_continuation + two
+         resumes). Under such a handler EVERY perform in the body doubles the
+         work (the continuation is replayed twice), and a perform inside a loop
+         doubles it once PER ITERATION — so the replay factor is 2^(sum over
+         static performs of their enclosing loop-iteration product). Left
+         unbounded, the oracle/VM time out (emit-js is fast enough to finish, so
+         it shows up as a TIMEOUT divergence, not a real semantic one). `fuel`
+         is that exponent budget, SHARED (a ref) across the whole region so
+         sequential and nested performs all draw it down; a perform is allowed
+         only while `!fuel >= loop_mult` and costs `loop_mult`. Nested handlers
+         inherit the outermost region's ref (performs amplify through every
+         enclosing multishot handler). `None` outside any multishot region
+         (single-shot/tail/abort resumes replay the continuation at most once,
+         so no exponential blow-up). *)
+  loop_mult : int;
+      (* The iteration-count product of the loops enclosing the current point
+         WITHIN the active multishot region (1 at the region root). A perform
+         here executes `loop_mult` times, so it costs `loop_mult` from `fanout`.
+         Only consulted when `fanout = Some _`; reset to 1 when a fresh region
+         opens (an enclosing loop multiplies how many times the HANDLER runs,
+         not the replay within one run). *)
 }
+
+(* Exponent budget for a multishot region: worst-case continuation replay is
+   ~2^FANOUT_BUDGET leaf evaluations. 8 -> ~256x, fast on every backend while
+   still letting programs exercise several performs / a short loop-with-perform
+   under a multishot handler. *)
+let fanout_budget = 8
+
+(* Conservative per-loop iteration estimate (generated lists are 0-4 elements,
+   while-bounds 2-6; see gen_int_list / gen_int_while). Capped product keeps the
+   number sane once it already exceeds the budget (performs are gated off then). *)
+let loop_iter_est = 4
+let loop_mult_cap = 64
 
 let fresh ctx prefix =
   let n = !(ctx.counter) in
@@ -64,6 +103,19 @@ let fresh ctx prefix =
 
 let spend ctx = decr ctx.budget
 let rand ctx n = Random.State.int ctx.rng n
+
+(* Can another perform be generated here without overflowing the multishot
+   fan-out budget? Outside a multishot region (fanout = None) performs are
+   unbounded; inside, this perform would cost `loop_mult` from the shared fuel. *)
+let fanout_allows ctx =
+  match ctx.fanout with None -> true | Some fuel -> !fuel >= ctx.loop_mult
+
+(* Charge a generated perform against the multishot fan-out budget. *)
+let fanout_spend ctx =
+  match ctx.fanout with Some fuel -> fuel := !fuel - ctx.loop_mult | None -> ()
+
+(* The loop_mult for a loop BODY nested at the current point. *)
+let nested_loop_mult ctx = min (ctx.loop_mult * loop_iter_est) loop_mult_cap
 
 (* Pick a production from a weighted list. *)
 let pick ctx (weighted : (int * (unit -> 'a)) list) : 'a =
@@ -99,7 +151,7 @@ let rec gen_int ctx : string =
         ((if ctx.loop_depth < 2 then 2 else 0), fun () -> gen_int_fold ctx);
         (1, fun () -> gen_int_list_op ctx);
         ((if ctx.loop_depth < 2 then 1 else 0), fun () -> gen_int_while ctx);
-        ((if ctx.ops <> [] && ctx.in_handler then 4 else 0),
+        ((if ctx.ops <> [] && ctx.in_handler && fanout_allows ctx then 4 else 0),
          fun () -> gen_perform ctx);
         ((if ctx.mutables <> [] then 2 else 0), fun () -> gen_int_mut_read ctx);
       ]
@@ -230,6 +282,7 @@ and gen_int_fold ctx =
       ctx with
       vars = (x, TInt) :: (acc, TInt) :: ctx.vars;
       loop_depth = ctx.loop_depth + 1;
+      loop_mult = nested_loop_mult ctx;
     }
   in
   let body =
@@ -261,6 +314,7 @@ and gen_int_while ctx =
       ctx with
       mutables = c :: acc :: ctx.mutables;
       loop_depth = ctx.loop_depth + 1;
+      loop_mult = nested_loop_mult ctx;
     }
   in
   Printf.sprintf
@@ -283,6 +337,7 @@ and gen_int_list_op ctx =
               ctx with
               vars = (x, TInt) :: ctx.vars;
               loop_depth = ctx.loop_depth + 1;
+              loop_mult = nested_loop_mult ctx;
               in_handler = false;
             }
           in
@@ -291,6 +346,9 @@ and gen_int_list_op ctx =
     ]
 
 and gen_perform ctx =
+  (* Charge this perform BEFORE generating its argument, so nested performs in
+     the argument draw down the same shared budget and are gated once spent. *)
+  fanout_spend ctx;
   let op = List.nth ctx.ops (rand ctx (List.length ctx.ops)) in
   Printf.sprintf "(perform %s %s)" op (gen_int ctx)
 
@@ -408,6 +466,7 @@ and gen_int_list ctx : string =
                 ctx with
                 vars = (x, TInt) :: ctx.vars;
                 loop_depth = ctx.loop_depth + 1;
+                loop_mult = nested_loop_mult ctx;
                 in_handler = false;
               }
             in
@@ -422,6 +481,7 @@ and gen_int_list ctx : string =
                 ctx with
                 vars = (x, TInt) :: ctx.vars;
                 loop_depth = ctx.loop_depth + 1;
+                loop_mult = nested_loop_mult ctx;
                 in_handler = false;
               }
             in
@@ -448,42 +508,56 @@ and gen_int_option ctx : string =
 
 (* ---- Handlers: the centerpiece ---------------------------------------------- *)
 
-(* A handler arm body for `| op arg k -> ...`. The resume patterns cover the
-   historical bug classes: tail resume, NON-TAIL resume (let / binop operand —
-   the emit-js trampoline bug), multishot via copy_continuation (the
-   cross-fiber bug), and abort (no resume). *)
-and gen_arm ctx : string =
-  let arm_ctx = { ctx with vars = ("arg", TInt) :: ctx.vars } in
+(* The resume shape of a handler arm. Multishot (copy_continuation + two
+   resumes) is the only shape that REPLAYS the continuation more than once, so
+   it is the one that drives the exponential fan-out the budget bounds. *)
+and pick_arm_kind ctx : arm_kind =
   pick ctx
     [
-      (* tail resume *)
-      (4, fun () -> Printf.sprintf "resume k %s" (gen_int arm_ctx));
-      (* non-tail: resume as let-bound RHS *)
-      ( 3,
-        fun () ->
-          let r = fresh ctx "r" in
-          let ctx' = { arm_ctx with vars = (r, TInt) :: arm_ctx.vars } in
-          Printf.sprintf "let %s = resume k %s in %s" r (gen_int arm_ctx)
-            (gen_int ctx') );
-      (* non-tail: resume as binop operand *)
-      ( 2,
-        fun () ->
-          Printf.sprintf "((resume k %s) + %s)" (gen_int arm_ctx)
-            (gen_int arm_ctx) );
-      (* multishot: copy the continuation, resume both *)
-      ( 3,
-        fun () ->
-          Printf.sprintf
-            "let k2 = copy_continuation k in ((resume k %s) + (resume k2 %s))"
-            (gen_int arm_ctx) (gen_int arm_ctx) );
-      (* abort: drop the continuation *)
-      (2, fun () -> gen_int arm_ctx);
+      (4, fun () -> ATail);
+      (3, fun () -> ALet);
+      (2, fun () -> ABinop);
+      (3, fun () -> AMulti);
+      (2, fun () -> AAbort);
     ]
+
+(* Render an arm body `| op arg k -> <here>` for a pre-decided kind. Covers the
+   historical bug classes: tail resume, NON-TAIL resume (let / binop operand —
+   the emit-js trampoline bug), multishot via copy_continuation (the cross-fiber
+   bug), and abort (no resume). *)
+and render_arm ctx (kind : arm_kind) : string =
+  let arm_ctx = { ctx with vars = ("arg", TInt) :: ctx.vars } in
+  match kind with
+  | ATail -> Printf.sprintf "resume k %s" (gen_int arm_ctx)
+  | ALet ->
+      let r = fresh ctx "r" in
+      let ctx' = { arm_ctx with vars = (r, TInt) :: arm_ctx.vars } in
+      Printf.sprintf "let %s = resume k %s in %s" r (gen_int arm_ctx)
+        (gen_int ctx')
+  | ABinop ->
+      Printf.sprintf "((resume k %s) + %s)" (gen_int arm_ctx) (gen_int arm_ctx)
+  | AMulti ->
+      Printf.sprintf
+        "let k2 = copy_continuation k in ((resume k %s) + (resume k2 %s))"
+        (gen_int arm_ctx) (gen_int arm_ctx)
+  | AAbort -> gen_int arm_ctx
 
 (* A handle expression of type int. [ops] are the operations this handler
    handles; the body may perform any of them. *)
 and gen_handle ctx ops : string =
-  let body_ctx = { ctx with ops; in_handler = true } in
+  (* Decide the arm shapes BEFORE generating the body: if any arm is multishot,
+     the body runs inside a fan-out region (every perform there replays twice),
+     so its performs must draw on a bounded fuel (see ctx.fanout). *)
+  let kinds = List.map (fun _ -> pick_arm_kind ctx) ops in
+  let has_multishot = List.exists (fun k -> k = AMulti) kinds in
+  let body_ctx =
+    let base = { ctx with ops; in_handler = true } in
+    if not has_multishot then base
+    else
+      match ctx.fanout with
+      | Some _ -> base (* nested: inherit the outermost region's shared fuel *)
+      | None -> { base with fanout = Some (ref fanout_budget); loop_mult = 1 }
+  in
   let body = gen_int body_ctx in
   (* Return-arm policy (one remaining known-divergence avoidance):
      - OPTIONAL (BUG-4 fixed 2026-06-02: the parser synthesizes the identity
@@ -508,7 +582,9 @@ and gen_handle ctx ops : string =
       ]
   in
   let arms =
-    List.map (fun op -> Printf.sprintf "\n| %s arg k -> %s" op (gen_arm ctx)) ops
+    List.map2
+      (fun op kind -> Printf.sprintf "\n| %s arg k -> %s" op (render_arm ctx kind))
+      ops kinds
   in
   Printf.sprintf "(handle\n  %s\nwith%s%s)" body return_arm
     (String.concat "" arms)
@@ -619,6 +695,8 @@ let generate ~seed ~size : string =
       in_function = false;
       mutables = [];
       loop_depth = 0;
+      fanout = None;
+      loop_mult = 1;
     }
   in
   let buf = Buffer.create 1024 in
