@@ -799,6 +799,36 @@ with
 | op arg k -> let k2 = copy_continuation k in (resume k (arg + 10)) + (resume k2 (arg + 20))
 --- expect: 38
 
+=== Mixed-Handler Abort (abort op alongside a resuming op) ===
+# In a handler mixing an ABORTING op (never resumes) with a RESUMING op, the
+# aborting op must abort the whole handle (its arm value is the handle result,
+# discarding the body) — not return its value as the perform's value and let the
+# body continue. The abort throws a tagged exception caught at the handle
+# boundary, which also unwinds correctly out through an opaque HOF call.
+
+--- test: aborting op alongside a resuming op aborts the handle
+effect E = op0 : int -> int  op1 : int -> int end
+handle ((perform op1 5) + (perform op0 99) + 1000) with
+| op0 arg k -> arg
+| op1 arg k -> resume k (arg + 1)
+--- expect: 99
+
+--- test: mixed-handler abort unwinds through a List.fold callback
+effect E = op0 : int -> int  op1 : int -> int end
+handle (List.fold (fn a e -> a + (perform op0 e)) 0 [1; 2; 3]) with
+| op0 arg k -> 77
+| op1 arg k -> resume k arg
+--- expect: 77
+
+--- test: mixed-handler abort unwinds through a List.map in a for-in body
+effect E = op0 : int -> int  op1 : int -> int end
+handle
+  (for i in [4] with a = 10 do (List.length ((String.length (string_of_int a)) :: (List.map (fn e -> perform op0 8) [1; 2; 3]))) end)
+with
+| op0 arg k -> 0
+| op1 arg k -> resume k arg
+--- expect: 0
+
 === Try/With Tests ===
 
 --- test: try/with basic return
