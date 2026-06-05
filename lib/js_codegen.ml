@@ -345,6 +345,21 @@ type ctx = {
          CPS-call `f(h, k')`; this is how a HOF twin (List$map$cps) calls its
          callback parameter (§12.2). Manually added/removed around twin and
          CPS-lambda bodies. *)
+  mutable fold_cps_break_k : string option;
+      (* Inside a CPS fold loop (emit_forloop_cps_native): the JS name of the
+         loop-exit continuation function `exitK(v)` (= `cont v`). `break v`
+         compiles to `return exitK(v)` and `continue`/fold-continue to a bounce
+         into the loop function — both CLOSED-OVER CALLS, never throws. A thrown
+         _break would unwind the dynamic JS stack to the loop's catch; when the
+         loop body performs and the captured continuation is resumed NON-tail,
+         that catch is the wrong delimiter (it sits between the handler and its
+         own post-resume code), so the break value escapes past the handler
+         (the break-perform-in-full-handler bug). Closed-over calls flow the
+         loop's result back through the resume's return value instead. *)
+  mutable fold_cps_loop_fn : string option;
+      (* The CPS fold loop's iteration function name (for continue). *)
+  mutable fold_cps_next_pos : string option;
+      (* JS expression for the next iteration position (for continue). *)
 }
 
 let create_ctx type_env =
@@ -377,6 +392,9 @@ let create_ctx type_env =
     twins_emitted = Hashtbl.create 64;
     in_full_handler = false;
     cps_form_vars = Hashtbl.create 16;
+    fold_cps_break_k = None;
+    fold_cps_loop_fn = None;
+    fold_cps_next_pos = None;
   }
 
 (* --- Save/restore helpers using Fun.protect for exception safety --- *)
@@ -3076,13 +3094,28 @@ and compile_cps_dispatch ctx (te : Typechecker.texpr) (cont : string -> unit) :
      route its value through [cont], which would defer the throw inside a
      _bounce, escaping the loop's catch (a fold_cont/break would then propagate
      uncaught — the bug exposed when needs_cps routes more loops through CPS). *)
-  | Typechecker.TEBreak value_te ->
+  | Typechecker.TEBreak value_te -> (
       let v = compile_non_tail ctx value_te in
-      emit_line ctx (Printf.sprintf "return _throw_break(%s);" v)
+      match ctx.fold_cps_break_k with
+      | Some exit_k ->
+          (* CPS fold loop: break v exits the loop with v by CALLING the
+             closed-over exit continuation, so the value flows back through a
+             resume's return rather than escaping past the handler via a throw
+             the loop's catch would intercept. *)
+          emit_line ctx (Printf.sprintf "return %s(%s);" exit_k v)
+      | None -> emit_line ctx (Printf.sprintf "return _throw_break(%s);" v))
   | Typechecker.TEContinueLoop -> emit_line ctx "return _throw_continue();"
-  | Typechecker.TEFoldContinue value_te ->
+  | Typechecker.TEFoldContinue value_te -> (
       let v = compile_non_tail ctx value_te in
-      emit_line ctx (Printf.sprintf "return _throw_fold_cont(%s);" v)
+      match (ctx.fold_cps_loop_fn, ctx.fold_cps_next_pos) with
+      | Some loop_fn, Some next_pos ->
+          (* CPS fold loop: continue proceeds to the next iteration with acc=v
+             by bouncing into the closed-over loop function (no throw). *)
+          emit_line ctx
+            (Printf.sprintf
+               "return _bounce(function() { return %s(%s, %s); });" loop_fn
+               next_pos v)
+      | _ -> emit_line ctx (Printf.sprintf "return _throw_fold_cont(%s);" v))
   (* Compound expressions: always recurse to ensure proper _resolve *)
   | Typechecker.TELet (name, _, e1, e2) -> compile_let_cps ctx name e1 e2 cont
   | Typechecker.TELetRec (name, _, fn_expr, body) ->
@@ -3326,11 +3359,27 @@ and emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont =
   let pos_var = fresh_tmp ctx in
   let acc_var = fresh_tmp ctx in
   let coll_var = fresh_tmp ctx in
+  let exit_k = fresh_tmp ctx in
+  let exit_v = fresh_tmp ctx in
   (* init and coll are pure here: anf_lift_effects lifts effectful for-in
      arguments before dispatch reaches this case. *)
   let init_js = compile_non_tail ctx init in
   let coll_js = compile_non_tail ctx coll in
   emit_line ctx (Printf.sprintf "const %s = %s;" coll_var coll_js);
+  (* The loop-exit continuation (= [cont]): the loop's result -> rest of the
+     handle body. Defined ONCE and invoked by loop exhaustion, by a thrown
+     _break (a break in a wholly-pure subtree), and by a CPS-dispatch `break v`
+     (which calls it directly instead of throwing — see TEBreak in
+     compile_cps_dispatch). A break that runs inside a RESUMED continuation must
+     return the loop's value back through the resume; a thrown _break would
+     instead unwind to this loop's catch, landing between the handler and its
+     own post-resume code and escaping past it. A closed-over call returns
+     normally. *)
+  emit_line ctx (Printf.sprintf "function %s(%s) {" exit_k exit_v);
+  ctx.indent <- ctx.indent + 1;
+  cont exit_v;
+  ctx.indent <- ctx.indent - 1;
+  emit_line ctx "}";
   (* The iteration function: %s(position, accumulator) *)
   emit_line ctx (Printf.sprintf "function %s(%s, %s) {" loop_fn pos_var acc_var);
   ctx.indent <- ctx.indent + 1;
@@ -3347,7 +3396,7 @@ and emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont =
       emit_line ctx
         (Printf.sprintf "if (%s >= %s._arr.length) {" pos_var coll_var));
   ctx.indent <- ctx.indent + 1;
-  cont acc_var;
+  emit_line ctx (Printf.sprintf "return %s(%s);" exit_k acc_var);
   ctx.indent <- ctx.indent - 1;
   emit_line ctx "}";
   (* Bind the loop variables for this iteration *)
@@ -3385,14 +3434,31 @@ and emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont =
     | "list" -> Printf.sprintf "%s._tl" pos_var
     | _ -> Printf.sprintf "(%s + 1)" pos_var
   in
-  (* Body in CPS. Its continuation is the next iteration. break/continue
-     compile to _throw_break/_throw_fold_cont (in_fold_loop), caught here. *)
+  (* Body in CPS. Its continuation is the next iteration.
+     A break/continue inside the body compiles two ways:
+     - via compile_cps_dispatch (the CPS path, which all control reaches when
+       the body or an enclosing position performs): a CLOSED-OVER CALL to
+       [exit_k] / a bounce into [loop_fn] (the fold_cps_* ctx fields), so it
+       survives being run inside a resumed continuation;
+     - via compile_non_tail (a wholly-pure subtree routed direct-style): a
+       thrown _break/_fold_cont (in_fold_loop) caught here — sound because a
+       pure subtree runs synchronously on this loop's stack. *)
   emit_line ctx "try {";
   ctx.indent <- ctx.indent + 1;
   let saved_in_fold = ctx.in_fold_loop in
+  let saved_break_k = ctx.fold_cps_break_k in
+  let saved_loop_fn = ctx.fold_cps_loop_fn in
+  let saved_next_pos = ctx.fold_cps_next_pos in
   ctx.in_fold_loop <- true;
+  ctx.fold_cps_break_k <- Some exit_k;
+  ctx.fold_cps_loop_fn <- Some loop_fn;
+  ctx.fold_cps_next_pos <- Some next_pos;
   Fun.protect
-    ~finally:(fun () -> ctx.in_fold_loop <- saved_in_fold)
+    ~finally:(fun () ->
+      ctx.in_fold_loop <- saved_in_fold;
+      ctx.fold_cps_break_k <- saved_break_k;
+      ctx.fold_cps_loop_fn <- saved_loop_fn;
+      ctx.fold_cps_next_pos <- saved_next_pos)
     (fun () ->
       compile_cps ctx body (fun v ->
           emit_line ctx
@@ -3409,11 +3475,9 @@ and emit_forloop_cps_native ctx kind acc_param elem_param body init coll cont =
         return %s(%s, _e._val); });"
        loop_fn next_pos);
   (* break v: the loop's value is v *)
-  emit_line ctx "if (_e && _e._tag === \"_break\") {";
-  ctx.indent <- ctx.indent + 1;
-  cont "_e._val";
-  ctx.indent <- ctx.indent - 1;
-  emit_line ctx "}";
+  emit_line ctx
+    (Printf.sprintf
+       "if (_e && _e._tag === \"_break\") return %s(_e._val);" exit_k);
   emit_line ctx "throw _e;";
   ctx.indent <- ctx.indent - 1;
   emit_line ctx "}";
