@@ -2922,13 +2922,8 @@ and compile_handle ctx body arms =
     compile_handle_trywith ctx body trywith_arms !return_arm result
   end
   else begin
-    (* Ops handled WITHOUT putting the body in CPS: provide ops (direct dispatch,
-       tail-resumptive, TEResume stripped) and try ops (an inline perform throws
-       a tagged abort). Only FULL ops require the body in CPS. *)
-    let try_op_names = List.map (fun (op, _, _) -> op) try_ops in
-    let simple_ops =
-      List.map (fun (op, _, _) -> op) provide_ops @ try_op_names
-    in
+    (* Simple ops come from provide_ops (tail-resumptive, already stripped of TEResume) *)
+    let simple_ops = List.map (fun (op, _, _) -> op) provide_ops in
 
     (* Emit: const _result = (function() { save/restore _h ... })(); *)
     emit_line ctx (Printf.sprintf "const %s = (function() {" result);
@@ -2992,23 +2987,22 @@ and compile_handle ctx body arms =
                  op_name arg_js k_js k_js direct_fn arg_js))
           provide_ops;
 
-        (* Emit try ops: the arm never resumes, so it ABORTS the handle. The op
-           throws a tagged exception caught at the handle boundary, where the arm
-           runs (discarding the body) — its value becomes the HANDLE result. A
-           bare `return <value>` here would instead make the value the PERFORM's
-           result and let the body continue (the mixed-handler abort bug); a
-           throw also correctly unwinds out through an opaque HOF call (e.g.
-           List.map) that the aborting perform sits inside. Mirrors the
-           all-trywith fast path (compile_handle_trywith) + the trywith_ops
-           inline-throw path. *)
+        (* Emit try ops: handler body never resumes, just returns the fallback value *)
         List.iter
-          (fun (op_name, arg_name, _fallback_body) ->
+          (fun (op_name, arg_name, fallback_body) ->
             let arg_js = mangle_name arg_name in
             let k_js = "_k" in
             emit_line ctx
-              (Printf.sprintf
-                 "\"%s\": function(%s, %s) { throw {_e: \"%s\", _v: %s}; },"
-                 op_name arg_js k_js op_name arg_js))
+              (Printf.sprintf "\"%s\": function(%s, %s) {" op_name arg_js k_js);
+            ctx.indent <- ctx.indent + 1;
+            push_scope ctx;
+            bind_var ctx arg_name arg_js;
+            let v = compile_non_tail ctx fallback_body in
+            emit_line ctx
+              (Printf.sprintf "return _bounce(function() { return %s; });" v);
+            pop_scope ctx;
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "},")
           try_ops;
 
         (* Emit full CPS ops *)
@@ -3062,12 +3056,6 @@ and compile_handle ctx body arms =
         let saved_ifh = ctx.in_full_handler in
         ctx.in_full_handler <- full_ops <> [] || saved_ifh;
 
-        (* While compiling the body, an inline `perform op` for a try op throws
-           the tagged abort (caught at the boundary below); a called function
-           that performs it finds the throwing `_h` entry. *)
-        let saved_two = ctx.trywith_ops in
-        ctx.trywith_ops <- try_op_names @ ctx.trywith_ops;
-
         emit_line ctx "try {";
         ctx.indent <- ctx.indent + 1;
 
@@ -3113,35 +3101,8 @@ and compile_handle ctx body arms =
           | None -> emit_line ctx (Printf.sprintf "return %s;" body_v)
         end;
         ctx.in_full_handler <- saved_ifh;
-        ctx.trywith_ops <- saved_two;
 
         ctx.indent <- ctx.indent - 1;
-        (* Catch the try ops' tagged aborts: run the matching arm (its value is
-           the handle result, discarding the body); re-throw anything else. *)
-        if try_ops <> [] then begin
-          emit_line ctx "} catch (_exc) {";
-          ctx.indent <- ctx.indent + 1;
-          let first = ref true in
-          List.iter
-            (fun (op_name, arg_name, arm_body) ->
-              let prefix = if !first then "if" else "} else if" in
-              first := false;
-              emit_line ctx
-                (Printf.sprintf "%s (_exc && _exc._e === \"%s\") {" prefix
-                   op_name);
-              ctx.indent <- ctx.indent + 1;
-              push_scope ctx;
-              let arg_js = mangle_name arg_name in
-              bind_var ctx arg_name arg_js;
-              emit_line ctx (Printf.sprintf "const %s = _exc._v;" arg_js);
-              let v = compile_non_tail ctx arm_body in
-              emit_line ctx (Printf.sprintf "return %s;" v);
-              pop_scope ctx;
-              ctx.indent <- ctx.indent - 1)
-            try_ops;
-          emit_line ctx "} else { throw _exc; }";
-          ctx.indent <- ctx.indent - 1
-        end;
         emit_line ctx (Printf.sprintf "} finally { _h = %s; }" h_saved));
 
     (* Fun.protect closes here — direct_dispatch_ops restored *)
