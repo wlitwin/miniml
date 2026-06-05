@@ -38,6 +38,24 @@ let rec needs_cps (ty : Types.ty) =
       (not (eff_is_pure eff)) || needs_cps ret
   | _ -> false
 
+(* Like [needs_cps] but treats an UNBOUND effect var as possibly-effectful too.
+   Used at a function's DEFINITION to decide whether to record it as twinnable:
+   there the effect var is typically not yet generalized (an unbound EffVar
+   rather than [EffGen]), but the function is effect-POLYMORPHIC and may be
+   instantiated to a non-empty row at some call site, so it must be twinnable.
+   At CALL sites [needs_cps] is used instead (the type is instantiated, and an
+   unbound var genuinely means "no effects" — don't CPS). Recording extra
+   functions is harmless: twins are still emitted only ON DEMAND, for ones
+   actually twin-called under a full handler. *)
+let rec may_need_cps (ty : Types.ty) =
+  let eff_maybe_effectful e =
+    match Types.eff_repr e with Types.EffEmpty -> false | _ -> true
+  in
+  match Types.repr ty with
+  | Types.TArrow (_, eff, ret) | Types.TCont (_, eff, ret) ->
+      eff_maybe_effectful eff || may_need_cps ret
+  | _ -> false
+
 (* ---- Effect / tail-resume analysis (hoisted from Js_codegen) ------------- *)
 
 let rec expr_has_perform_with ~check_perform ~enter_funs ~on_app

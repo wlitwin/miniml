@@ -74,12 +74,13 @@ module Js_codegen =
     cps_form_vars: (string, unit) Hashtbl.t;
     mut fold_cps_break_k: string option;
     mut fold_cps_loop_fn: string option;
-    mut fold_cps_next_pos: string option
+    mut fold_cps_next_pos: string option;
+    local_twins: (string, unit) Hashtbl.t
   }
 
   pub let create_ctx type_env =
     let tbl = Hashtbl.create 16 in
-    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None}
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None; local_twins = Hashtbl.create 16}
 
   pub let with_in_cps ctx value f =
     let saved = ctx.in_cps in
@@ -463,25 +464,58 @@ module Js_codegen =
     | _ -> None
 
 
+  pub let cps_call_on_app ctx (fn_ : Typechecker.texpr) =
+    match fn_.expr with
+    | Typechecker.TEVar name -> 
+      let jsn = lookup_var ctx name in
+      (Hashtbl.has ctx.cps_form_vars jsn) || ((Hashtbl.has ctx.twinnable jsn) && (may_need_cps fn_.ty))
+    | _ -> false
+
+
+  pub let eval_can_perform_cps ctx (te : Typechecker.texpr) =
+    if not ctx.in_full_handler do
+      eval_can_perform te
+    else
+      expr_has_perform_with (fn _ -> true) false (cps_call_on_app ctx) te
+
+  pub let invokes_effect_cps ctx (te : Typechecker.texpr) =
+    if not ctx.in_full_handler do
+      eval_invokes_effect te
+    else
+      expr_has_perform_with (fn _ -> true) true (cps_call_on_app ctx) te
+
   pub let anf_lift_effects ctx (te : Typechecker.texpr) =
     match te.expr with
-    | Typechecker.TEBinop ((Ast.And, e1, e2)) when (eval_can_perform e1) || (eval_can_perform e2) -> Some {expr = Typechecker.TEIf (e1, e2, {expr = Typechecker.TEBool false; ty = te.ty; loc = te.loc}); ty = te.ty; loc = te.loc}
-    | Typechecker.TEBinop ((Ast.Or, e1, e2)) when (eval_can_perform e1) || (eval_can_perform e2) -> Some {expr = Typechecker.TEIf (e1, {expr = Typechecker.TEBool true; ty = te.ty; loc = te.loc}, e2); ty = te.ty; loc = te.loc}
+    | Typechecker.TEBinop ((Ast.And, e1, e2)) when (eval_can_perform_cps ctx e1) || (eval_can_perform_cps ctx e2) -> Some {expr = Typechecker.TEIf (e1, e2, {expr = Typechecker.TEBool false; ty = te.ty; loc = te.loc}); ty = te.ty; loc = te.loc}
+    | Typechecker.TEBinop ((Ast.Or, e1, e2)) when (eval_can_perform_cps ctx e1) || (eval_can_perform_cps ctx e2) -> Some {expr = Typechecker.TEIf (e1, {expr = Typechecker.TEBool true; ty = te.ty; loc = te.loc}, e2); ty = te.ty; loc = te.loc}
     | _ -> 
       do
         match anf_decompose te with
         | None -> None
         | Some ((subs, rebuild)) -> 
           do
-            if not (List.exists eval_can_perform subs) do
+            if not (List.exists (eval_can_perform_cps ctx) subs) do
               None
             else do
               let last_eff = Ref.create (-1) in
-              List.iteri (fn i sub -> if eval_can_perform sub do
+              List.iteri (fn i sub -> if eval_can_perform_cps ctx sub do
                 Ref.set last_eff i
               end) subs;
+              let protect_head =
+                match te.expr with
+                | Typechecker.TEApp _ -> 
+                  do
+                    match subs with
+                    | {expr = Typechecker.TEVar n; _} :: _ -> 
+                      let jsn = lookup_var ctx n in
+                      (Hashtbl.has ctx.local_twins jsn) || ((Hashtbl.has ctx.twinnable jsn) || (Hashtbl.has ctx.cps_form_vars jsn))
+                    | _ -> false
+
+                  end
+                | _ -> false
+               in
               let bindings = Ref.create [] in
-              let parts = List.mapi (fn i sub -> if (i <= (Ref.get last_eff)) && (not (is_anf_atom sub)) do
+              let parts = List.mapi (fn i sub -> if (i <= (Ref.get last_eff)) && ((not (is_anf_atom sub)) && (not ((i = 0) && protect_head))) do
                 let name = $"__anf{ctx.tmp_counter}" in
                 ctx.tmp_counter := ctx.tmp_counter + 1;
                 Ref.set bindings ((name, sub) :: Ref.get bindings);
@@ -983,18 +1017,20 @@ module Js_codegen =
         Buffer.add_string ctx.buf (indent_str ^ "}\n")
       end;
       emit_line ctx "}";
-      if (needs_cps fn_expr.ty) && (not has_return) do
+      if (may_need_cps fn_expr.ty) && (not has_return) do
         Hashtbl.set ctx.twinnable js_name (all_params, js_params, final_body, fn_expr.ty)
       end
     | _ -> 
       let v = compile_expr ctx fn_expr in
       emit_line ctx ($"const {js_name} = {v};")
 
-  and emit_cps_twin ctx js_name =
+  and emit_cps_twin ctx js_name local =
     match Hashtbl.get ctx.twinnable js_name with
     | None -> ()
     | Some ((all_params, js_params, final_body, fn_ty)) -> 
-      Hashtbl.set ctx.twins_emitted js_name ();
+      if not local do
+        Hashtbl.set ctx.twins_emitted js_name ()
+      end;
       let k_param = "$k" in
       let saved_ifh = ctx.in_full_handler in
       ctx.in_full_handler := true;
@@ -1023,7 +1059,7 @@ module Js_codegen =
     let rec zip ps tys =
       match (ps, tys) with
       | (p :: ps', t :: tys') -> 
-        if needs_cps t do
+        if may_need_cps t do
           p :: zip ps' tys'
         else
           zip ps' tys'
@@ -1058,7 +1094,9 @@ module Js_codegen =
       fn_name
     | Typechecker.TEVar name -> 
       let jsn = lookup_var ctx name in
-      if Hashtbl.has ctx.twinnable jsn do
+      if Hashtbl.has ctx.local_twins jsn do
+        jsn ^ "$cps"
+      else if Hashtbl.has ctx.twinnable jsn do
         Hashtbl.set ctx.twins_requested jsn ();
         jsn ^ "$cps"
       else
@@ -1074,7 +1112,7 @@ module Js_codegen =
       match pending () with
       | [] -> ()
       | names -> 
-        List.iter (emit_cps_twin ctx) names;
+        List.iter (fn n -> emit_cps_twin ctx n false) names;
         loop ()
      in
     loop ()
@@ -2059,7 +2097,7 @@ module Js_codegen =
       emit_line ctx "});";
       let body_needs_cps =
         if simple_ops = [] do
-          eval_invokes_effect body
+          invokes_effect_cps ctx body
         else
           expr_has_unhandled_perform simple_ops body in
       let saved_ifh = ctx.in_full_handler in
@@ -2124,12 +2162,22 @@ module Js_codegen =
         do
           let (base, args) = collect te [] in
           match base.expr with
-          | Typechecker.TEVar name when needs_cps base.ty -> 
+          | Typechecker.TEVar name -> 
             do
               let jsn = lookup_var ctx name in
-              match Hashtbl.get ctx.twinnable jsn with
-              | Some ((_, js_params, _, _)) -> (List.length js_params) = (List.length args)
-              | None -> (Hashtbl.has ctx.cps_form_vars jsn) && ((count_arrows base.ty) = (Some (List.length args)))
+              if Hashtbl.has ctx.local_twins jsn do
+                (count_arrows base.ty) = (Some (List.length args))
+              else if Hashtbl.has ctx.cps_form_vars jsn do
+                (count_arrows base.ty) = (Some (List.length args))
+              else
+                match Hashtbl.get ctx.twinnable jsn with
+                | Some ((_, js_params, _, _)) when (List.length js_params) = (List.length args) -> 
+                  let arg_effectful a = (match a.expr with
+                  | Typechecker.TEVar n -> Hashtbl.has ctx.cps_form_vars (lookup_var ctx n)
+                  | _ -> false
+                  ) || (needs_cps a.ty) in
+                  (needs_cps base.ty) || (List.exists arg_effectful args)
+                | _ -> false
 
             end
           | _ -> false
@@ -2170,7 +2218,7 @@ module Js_codegen =
     | Typechecker.TEMatch ((scrut, arms, _partial)) -> compile_match_cps ctx scrut arms te.loc cont
     | Typechecker.TEMatchTree cm -> compile_js_match_tree_cps ctx cm cont
     | Typechecker.TELetMut ((name, init, body)) -> 
-      if eval_invokes_effect init do
+      if invokes_effect_cps ctx init do
         compile_cps ctx init (fn init_v -> let js_name = mangle_name name in
         let actual_name = js_name ^ ("_" ^ (string_of_int ctx.tmp_counter)) in
         ctx.tmp_counter := ctx.tmp_counter + 1;
@@ -2438,7 +2486,7 @@ module Js_codegen =
       emit_line ctx "});"
 
   and compile_let_cps ctx name e1 e2 cont =
-    if eval_invokes_effect e1 do
+    if invokes_effect_cps ctx e1 do
       compile_cps ctx e1 (fn v1 -> let js_name = mangle_name name in
       let actual_name =
         if js_name = "_" do
@@ -2470,18 +2518,28 @@ module Js_codegen =
     let js_name = mangle_name name in
     push_scope ctx;
     bind_var ctx name js_name;
+    let added_local_twin = Ref.create false in
     do
       match fn_expr.expr with
-      | Typechecker.TEFun _ -> compile_named_function ctx js_name fn_expr
+      | Typechecker.TEFun _ -> 
+        compile_named_function ctx js_name fn_expr;
+        if ctx.in_full_handler && ((Hashtbl.has ctx.twinnable js_name) && (not (Hashtbl.has ctx.local_twins js_name))) do
+          Hashtbl.set ctx.local_twins js_name ();
+          Ref.set added_local_twin true;
+          emit_cps_twin ctx js_name true
+        end
       | _ -> 
         emit_js_placeholder ctx js_name fn_expr;
         emit_js_backpatch ctx js_name fn_expr
 
     end;
     compile_cps ctx body cont;
+    if Ref.get added_local_twin do
+      Hashtbl.remove ctx.local_twins js_name
+    end;
     pop_scope ctx
   and compile_seq_cps ctx e1 e2 cont =
-    if eval_invokes_effect e1 do
+    if invokes_effect_cps ctx e1 do
       compile_cps ctx e1 (fn v1 -> emit_line ctx ($"_resolve({v1});");
       compile_cps ctx e2 cont)
     else do
@@ -2533,6 +2591,60 @@ module Js_codegen =
   ctx.indent := ctx.indent - 1;
   emit_line ctx "}") arms;
   emit_line ctx ($"if (!{matched}) _match_fail(\"line {loc.line}\");"))
+  and twin_cps_arg_flags ctx base_fn nargs =
+    match base_fn.expr with
+    | Typechecker.TEVar name -> 
+      do
+        let jsn = lookup_var ctx name in
+        match Hashtbl.get ctx.twinnable jsn with
+        | Some ((_, _, _, fn_ty)) -> 
+          let rec param_types ty =
+            match Types.repr ty with
+            | (Types.TArrow ((a, _, r)) | Types.TCont ((a, _, r))) -> a :: param_types r
+            | _ -> []
+           in
+          let ptys = param_types fn_ty in
+          Some (List.init nargs (fn i ->
+            do
+              match List.nth_opt ptys i with
+              | Some t -> may_need_cps t
+              | None -> false
+
+            end))
+        | None -> None
+
+      end
+    | _ -> None
+
+  and compile_cps_form_arg ctx a =
+    let already_cps_form =
+      match a.expr with
+      | Typechecker.TEVar name -> 
+        let jsn = lookup_var ctx name in
+        (Hashtbl.has ctx.cps_form_vars jsn) || ((Hashtbl.has ctx.twinnable jsn) || (Hashtbl.has ctx.local_twins jsn))
+      | _ -> false
+     in
+    match a.expr with
+    | Typechecker.TEFun _ -> compile_cps_value ctx a
+    | _ when already_cps_form -> compile_cps_value ctx a
+    | _ when needs_cps a.ty -> compile_cps_value ctx a
+    | _ -> 
+      let raw = compile_non_tail ctx a in
+      let arity =
+        match count_arrows a.ty with
+        | Some n when n > 0 -> n
+        | _ -> 1
+       in
+      let params = List.init arity (fn _ -> fresh_tmp ctx) in
+      let k_param = "$k" in
+      let fn_name = fresh_tmp ctx in
+      emit_line ctx ($"function {fn_name}({String.concat ", " (List.concat params (k_param :: []))}) \{");
+      ctx.indent := ctx.indent + 1;
+      emit_line ctx ($"return _bounce(function() \{ return {k_param}(_call({raw}, [{String.concat ", " params}])); \});");
+      ctx.indent := ctx.indent - 1;
+      emit_line ctx "}";
+      fn_name
+
   and compile_app_cps ctx te fn_ arg cont =
     let rec collect_args expr acc =
       match expr.expr with
@@ -2542,8 +2654,20 @@ module Js_codegen =
     let (base_fn, all_args) = collect_args fn_ (arg :: []) in
     if is_twin_call ctx te do
       let fn_cps = compile_cps_value ctx base_fn in
-      let args_js = List.map (fn a -> if needs_cps a.ty do
-        compile_cps_value ctx a
+      let cps_flags = twin_cps_arg_flags ctx base_fn (List.length all_args) in
+      let args_js = List.mapi (fn i a -> let expects_cps =
+        match cps_flags with
+        | Some fl -> 
+          do
+            match List.nth_opt fl i with
+            | Some b -> b
+            | None -> false
+
+          end
+        | None -> needs_cps a.ty
+       in
+      if expects_cps do
+        compile_cps_form_arg ctx a
       else
         compile_non_tail ctx a) all_args in
       let result_var = fresh_tmp ctx in

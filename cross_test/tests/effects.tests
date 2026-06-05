@@ -1038,6 +1038,52 @@ with
 | keep n k -> resume k (n mod 2 = 0)
 --- expect: [2; 4]
 
+=== Multishot Through HOF Recursion (§12 step 3c regression suite) ===
+# A continuation captured inside a HOF's callback, then resumed MORE THAN ONCE
+# (copy_continuation), must run the rest of the HOF's per-element recursion
+# independently per resumption. emit-js threads $k through an INLINE `$cps` twin
+# of the HOF's recursive worker (List.map/fold/filter's local `go`, or a
+# user-defined recursive HOF), closing over the effectful callback. A pure
+# callback the twin expects in CPS form (e.g. the `(+)` in a trailing fold) is
+# wrapped into CPS form at the call. Native skips: a separate pre-existing native
+# bug (copy_continuation captured mid native fold-loop diverges, tracked).
+
+--- test: multishot through List.map then List.fold compose
+effect Choose = pick : unit -> bool end
+handle
+  (let xs = List.map (fn e -> if perform pick () do e else (e * 100)) [1; 2] in
+   List.fold (fn a x -> a + x) 0 xs)
+with
+| pick () k -> let k2 = copy_continuation k in (resume k true) + (resume k2 false)
+--- skip-native: native multishot copy_continuation captured mid fold-loop diverges (tracked bugs list, 2026-06-04)
+--- expect: 606
+
+--- test: multishot through List.fold with effectful callback
+effect Add = inc : int -> int end
+handle
+  (List.fold (fn a e -> a + (perform inc e)) 0 [1; 2])
+with
+| inc n k -> let k2 = copy_continuation k in (resume k n) + (resume k2 (n * 10))
+--- skip-native: native multishot copy_continuation captured mid fold-loop diverges (tracked bugs list, 2026-06-04)
+--- expect: 66
+
+--- test: multishot through a user-defined recursive HOF
+effect Choose = pick : int -> int end
+let rec mymap f xs = match xs with | [] -> [] | x :: r -> (f x) :: (mymap f r)
+handle
+  (List.fold (fn a x -> a + x) 0 (mymap (fn e -> perform pick e) [1; 2]))
+with
+| pick n k -> let k2 = copy_continuation k in (resume k n) + (resume k2 (n * 100))
+--- expect: 606
+
+--- test: multishot through List.filter then List.fold compose
+effect P = keep : int -> bool end
+handle
+  (List.fold (fn a x -> a + x) 0 (List.filter (fn e -> perform keep e) [1; 2; 3]))
+with
+| keep n k -> let k2 = copy_continuation k in (resume k true) + (resume k2 false)
+--- expect: 24
+
 --- test: immediately-applied lambda with perform nested in perform argument
 effect E2 =
   op0 : int -> int
