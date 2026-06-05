@@ -1146,3 +1146,11 @@ List.filter (fn e -> e > e) [1; 2; 3]
 let cmp x y = x > y;;
 (cmp 1 2, cmp 5 3)
 --- expect: (false, true)
+
+--- test: show on a never-pinned type falls back to structural (not ambiguous)
+List.map (fn e -> show e) []
+--- expect: []
+
+--- test: show on a never-pinned type, callback typed list result
+List.length (List.map (fn e -> show e) [])
+--- expect: 0

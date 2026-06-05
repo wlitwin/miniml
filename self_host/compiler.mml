@@ -344,9 +344,17 @@ module Compiler =
                 end
               | _ -> 
                 do
-                  match Types.most_specific_inst matching with
-                  | Some inst -> emit_inst_method inst
-                  | None -> error ($"ambiguous instance for {class_def.class_name} method {method_name}")
+                  let has_unbound = List.exists (fn
+                    | None -> true
+                    | _ -> false
+                  ) concrete_partial in
+                  if has_unbound && ((class_def.class_name = "Show") && (method_name = "show")) do
+                    let gidx = find_or_add_global s "__show_value" in
+                    emit s (Bytecode.GET_GLOBAL gidx)
+                  else
+                    match Types.most_specific_inst matching with
+                    | Some inst -> emit_inst_method inst
+                    | None -> error ($"ambiguous instance for {class_def.class_name} method {method_name}")
 
                 end
 

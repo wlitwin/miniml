@@ -397,13 +397,33 @@ let rec compile_expr tail s (te : Typechecker.texpr) =
                        (String.concat ", " ty_strs))
                 end
             | _ -> (
-                (* Multiple matches: try specificity-based selection *)
-                match Types.most_specific_inst matching with
-                | Some inst -> emit_inst_method inst
-                | None ->
-                    error
-                      (Printf.sprintf "ambiguous instance for %s method %s"
-                         class_def.class_name method_name)))
+                (* Multiple matches. An unbound type variable makes EVERY
+                   instance match (the wildcard), so this is the never-pinned
+                   case. For Show that is not ambiguous — show is total, so it
+                   falls back to structural display (__show_value), matching the
+                   transform's intent and emit-js/oracle. Other classes are
+                   genuinely ambiguous and rejected (the typechecker's
+                   transform_constraints already rejects operator forms; a bare
+                   most-specific overlap on concrete types still errors here). *)
+                let has_unbound =
+                  List.exists (function None -> true | _ -> false)
+                    concrete_partial
+                in
+                if
+                  has_unbound
+                  && String.equal class_def.class_name "Show"
+                  && String.equal method_name "show"
+                then begin
+                  let gidx = find_or_add_global s "__show_value" in
+                  emit s (Bytecode.GET_GLOBAL gidx)
+                end
+                else
+                  match Types.most_specific_inst matching with
+                  | Some inst -> emit_inst_method inst
+                  | None ->
+                      error
+                        (Printf.sprintf "ambiguous instance for %s method %s"
+                           class_def.class_name method_name)))
         | None -> compile_var_access s name
       else compile_var_access s name
   | Typechecker.TEBinop (op, e1, e2) -> compile_binop s op e1 e2
