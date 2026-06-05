@@ -2377,6 +2377,17 @@ void mml_handler_restore(int64_t mark) {
     mml_current_handler = (mml_handler*)(intptr_t)mark;
 }
 
+/* Does this handler have any FULL (multishot) op arm? If so it was installed by
+ * mml_run_full_handler and its body runs on a fiber — so its TRY arms must be
+ * dispatched by yielding to the fiber loop (which has a correct TRY case), NOT
+ * by longjmp: try_jmp is only set up by mml_run_try_handler (the all-try/provide
+ * runner), so longjmp'ing in a fiber handler jumps to an uninitialized buffer. */
+static int handler_has_full(mml_handler *h) {
+    for (int i = 0; i < h->num_ops; i++)
+        if (h->ops[i].kind == MML_HANDLER_FULL) return 1;
+    return 0;
+}
+
 int64_t mml_perform_op(const char* op_name, int64_t arg) {
     typedef int64_t (*arm_fn_t)(int64_t*, int64_t, int64_t);
     /* Search handler stack from innermost to outermost */
@@ -2392,7 +2403,30 @@ int64_t mml_perform_op(const char* op_name, int64_t arg) {
                     /* Tail-resumptive: call fn(env, arg, 0), return result directly */
                     return fn(env, arg, 0);
                 case MML_HANDLER_TRY: {
-                    /* Never-resume: call fn(env, arg, 0), longjmp back to handler */
+                    if (handler_has_full(h)) {
+                        /* Mixed handler (TRY + FULL arms): its body runs on a
+                         * fiber, so abort by YIELDING — exactly like a full op —
+                         * and let the fiber dispatch loop's TRY case run the arm
+                         * and tear the fiber down. The arm's value becomes the
+                         * result of whatever drove the fiber: the handle body
+                         * (abort the whole handle) or a resume (abort just that
+                         * resumption, its value flowing back into the arm that
+                         * called `resume`). longjmp can't reach here: try_jmp was
+                         * never set (this handler ran via mml_run_full_handler). */
+                        if (!mml_current_fiber) {
+                            fprintf(stderr, "native: try abort in fiber handler outside fiber\n");
+                            exit(1);
+                        }
+                        mml_current_fiber->op_name = op_name;
+                        mml_current_fiber->op_arg = arg;
+                        mml_current_fiber->state = MML_FIBER_YIELDED;
+                        mml_current_fiber->result = (int64_t)(intptr_t)h;
+                        mml_swap_context(&mml_current_fiber->ctx, mml_current_fiber->parent_ctx);
+                        /* Unreachable: a TRY abort never resumes this fiber. */
+                        return mml_current_fiber->result;
+                    }
+                    /* All-try/provide handler (run via mml_run_try_handler, which
+                     * set try_jmp): never-resume — call the arm, longjmp back. */
                     int64_t result = fn(env, arg, 0);
                     /* Pop all handlers down to and including this one */
                     mml_current_handler = h->parent;

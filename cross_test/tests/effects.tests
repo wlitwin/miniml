@@ -3348,8 +3348,16 @@ handle (perform op0 (perform op1 11)) with
 | return x -> x
 | op0 arg k -> arg
 | op1 arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 100)
---- skip-native: native segfaults on same-handler multishot copy_continuation + try-op abort inside the resumed continuation (tracked bugs list, 2026-06-05)
 --- expect: 111
+
+--- test: abort through a HOF callback inside a multishot resume
+effect E = op0 : int -> int; op1 : int -> int end
+handle
+  (let x = perform op1 0 in List.length (List.map (fn e -> perform op0 e) [1; 2; x]))
+with
+| op0 arg k -> 0
+| op1 arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 5)
+--- expect: 0
 
 --- test: abort from inside an inner multishot resume caught by the outer handler
 effect E = a : int -> int; b : int -> int end
