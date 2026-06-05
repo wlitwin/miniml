@@ -882,37 +882,39 @@ module Js_codegen =
     let is_fold_cb = ctx.fold_cont_pending in
     ctx.fold_cont_pending := false;
     with_function_ctx ctx None [] [] [] is_fold_cb (fn () -> let needs_return_catch = has_return && (not is_fold_cb) in
-    if expr_has_perform final_body do
-      with_in_cps ctx true (fn () -> if needs_return_catch do
-        emit_line ctx "try {";
-        ctx.indent := ctx.indent + 1
-      end;
-      emit_line ctx "return _trampoline(function() {";
-      ctx.indent := ctx.indent + 1;
-      if is_fold_cb do
-        emit_line ctx "try {";
-        ctx.indent := ctx.indent + 1
-      end;
-      compile_cps ctx final_body (fn v -> emit_line ctx ($"return {v};"));
-      if is_fold_cb do
-        ctx.indent := ctx.indent - 1;
-        emit_line ctx "} catch(_e) {";
-        ctx.indent := ctx.indent + 1;
-        emit_line ctx "if (_e && _e._tag === \"_fold_cont\") return _e._val;";
-        emit_line ctx "throw _e;";
-        ctx.indent := ctx.indent - 1;
-        emit_line ctx "}"
-      end;
-      ctx.indent := ctx.indent - 1;
-      emit_line ctx "});");
+    let outer_catch_tag =
       if needs_return_catch do
-        ctx.indent := ctx.indent - 1;
-        emit_line ctx "} catch(_e) {";
+        Some "_return"
+      else if is_fold_cb do
+        Some "_fold_cont"
+      else
+        None in
+    if expr_has_perform final_body do
+      do
+        with_in_cps ctx true (fn () -> do
+          match outer_catch_tag with
+          | Some _ -> 
+            emit_line ctx "try {";
+            ctx.indent := ctx.indent + 1
+          | None -> ()
+
+        end;
+        emit_line ctx "return _trampoline(function() {";
         ctx.indent := ctx.indent + 1;
-        emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
-        emit_line ctx "throw _e;";
+        compile_cps ctx final_body (fn v -> emit_line ctx ($"return {v};"));
         ctx.indent := ctx.indent - 1;
-        emit_line ctx "}"
+        emit_line ctx "});");
+        match outer_catch_tag with
+        | Some tag -> 
+          ctx.indent := ctx.indent - 1;
+          emit_line ctx "} catch(_e) {";
+          ctx.indent := ctx.indent + 1;
+          emit_line ctx ($"if (_e && _e._tag === \"{tag}\") return _e._val;");
+          emit_line ctx "throw _e;";
+          ctx.indent := ctx.indent - 1;
+          emit_line ctx "}"
+        | None -> ()
+
       end
     else do
       let needs_try = is_fold_cb || has_return in

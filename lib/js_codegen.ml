@@ -1482,44 +1482,49 @@ and compile_fun ctx param body has_return =
   with_function_ctx ctx ~fn_name:None ~fn_params:[] ~ddo:[] ~two:[]
     ~in_fold:is_fold_cb (fun () ->
       let needs_return_catch = has_return && not is_fold_cb in
+      (* A fold callback catches _fold_cont (continue → this iteration's value);
+         a has_return function catches _return. Either catch must wrap the
+         _trampoline call from the OUTSIDE: the body's perform reifies a
+         continuation the trampoline runs as a bounce, and a control transfer
+         raised when that bounce runs — e.g. `continue (perform ...)` whose value
+         itself performs — surfaces OUT of _trampoline; a catch nested inside the
+         trampolined function would miss it and the throw would escape uncaught.
+         (is_fold_cb and needs_return_catch are mutually exclusive here; a
+         `return` inside a fold callback targets the enclosing function, so the
+         callback re-throws _return rather than catching it.) *)
+      let outer_catch_tag =
+        if needs_return_catch then Some "_return"
+        else if is_fold_cb then Some "_fold_cont"
+        else None
+      in
       if expr_has_perform final_body then begin
         (* CPS-compile function body for effect support, wrapped in trampoline.
          Set in_cps so non-tail function calls within the body get _resolve wrapping,
          which is needed because re-entrant trampoline calls return bounces. *)
         with_in_cps ctx true (fun () ->
-            if needs_return_catch then begin
-              emit_line ctx "try {";
-              ctx.indent <- ctx.indent + 1
-            end;
+            (match outer_catch_tag with
+            | Some _ ->
+                emit_line ctx "try {";
+                ctx.indent <- ctx.indent + 1
+            | None -> ());
             emit_line ctx "return _trampoline(function() {";
             ctx.indent <- ctx.indent + 1;
-            if is_fold_cb then begin
-              emit_line ctx "try {";
-              ctx.indent <- ctx.indent + 1
-            end;
             compile_cps ctx final_body (fun v ->
                 emit_line ctx (Printf.sprintf "return %s;" v));
-            if is_fold_cb then begin
-              ctx.indent <- ctx.indent - 1;
-              emit_line ctx "} catch(_e) {";
-              ctx.indent <- ctx.indent + 1;
-              emit_line ctx
-                "if (_e && _e._tag === \"_fold_cont\") return _e._val;";
-              emit_line ctx "throw _e;";
-              ctx.indent <- ctx.indent - 1;
-              emit_line ctx "}"
-            end;
             ctx.indent <- ctx.indent - 1;
             emit_line ctx "});");
-        if needs_return_catch then begin
-          ctx.indent <- ctx.indent - 1;
-          emit_line ctx "} catch(_e) {";
-          ctx.indent <- ctx.indent + 1;
-          emit_line ctx "if (_e && _e._tag === \"_return\") return _e._val;";
-          emit_line ctx "throw _e;";
-          ctx.indent <- ctx.indent - 1;
-          emit_line ctx "}"
-        end
+        match outer_catch_tag with
+        | Some tag ->
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "} catch(_e) {";
+            ctx.indent <- ctx.indent + 1;
+            emit_line ctx
+              (Printf.sprintf "if (_e && _e._tag === \"%s\") return _e._val;"
+                 tag);
+            emit_line ctx "throw _e;";
+            ctx.indent <- ctx.indent - 1;
+            emit_line ctx "}"
+        | None -> ()
       end
       else begin
         let needs_try = is_fold_cb || has_return in
