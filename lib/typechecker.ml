@@ -1513,17 +1513,39 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
       (* Sort: constraints with more CATGen entries first. These have more
          concrete type info from the function's TGen params, so their fundep
          resolutions propagate to dependent constraints that have only CATy. *)
+      let count_catgen args =
+        List.length
+          (List.filter
+             (fun (ca : Types.class_arg) ->
+               match ca with Types.CATGen _ -> true | _ -> false)
+             args)
+      in
+      (* A canonical tie-break key independent of tvar-id collection order: the
+         constraint's CATGen indices (which generalization assigns by
+         left-to-right body occurrence, identical across the two compilers) plus
+         the class name. Without it, equal-count_catgen constraints kept their
+         arrival order in [found_multi] — which follows tvar-id allocation order
+         and so DIFFERS between the reference and self-hosted compilers, emitting
+         dict params in a different order (alpha-equivalent but not byte-identical;
+         a cross-compiler IR divergence the ir-parity runner surfaced, roadmap
+         #13). NOTE: constraints whose args are all CATy/CAPhantom (fundep-
+         determined internal tvars, not present in the body) have no canonical
+         index and can still tie — those remain a known residual. *)
+      let catgen_indices (cc : Types.class_constraint) =
+        List.sort compare
+          (List.filter_map
+             (fun (ca : Types.class_arg) ->
+               match ca with Types.CATGen i -> Some i | _ -> None)
+             cc.cc_args)
+      in
       let cc_list =
         List.sort
           (fun (a : Types.class_constraint) (b : Types.class_constraint) ->
-            let count_catgen args =
-              List.length
-                (List.filter
-                   (fun (ca : Types.class_arg) ->
-                     match ca with Types.CATGen _ -> true | _ -> false)
-                   args)
-            in
-            compare (count_catgen b.cc_args) (count_catgen a.cc_args))
+            let c = compare (count_catgen b.cc_args) (count_catgen a.cc_args) in
+            if c <> 0 then c
+            else
+              let c2 = compare (catgen_indices a) (catgen_indices b) in
+              if c2 <> 0 then c2 else String.compare a.cc_class b.cc_class)
           cc_list
       in
       { scheme with Types.constraints = cc_list }
