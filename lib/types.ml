@@ -1244,6 +1244,16 @@ let pp_ty_normalized_impl synonyms ty =
 let pp_ty_normalized_with synonyms ty = pp_ty_normalized_impl synonyms ty
 let pp_ty_normalized ty = pp_ty_normalized_impl [] ty
 
+(* Like pp_ty_normalized, but renders through pp_scheme_impl so the quantified
+   variables are renamed by LEFT-TO-RIGHT FIRST OCCURRENCE rather than by their
+   internal generalization index. This makes the string alpha-canonical: two
+   alpha-equivalent types print identically regardless of the order the two
+   compilers happened to allocate tvar ids during inference. Used by the IR
+   serializer (roadmap #13) where cross-compiler equality must not depend on
+   tvar-id allocation order. *)
+let pp_ty_canonical_with synonyms ty = pp_scheme_impl synonyms (generalize (-1) ty)
+let pp_ty_canonical ty = pp_ty_canonical_with [] ty
+
 (* Instantiate and return TGen index -> fresh tvar mapping *)
 let instantiate_with_mapping level (s : scheme) =
   if s.quant = 0 && s.equant = 0 && s.pvquant = 0 && s.rquant = 0 then

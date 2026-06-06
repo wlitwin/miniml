@@ -34,9 +34,11 @@ module Ir_serialize =
     Buffer.add_byte b #22;
     Buffer.contents b
 
-  pub let ty_atom ty = q (Types.pp_ty_normalized ty)
+  pub let ty_atom ty = q (Types.pp_ty_canonical ty)
 
   pub let scheme_atom (s : Types.scheme) = q (Types.pp_scheme s)
+
+  pub let float_atom f = q ($"{f:g}")
 
   pub let binop_name (op : Ast.binop) =
     match op with
@@ -74,7 +76,7 @@ module Ir_serialize =
     | Match_tree_types.MKInt i -> $"(MKInt {i})"
     | Match_tree_types.MKString s -> $"(MKString {q s})"
     | Match_tree_types.MKBool b -> $"(MKBool {b})"
-    | Match_tree_types.MKFloat f -> $"(MKFloat {q (string_of_float f)})"
+    | Match_tree_types.MKFloat f -> $"(MKFloat {float_atom f})"
     | Match_tree_types.MKPin s -> $"(MKPin {q s})"
 
 
@@ -97,7 +99,7 @@ module Ir_serialize =
     | Match_tree_types.TPolyVariant ((n, h)) -> $"(TPolyVariant {q n} {h})"
     | Match_tree_types.TBoolLit b -> $"(TBoolLit {b})"
     | Match_tree_types.TIntLit i -> $"(TIntLit {i})"
-    | Match_tree_types.TFloatLit f -> $"(TFloatLit {q (string_of_float f)})"
+    | Match_tree_types.TFloatLit f -> $"(TFloatLit {float_atom f})"
     | Match_tree_types.TStringLit s -> $"(TStringLit {q s})"
     | Match_tree_types.TUnit -> "TUnit"
     | Match_tree_types.TNil -> "TNil"
@@ -115,7 +117,7 @@ module Ir_serialize =
     let k = "(:T " ^ ((ty_atom te.ty) ^ ")") in
     match te.expr with
     | TEInt i -> line e ($"(TEInt {i} {k})")
-    | TEFloat f -> line e ($"(TEFloat {q (string_of_float f)} {k})")
+    | TEFloat f -> line e ($"(TEFloat {float_atom f} {k})")
     | TEBool b -> line e ($"(TEBool {b} {k})")
     | TEString s -> line e ($"(TEString {q s} {k})")
     | TEByte i -> line e ($"(TEByte {i} {k})")
@@ -239,9 +241,50 @@ module Ir_serialize =
     | TDModule ((n, decls, _schemes)) -> block e ($"TDModule {q n}") (fn () -> List.iter (emit_decl e) decls)
 
 
+  pub let canonicalize_gensyms (s : string) : string =
+    let n = String.length s in
+    let buf = Buffer.create n in
+    let map = Ref.create [] in
+    let counter = Ref.create 0 in
+    let is_ident_char c = ((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || (((c >= #30) && (c <= #39)) || (c = #5f))) in
+    let starts_at i prefix =
+      let pl = String.length prefix in
+      ((i + pl) <= n) && ((String.sub s i pl) = prefix) in
+    let rec assoc k =
+      fn
+        | [] -> None
+        | (a, b) :: _ when a = k -> Some b
+        | _ :: rest -> assoc k rest
+     in
+    let i = Ref.create 0 in
+    for (Ref.get i) < n do
+      if (starts_at (Ref.get i) "__dict_") || (starts_at (Ref.get i) "__ev_") do
+        let j = Ref.create (Ref.get i) in
+        for ((Ref.get j) < n) && (is_ident_char (String.get s (Ref.get j))) do
+          Ref.set j (Ref.get j + 1)
+        end;
+        let tok = String.sub s (Ref.get i) ((Ref.get j) - (Ref.get i)) in
+        let canon =
+          match assoc tok (Ref.get map) with
+          | Some c -> c
+          | None -> 
+            let c = $"__dict${Ref.get counter}" in
+            Ref.set counter (Ref.get counter + 1);
+            Ref.set map ((tok, c) :: Ref.get map);
+            c
+         in
+        Buffer.add_string buf canon;
+        Ref.set i (Ref.get j)
+      else do
+        Buffer.add_byte buf (String.get s (Ref.get i));
+        Ref.set i (Ref.get i + 1)
+      end
+    end;
+    Buffer.contents buf
+
   pub let serialize_program (program : tprogram) : string =
     let e = make () in
     List.iter (emit_decl e) program;
-    Buffer.contents e.buf
+    canonicalize_gensyms (Buffer.contents e.buf)
 
 end

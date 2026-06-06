@@ -1160,6 +1160,10 @@ module Types =
 
   pub let pp_ty_normalized ty = pp_ty_normalized_impl [] ty
 
+  pub let pp_ty_canonical_with synonyms ty = pp_scheme_impl synonyms (generalize (-1) ty)
+
+  pub let pp_ty_canonical ty = pp_ty_canonical_with [] ty
+
   pub let instantiate_with_mapping level (s : scheme) =
     if (s.quant = 0) && ((s.equant = 0) && ((s.pvquant = 0) && (s.rquant = 0))) do
       (s.body, [])

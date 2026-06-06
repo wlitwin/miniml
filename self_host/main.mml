@@ -519,6 +519,48 @@ module Main =
     | unify_error msg _k -> failwith msg
     | codegen_error msg _k -> failwith ("IR serialize error: " ^ msg)
 
+  -- ---- Batch emit-IR (one invocation, IR per file, for the IR-parity gate) ----
+
+  let run_batch_emit_ir manifest_file =
+    handle
+      -- Capture mode so the stdlib setups become stdlib_programs (matching the
+      -- OCaml ref's regime), populated once during setup.
+      js_capture_mode := true;
+      captured_typed_setups := [];
+      let (ctx, global_names, mutable_globals) = setup_builtins () in
+      let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+      let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+      let stdlib_programs = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
+
+      let manifest = IO.read_file manifest_file in
+      let files = List.filter (fn s -> s <> "") (String.split "\n" manifest) in
+      list_iter (fn filename ->
+        handle
+          let source = IO.read_file filename in
+          let tokens = Lexer.tokenize source in
+          let program = Parser.parse_program tokens in
+          let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+          let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let typed_program2 = Pipeline.lower true stdlib_programs ctx2.type_env typed_program2 in
+          print (Ir_serialize.serialize_program typed_program2);
+          print "===BATCH-SEP==="
+        with
+        | return x -> x
+        | lex_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | parse_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | type_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | compile_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | unify_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+      ) files
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("IR serialize error: " ^ msg)
+
   -- ---- Main entry point ----
 
   let () =
@@ -527,11 +569,18 @@ module Main =
       | _ :: "--batch" :: f :: _ -> Some f
       | _ -> None
     in
+    let batch_ir_file = match args with
+      | _ :: "--batch-emit-ir" :: f :: _ -> Some f
+      | _ -> None
+    in
     let emit_js = List.exists (fn a -> a = "--emit-js") args in
     let emit_ir = List.exists (fn a -> a = "--emit-ir") args in
     let no_optimize = List.exists (fn a -> a = "--no-optimize") args in
     if no_optimize do Ref.set Compiler.optimize_enabled false end;
     let args = List.filter (fn a -> a <> "--no-optimize" && a <> "--emit-js" && a <> "--emit-ir") args in
+    match batch_ir_file with
+    | Some f -> run_batch_emit_ir f
+    | None ->
     match batch_file with
     | Some f -> run_batch f
     | None ->

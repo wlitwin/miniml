@@ -11,7 +11,7 @@
         translate translate-all translate-diff \
         self-host-compile \
         playground playground-serve \
-        mmlc emit-ir emit-ir-typed ir-parity test-native native-compile native-run
+        mmlc emit-ir emit-ir-typed ir-parity ir-parity-full test-native native-compile native-run
 
 # ── Build ──────────────────────────────────────────────────
 
@@ -342,8 +342,11 @@ emit-ir-typed: build  ## Dump the lowered typed IR (S-expr) for a MiniML file: m
 	@test -n "$(FILE)" || (echo "Usage: make emit-ir-typed FILE=<file.mml>"; exit 1)
 	dune exec bin/main.exe -- --emit-ir $(FILE)
 
-ir-parity: self-host-compile-js  ## Cross-compiler IR parity: both compilers must lower a corpus to identical IR (roadmap #13)
+ir-parity: self-host-compile-js  ## Cross-compiler IR parity: both compilers must lower a curated corpus to identical IR (roadmap #13)
 	bash compiler_test/ir_parity.sh
+
+ir-parity-full: self-host-compile-js  ## Diagnostic: cross-compiler IR parity over the FULL cross_test corpus (not yet gate-clean — see roadmap #13)
+	dune exec compiler_test/ir_parity_runner.exe -- cross_test/tests/*.tests
 
 test-native: build  ## Run native compiler tests: make test-native [FILTER="name"]
 	dune exec native_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
