@@ -11,7 +11,7 @@
         translate translate-all translate-diff \
         self-host-compile \
         playground playground-serve \
-        mmlc emit-ir test-native native-compile native-run
+        mmlc emit-ir emit-ir-typed ir-parity test-native native-compile native-run
 
 # ── Build ──────────────────────────────────────────────────
 
@@ -227,7 +227,7 @@ test-file: build  ## Run a specific .tests file on the OCaml VM and emit-js: mak
 
 # ── Translation (OCaml → MiniML) ──────────────────────────
 
-TRANSLATE_FILES = ast token bytecode types match_tree_types match_tree lexer typechecker ir_analysis texpr_opt pipeline optimize compiler parser serialize js_codegen
+TRANSLATE_FILES = ast token bytecode types match_tree_types match_tree lexer typechecker ir_analysis texpr_opt pipeline ir_serialize optimize compiler parser serialize js_codegen
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
@@ -275,7 +275,7 @@ SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
                   self_host/lexer.mml self_host/parser.mml \
                   self_host/typechecker.mml self_host/ir_analysis.mml \
                   self_host/match_tree.mml \
-                  self_host/texpr_opt.mml self_host/pipeline.mml \
+                  self_host/texpr_opt.mml self_host/pipeline.mml self_host/ir_serialize.mml \
                   self_host/optimize.mml self_host/compiler.mml \
                   self_host/serialize.mml self_host/js_codegen.mml self_host/main.mml
 
@@ -337,6 +337,13 @@ native-run: build  ## Compile and run a MiniML file natively: make native-run FI
 emit-ir: build  ## Emit LLVM IR for a MiniML file: make emit-ir FILE=program.mml
 	@test -n "$(FILE)" || (echo "Usage: make emit-ir FILE=<file.mml>"; exit 1)
 	dune exec bin_native/main.exe -- --emit-ir $(FILE)
+
+emit-ir-typed: build  ## Dump the lowered typed IR (S-expr) for a MiniML file: make emit-ir-typed FILE=program.mml
+	@test -n "$(FILE)" || (echo "Usage: make emit-ir-typed FILE=<file.mml>"; exit 1)
+	dune exec bin/main.exe -- --emit-ir $(FILE)
+
+ir-parity: self-host-compile-js  ## Cross-compiler IR parity: both compilers must lower a corpus to identical IR (roadmap #13)
+	bash compiler_test/ir_parity.sh
 
 test-native: build  ## Run native compiler tests: make test-native [FILTER="name"]
 	dune exec native_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")

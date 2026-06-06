@@ -1232,6 +1232,27 @@ let emit_js state ?source () =
       Js_codegen.compile_program_with_stdlib ctx'.Typechecker.type_env
         state.setup_typed typed_program
 
+(* Serialize the LOWERED IR (post Pipeline.lower) — the structural dump used for
+   cross-compiler IR parity / golden tests (roadmap #13). Same front-end as
+   emit_js so the IR matches what the backends actually consume. *)
+let emit_ir state ?source () =
+  match source with
+  | None -> ""
+  | Some src ->
+      let tokens = Lexer.tokenize src in
+      let program = Parser.parse_program tokens in
+      let ctx', typed_program =
+        Typechecker.check_program_in_ctx state.ctx program
+      in
+      let typed_program =
+        Typechecker.transform_constraints ctx' typed_program
+      in
+      let stdlib_programs = List.map snd state.setup_typed in
+      let typed_program =
+        Pipeline.lower ~stdlib_programs ctx'.Typechecker.type_env typed_program
+      in
+      Ir_serialize.serialize_program typed_program
+
 let typecheck_source state source =
   let tokens = Lexer.tokenize source in
   let program = Parser.parse_program tokens in

@@ -1,0 +1,6 @@
+type tree = Leaf | Node of tree * int * tree;;
+let rec sum t = match t with
+  | Leaf -> 0
+  | Node (l, v, r) -> (sum l) + v + (sum r)
+;;
+print (sum (Node (Node (Leaf, 1, Leaf), 2, Node (Leaf, 3, Leaf))))

@@ -1,0 +1,3 @@
+let safe_div a b = if b = 0 do None else Some (a / b);;
+let r = match safe_div 10 2 with Some v -> v | None -> -1;;
+print r
