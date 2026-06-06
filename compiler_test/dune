@@ -1,4 +1,4 @@
-(executable
- (name parity_runner)
+(executables
+ (names parity_runner ir_parity_runner)
  (libraries interpreter test_format unix)
- (modules parity_runner))
+ (modules parity_runner ir_parity_runner))

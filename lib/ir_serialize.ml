@@ -48,8 +48,16 @@ let q s =
   Buffer.add_char b '"';
   Buffer.contents b
 
-let ty_atom ty = q (Types.pp_ty_normalized ty)
+let ty_atom ty = q (Types.pp_ty_canonical ty)
 let scheme_atom (s : Types.scheme) = q (Types.pp_scheme s)
+
+(* Render a float with the codebase's canonical BARE %g format (what pp_value /
+   show / string interpolation use), NOT OCaml's stdlib string_of_float — the
+   latter appends a trailing "." for integer-valued floats ("3.") while the
+   self-host VM's string_of_float does not ("3"), which would break IR parity.
+   ocaml_to_mml lowers Printf.sprintf "%g" to the self-host's bare interpolation,
+   so both compilers render this identically. *)
+let float_atom f = q (Printf.sprintf "%g" f)
 
 (* ---- binop / unop names (stable spellings, no dependence on pp) ---- *)
 
@@ -89,7 +97,7 @@ let map_key_atom (k : Match_tree_types.map_key) =
   | Match_tree_types.MKInt i -> Printf.sprintf "(MKInt %d)" i
   | Match_tree_types.MKString s -> Printf.sprintf "(MKString %s)" (q s)
   | Match_tree_types.MKBool b -> Printf.sprintf "(MKBool %b)" b
-  | Match_tree_types.MKFloat f -> Printf.sprintf "(MKFloat %s)" (q (string_of_float f))
+  | Match_tree_types.MKFloat f -> Printf.sprintf "(MKFloat %s)" (float_atom f)
   | Match_tree_types.MKPin s -> Printf.sprintf "(MKPin %s)" (q s)
 
 let access_atom (a : Match_tree_types.access) =
@@ -111,7 +119,7 @@ let test_atom (t : Match_tree_types.test) =
   | Match_tree_types.TPolyVariant (n, h) -> Printf.sprintf "(TPolyVariant %s %d)" (q n) h
   | Match_tree_types.TBoolLit b -> Printf.sprintf "(TBoolLit %b)" b
   | Match_tree_types.TIntLit i -> Printf.sprintf "(TIntLit %d)" i
-  | Match_tree_types.TFloatLit f -> Printf.sprintf "(TFloatLit %s)" (q (string_of_float f))
+  | Match_tree_types.TFloatLit f -> Printf.sprintf "(TFloatLit %s)" (float_atom f)
   | Match_tree_types.TStringLit s -> Printf.sprintf "(TStringLit %s)" (q s)
   | Match_tree_types.TUnit -> "TUnit"
   | Match_tree_types.TNil -> "TNil"
@@ -132,7 +140,7 @@ let rec emit_expr e (te : texpr) =
   let k = "(:T " ^ ty_atom te.ty ^ ")" in
   match te.expr with
   | TEInt i -> line e (Printf.sprintf "(TEInt %d %s)" i k)
-  | TEFloat f -> line e (Printf.sprintf "(TEFloat %s %s)" (q (string_of_float f)) k)
+  | TEFloat f -> line e (Printf.sprintf "(TEFloat %s %s)" (float_atom f) k)
   | TEBool b -> line e (Printf.sprintf "(TEBool %b %s)" b k)
   | TEString s -> line e (Printf.sprintf "(TEString %s %s)" (q s) k)
   | TEByte i -> line e (Printf.sprintf "(TEByte %d %s)" i k)
@@ -348,8 +356,61 @@ let rec emit_decl e (d : tdecl) =
   | TDModule (n, decls, _schemes) ->
       block e (Printf.sprintf "TDModule %s" (q n)) (fun () -> List.iter (emit_decl e) decls)
 
+(* Constraint elaboration generates dictionary/evidence parameters named
+   `__dict_<Class>_<id>` and `__ev_<id>`, where <id> derives from the constrained
+   type variable's internal id. The two compilers allocate those ids in different
+   orders, so the SAME elaborated program gets alpha-equivalent-but-differently-
+   numbered dict params (e.g. `__dict_Show_0`/`_1` swapped). That is a naming
+   difference, not a structural one. Canonicalize it: rewrite every `__dict_…` /
+   `__ev_…` token to a fresh `__dict$0`, `__dict$1`, … in first-appearance order
+   over the whole dump. Both compilers apply the same rewrite to alpha-equivalent
+   dumps, so the canonical forms match; a genuine structural divergence still
+   shows because the rewrite is order-preserving, not structure-erasing. *)
+let canonicalize_gensyms (s : string) : string =
+  let n = String.length s in
+  let buf = Buffer.create n in
+  let map = ref [] (* (original_token, canonical) *) in
+  let counter = ref 0 in
+  let is_ident_char c =
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    || (c >= '0' && c <= '9') || c = '_'
+  in
+  let starts_at i prefix =
+    let pl = String.length prefix in
+    i + pl <= n && String.sub s i pl = prefix
+  in
+  let rec assoc k = function
+    | [] -> None
+    | (a, b) :: _ when a = k -> Some b
+    | _ :: rest -> assoc k rest
+  in
+  let i = ref 0 in
+  while !i < n do
+    if starts_at !i "__dict_" || starts_at !i "__ev_" then begin
+      let j = ref !i in
+      while !j < n && is_ident_char s.[!j] do incr j done;
+      let tok = String.sub s !i (!j - !i) in
+      let canon =
+        match assoc tok !map with
+        | Some c -> c
+        | None ->
+            let c = Printf.sprintf "__dict$%d" !counter in
+            incr counter;
+            map := (tok, c) :: !map;
+            c
+      in
+      Buffer.add_string buf canon;
+      i := !j
+    end
+    else begin
+      Buffer.add_char buf s.[!i];
+      incr i
+    end
+  done;
+  Buffer.contents buf
+
 (* Serialize a lowered program to a deterministic S-expression string. *)
 let serialize_program (program : tprogram) : string =
   let e = make () in
   List.iter (emit_decl e) program;
-  Buffer.contents e.buf
+  canonicalize_gensyms (Buffer.contents e.buf)
