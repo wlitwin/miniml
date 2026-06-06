@@ -53,8 +53,7 @@ let snippet s off =
 
 let () =
   let passed = ref 0 and failed = ref 0 in
-  let report label source =
-    let rebuilt = Interpreter.Cst.roundtrip source in
+  let check label source rebuilt =
     if rebuilt = source then incr passed
     else begin
       incr failed;
@@ -65,6 +64,14 @@ let () =
       Printf.printf "        src     : ...%s...\n" (snippet source off);
       Printf.printf "        rebuilt : ...%s...\n" (snippet rebuilt off)
     end
+  in
+  (* Two lossless paths must each reproduce the source byte-for-byte: the raw
+     piece-stream reconstruction (increment 1) and the flat green tree's
+     to_source (increment 2). *)
+  let report label source =
+    check (label ^ " [pieces]") source (Interpreter.Cst.roundtrip source);
+    check (label ^ " [green]") source
+      (Interpreter.Cst.to_source (Interpreter.Cst.flat_of_source source))
   in
   (* Real source files. *)
   let file_corpus =
