@@ -4,13 +4,34 @@ module Parser =
     parse_error : string * Token.loc -> 'a
   end
 
+  pub type cst_node_kind =
+    | CstSourceFile
+    | CstDecl
+    | CstExpr
+    | CstPattern
+    | CstTypeExpr
+    | CstMatchArm
+    | CstHandlerArm
+    | CstRecordField
+    | CstParam
+    | CstError
+
+
+  pub type cst_event =
+    | CstStart of cst_node_kind
+    | CstFinish
+    | CstToken
+
+
   pub type t = {
     tokens: Token.token array;
     mut pos: int;
-    mut suppress_do: bool
+    mut suppress_do: bool;
+    mut record_cst: bool;
+    mut cst_events: cst_event list
   }
 
-  pub let create tokens = {tokens = Array.of_list tokens; pos = 0; suppress_do = false}
+  pub let create tokens = {tokens = Array.of_list tokens; pos = 0; suppress_do = false; record_cst = false; cst_events = []}
 
   pub let peek p = Array.get p.tokens p.pos
 
@@ -26,9 +47,32 @@ module Parser =
   pub let advance p =
     let tok = Array.get p.tokens p.pos in
     if tok.kind <> Token.EOF do
+      if p.record_cst do
+        p.cst_events := CstToken :: p.cst_events
+      end;
       p.pos := p.pos + 1
     end;
     tok
+
+  pub let start_node p kind =
+    if p.record_cst do
+      p.cst_events := CstStart kind :: p.cst_events
+    end
+
+  pub let finish_node p =
+    if p.record_cst do
+      p.cst_events := CstFinish :: p.cst_events
+    end
+
+  pub let with_node p kind f =
+    start_node p kind;
+    let r = f () in
+    finish_node p;
+    r
+
+  pub let cst_checkpoint p = p.cst_events
+
+  pub let cst_rewind p saved = p.cst_events := saved
 
   pub let error p msg =
     let tok = peek p in
@@ -174,7 +218,8 @@ module Parser =
     | _ -> false
 
 
-  pub let rec parse_ty_atom p =
+  pub let rec parse_ty_atom p = with_node p CstTypeExpr (fn () -> parse_ty_atom_inner p)
+  and parse_ty_atom_inner p =
     match peek_kind p with
     | Token.IDENT "int" -> 
       (advance p; ());
@@ -438,7 +483,8 @@ module Parser =
     end;
     (List.rev (Ref.get fields), Ref.get is_open)
 
-  pub let rec parse_pattern_atom p =
+  pub let rec parse_pattern_atom p = with_node p CstPattern (fn () -> parse_pattern_atom_inner p)
+  and parse_pattern_atom_inner p =
     match peek_kind p with
     | Token.UNDERSCORE -> 
       (advance p; ());
@@ -888,6 +934,7 @@ module Parser =
     r
 
   pub let rec parse_atom p =
+    start_node p CstExpr;
     let loc = (peek p).loc in
     let saved = p.suppress_do in
     do
@@ -898,6 +945,7 @@ module Parser =
     end;
     let expr = parse_atom_inner p in
     p.suppress_do := saved;
+    finish_node p;
     Ast.ELoc (loc, expr)
   and parse_atom_inner p =
     match peek_kind p with
@@ -1810,6 +1858,7 @@ module Parser =
       parse_for_in_rest p elem_name elem_wrap coll
     | (Token.IDENT _ | Token.UNDERSCORE) when (peek_kind_at p 1) = Token.EQ -> 
       let saved_pos = p.pos in
+      let saved_events = cst_checkpoint p in
       let var_name =
         if (peek_kind p) = Token.UNDERSCORE do
           (advance p; ());
@@ -1829,6 +1878,7 @@ module Parser =
         Ast.EForNumeric {fn_var = var_name; fn_init = init; fn_cond = cond; fn_step = step; fn_body = body}
       else do
         p.pos := saved_pos;
+        cst_rewind p saved_events;
         let cond = with_suppress_do p (fn () -> parse_expr_bp p 0) in
         expect p Token.DO;
         let body = parse_expr p in
@@ -2553,18 +2603,27 @@ module Parser =
       Ast.DExpr expr :: []
 
 
-  pub let parse_program tokens =
+  pub let parse_program_in p =
     Ref.set fresh_param_counter 0;
-    let p = create tokens in
     let decls = Ref.create [] in
+    start_node p CstSourceFile;
     for (peek_kind p) <> Token.EOF do
-      let ds = parse_decl p in
+      let ds = with_node p CstDecl (fn () -> parse_decl p) in
       Ref.set decls (List.rev_append ds (Ref.get decls));
       if (peek_kind p) = Token.DOUBLE_SEMICOLON do
         (advance p; ())
       end
     end;
+    finish_node p;
     List.rev (Ref.get decls)
+
+  pub let parse_program tokens = parse_program_in (create tokens)
+
+  pub let parse_program_with_events tokens =
+    let p = create tokens in
+    p.record_cst := true;
+    let prog = parse_program_in p in
+    (prog, List.rev p.cst_events)
 
   pub let parse_expr_string tokens =
     Ref.set fresh_param_counter 0;

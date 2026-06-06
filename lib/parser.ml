@@ -1,5 +1,29 @@
 exception Parse_error of string * Token.loc
 
+(* Lossless-CST event recording (roadmap #17, increment 3). The parser emits a
+   flat stream of structural events alongside building the AST: [CstStart k] /
+   [CstFinish] bracket the token span of a syntactic construct, and [CstToken]
+   marks one consumed token (recorded in [advance], the sole consumption point).
+   The AST it returns is UNCHANGED — events are a pure side channel — so value
+   parity and IR parity hold by construction. A separate OCaml-only builder
+   (cst_build.ml) folds the events plus the lossless token pieces into a
+   Cst.tree; the self-hosted compiler never enables recording, so the stream is
+   inert there. The node-kind enum lives here (not in the untranslated Cst
+   module) to keep parser.ml self-contained and mechanically translatable. *)
+type cst_node_kind =
+  | CstSourceFile
+  | CstDecl
+  | CstExpr
+  | CstPattern
+  | CstTypeExpr
+  | CstMatchArm
+  | CstHandlerArm
+  | CstRecordField
+  | CstParam
+  | CstError
+
+type cst_event = CstStart of cst_node_kind | CstFinish | CstToken
+
 type t = {
   tokens : Token.token array;
   mutable pos : int;
@@ -9,10 +33,22 @@ type t = {
      stops the condition at `do`. Cleared inside delimited sub-expressions
      (parens/brackets/blocks) where a `do` is unambiguous. *)
   mutable suppress_do : bool;
+  (* When true, record CST events into [cst_events] (prepended, so the list is
+     in reverse order until finalized). Off by default: normal compilation and
+     the self-hosted compiler pay only a per-advance boolean test. *)
+  mutable record_cst : bool;
+  mutable cst_events : cst_event list;
 }
 
 let create tokens =
-  { tokens = Array.of_list tokens; pos = 0; suppress_do = false }
+  {
+    tokens = Array.of_list tokens;
+    pos = 0;
+    suppress_do = false;
+    record_cst = false;
+    cst_events = [];
+  }
+
 let peek p = p.tokens.(p.pos)
 let peek_kind p = (peek p).kind
 
@@ -22,8 +58,34 @@ let peek_kind_at p offset =
 
 let advance p =
   let tok = p.tokens.(p.pos) in
-  if tok.kind <> Token.EOF then p.pos <- p.pos + 1;
+  if tok.kind <> Token.EOF then begin
+    if p.record_cst then p.cst_events <- CstToken :: p.cst_events;
+    p.pos <- p.pos + 1
+  end;
   tok
+
+(* --- CST event helpers (no-ops unless [record_cst]) --------------------- *)
+
+let start_node p kind =
+  if p.record_cst then p.cst_events <- CstStart kind :: p.cst_events
+
+let finish_node p =
+  if p.record_cst then p.cst_events <- CstFinish :: p.cst_events
+
+(* Bracket [f]'s token span in a [kind] node. Balanced on the success path
+   (the only path on which a CST is built — a parse error abandons the tree). *)
+let with_node p kind f =
+  start_node p kind;
+  let r = f () in
+  finish_node p;
+  r
+
+(* Snapshot / restore for the parser's one speculative-parse site. Because
+   events are only ever prepended, the saved list is a suffix of the current
+   one, so restoring it truncates exactly the events added since the snapshot —
+   regardless of their kind. *)
+let cst_checkpoint p = p.cst_events
+let cst_rewind p saved = p.cst_events <- saved
 
 let error p msg =
   let tok = peek p in
@@ -178,7 +240,9 @@ let at_expr_start p =
 
 (* ---- Type annotation parsing ---- *)
 
-let rec parse_ty_atom p =
+let rec parse_ty_atom p = with_node p CstTypeExpr (fun () -> parse_ty_atom_inner p)
+
+and parse_ty_atom_inner p =
   match peek_kind p with
   | Token.IDENT "int" ->
       ignore (advance p);
@@ -427,6 +491,9 @@ and parse_ty_record_fields p =
 (* ---- Pattern parsing ---- *)
 
 let rec parse_pattern_atom p =
+  with_node p CstPattern (fun () -> parse_pattern_atom_inner p)
+
+and parse_pattern_atom_inner p =
   match peek_kind p with
   | Token.UNDERSCORE ->
       ignore (advance p);
@@ -895,6 +962,7 @@ let with_suppress_do p f =
   r
 
 let rec parse_atom p =
+  start_node p CstExpr;
   let loc = (peek p).loc in
   (* Inside a delimited atom (parens, list/record/map/set brackets, a `do`
      block, or an interpolated string) a `do` is unambiguous, so clear the
@@ -912,6 +980,7 @@ let rec parse_atom p =
   | _ -> ());
   let expr = parse_atom_inner p in
   p.suppress_do <- saved;
+  finish_node p;
   Ast.ELoc (loc, expr)
 
 and parse_atom_inner p =
@@ -1861,6 +1930,7 @@ and parse_for_expr p =
   | (Token.IDENT _ | Token.UNDERSCORE) when peek_kind_at p 1 = Token.EQ ->
       (* Try: for i = init; cond; step do body end — numeric for loop *)
       let saved_pos = p.pos in
+      let saved_events = cst_checkpoint p in
       let var_name =
         if peek_kind p = Token.UNDERSCORE then (
           ignore (advance p);
@@ -1889,6 +1959,7 @@ and parse_for_expr p =
       else begin
         (* Not a numeric for — restore and fall through to while *)
         p.pos <- saved_pos;
+        cst_rewind p saved_events;
         let cond = with_suppress_do p (fun () -> parse_expr_bp p 0) in
         expect p Token.DO;
         let body = parse_expr p in
@@ -2694,17 +2765,30 @@ and parse_decl p =
       let expr = parse_expr p in
       [ Ast.DExpr expr ]
 
-let parse_program tokens =
+let parse_program_in p =
   fresh_param_counter := 0;
-  let p = create tokens in
   let decls = ref [] in
+  start_node p CstSourceFile;
   while peek_kind p <> Token.EOF do
-    let ds = parse_decl p in
+    let ds = with_node p CstDecl (fun () -> parse_decl p) in
     decls := List.rev_append ds !decls;
     (* Optional ;; separator *)
     if peek_kind p = Token.DOUBLE_SEMICOLON then ignore (advance p)
   done;
+  finish_node p;
   List.rev !decls
+
+let parse_program tokens = parse_program_in (create tokens)
+
+(* Parse, recording the lossless-CST event stream (roadmap #17). Returns the
+   AST (identical to [parse_program]'s) and the events in forward order. Used
+   only by the OCaml-side CST builder (cst_build.ml); the self-hosted compiler
+   never calls it, so its recording stays inert there. *)
+let parse_program_with_events tokens =
+  let p = create tokens in
+  p.record_cst <- true;
+  let prog = parse_program_in p in
+  (prog, List.rev p.cst_events)
 
 let parse_expr_string tokens =
   fresh_param_counter := 0;

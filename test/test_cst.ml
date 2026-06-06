@@ -1,5 +1,6 @@
 open Test_helpers
 module Cst = Interpreter.Cst
+module Cst_build = Interpreter.Cst_build
 module Token = Interpreter.Token
 
 (* Round-trip invariant: lexing then reassembling must reproduce the source
@@ -109,5 +110,47 @@ let () =
       match kinds with
       | [ Token.LET; Token.IDENT "x"; Token.EQ; Token.INT 1; Token.EOF ] -> ()
       | _ -> failwith "unexpected token kinds from tree");
+
+  Printf.printf "--- parser-produced CST (increment 3) ---\n";
+
+  let rec count_nodes kind = function
+    | Cst.Leaf _ -> 0
+    | Cst.Node (k, cs) ->
+        (if k = kind then 1 else 0)
+        + List.fold_left (fun acc c -> acc + count_nodes kind c) 0 cs
+  in
+  let parsed_roundtrips src () =
+    let t = Cst_build.cst_of_source src in
+    if Cst.to_source t <> src then
+      failwith (Printf.sprintf "parsed to_source mismatch: %S" (Cst.to_source t))
+  in
+
+  test "parsed: round-trips simple decl" (parsed_roundtrips "let x = 1 + 2");
+  test "parsed: round-trips comment-rich program"
+    (parsed_roundtrips "(* h *)\nlet rec f n = if n < 2 do n else f (n - 1)\n");
+  (* the one backtracking site: numeric-for and the for/while fallback *)
+  test "parsed: numeric for round-trips"
+    (parsed_roundtrips "let _ = for i = 0; i < 10; i + 1 do print i end");
+  test "parsed: for-while fallback round-trips"
+    (parsed_roundtrips "let _ = for x < 10 do set x = x + 1 end");
+
+  (* The tree is genuinely structured: SourceFile root over Decl over Expr,
+     not a degenerate flat list. *)
+  test "parsed: tree is structured" (fun () ->
+      let t = Cst_build.cst_of_source "let x = f 1 + 2" in
+      (match t with
+      | Cst.Node (Cst.SourceFile, _) -> ()
+      | _ -> failwith "root should be SourceFile");
+      if count_nodes Cst.Decl t < 1 then failwith "expected a Decl node";
+      if count_nodes Cst.Expr t < 2 then failwith "expected nested Expr nodes");
+
+  (* Type and pattern atoms get their own nodes. *)
+  test "parsed: type and pattern nodes present" (fun () ->
+      let t =
+        Cst_build.cst_of_source
+          "let f (x : int) = match x with | 0 -> 0 | _ -> 1"
+      in
+      if count_nodes Cst.TypeExpr t < 1 then failwith "expected a TypeExpr node";
+      if count_nodes Cst.Pattern t < 1 then failwith "expected a Pattern node");
 
   print_summary ()

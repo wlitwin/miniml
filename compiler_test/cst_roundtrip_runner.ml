@@ -52,7 +52,7 @@ let snippet s off =
   String.escaped (String.sub s lo (hi - lo))
 
 let () =
-  let passed = ref 0 and failed = ref 0 in
+  let passed = ref 0 and failed = ref 0 and parse_skipped = ref 0 in
   let check label source rebuilt =
     if rebuilt = source then incr passed
     else begin
@@ -71,7 +71,13 @@ let () =
   let report label source =
     check (label ^ " [pieces]") source (Interpreter.Cst.roundtrip source);
     check (label ^ " [green]") source
-      (Interpreter.Cst.to_source (Interpreter.Cst.flat_of_source source))
+      (Interpreter.Cst.to_source (Interpreter.Cst.flat_of_source source));
+    (* The parser-produced STRUCTURED tree must also round-trip. Sources that
+       don't parse on the OCaml reference are out of scope (skipped), exactly as
+       in the IR-parity runner. *)
+    match Interpreter.Cst_build.cst_of_source source with
+    | tree -> check (label ^ " [parsed]") source (Interpreter.Cst.to_source tree)
+    | exception _ -> incr parse_skipped
   in
   (* Real source files. *)
   let file_corpus =
@@ -102,5 +108,6 @@ let () =
         (find_test_files dir));
   Printf.printf "Round-tripped %d cross-test case sources.\n%!" !case_count;
   Printf.printf "\n==============================\n";
-  Printf.printf "CST round-trip: %d passed, %d failed\n" !passed !failed;
+  Printf.printf "CST round-trip: %d passed, %d failed (%d parsed-tree skipped: unparseable on ref)\n"
+    !passed !failed !parse_skipped;
   if !failed > 0 then exit 1
