@@ -1079,7 +1079,6 @@ handle
    List.fold (fn a x -> a + x) 0 xs)
 with
 | pick () k -> let k2 = copy_continuation k in (resume k true) + (resume k2 false)
---- skip-native: native multishot copy_continuation captured mid fold-loop diverges (tracked bugs list, 2026-06-04)
 --- expect: 606
 
 --- test: multishot through List.fold with effectful callback
@@ -1088,8 +1087,30 @@ handle
   (List.fold (fn a e -> a + (perform inc e)) 0 [1; 2])
 with
 | inc n k -> let k2 = copy_continuation k in (resume k n) + (resume k2 (n * 10))
---- skip-native: native multishot copy_continuation captured mid fold-loop diverges (tracked bugs list, 2026-06-04)
 --- expect: 66
+
+# A continuation captured MID a for-in fold loop (after >= 1 iteration), resumed
+# more than once (copy_continuation), must re-run the remaining iterations
+# independently per resumption — the loop's position + accumulator are part of
+# the captured state. On native the for-in fold runs in a C driver
+# (mml_list_fold_breakable) whose frame sits between the perform and the loop;
+# copy_continuation's stack copy must relocate ALL stack-internal pointers (not
+# just the frame-pointer chain) or the copy aliases the original's loop state and
+# skips its remaining iterations (item 20 — fixed by conservative relocation).
+
+--- test: multishot copy mid for-in fold (two iterations)
+effect E = op : int -> int end
+handle (for x in [1; 2] with acc = 0 do (acc + (perform op x)) end) with
+| return v -> v
+| op arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 0)
+--- expect: 6
+
+--- test: multishot copy mid for-in fold with conditional break
+effect E = op : int -> int end
+handle (for x in [1; 2; 3] with acc = 0 do (if (perform op x) > 1 do break 50 else (acc + x)) end) with
+| return x -> x
+| op arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 0)
+--- expect: 212
 
 --- test: multishot through a user-defined recursive HOF
 effect Choose = pick : int -> int end

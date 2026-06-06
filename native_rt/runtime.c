@@ -2777,26 +2777,40 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     uint64_t *sp_ptr = (uint64_t*)((char*)&new_fiber->ctx + MML_CTX_SP_OFFSET);
     *sp_ptr += stack_offset;
 
-    /* Relocate FP/BP and walk the frame pointer chain */
+    /* Relocate the saved frame pointer in the context. */
     uint64_t *bp_ptr = (uint64_t*)((char*)&new_fiber->ctx + MML_CTX_BP_OFFSET);
     uint64_t bp = *bp_ptr;
     if ((char*)(uintptr_t)bp >= old_lo && (char*)(uintptr_t)bp < old_hi) {
-        bp += stack_offset;
-        *bp_ptr = bp;
+        *bp_ptr = bp + stack_offset;
     }
-    /* Walk frame pointer chain in the copied stack */
+    /* Relocate stack-internal pointers in the LIVE region [sp, hi) by a
+     * CONSERVATIVE scan rather than walking only the frame-pointer chain. The
+     * chain walk relocated saved FPs link-by-link and stopped at the first link
+     * pointing outside the fiber stack — but the C runtime frames between a
+     * perform and its enclosing loop driver (mml_list_fold_breakable / mml_apply
+     * / mml_apply2) can break that chain (a frame without a chained FP slot), so
+     * frames above the break kept STALE pointers into the ORIGINAL stack and the
+     * copy aliased the original's loop state (a copy_continuation captured mid
+     * fold-loop resumed without re-running the loop — item 20).
+     *
+     * Every 8-byte-aligned slot in the copied live stack whose value lands in
+     * the old stack range is a stack-internal pointer (a saved FP, or a spilled
+     * pointer-to-local) and is relocated by stack_offset. This cannot misfire on
+     * a real datum: MiniML tagged ints are odd (low bit 1); heap pointers point
+     * into the GC heap; return addresses point into the code segment — none fall
+     * inside the fiber's mmap'd stack range. Scanning the live region only (at or
+     * above sp) avoids dead slots below sp. */
     {
-        uint64_t *fp = (uint64_t*)(uintptr_t)bp;
-        for (int depth = 0; depth < 1024 && fp; depth++) {
-            uint64_t saved_fp = fp[0];
-            if (saved_fp == 0) break;
-            if ((char*)(uintptr_t)saved_fp >= old_lo &&
-                (char*)(uintptr_t)saved_fp < old_hi) {
-                fp[0] = saved_fp + stack_offset;
-                fp = (uint64_t*)(uintptr_t)fp[0];
-            } else {
-                break;
-            }
+        uintptr_t new_sp = (uintptr_t)*sp_ptr;
+        char *new_lo = (char*)new_fiber->stack;
+        char *new_hi = new_lo + MML_FIBER_STACK_SIZE;
+        char *scan = (char*)new_sp;
+        if (scan < new_lo) scan = new_lo;     /* guard against a bogus sp */
+        for (; scan + sizeof(uint64_t) <= new_hi; scan += sizeof(uint64_t)) {
+            uint64_t *slot = (uint64_t*)scan;
+            uintptr_t v = (uintptr_t)*slot;
+            if ((char*)v >= old_lo && (char*)v < old_hi)
+                *slot = (uint64_t)(v + stack_offset);
         }
     }
 
