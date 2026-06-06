@@ -1799,6 +1799,19 @@ let infer_record_evidence vars te scheme =
           :: acc)
         found_evidences []
     in
+    (* Hashtbl.fold yields entries in an id/hash-dependent order that differs
+       between the reference and self-hosted compilers, so the record-update
+       evidence params would be emitted in a different (alpha-equivalent) order.
+       Sort canonically by the SORTED FIELD-NAME LIST (re_fields, stable across
+       compilers — field names are not tvar-id-derived), tie-breaking on re_rgen
+       (roadmap #13, the record-evidence analogue of the constraint-order fix). *)
+    let ev_list =
+      List.sort
+        (fun (a : Types.record_evidence) (b : Types.record_evidence) ->
+          let c = compare a.Types.re_fields b.Types.re_fields in
+          if c <> 0 then c else compare a.Types.re_rgen b.Types.re_rgen)
+        ev_list
+    in
     if ev_list = [] then scheme
     else { scheme with Types.record_evidences = ev_list }
   end

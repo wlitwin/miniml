@@ -1739,6 +1739,11 @@ module Typechecker =
         iter_texpr_children walk te in
       walk te;
       let ev_list = Hashtbl.fold (fn rgen_idx fields acc -> {re_fields = List.sort String.compare fields; re_rgen = rgen_idx} :: acc) found_evidences [] in
+      let ev_list = List.sort (fn (a : Types.record_evidence) (b : Types.record_evidence) -> let c = compare a.re_fields b.re_fields in
+      if c <> 0 do
+        c
+      else
+        compare a.re_rgen b.re_rgen) ev_list in
       if ev_list = [] do
         scheme
       else
