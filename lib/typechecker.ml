@@ -1520,22 +1520,63 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
                match ca with Types.CATGen _ -> true | _ -> false)
              args)
       in
-      (* A canonical tie-break key independent of tvar-id collection order: the
-         constraint's CATGen indices (which generalization assigns by
-         left-to-right body occurrence, identical across the two compilers) plus
-         the class name. Without it, equal-count_catgen constraints kept their
-         arrival order in [found_multi] — which follows tvar-id allocation order
-         and so DIFFERS between the reference and self-hosted compilers, emitting
-         dict params in a different order (alpha-equivalent but not byte-identical;
-         a cross-compiler IR divergence the ir-parity runner surfaced, roadmap
-         #13). NOTE: constraints whose args are all CATy/CAPhantom (fundep-
-         determined internal tvars, not present in the body) have no canonical
-         index and can still tie — those remain a known residual. *)
+      (* Sort key independent of tvar-id allocation order. The two compilers
+         allocate fresh tvars (hence the body's TGen indices) in a different
+         order during inference — an OCaml-vs-translated evaluation-order
+         difference — so the RAW CATGen indices are NOT canonical. But each TGen's
+         FIRST-OCCURRENCE POSITION in the body is purely structural and identical
+         across compilers, so we sort by that. (Without this, equal-count_catgen
+         constraints kept their found_multi arrival order, emitting dict params in
+         a different order: an alpha-equivalent cross-compiler IR divergence the
+         ir-parity runner surfaced, roadmap #13.) A TGen not present in the body —
+         a fundep-determined / phantom variable — has no body position; it falls
+         back to a high key + its raw index and so can still diverge (the known
+         residual). *)
+      let occ_pos =
+        let tbl = Hashtbl.create 8 in
+        let counter = ref 0 in
+        let see i =
+          if not (Hashtbl.mem tbl i) then begin
+            Hashtbl.replace tbl i !counter;
+            incr counter
+          end
+        in
+        let rec collect ty =
+          match Types.repr ty with
+          | Types.TGen i -> see i
+          | Types.TArrow (a, _, r) | Types.TCont (a, _, r) ->
+              collect a;
+              collect r
+          | Types.TTuple ts -> List.iter collect ts
+          | Types.TList t | Types.TArray t -> collect t
+          | Types.TVariant (_, ts) -> List.iter collect ts
+          | Types.TRecord row -> collect_rrow row
+          | Types.TPolyVariant row -> collect_pvrow row
+          | _ -> ()
+        and collect_rrow row =
+          match Types.rrow_repr row with
+          | Types.RRow (_, ty, tail) ->
+              collect ty;
+              collect_rrow tail
+          | _ -> ()
+        and collect_pvrow row =
+          match Types.pv_repr row with
+          | Types.PVRow (_, ty_opt, tail) ->
+              (match ty_opt with Some ty -> collect ty | None -> ());
+              collect_pvrow tail
+          | _ -> ()
+        in
+        collect scheme.Types.body;
+        tbl
+      in
+      let pos_of i =
+        match Hashtbl.find_opt occ_pos i with Some p -> p | None -> 1000000 + i
+      in
       let catgen_indices (cc : Types.class_constraint) =
         List.sort compare
           (List.filter_map
              (fun (ca : Types.class_arg) ->
-               match ca with Types.CATGen i -> Some i | _ -> None)
+               match ca with Types.CATGen i -> Some (pos_of i) | _ -> None)
              cc.cc_args)
       in
       let cc_list =

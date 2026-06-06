@@ -1399,10 +1399,57 @@ module Typechecker =
             | _ -> false
 
           end) args) in
+        let occ_pos =
+          let tbl = Hashtbl.create 8 in
+          let counter = Ref.create 0 in
+          let see i =
+            if not (Hashtbl.has tbl i) do
+              Hashtbl.set tbl i (Ref.get counter);
+              Ref.set counter (Ref.get counter + 1)
+            end in
+          let rec collect ty =
+            match Types.repr ty with
+            | Types.TGen i -> see i
+            | (Types.TArrow ((a, _, r)) | Types.TCont ((a, _, r))) -> 
+              collect a;
+              collect r
+            | Types.TTuple ts -> List.iter collect ts
+            | (Types.TList t | Types.TArray t) -> collect t
+            | Types.TVariant ((_, ts)) -> List.iter collect ts
+            | Types.TRecord row -> collect_rrow row
+            | Types.TPolyVariant row -> collect_pvrow row
+            | _ -> ()
+
+          and collect_rrow row =
+            match Types.rrow_repr row with
+            | Types.RRow ((_, ty, tail)) -> 
+              collect ty;
+              collect_rrow tail
+            | _ -> ()
+
+          and collect_pvrow row =
+            match Types.pv_repr row with
+            | Types.PVRow ((_, ty_opt, tail)) -> 
+              do
+                match ty_opt with
+                | Some ty -> collect ty
+                | None -> ()
+
+              end;
+              collect_pvrow tail
+            | _ -> ()
+           in
+          collect scheme.body;
+          tbl in
+        let pos_of i =
+          match Hashtbl.get occ_pos i with
+          | Some p -> p
+          | None -> 1000000 + i
+         in
         let catgen_indices (cc : Types.class_constraint) = List.sort compare (List.filter_map (fn (ca : Types.class_arg) ->
           do
             match ca with
-            | Types.CATGen i -> Some i
+            | Types.CATGen i -> Some (pos_of i)
             | _ -> None
 
           end) cc.cc_args) in
