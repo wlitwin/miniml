@@ -1112,6 +1112,59 @@ handle (for x in [1; 2; 3] with acc = 0 do (if (perform op x) > 1 do break 50 el
 | op arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 0)
 --- expect: 212
 
+=== User-Defined Iter Instance (BUG-11 for-in slice, dict-method $cps twins) ===
+
+--- test: multishot copy mid for-in over a user Iter instance
+type box = Box of int list
+instance Iter box int =
+  let fold f init (Box xs) = List.fold f init xs
+end
+;;
+effect E = op : int -> int end
+;;
+handle (for x in (Box [1; 2; 3]) with acc = 0 do (acc + (perform op x)) end) with
+| return v -> v
+| op arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 0)
+--- expect: 24
+
+--- test: single-shot resume over a user Iter instance
+type box = Box of int list
+instance Iter box int =
+  let fold f init (Box xs) = List.fold f init xs
+end
+;;
+effect E = op : int -> int end
+;;
+handle (for x in (Box [10; 20; 30]) with acc = 0 do (acc + (perform op x)) end) with
+| return v -> v
+| op arg k -> resume k (arg * 2)
+--- expect: 120
+
+--- test: non-performing for-in over a user Iter instance
+type box = Box of int list
+instance Iter box int =
+  let fold f init (Box xs) = List.fold f init xs
+end
+;;
+print (for x in (Box [1; 2; 3; 4]) with acc = 0 do acc + x end)
+--- expect: 10
+
+--- test: nested for-in over a user Iter instance under a multishot handler
+type box = Box of int list
+instance Iter box int =
+  let fold f init (Box xs) = List.fold f init xs
+end
+;;
+effect E = op : int -> int end
+;;
+handle
+  (for x in (Box [1; 2]) with acc = 0 do
+    (for y in (Box [10; 20]) with bcc = acc do bcc + (perform op (x + y)) end)
+  end) with
+| return v -> v
+| op arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 1)
+--- expect: 560
+
 --- test: multishot through a user-defined recursive HOF
 effect Choose = pick : int -> int end
 let rec mymap f xs = match xs with | [] -> [] | x :: r -> (f x) :: (mymap f r)

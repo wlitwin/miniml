@@ -76,12 +76,13 @@ module Js_codegen =
     mut fold_cps_loop_fn: string option;
     mut fold_cps_next_pos: string option;
     local_twins: (string, unit) Hashtbl.t;
+    dict_twins: (string, unit) Hashtbl.t;
     mut handler_try_arms: (string * string * Typechecker.texpr) list
   }
 
   pub let create_ctx type_env =
     let tbl = Hashtbl.create 16 in
-    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None; local_twins = Hashtbl.create 16; handler_try_arms = []}
+    {buf = Buffer.create 4096; indent = 0; scopes = tbl :: []; tmp_counter = 0; type_env; current_fn_name = None; current_fn_params = []; in_tail_position = false; tco_used = false; current_module = None; in_cps = false; handler_tail_resume = false; direct_dispatch_ops = []; trywith_ops = []; break_flag_name = "_break_flag"; break_val_name = "_break_val"; cont_flag_name = "_cont_flag"; in_fold_loop = false; loop_via_throw = false; fold_cont_pending = false; top_level_exports = []; function_arities = Hashtbl.create 64; twinnable = Hashtbl.create 64; twins_requested = Hashtbl.create 64; twins_emitted = Hashtbl.create 64; in_full_handler = false; cps_form_vars = Hashtbl.create 16; fold_cps_break_k = None; fold_cps_loop_fn = None; fold_cps_next_pos = None; local_twins = Hashtbl.create 16; dict_twins = Hashtbl.create 16; handler_try_arms = []}
 
   pub let with_in_cps ctx value f =
     let saved = ctx.in_cps in
@@ -1104,6 +1105,9 @@ module Js_codegen =
         jsn ^ "$cps"
       else
         jsn
+    | Typechecker.TEField ((dict_ref, mname)) when is_dict_ref dict_ref -> 
+      let d = compile_non_tail ctx dict_ref in
+      d ^ ("." ^ ((mangle_name mname) ^ "$cps"))
     | _ -> compile_non_tail ctx te
 
   and drain_cps_twins ctx =
@@ -2197,6 +2201,16 @@ module Js_codegen =
       emit_line ctx "})();"
     end;
     result
+  and is_dict_ref (dict_ref : Typechecker.texpr) =
+    match dict_ref.expr with
+    | Typechecker.TEVar name -> ((String.length name) >= 7) && ((String.sub name 0 7) = "__dict_")
+    | _ -> false
+
+  and dict_ref_name (dict_ref : Typechecker.texpr) =
+    match dict_ref.expr with
+    | Typechecker.TEVar name -> name
+    | _ -> failwith "assert false"
+
   and is_twin_call ctx te =
     if not ctx.in_full_handler do
       false
@@ -2229,6 +2243,12 @@ module Js_codegen =
                 | _ -> false
 
             end
+          | Typechecker.TEField ((dict_ref, mname)) when (is_dict_ref dict_ref) && (Hashtbl.has ctx.dict_twins ((lookup_var ctx (dict_ref_name dict_ref)) ^ ("." ^ (mangle_name mname)))) -> 
+            let arg_effectful a = (match a.expr with
+            | Typechecker.TEVar n -> Hashtbl.has ctx.cps_form_vars (lookup_var ctx n)
+            | _ -> false
+            ) || (needs_cps a.ty) in
+            ((count_arrows base.ty) = (Some (List.length args))) && (List.exists arg_effectful args)
           | _ -> false
 
         end
@@ -2370,9 +2390,8 @@ module Js_codegen =
     emit_line ctx "}";
     emit_line ctx ($"return _bounce({loop_fn});"))
   and compile_forloop_cps ctx te fold_app cont =
-    let fallback () =
-      let v = compile_non_tail ctx te in
-      cont v in
+    (te; ());
+    let fallback () = compile_cps ctx fold_app cont in
     let rec collect expr acc =
       match expr.expr with
       | Typechecker.TEApp ((f, a)) -> collect f (a :: acc)
@@ -2641,25 +2660,26 @@ module Js_codegen =
   emit_line ctx "}") arms;
   emit_line ctx ($"if (!{matched}) _match_fail(\"line {loc.line}\");"))
   and twin_cps_arg_flags ctx base_fn nargs =
+    let param_types ty =
+      let rec go ty =
+        match Types.repr ty with
+        | (Types.TArrow ((a, _, r)) | Types.TCont ((a, _, r))) -> a :: go r
+        | _ -> []
+       in
+      go ty in
+    let flags_of ptys = Some (List.init nargs (fn i ->
+      do
+        match List.nth_opt ptys i with
+        | Some t -> may_need_cps t
+        | None -> false
+
+      end)) in
     match base_fn.expr with
     | Typechecker.TEVar name -> 
       do
         let jsn = lookup_var ctx name in
         match Hashtbl.get ctx.twinnable jsn with
-        | Some ((_, _, _, fn_ty)) -> 
-          let rec param_types ty =
-            match Types.repr ty with
-            | (Types.TArrow ((a, _, r)) | Types.TCont ((a, _, r))) -> a :: param_types r
-            | _ -> []
-           in
-          let ptys = param_types fn_ty in
-          Some (List.init nargs (fn i ->
-            do
-              match List.nth_opt ptys i with
-              | Some t -> may_need_cps t
-              | None -> false
-
-            end))
+        | Some ((_, _, _, fn_ty)) -> flags_of (param_types fn_ty)
         | None -> None
 
       end
@@ -2753,6 +2773,28 @@ module Js_codegen =
       emit_line ctx ($"const {result_var} = _resolve({call_expr});");
       cont result_var
     end
+  and compile_dict_record ctx js_name methods =
+    let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) methods in
+    let fields = List.concat_map (fn (mname, mexpr) -> let v = compile_non_tail ctx mexpr in
+    let jn = mangle_name mname in
+    let base_field =
+      if jn = mname do
+        mname ^ (": " ^ v)
+      else
+        $"{jn}: {v}" in
+    let twin_field =
+      match mexpr.expr with
+      | Typechecker.TEFun ((_, _, false)) when may_need_cps mexpr.ty -> 
+        let saved = ctx.in_full_handler in
+        ctx.in_full_handler := true;
+        let cps_v = compile_cps_value ctx mexpr in
+        ctx.in_full_handler := saved;
+        Hashtbl.set ctx.dict_twins (js_name ^ ("." ^ jn)) ();
+        $"{jn}$cps: {cps_v}" :: []
+      | _ -> []
+     in
+    base_field :: twin_field) sorted in
+    emit_line ctx ($"const {js_name} = (\{{String.concat ", " fields}\});")
   and compile_decl ctx (decl : Typechecker.tdecl) =
     match decl with
     | Typechecker.TDLet ((name, te)) -> 
@@ -2770,6 +2812,9 @@ module Js_codegen =
           match te.expr with
           | Typechecker.TEFun _ -> 
             compile_named_function ctx js_name te;
+            bind_var ctx name js_name
+          | Typechecker.TERecord methods when ((String.length name) >= 7) && ((String.sub name 0 7) = "__dict_") -> 
+            compile_dict_record ctx js_name methods;
             bind_var ctx name js_name
           | _ -> 
             let v = compile_expr ctx te in
