@@ -49,7 +49,68 @@ let q s =
   Buffer.contents b
 
 let ty_atom ty = q (Types.pp_ty_canonical ty)
-let scheme_atom (s : Types.scheme) = q (Types.pp_scheme s)
+
+(* Rename type-variable tokens (`'a`, `'f221`, …) by first appearance within a
+   string, to `'a`, `'b`, …. pp_scheme renumbers a scheme's quantified TGens
+   canonically but renders fundep-determined / phantom UNBOUND tvars with their
+   raw id-based names (`'f221` vs `'t198`) — which differ between the two
+   compilers' tvar-id allocation. A scheme string contains `'` only in tvar
+   names, so a by-appearance rewrite makes alpha-equivalent schemes print
+   identically (roadmap #13). Applied only to scheme strings; node types already
+   go through pp_ty_canonical, which generalizes every unbound var to a
+   canonically-numbered TGen. *)
+let canonicalize_tyvars (s : string) : string =
+  let n = String.length s in
+  let buf = Buffer.create n in
+  let map = ref [] in
+  let counter = ref 0 in
+  let rec assoc k = function
+    | [] -> None
+    | (a, b) :: _ when a = k -> Some b
+    | _ :: rest -> assoc k rest
+  in
+  (* Build the letter via String.sub on a literal rather than Char.chr + "%c":
+     ocaml_to_mml lowers "%c" to char interpolation, which the self-host renders
+     as a byte literal ("#61") instead of the character — a cross-compiler
+     divergence in this very canonicalizer. String.sub on a constant is portable. *)
+  let letters = "abcdefghijklmnopqrstuvwxyz" in
+  let canon () =
+    let i = !counter in
+    counter := i + 1;
+    let letter = String.sub letters (i mod 26) 1 in
+    if i < 26 then "'" ^ letter else "'" ^ letter ^ string_of_int (i / 26)
+  in
+  let is_alnum c =
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+  in
+  let i = ref 0 in
+  while !i < n do
+    let c = s.[!i] in
+    if c = '\'' && !i + 1 < n && s.[!i + 1] >= 'a' && s.[!i + 1] <= 'z' then begin
+      let j = ref (!i + 1) in
+      while !j < n && is_alnum s.[!j] do
+        incr j
+      done;
+      let tok = String.sub s !i (!j - !i) in
+      let cn =
+        match assoc tok !map with
+        | Some c -> c
+        | None ->
+            let c = canon () in
+            map := (tok, c) :: !map;
+            c
+      in
+      Buffer.add_string buf cn;
+      i := !j
+    end
+    else begin
+      Buffer.add_char buf c;
+      incr i
+    end
+  done;
+  Buffer.contents buf
+
+let scheme_atom (s : Types.scheme) = q (canonicalize_tyvars (Types.pp_scheme s))
 
 (* Render a float with the codebase's canonical BARE %g format (what pp_value /
    show / string interpolation use), NOT OCaml's stdlib string_of_float — the

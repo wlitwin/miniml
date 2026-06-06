@@ -36,7 +36,54 @@ module Ir_serialize =
 
   pub let ty_atom ty = q (Types.pp_ty_canonical ty)
 
-  pub let scheme_atom (s : Types.scheme) = q (Types.pp_scheme s)
+  pub let canonicalize_tyvars (s : string) : string =
+    let n = String.length s in
+    let buf = Buffer.create n in
+    let map = Ref.create [] in
+    let counter = Ref.create 0 in
+    let rec assoc k =
+      fn
+        | [] -> None
+        | (a, b) :: _ when a = k -> Some b
+        | _ :: rest -> assoc k rest
+     in
+    let letters = "abcdefghijklmnopqrstuvwxyz" in
+    let canon () =
+      let i = Ref.get counter in
+      Ref.set counter (i + 1);
+      let letter = String.sub letters (i mod 26) 1 in
+      if i < 26 do
+        "'" ^ letter
+      else
+        "'" ^ (letter ^ (string_of_int (i / 26))) in
+    let is_alnum c = ((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || ((c >= #30) && (c <= #39))) in
+    let i = Ref.create 0 in
+    for (Ref.get i) < n do
+      let c = String.get s (Ref.get i) in
+      if (c = #27) && ((((Ref.get i) + 1) < n) && (((String.get s ((Ref.get i) + 1)) >= #61) && ((String.get s ((Ref.get i) + 1)) <= #7a))) do
+        let j = Ref.create ((Ref.get i) + 1) in
+        for ((Ref.get j) < n) && (is_alnum (String.get s (Ref.get j))) do
+          Ref.set j (Ref.get j + 1)
+        end;
+        let tok = String.sub s (Ref.get i) ((Ref.get j) - (Ref.get i)) in
+        let cn =
+          match assoc tok (Ref.get map) with
+          | Some c -> c
+          | None -> 
+            let c = canon () in
+            Ref.set map ((tok, c) :: Ref.get map);
+            c
+         in
+        Buffer.add_string buf cn;
+        Ref.set i (Ref.get j)
+      else do
+        Buffer.add_byte buf c;
+        Ref.set i (Ref.get i + 1)
+      end
+    end;
+    Buffer.contents buf
+
+  pub let scheme_atom (s : Types.scheme) = q (canonicalize_tyvars (Types.pp_scheme s))
 
   pub let float_atom f = q ($"{f:g}")
 
