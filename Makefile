@@ -5,7 +5,7 @@
         test-unit test-emit-js test-parity test-playground test-oracle test-translate test-all check \
         check-run-unit check-run-diff check-run-translate \
         check-run-emit-js check-run-playground check-run-native check-run-oracle check-run-parity check-run-ir-parity \
-        check-run-fuzz test-fuzz \
+        check-run-fuzz test-fuzz check-run-cst test-cst \
         test-diff diff fuzz shrink \
         run emit-json emit-binary run-json run-binary \
         translate translate-all translate-diff \
@@ -102,6 +102,9 @@ diff: build  ## Differential run: do all backends agree on a program? make diff 
 test-translate: build  ## Run translator tests (OCaml → MiniML)
 	dune exec translate_test/runner.exe -- translate_test/tests/*.tests
 
+test-cst: build  ## Lossless CST round-trip: lex+reconstruct the whole corpus, assert byte-identical (#17)
+	dune exec compiler_test/cst_roundtrip_runner.exe
+
 test-all: test-unit test-ocaml test-translate  ## Run ALL local tests (unit + cross-VM + translator)
 	@echo ""
 	@echo "All tests passed."
@@ -123,6 +126,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 #   test-native      ocaml-ref   cross tests as LLVM native binaries
 #   test-oracle      —           cross tests on the reference interpreter (the executable spec, lib/oracle.ml)
 #   test-parity      self-host   cross tests as bytecode on the OCaml VM
+#   test-cst         —           lossless CST round-trip: lex+reconstruct the corpus byte-for-byte (#17)
 
 # The gate runs every suite. Suites run CONCURRENTLY, CHECK_JOBS at a time
 # (default 4, CHECK_JOBS=1 restores fully-sequential behavior), each logging
@@ -138,7 +142,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -216,6 +220,8 @@ check-run-ir-parity:
 	$(CHECK_BIN)/compiler_test/ir_parity_runner.exe cross_test/tests/*.tests
 check-run-fuzz:
 	$(CHECK_BIN)/diff_test/fuzz_runner.exe --count 50 --seed 1 --fast
+check-run-cst:
+	$(CHECK_BIN)/compiler_test/cst_roundtrip_runner.exe
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests

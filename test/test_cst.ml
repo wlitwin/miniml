@@ -1,0 +1,71 @@
+open Test_helpers
+module Cst = Interpreter.Cst
+module Token = Interpreter.Token
+
+(* Round-trip invariant: lexing then reassembling must reproduce the source
+   byte-for-byte. Covers the lexically tricky constructs where a span bug would
+   hide (comments, every string form, literals, operator spellings). *)
+let roundtrips src () =
+  let got = Cst.roundtrip src in
+  if got <> src then
+    failwith (Printf.sprintf "roundtrip mismatch\n  src     = %S\n  rebuilt = %S" src got)
+
+let () =
+  Printf.printf "=== CST Lossless Round-trip Tests (#17) ===\n";
+
+  test "empty source" (roundtrips "");
+  test "only whitespace" (roundtrips "   \n\t  \n");
+  test "leading + trailing whitespace" (roundtrips "  \n  let x = 1  \n\n");
+  test "simple expression" (roundtrips "let x = 1 + 2 * 3");
+
+  (* Comments are trivia — recovered from inter-token gaps. *)
+  test "block comment between tokens" (roundtrips "let (* a comment *) x = 1");
+  test "nested block comment" (roundtrips "let x = (* outer (* inner *) still *) 1");
+  test "comment-only source" (roundtrips "(* just a comment *)");
+  test "comment with no trailing token" (roundtrips "let x = 1 (* trailing *)");
+  test "leading comment then code" (roundtrips "(* header *)\nlet x = 1\n");
+
+  (* Every string form keeps its exact source spelling. *)
+  test "string with escapes" (roundtrips "let s = \"a\\tb\\nc\\\"d\"");
+  test "string with unicode" (roundtrips "let s = \"héllo wörld\"");
+  test "raw string" (roundtrips "let s = {|raw \"text\" with |whatever|}");
+  test "interpolated string" (roundtrips "let s = $\"x = {x} and {y + 1}\"");
+  test "adjacent strings" (roundtrips "[\"a\"; \"b\"; \"c\"]");
+
+  (* Numeric / char-ish literals. *)
+  test "int and float" (roundtrips "let a = 42 and b = 3.14 and c = 1e10");
+  test "negative-looking" (roundtrips "let a = 0 - 5");
+
+  (* Operators and punctuation spellings. *)
+  test "operators" (roundtrips "a <= b && c >= d || e <> f");
+  test "arrows and pipes" (roundtrips "fn x => x |> f :: rest");
+  test "colons and assign" (roundtrips "x := y; let z : int = 0");
+  test "polyvariant tag" (roundtrips "let t = `Ok 1");
+
+  (* A multi-line, comment-rich program resembling real source. *)
+  test "multi-line program"
+    (roundtrips
+       "(* module doc *)\n\
+        let rec fib n =\n\
+       \  if n < 2 do n  (* base case *)\n\
+        else fib (n - 1) + fib (n - 2) (* recurse *)\n\
+        end\n");
+
+  (* The pieces stream: leading trivia + token text reassemble exactly, and the
+     first token's leading trivia is the source prefix before it. *)
+  test "pieces expose leading trivia" (fun () ->
+      let src = "  (* c *) let x = 1" in
+      let ps = Cst.of_source src in
+      (match ps with
+      | first :: _ ->
+          if first.Cst.leading <> "  (* c *) " then
+            failwith (Printf.sprintf "leading was %S" first.Cst.leading);
+          if first.Cst.token.Token.kind <> Token.LET then
+            failwith "first significant token should be LET"
+      | [] -> failwith "no pieces");
+      (* and EOF terminates the stream *)
+      (match List.rev ps with
+      | last :: _ when last.Cst.token.Token.kind = Token.EOF -> ()
+      | _ -> failwith "last piece should be EOF"));
+
+  print_summary ()
