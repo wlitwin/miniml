@@ -76,6 +76,6 @@ let lower ?(inline_handlers = true) ?(stdlib_programs = []) type_env
   let p = Typechecker.classify_handlers_with inline_handlers typed_program in
   let p = Match_tree.lower_program type_env p in
   validate_lowered "match-tree lowering" p;
-  let p = Texpr_opt.optimize_program ~stdlib_programs p in
+  let p = Texpr_opt.optimize_program ~stdlib_programs ~type_env p in
   validate_lowered "texpr optimization" p;
   p

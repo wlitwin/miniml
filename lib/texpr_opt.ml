@@ -63,6 +63,28 @@ let collect_pure_externs program =
     program;
   !set
 
+(* Collect known-pure module functions straight from the type environment, keyed
+   by their qualified name ("Array.copy", ...). The two compilers register native
+   builtin modules differently — the OCaml reference parses a `module M = pub
+   extern ...` source block (so its externs reach the optimizer via
+   stdlib_programs), while the self-host calls register_fn (type_env only, no
+   TDExtern program). Sourcing purity from the type_env — the single source of
+   truth both share post-setup — makes collect_pure_externs see the SAME set
+   regardless of registration path, so the optimizer inlines identically across
+   compilers (roadmap #13, class-A IR divergence; the [#2] single-source-of-truth
+   principle). all_arrows_pure already excludes unit-returning and effectful
+   (e.g. / IO) signatures, so only genuinely value-pure functions qualify. *)
+let collect_module_pure_externs (type_env : Types.type_env) =
+  List.fold_left
+    (fun acc (mod_name, (info : Types.module_info)) ->
+      List.fold_left
+        (fun acc (vname, (scheme : Types.scheme)) ->
+          if all_arrows_pure scheme.Types.body then
+            ss_add (mod_name ^ "." ^ vname) acc
+          else acc)
+        acc info.Types.mod_pub_vars)
+    ss_empty type_env.Types.modules
+
 let rec is_pure ~mutables ~pure_fns te =
   match te.expr with
   | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit
@@ -580,7 +602,7 @@ let rec optimize_decl ~mutables ~pure_fns decl =
         (name, List.map (optimize_decl ~mutables ~pure_fns) decls, schemes)
   | (TDType _ | TDClass _ | TDEffect _ | TDExtern _ | TDOpen _) as d -> d
 
-let optimize_program ?(stdlib_programs = []) (program : tprogram) : tprogram =
+let optimize_program ~stdlib_programs ~type_env (program : tprogram) : tprogram =
   (* Collect all top-level mutable names (including inside modules) *)
   let rec collect_mutables acc = function
     | [] -> acc
@@ -593,9 +615,12 @@ let optimize_program ?(stdlib_programs = []) (program : tprogram) : tprogram =
   let mutables = collect_mutables ss_empty program in
   (* Collect known-pure extern functions from this program and all stdlib programs *)
   let pure_fns =
-    List.fold_left
-      (fun acc p -> ss_union acc (collect_pure_externs p))
-      (collect_pure_externs program)
-      stdlib_programs
+    let from_programs =
+      List.fold_left
+        (fun acc p -> ss_union acc (collect_pure_externs p))
+        (collect_pure_externs program)
+        stdlib_programs
+    in
+    ss_union from_programs (collect_module_pure_externs type_env)
   in
   List.map (optimize_decl ~mutables ~pure_fns) program
