@@ -486,6 +486,7 @@ module Parser =
         Ref.set is_open true
       else do
         Ref.set first false;
+        start_node p CstRecordField;
         let is_mut = (peek_kind p) = Token.MUT in
         if is_mut do
           (advance p; ())
@@ -493,6 +494,7 @@ module Parser =
         let name = expect_ident p in
         expect p Token.COLON;
         let ty = parse_ty p in
+        finish_node p;
         Ref.set fields ({rfd_mutable = is_mut; rfd_name = name; rfd_type = ty} :: Ref.get fields)
       end
     end;
@@ -712,6 +714,7 @@ module Parser =
         ()
       else do
         Ref.set first false;
+        start_node p CstRecordField;
         if (peek_kind p) = Token.UNDERSCORE do
           (advance p; ())
         else do
@@ -723,7 +726,8 @@ module Parser =
             else
               Ast.PatVar name in
           Ref.set fields ((name, pat) :: Ref.get fields)
-        end
+        end;
+        finish_node p
       end
     end;
     List.rev (Ref.get fields)
@@ -1375,7 +1379,8 @@ module Parser =
       Some ((Array.get p.tokens (p.pos + 1)).kind)
     else
       None
-  and parse_fun_param p =
+  and parse_fun_param p = with_node p CstParam (fn () -> parse_fun_param_inner p)
+  and parse_fun_param_inner p =
     match peek_kind p with
     | Token.LPAREN -> 
       do
@@ -1429,6 +1434,7 @@ module Parser =
       let arms = Ref.create [] in
       let continue_ = Ref.create true in
       for Ref.get continue_ do
+        start_node p CstMatchArm;
         let pat = parse_pattern p in
         let guard =
           if (peek_kind p) = Token.WHEN do
@@ -1438,6 +1444,7 @@ module Parser =
             None in
         expect p Token.ARROW;
         let body = parse_expr p in
+        finish_node p;
         Ref.set arms ((pat, guard, body) :: Ref.get arms);
         if (peek_kind p) = Token.PIPE do
           (advance p; ())
@@ -1657,16 +1664,19 @@ module Parser =
     for Ref.get continue_parsing do
       match peek_kind p with
       | Token.RETURN -> 
+        start_node p CstHandlerArm;
         (advance p; ());
         let name = expect_ident p in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         Ref.set arms (Ast.HReturn (name, handler_body) :: Ref.get arms);
         if (peek_kind p) = Token.PIPE do
           (advance p; ())
         else
           Ref.set continue_parsing false
       | Token.IDENT s -> 
+        start_node p CstHandlerArm;
         (advance p; ());
         let (arg_name, k_name) =
           match peek_kind p with
@@ -1686,6 +1696,7 @@ module Parser =
          in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         Ref.set arms (Ast.HOp {op_name = s; arg = arg_name; k = k_name; body = handler_body} :: Ref.get arms);
         if (peek_kind p) = Token.PIPE do
           (advance p; ())
@@ -1717,6 +1728,7 @@ module Parser =
     for Ref.get continue_parsing do
       match peek_kind p with
       | Token.IDENT s -> 
+        start_node p CstHandlerArm;
         (advance p; ());
         let arg_name =
           match peek_kind p with
@@ -1729,6 +1741,7 @@ module Parser =
          in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         Ref.set arms (Ast.HOp {op_name = s; arg = arg_name; k = "__k"; body = handler_body} :: Ref.get arms);
         if (peek_kind p) = Token.PIPE do
           (advance p; ())
@@ -1750,6 +1763,7 @@ module Parser =
     for Ref.get continue_parsing do
       match peek_kind p with
       | Token.IDENT s -> 
+        start_node p CstHandlerArm;
         (advance p; ());
         let arg_name =
           match peek_kind p with
@@ -1762,6 +1776,7 @@ module Parser =
          in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         let resume_expr = Ast.EResume (Ast.EVar "__k", handler_body) in
         Ref.set arms (Ast.HOp {op_name = s; arg = arg_name; k = "__k"; body = resume_expr} :: Ref.get arms);
         if (peek_kind p) = Token.PIPE do
@@ -1924,6 +1939,7 @@ module Parser =
         ()
       else do
         Ref.set first false;
+        start_node p CstRecordField;
         let name = expect_ident p in
         let expr =
           if (peek_kind p) = Token.EQ do
@@ -1931,6 +1947,7 @@ module Parser =
             parse_expr_bp p 0
           else
             Ast.EVar name in
+        finish_node p;
         Ref.set fields ((name, expr) :: Ref.get fields)
       end
     end;
