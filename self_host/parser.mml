@@ -74,6 +74,21 @@ module Parser =
 
   pub let cst_rewind p saved = p.cst_events := saved
 
+  pub let cst_marker p = p.cst_events
+
+  pub let cst_complete p marker kind =
+    if p.record_cst do
+      let rec splice lst =
+        if phys_equal lst marker do
+          CstStart kind :: marker
+        else
+          match lst with
+          | x :: xs -> x :: splice xs
+          | [] -> CstStart kind :: []
+       in
+      p.cst_events := CstFinish :: splice p.cst_events
+    end
+
   pub let error p msg =
     let tok = peek p in
     perform parse_error (msg, tok.loc)
@@ -1267,6 +1282,7 @@ module Parser =
     | _ -> false
 
   and parse_expr_bp p min_bp =
+    let m = cst_marker p in
     let lhs = parse_app p in
     let rec loop lhs =
       let kind = peek_kind p in
@@ -1279,14 +1295,17 @@ module Parser =
             (advance p; ());
             if kind = Token.COLONCOLON do
               let rhs = parse_expr_bp p r_bp in
+              cst_complete p m CstExpr;
               loop (Ast.ECons (lhs, rhs))
             else
               match kind with
               | Token.BACKTICK_INFIX name -> 
                 let rhs = parse_expr_bp p r_bp in
+                cst_complete p m CstExpr;
                 loop (Ast.EApp (Ast.EApp (Ast.EVar name, lhs), rhs))
               | _ -> 
                 let rhs = parse_expr_bp p r_bp in
+                cst_complete p m CstExpr;
                 loop (Ast.EBinop (binop_of_token kind, lhs, rhs))
 
           end
@@ -1608,6 +1627,7 @@ module Parser =
     let arms = Ref.create [] in
     let continue_ = Ref.create true in
     for Ref.get continue_ do
+      start_node p CstMatchArm;
       let pat = parse_pattern p in
       let guard =
         if (peek_kind p) = Token.WHEN do
@@ -1617,6 +1637,7 @@ module Parser =
           None in
       expect p Token.ARROW;
       let body = parse_expr p in
+      finish_node p;
       Ref.set arms ((pat, guard, body) :: Ref.get arms);
       if (peek_kind p) = Token.PIPE do
         (advance p; ())

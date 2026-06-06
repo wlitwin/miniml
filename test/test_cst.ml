@@ -144,6 +144,31 @@ let () =
       if count_nodes Cst.Decl t < 1 then failwith "expected a Decl node";
       if count_nodes Cst.Expr t < 2 then failwith "expected nested Expr nodes");
 
+  (* Increment 3b: binop precedence nesting + match-arm nodes. *)
+  test "parsed: binop chain is left-nested (precede)" (fun () ->
+      let src = "let r = 1 + 2 + 3" in
+      let t = Cst_build.cst_of_source src in
+      if Cst.to_source t <> src then failwith "binop chain not lossless";
+      (* 3 operand atoms + 2 completed binop spans = >=5 Expr nodes, and they
+         nest (the outer binop contains the inner one). *)
+      if count_nodes Cst.Expr t < 5 then
+        failwith (Printf.sprintf "expected >=5 Expr nodes, got %d" (count_nodes Cst.Expr t));
+      (* deepest Expr nesting must exceed 2 (flat siblings would stay shallow) *)
+      let rec depth = function
+        | Cst.Leaf _ -> 0
+        | Cst.Node (k, cs) ->
+            let sub = List.fold_left (fun a c -> max a (depth c)) 0 cs in
+            (if k = Cst.Expr then 1 else 0) + sub
+      in
+      if depth t < 3 then failwith "binop nesting too shallow — precede not wrapping");
+
+  test "parsed: one MatchArm node per arm" (fun () ->
+      let t =
+        Cst_build.cst_of_source "let f x = match x with | 0 -> 0 | 1 -> 1 | _ -> 2"
+      in
+      let n = count_nodes Cst.MatchArm t in
+      if n <> 3 then failwith (Printf.sprintf "expected 3 MatchArm nodes, got %d" n));
+
   (* Type and pattern atoms get their own nodes. *)
   test "parsed: type and pattern nodes present" (fun () ->
       let t =

@@ -87,6 +87,25 @@ let with_node p kind f =
 let cst_checkpoint p = p.cst_events
 let cst_rewind p saved = p.cst_events <- saved
 
+(* Forward-parent ("precede") support for precedence climbing: capture a marker
+   BEFORE parsing a span whose node kind isn't known yet, then — once it turns
+   out to be e.g. the left operand of a binop — retroactively wrap everything
+   recorded since the marker in a [kind] node. Because events are only ever
+   prepended, the marker (a saved list tail) stays physically present in the
+   current list, so we splice a [CstStart] in at that boundary and prepend the
+   matching [CstFinish]. Repeated completes against one marker left-nest, which
+   is exactly what a left-associative operator chain wants. *)
+let cst_marker p = p.cst_events
+
+let cst_complete p marker kind =
+  if p.record_cst then begin
+    let rec splice lst =
+      if lst == marker then CstStart kind :: marker
+      else match lst with x :: xs -> x :: splice xs | [] -> CstStart kind :: []
+    in
+    p.cst_events <- CstFinish :: splice p.cst_events
+  end
+
 let error p msg =
   let tok = peek p in
   raise (Parse_error (msg, tok.loc))
@@ -1304,6 +1323,9 @@ and is_keyword_expr_start p =
 
 (* Pratt expression parser *)
 and parse_expr_bp p min_bp =
+  (* Marker before the left operand: each operator at this level retroactively
+     wraps the operand span parsed so far into an Expr node (left-nesting). *)
+  let m = cst_marker p in
   let lhs = parse_app p in
   let rec loop lhs =
     let kind = peek_kind p in
@@ -1314,15 +1336,18 @@ and parse_expr_bp p min_bp =
         ignore (advance p);
         if kind = Token.COLONCOLON then begin
           let rhs = parse_expr_bp p r_bp in
+          cst_complete p m CstExpr;
           loop (Ast.ECons (lhs, rhs))
         end
         else
           match kind with
           | Token.BACKTICK_INFIX name ->
               let rhs = parse_expr_bp p r_bp in
+              cst_complete p m CstExpr;
               loop (Ast.EApp (Ast.EApp (Ast.EVar name, lhs), rhs))
           | _ ->
               let rhs = parse_expr_bp p r_bp in
+              cst_complete p m CstExpr;
               loop (Ast.EBinop (binop_of_token kind, lhs, rhs))
       end
     end
@@ -1652,6 +1677,7 @@ and parse_match p partial =
   let arms = ref [] in
   let continue = ref true in
   while !continue do
+    start_node p CstMatchArm;
     let pat = parse_pattern p in
     (* Optional guard *)
     let guard =
@@ -1663,6 +1689,7 @@ and parse_match p partial =
     in
     expect p Token.ARROW;
     let body = parse_expr p in
+    finish_node p;
     arms := (pat, guard, body) :: !arms;
     if peek_kind p = Token.PIPE then ignore (advance p) else continue := false
   done;
