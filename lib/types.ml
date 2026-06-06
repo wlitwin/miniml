@@ -104,7 +104,23 @@ let mono ty =
 
 (* 30-bit mask for polymorphic variant tag hashing *)
 let polyvar_tag_mask = 0x3FFFFFFF
-let polyvar_tag name = Hashtbl.hash name land polyvar_tag_mask
+
+(* Portable polymorphic-variant tag hash. It MUST produce the same value whether
+   the compiler runs as OCaml-native (the reference compiler), as self-host
+   bytecode on the OCaml VM (parity), or as self-host emit-js (playground) —
+   otherwise the same tag gets different hash ints depending on which compiler
+   elaborated the program (roadmap #13 IR-DIVERGENCE finding; value-invisible
+   because display uses the tag NAME, so value parity never caught it). OCaml's
+   Hashtbl.hash is runtime-specific and does NOT satisfy that, so we use an
+   explicit masked polynomial (×31) instead. Masking to 30 bits every step keeps
+   every intermediate below 2^35 — well inside the <2^53 float64-exact envelope
+   the emit-js backend needs (cf. the BUG-1 string-hash overflow). *)
+let polyvar_tag name =
+  let h = ref 0 in
+  String.iter
+    (fun c -> h := ((!h * 31) + Char.code c) land polyvar_tag_mask)
+    name;
+  !h
 
 (* Global counter for fresh type variable ids *)
 let next_id = ref 0

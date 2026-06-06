@@ -159,6 +159,14 @@ module Main =
   let arr a b = TArrow (a, EffEmpty, b)
   let arr2 a b c = arr a (arr b c)
   let arr3 a b c d = arr a (arr b (arr c d))
+  -- IO-effectful arrows: the IO effect sits on the LAST (fully-applied) arrow,
+  -- matching the OCaml ref's `... -> T / IO` signatures for Sys/IO builtins.
+  -- Without this the self-host typed these as pure, diverging from the reference
+  -- compiler (a value-invisible builtin-signature drift the IR-parity runner
+  -- surfaced; roadmap #13 / the [#2] single-source-of-truth gap for Sys/IO).
+  let io_eff = EffRow ("IO", [], EffEmpty)
+  let arr_io a b = TArrow (a, io_eff, b)
+  let arr2_io a b c = arr a (arr_io b c)
 
   -- ---- Setup builtins ----
   -- Core builtin signatures live in stdlib/builtins.mml — the single source of
@@ -316,11 +324,11 @@ module Main =
 
     -- IO module (5 native fns)
     pub_vars := [];
-    register_fn "IO" "read_file" (arr TString TString) 1;
-    register_fn "IO" "write_file" (arr2 TString TString TUnit) 2;
-    register_fn "IO" "append_file" (arr2 TString TString TUnit) 2;
-    register_fn "IO" "read_line" (arr TUnit TString) 1;
-    register_fn "IO" "file_exists" (arr TString TBool) 1;
+    register_fn "IO" "read_file" (arr_io TString TString) 1;
+    register_fn "IO" "write_file" (arr2_io TString TString TUnit) 2;
+    register_fn "IO" "append_file" (arr2_io TString TString TUnit) 2;
+    register_fn "IO" "read_line" (arr_io TUnit TString) 1;
+    register_fn "IO" "file_exists" (arr_io TString TBool) 1;
     let io_info = {
       mod_name = "IO"; mod_pub_vars = pub_vars;
       mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
@@ -330,10 +338,10 @@ module Main =
 
     -- Sys module (4 native fns)
     pub_vars := [];
-    register_fn "Sys" "args" (arr TUnit (TList TString)) 1;
-    register_fn "Sys" "getenv" (arr TString (TVariant ("option", [TString]))) 1;
-    register_fn "Sys" "exit" (arr TInt TUnit) 1;
-    register_fn "Sys" "time" (arr TUnit TFloat) 1;
+    register_fn "Sys" "args" (arr_io TUnit (TList TString)) 1;
+    register_fn "Sys" "getenv" (arr_io TString (TVariant ("option", [TString]))) 1;
+    register_fn "Sys" "exit" (arr_io TInt TUnit) 1;
+    register_fn "Sys" "time" (arr_io TUnit TFloat) 1;
     let sys_info = {
       mod_name = "Sys"; mod_pub_vars = pub_vars;
       mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
