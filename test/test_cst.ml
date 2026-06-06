@@ -68,4 +68,46 @@ let () =
       | last :: _ when last.Cst.token.Token.kind = Token.EOF -> ()
       | _ -> failwith "last piece should be EOF"));
 
+  Printf.printf "--- green tree (increment 2) ---\n";
+
+  (* The flat green tree's to_source round-trips just like the piece stream. *)
+  let green_roundtrips src () =
+    let got = Cst.to_source (Cst.flat_of_source src) in
+    if got <> src then
+      failwith
+        (Printf.sprintf "green to_source mismatch\n  src = %S\n  got = %S" src got)
+  in
+  test "green: empty" (green_roundtrips "");
+  test "green: comment-rich program"
+    (green_roundtrips "(* h *)\nlet x = 1 (* c *)\nlet y = $\"v={x}\"\n");
+  test "green: raw + interp strings"
+    (green_roundtrips "let a = {|raw|} and b = $\"{a}!\"");
+
+  (* to_source is kind-agnostic: an arbitrary nesting of the same leaves over
+     interior nodes reproduces the identical text. *)
+  test "green: nesting is irrelevant to to_source" (fun () ->
+      let src = "let x = 1 + 2" in
+      let leaves = List.map (fun p -> Cst.Leaf p) (Cst.of_source src) in
+      (* bracket the leaves arbitrarily under assorted node kinds *)
+      let nested =
+        match leaves with
+        | a :: b :: rest ->
+            Cst.Node
+              ( Cst.SourceFile,
+                [ Cst.Node (Cst.Decl, [ a; Cst.Node (Cst.Expr, [ b ]) ]) ]
+                @ rest )
+        | _ -> Cst.Node (Cst.SourceFile, leaves)
+      in
+      if Cst.to_source nested <> src then
+        failwith (Printf.sprintf "nested to_source = %S" (Cst.to_source nested)));
+
+  (* leaves / tokens recover the stream from the tree. *)
+  test "green: tokens recovers significant tokens" (fun () ->
+      let src = "let x = 1" in
+      let t = Cst.flat_of_source src in
+      let kinds = List.map (fun (tk : Token.token) -> tk.Token.kind) (Cst.tokens t) in
+      match kinds with
+      | [ Token.LET; Token.IDENT "x"; Token.EQ; Token.INT 1; Token.EOF ] -> ()
+      | _ -> failwith "unexpected token kinds from tree");
+
   print_summary ()
