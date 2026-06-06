@@ -52,3 +52,8 @@
  (name test_gadts)
  (libraries interpreter test_helpers)
  (modules test_gadts))
+
+(test
+ (name test_cst)
+ (libraries interpreter test_helpers)
+ (modules test_cst))
