@@ -372,6 +372,15 @@ type ctx = {
          resolved to the in-scope `go$cps` without touching the global
          twins_requested / drain. Saved/restored around the worker's scope
          (§12 step 3c, multishot through HOF recursion). *)
+  dict_twins : (string, unit) Hashtbl.t;
+      (* "<dict_js_name>.<method>" for every typeclass-instance method that
+         compile_dict_record gave a `$cps` twin field. A saturated, effectful
+         call to such a method under a full handler is a twin-call routed to
+         `dict.method$cps` (BUG-11, user Iter instances). Membership both proves
+         the twin field exists (so the route is safe) and is the call-site gate.
+         Dicts are compiled before their uses (top-level order), so the entry is
+         present when a call is compiled; a forward reference just misses the
+         twin and falls back to the direct (pre-existing) path. *)
   mutable handler_try_arms : (string * string * Typechecker.texpr) list;
       (* (op_name, arg_name, arm_body) for the TRY (abort) ops of the FULL handler
          whose arm body we are lexically inside. A try-op abort throws a tagged
@@ -420,6 +429,7 @@ let create_ctx type_env =
     fold_cps_loop_fn = None;
     fold_cps_next_pos = None;
     local_twins = Hashtbl.create 16;
+    dict_twins = Hashtbl.create 16;
     handler_try_arms = [];
   }
 
@@ -1818,6 +1828,11 @@ and compile_cps_value ctx te =
         jsn ^ "$cps"
       end
       else jsn (* a param/local already holding a CPS-form value *))
+  | Typechecker.TEField (dict_ref, mname) when is_dict_ref dict_ref ->
+      (* The CPS twin of a typeclass-instance method lives alongside the method
+         on the dictionary as `<mname>$cps` (compile_dict_record). *)
+      let d = compile_non_tail ctx dict_ref in
+      d ^ "." ^ mangle_name mname ^ "$cps"
   | _ -> compile_non_tail ctx te
 
 (* Emit every requested twin, to fixpoint (a twin body may request more). Twins
@@ -3237,6 +3252,22 @@ and compile_handle ctx body arms =
    which would sever the continuation at the callee boundary. A call to an
    effectful function with NO twin (e.g. a local `let rec`) is NOT a twin-call —
    it keeps the existing stack-safe bounce path. *)
+and is_dict_ref (dict_ref : Typechecker.texpr) =
+  (* A reference to a concrete typeclass-instance dictionary, recognised by the
+     `__dict_…` naming convention (Types.dict_name; also used by the
+     has_implicit_args / partial-application checks). Only such records carry the
+     `$cps` twin fields emitted by compile_dict_record, so dict-method twin-calls
+     are gated on this to never misroute an ordinary record field-call. *)
+  match dict_ref.Typechecker.expr with
+  | Typechecker.TEVar name ->
+      String.length name >= 7 && String.sub name 0 7 = "__dict_"
+  | _ -> false
+
+and dict_ref_name (dict_ref : Typechecker.texpr) =
+  match dict_ref.Typechecker.expr with
+  | Typechecker.TEVar name -> name
+  | _ -> assert false (* only called when is_dict_ref holds *)
+
 and is_twin_call ctx te =
   (* Only under a FULL handler, and only a saturated call to a twinnable named
      function. Outside a full-handler region no continuation is reified, so the
@@ -3289,6 +3320,31 @@ and is_twin_call ctx te =
                   needs_cps base.Typechecker.ty
                   || List.exists arg_effectful args
               | _ -> false)
+        | Typechecker.TEField (dict_ref, mname)
+          when is_dict_ref dict_ref
+               && Hashtbl.mem ctx.dict_twins
+                    (lookup_var ctx (dict_ref_name dict_ref) ^ "." ^ mangle_name mname) ->
+            (* A saturated call to a typeclass-instance method that has a `$cps`
+               twin (e.g. `Iter.fold` over a user instance, the for-in slice of
+               BUG-11). Routing it to the twin threads $k through the method body
+               so a perform inside it — or inside a callback it drives, like the
+               fold's element function — captures a continuation spanning this
+               call's rest, which is what multishot resume needs. The method's
+               own resolved type here has its effect row stripped to empty, so
+               (mirroring the TEVar twinnable path) twin-call only when the call
+               is effectful HERE: an argument is a CPS-form value or an
+               effectful-typed expression. A wholly-pure use stays on the direct
+               path. Membership in dict_twins proves the twin field exists, so
+               the route is safe. *)
+            let arg_effectful a =
+              (match a.Typechecker.expr with
+              | Typechecker.TEVar n ->
+                  Hashtbl.mem ctx.cps_form_vars (lookup_var ctx n)
+              | _ -> false)
+              || needs_cps a.Typechecker.ty
+            in
+            count_arrows base.Typechecker.ty = Some (List.length args)
+            && List.exists arg_effectful args
         | _ -> false)
     | _ -> false
 
@@ -3526,10 +3582,15 @@ and compile_while_cps ctx cond body step cont =
    inside a continuation closure where the iteration's catch is no longer on
    the JS stack. *)
 and compile_forloop_cps ctx te fold_app cont =
-  let fallback () =
-    let v = compile_non_tail ctx te in
-    cont v
-  in
+  ignore te;
+  (* Compile the desugared `fold callback init coll` application in CPS rather
+     than direct style. When the collection is a user-defined Iter instance the
+     fold is a dict-method call (`__dict_….fold`); under a full handler that is a
+     twin-call (is_twin_call), so the continuation threads through the instance's
+     `fold$cps` and a perform inside the loop body captures the rest of the loop
+     + handle body (BUG-11, user-Iter slice). For non-twin shapes compile_cps
+     falls back to the same `_resolve(call)` the direct path produced. *)
+  let fallback () = compile_cps ctx fold_app cont in
   (* Decompose the fold application spine: (fold_fn, [callback; init; coll]) *)
   let rec collect expr acc =
     match expr.Typechecker.expr with
@@ -3892,23 +3953,33 @@ and compile_match_cps ctx scrut arms loc cont =
    CPS-form parameter value), in which case the caller falls back to per-arg
    [needs_cps]. *)
 and twin_cps_arg_flags ctx base_fn nargs =
+  let param_types ty =
+    let rec go ty =
+      match Types.repr ty with
+      | Types.TArrow (a, _, r) | Types.TCont (a, _, r) -> a :: go r
+      | _ -> []
+    in
+    go ty
+  in
+  let flags_of ptys =
+    Some
+      (List.init nargs (fun i ->
+           match List.nth_opt ptys i with
+           | Some t -> may_need_cps t
+           | None -> false))
+  in
   match base_fn.Typechecker.expr with
   | Typechecker.TEVar name -> (
       let jsn = lookup_var ctx name in
       match Hashtbl.find_opt ctx.twinnable jsn with
-      | Some (_, _, _, fn_ty) ->
-          let rec param_types ty =
-            match Types.repr ty with
-            | Types.TArrow (a, _, r) | Types.TCont (a, _, r) -> a :: param_types r
-            | _ -> []
-          in
-          let ptys = param_types fn_ty in
-          Some
-            (List.init nargs (fun i ->
-                 match List.nth_opt ptys i with
-                 | Some t -> may_need_cps t
-                 | None -> false))
+      | Some (_, _, _, fn_ty) -> flags_of (param_types fn_ty)
       | None -> None)
+  (* A dict-method twin-call returns None so compile_app_cps decides per
+     argument from the argument's OWN type: the instance method's resolved type
+     here has its effect row stripped, so its parameter types would wrongly mark
+     an effectful callback as direct. The twin body passes that callback straight
+     into the underlying CPS twin (e.g. List$fold$cps), so it must arrive in CPS
+     form — which `needs_cps arg.ty` correctly selects. *)
   | _ -> None
 
 (* Produce a CPS-form value (taking a trailing $k) for an argument the callee
@@ -4030,6 +4101,46 @@ and compile_app_cps ctx te fn arg cont =
 
 (* ---- Top-level declarations ---- *)
 
+(* Emit a typeclass-instance dictionary object. Besides each method, emit a
+   `<mname>$cps` twin field for every effect-polymorphic method (BUG-11, user
+   Iter instances and any other effectful instance method). A saturated call to
+   such a method under a full handler routes to the twin (is_twin_call /
+   compile_app_cps recognise the `__dict_…`.method shape), so the captured
+   continuation threads through the method body instead of being severed at the
+   method's own per-function trampoline. The twin is the same CPS-form function
+   compile_cps_value builds, compiled with in_full_handler set so effectful calls
+   inside the body (e.g. the underlying List.fold) thread their continuation too.
+   Only TEFun methods with no `return` escape get a twin — compile_cps_value
+   declines a has_return lambda, so its calling convention would not match. *)
+and compile_dict_record ctx js_name methods =
+  let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) methods in
+  let fields =
+    List.concat_map
+      (fun (mname, mexpr) ->
+        let v = compile_non_tail ctx mexpr in
+        let jn = mangle_name mname in
+        let base_field =
+          if jn = mname then mname ^ ": " ^ v
+          else Printf.sprintf "%s: %s" jn v
+        in
+        let twin_field =
+          match mexpr.Typechecker.expr with
+          | Typechecker.TEFun (_, _, false)
+            when may_need_cps mexpr.Typechecker.ty ->
+              let saved = ctx.in_full_handler in
+              ctx.in_full_handler <- true;
+              let cps_v = compile_cps_value ctx mexpr in
+              ctx.in_full_handler <- saved;
+              Hashtbl.replace ctx.dict_twins (js_name ^ "." ^ jn) ();
+              [ Printf.sprintf "%s$cps: %s" jn cps_v ]
+          | _ -> []
+        in
+        base_field :: twin_field)
+      sorted
+  in
+  emit_line ctx
+    (Printf.sprintf "const %s = ({%s});" js_name (String.concat ", " fields))
+
 and compile_decl ctx (decl : Typechecker.tdecl) =
   match decl with
   | Typechecker.TDLet (name, te) ->
@@ -4048,6 +4159,10 @@ and compile_decl ctx (decl : Typechecker.tdecl) =
         (match te.expr with
         | Typechecker.TEFun _ ->
             compile_named_function ctx js_name te;
+            bind_var ctx name js_name
+        | Typechecker.TERecord methods
+          when String.length name >= 7 && String.sub name 0 7 = "__dict_" ->
+            compile_dict_record ctx js_name methods;
             bind_var ctx name js_name
         | _ ->
             let v = compile_expr ctx te in
