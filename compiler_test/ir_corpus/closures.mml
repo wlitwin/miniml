@@ -1,0 +1,5 @@
+let make_adder n = fn x -> x + n;;
+let add5 = make_adder 5;;
+let mut total = 0;;
+for i in [1;2;3] do total := total + (add5 i) end;;
+print total

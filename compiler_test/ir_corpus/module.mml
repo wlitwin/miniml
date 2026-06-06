@@ -1,0 +1,2 @@
+module M = pub let double x = x * 2;; pub let triple x = x * 3 end;;
+print (M.double 5 + M.triple 2)

@@ -474,6 +474,51 @@ module Main =
     | unify_error msg _k -> failwith msg
     | codegen_error msg _k -> failwith ("JS codegen error: " ^ msg)
 
+  -- ---- Emit IR (lowered-IR S-expression dump, roadmap #13) ----
+
+  let run_emit_ir args =
+    handle
+      -- Capture mode populates captured_typed_setups with the typed stdlib so the
+      -- optimizer sees the same extern-purity info the OCaml ref passes.
+      js_capture_mode := true;
+      captured_typed_setups := [];
+
+      let (ctx, global_names, mutable_globals) =
+        if __cache_has "emit_js" do
+          let (c, gn, mg, cts) = __cache_get "emit_js" in
+          captured_typed_setups := cts;
+          (c, gn, mg)
+        else
+          let (ctx, global_names, mutable_globals) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+          let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+          __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+          (ctx, global_names, mutable_globals)
+      in
+
+      let filename = match args with
+        | _ :: file :: _ -> file
+        | _ -> failwith "Usage: compiler --emit-ir <source-file>"
+      in
+      let source = IO.read_file filename in
+
+      let tokens = Lexer.tokenize source in
+      let program = Parser.parse_program tokens in
+      let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+      let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+      let stdlib_programs = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
+      let typed_program2 = Pipeline.lower true stdlib_programs ctx2.type_env typed_program2 in
+
+      print (Ir_serialize.serialize_program typed_program2)
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("IR serialize error: " ^ msg)
+
   -- ---- Main entry point ----
 
   let () =
@@ -483,13 +528,16 @@ module Main =
       | _ -> None
     in
     let emit_js = List.exists (fn a -> a = "--emit-js") args in
+    let emit_ir = List.exists (fn a -> a = "--emit-ir") args in
     let no_optimize = List.exists (fn a -> a = "--no-optimize") args in
     if no_optimize do Ref.set Compiler.optimize_enabled false end;
-    let args = List.filter (fn a -> a <> "--no-optimize" && a <> "--emit-js") args in
+    let args = List.filter (fn a -> a <> "--no-optimize" && a <> "--emit-js" && a <> "--emit-ir") args in
     match batch_file with
     | Some f -> run_batch f
     | None ->
-      if emit_js do
+      if emit_ir do
+        run_emit_ir args
+      else if emit_js do
         run_emit_js args
       else
         handle

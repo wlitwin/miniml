@@ -1,0 +1,6 @@
+let classify p = match p with
+  | (0, 0) -> "origin"
+  | (x, 0) -> "x-axis"
+  | (0, y) -> "y-axis"
+  | (_, _) -> "other"
+;; print (classify (0, 5))

@@ -1,0 +1,7 @@
+class Show2 'a = show2 : 'a -> string end
+;;
+instance Show2 int = let show2 x = String.from_int x end
+;;
+let f x = show2 x
+;;
+print (f 42)

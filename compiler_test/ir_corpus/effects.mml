@@ -1,0 +1,5 @@
+effect E = op : int -> int end;;
+let r = handle (for x in [1;2;3] with acc=0 do acc + perform op x end) with
+  | return v -> v
+  | op arg k -> let k2 = copy_continuation k in (resume k arg) + (resume k2 0)
+in print r

@@ -272,6 +272,27 @@ let () =
       | Interpreter.Js_codegen.Codegen_error msg ->
           Printf.eprintf "JS codegen error: %s\n" msg;
           exit 1)
+  | () when argc >= 3 && Sys.argv.(1) = "--emit-ir" -> (
+      try
+        let state =
+          Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ())
+        in
+        let buf = Buffer.create 4096 in
+        for i = 2 to argc - 1 do
+          let ic = open_in Sys.argv.(i) in
+          Buffer.add_string buf (In_channel.input_all ic);
+          Buffer.add_char buf '\n';
+          close_in ic
+        done;
+        let source = Buffer.contents buf in
+        let ir =
+          Interpreter.Interp.wrap_errors (fun () ->
+              Interpreter.Interp.emit_ir state ~source ())
+        in
+        print_string ir
+      with Interpreter.Interp.Error msg ->
+        Printf.eprintf "%s\n" msg;
+        exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--analyze" -> (
       try
         let state =
