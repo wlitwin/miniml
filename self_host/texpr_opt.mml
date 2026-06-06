@@ -48,6 +48,11 @@ module Texpr_opt =
       end) program;
     Ref.get set
 
+  pub let collect_module_pure_externs (type_env : Types.type_env) = List.fold (fn acc (mod_name, (info : Types.module_info)) -> List.fold (fn acc (vname, (scheme : Types.scheme)) -> if all_arrows_pure scheme.body do
+    ss_add (mod_name ^ ("." ^ vname)) acc
+  else
+    acc) acc info.mod_pub_vars) ss_empty type_env.modules
+
   pub let rec is_pure mutables pure_fns te =
     match te.expr with
     | ((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TENil) | TEContinueLoop) -> true
@@ -428,7 +433,7 @@ module Texpr_opt =
     | d -> d
 
 
-  pub let optimize_program stdlib_programs (program : tprogram) : tprogram =
+  pub let optimize_program stdlib_programs type_env (program : tprogram) : tprogram =
     let rec collect_mutables acc =
       fn
         | [] -> acc
@@ -439,7 +444,9 @@ module Texpr_opt =
         | _ :: rest -> collect_mutables acc rest
      in
     let mutables = collect_mutables ss_empty program in
-    let pure_fns = List.fold (fn acc p -> ss_union acc (collect_pure_externs p)) (collect_pure_externs program) stdlib_programs in
+    let pure_fns =
+      let from_programs = List.fold (fn acc p -> ss_union acc (collect_pure_externs p)) (collect_pure_externs program) stdlib_programs in
+      ss_union from_programs (collect_module_pure_externs type_env) in
     List.map (optimize_decl mutables pure_fns) program
 
 end
