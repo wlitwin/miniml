@@ -1,0 +1,445 @@
+module Texpr_opt =
+  open Typechecker
+
+  pub let ss_empty = []
+
+  pub let ss_mem (x : string) (s : string list) = List.mem x s
+
+  pub let ss_add (x : string) (s : string list) =
+    if List.mem x s do
+      s
+    else
+      x :: s
+
+  pub let ss_union (a : string list) (b : string list) = List.fold (fn acc x -> ss_add x acc) a b
+
+  pub let rec all_arrows_pure ty =
+    match Types.repr ty with
+    | Types.TArrow ((_, eff, ret)) -> 
+      do
+        match Types.eff_repr eff with
+        | Types.EffEmpty -> all_arrows_pure ret
+        | _ -> false
+
+      end
+    | Types.TUnit -> false
+    | _ -> true
+
+
+  pub let collect_pure_externs program =
+    let set = Ref.create ss_empty in
+    let check name (scheme : Types.scheme) =
+      if all_arrows_pure scheme.body do
+        Ref.set set (ss_add name (Ref.get set))
+      end in
+    List.iter (fn decl ->
+      do
+        match decl with
+        | TDExtern ((name, scheme)) -> check name scheme
+        | TDModule ((_, decls, _)) -> List.iter (fn d ->
+          do
+            match d with
+            | TDExtern ((name, scheme)) -> check name scheme
+            | _ -> ()
+
+          end) decls
+        | _ -> ()
+
+      end) program;
+    Ref.get set
+
+  pub let rec is_pure mutables pure_fns te =
+    match te.expr with
+    | ((((((((TEInt _ | TEFloat _) | TEBool _) | TEString _) | TEByte _) | TERune _) | TEUnit) | TENil) | TEContinueLoop) -> true
+    | TEVar name -> not (ss_mem name mutables)
+    | TEFun _ -> true
+    | (TETuple es | TEArray es) -> List.forall (is_pure mutables pure_fns) es
+    | TERecord fields -> List.forall (fn (_, e) -> is_pure mutables pure_fns e) fields
+    | TERecordUpdate ((base, fields)) -> (is_pure mutables pure_fns base) && (List.forall (fn (_, e) -> is_pure mutables pure_fns e) fields)
+    | TECons ((h, t)) -> (is_pure mutables pure_fns h) && (is_pure mutables pure_fns t)
+    | TEConstruct ((_, None)) -> true
+    | TEConstruct ((_, Some e)) -> is_pure mutables pure_fns e
+    | TEField ((_, _)) -> false
+    | TEBinop ((op, l, r)) -> 
+      do
+        match op with
+        | (Ast.Div | Ast.Mod) -> false
+        | _ -> (is_pure mutables pure_fns l) && (is_pure mutables pure_fns r)
+
+      end
+    | TEUnop ((_, e)) -> is_pure mutables pure_fns e
+    | TEApp _ -> 
+      do
+        let rec get_head e =
+          match e.expr with
+          | TEApp ((f, _)) -> get_head f
+          | _ -> e
+         in
+        let head = get_head te in
+        match head.expr with
+        | TEVar name when ss_mem name pure_fns -> 
+          let rec all_args_pure e =
+            match e.expr with
+            | TEApp ((f, arg)) -> (is_pure mutables pure_fns arg) && (all_args_pure f)
+            | _ -> is_pure mutables pure_fns e
+           in
+          all_args_pure te
+        | _ -> false
+
+      end
+    | _ -> false
+
+
+  pub let rec pattern_binds name =
+    fn
+      | Ast.PatVar n -> n = name
+      | Ast.PatAs ((p, n)) -> (n = name) || (pattern_binds name p)
+      | (Ast.PatTuple ps | Ast.PatArray ps) -> List.exists (pattern_binds name) ps
+      | Ast.PatCons ((h, t)) -> (pattern_binds name h) || (pattern_binds name t)
+      | ((Ast.PatConstruct ((_, Some p)) | Ast.PatPolyVariant ((_, Some p))) | Ast.PatAnnot ((p, _))) -> pattern_binds name p
+      | Ast.PatRecord fields -> List.exists (fn (_, p) -> pattern_binds name p) fields
+      | Ast.PatOr ((p1, p2)) -> (pattern_binds name p1) || (pattern_binds name p2)
+      | Ast.PatMap entries -> List.exists (fn (k, v) -> (pattern_binds name k) || (pattern_binds name v)) entries
+      | Ast.PatSet elems -> List.exists (pattern_binds name) elems
+      | _ -> false
+
+
+  pub let collect_tree_binding_names tree =
+    let names = Ref.create ss_empty in
+    let add binds = List.iter (fn b -> Ref.set names (ss_add b.var_name (Ref.get names))) binds in
+    let rec walk =
+      fn
+        | Match_tree_types.DSwitch {cases; default; _} -> 
+          List.iter (fn (_, binds, sub) -> add binds;
+          walk sub) cases;
+          Option.iter walk default
+        | Match_tree_types.DGuard {bindings; on_true; on_false; _} -> 
+          add bindings;
+          walk on_true;
+          walk on_false
+        | Match_tree_types.DLeaf {bindings; _} -> add bindings
+        | Match_tree_types.DFail _ -> ()
+     in
+    walk tree;
+    Ref.get names
+
+  pub let count_pin_refs name tree =
+    let n = Ref.create 0 in
+    let check_map_key =
+      fn
+        | Match_tree_types.MKPin s when s = name -> Ref.set n (Ref.get n + 1)
+        | _ -> ()
+     in
+    let check_test =
+      fn
+        | Match_tree_types.TPin s when s = name -> Ref.set n (Ref.get n + 1)
+        | Match_tree_types.TMapHasKey mk -> check_map_key mk
+        | _ -> ()
+     in
+    let check_access =
+      fn
+        | Match_tree_types.AMapValue mk -> check_map_key mk
+        | _ -> ()
+     in
+    let check_occ occ = List.iter check_access occ in
+    let check_binding b = check_occ b.bind_occ in
+    let rec walk =
+      fn
+        | Match_tree_types.DSwitch {occ; cases; default; _} -> 
+          check_occ occ;
+          List.iter (fn (test, binds, sub) -> check_test test;
+          List.iter check_binding binds;
+          walk sub) cases;
+          Option.iter walk default
+        | Match_tree_types.DGuard {bindings; on_true; on_false; _} -> 
+          List.iter check_binding bindings;
+          walk on_true;
+          walk on_false
+        | Match_tree_types.DLeaf {bindings; _} -> List.iter check_binding bindings
+        | Match_tree_types.DFail _ -> ()
+     in
+    walk tree;
+    Ref.get n
+
+  pub let has_pin_reference name te =
+    let found = Ref.create false in
+    let rec go te =
+      if Ref.get found do
+        ()
+      else
+        match te.expr with
+        | TEMatchTree cm -> 
+          if (count_pin_refs name cm.tree) > 0 do
+            Ref.set found true
+          else
+            iter_texpr_children go te
+        | _ -> iter_texpr_children go te
+     in
+    go te;
+    Ref.get found
+
+  pub let count_free_uses name te =
+    let n = Ref.create 0 in
+    let rec go te =
+      match te.expr with
+      | TEVar v when v = name -> Ref.set n (Ref.get n + 1)
+      | TELet ((bind_name, _, rhs, body)) -> 
+        go rhs;
+        if not (bind_name = name) do
+          go body
+        end
+      | TELetRec ((bind_name, _, rhs, body)) -> 
+        if not (bind_name = name) do
+          go rhs;
+          go body
+        end
+      | TEFun ((param, body, _)) -> 
+        if not (param = name) do
+          go body
+        end
+      | TELetMut ((bind_name, rhs, body)) -> 
+        go rhs;
+        if not (bind_name = name) do
+          go body
+        end
+      | TELetRecAnd ((binds, body)) -> 
+        let bound = List.map fst binds in
+        if not (List.mem name bound) do
+          List.iter (fn (_, e) -> go e) binds;
+          go body
+        end
+      | TEMatch ((scrut, arms, _)) -> 
+        go scrut;
+        List.iter (fn (pat, guard, body) -> if not (pattern_binds name pat) do
+          Option.iter go guard;
+          go body
+        end) arms
+      | TEMatchTree cm -> 
+        go cm.scrutinee;
+        let tree_names = collect_tree_binding_names cm.tree in
+        if not (ss_mem name tree_names) do
+          Array.iter (fn arm -> go arm.arm_body) cm.match_arms;
+          let rec walk_guards =
+            fn
+              | Match_tree_types.DGuard {guard; on_true; on_false; _} -> 
+                go guard;
+                walk_guards on_true;
+                walk_guards on_false
+              | Match_tree_types.DSwitch {cases; default; _} -> 
+                List.iter (fn (_, _, sub) -> walk_guards sub) cases;
+                Option.iter walk_guards default
+              | _ -> ()
+           in
+          walk_guards cm.tree
+        end
+      | TEHandle ((body, arms)) -> 
+        go body;
+        List.iter (fn arm ->
+          do
+            match arm with
+            | THReturn ((n_bind, b)) -> 
+              if not (n_bind = name) do
+                go b
+              end
+            | THOp {arg; k; body; _} -> 
+              if (not (arg = name)) && (not (k = name)) do
+                go body
+              end
+            | (THOpProvide ((_, x, b)) | THOpTry ((_, x, b))) -> 
+              if not (x = name) do
+                go b
+              end
+
+          end) arms
+      | _ -> iter_texpr_children go te
+     in
+    go te;
+    Ref.get n
+
+  pub let subst name repl te =
+    let rec go te =
+      match te.expr with
+      | TEVar v when v = name -> repl
+      | TELet ((bind_name, scheme, rhs, body)) -> 
+        let rhs' = go rhs in
+        if bind_name = name do
+          {te with expr = TELet (bind_name, scheme, rhs', body)}
+        else
+          {te with expr = TELet (bind_name, scheme, rhs', go body)}
+      | TELetRec ((bind_name, scheme, rhs, body)) -> 
+        if bind_name = name do
+          te
+        else
+          {te with expr = TELetRec (bind_name, scheme, go rhs, go body)}
+      | TEFun ((param, body, hr)) -> 
+        if param = name do
+          te
+        else
+          {te with expr = TEFun (param, go body, hr)}
+      | TELetMut ((bind_name, rhs, body)) -> 
+        let rhs' = go rhs in
+        if bind_name = name do
+          {te with expr = TELetMut (bind_name, rhs', body)}
+        else
+          {te with expr = TELetMut (bind_name, rhs', go body)}
+      | TELetRecAnd ((binds, body)) -> 
+        let bound = List.map fst binds in
+        if List.mem name bound do
+          te
+        else
+          {te with expr = TELetRecAnd (List.map (fn (n, e) -> (n, go e)) binds, go body)}
+      | TEMatch ((scrut, arms, mk)) -> 
+        let scrut' = go scrut in
+        let arms' = List.map (fn (pat, guard, body) -> if pattern_binds name pat do
+          (pat, guard, body)
+        else
+          (pat, Option.map go guard, go body)) arms in
+        {te with expr = TEMatch (scrut', arms', mk)}
+      | TEMatchTree cm -> 
+        let scrutinee' = go cm.scrutinee in
+        let tree_names = collect_tree_binding_names cm.tree in
+        if ss_mem name tree_names do
+          {te with expr = TEMatchTree {cm with scrutinee = scrutinee'}}
+        else do
+          let match_arms' = Array.map (fn arm -> {arm_body = go arm.arm_body}) cm.match_arms in
+          let rec map_guards =
+            fn
+              | Match_tree_types.DGuard g -> Match_tree_types.DGuard {g with guard = go g.guard; on_true = map_guards g.on_true; on_false = map_guards g.on_false}
+              | Match_tree_types.DSwitch sw -> Match_tree_types.DSwitch {sw with cases = List.map (fn (t, b, sub) -> (t, b, map_guards sub)) sw.cases; default = Option.map map_guards sw.default}
+              | other -> other
+           in
+          {te with expr = TEMatchTree {cm with scrutinee = scrutinee'; match_arms = match_arms'; tree = map_guards cm.tree}}
+        end
+      | TEHandle ((body, arms)) -> 
+        let body' = go body in
+        let arms' = List.map (fn arm ->
+          do
+            match arm with
+            | THReturn ((n_bind, b)) -> 
+              if n_bind = name do
+                arm
+              else
+                THReturn (n_bind, go b)
+            | THOp {op_name; arg; k; body} -> 
+              if (arg = name) || (k = name) do
+                arm
+              else
+                THOp {op_name; arg; k; body = go body}
+            | THOpProvide ((eff, x, b)) -> 
+              if x = name do
+                arm
+              else
+                THOpProvide (eff, x, go b)
+            | THOpTry ((eff, x, b)) -> 
+              if x = name do
+                arm
+              else
+                THOpTry (eff, x, go b)
+
+          end) arms in
+        {te with expr = TEHandle (body', arms')}
+      | _ -> {te with expr = map_texpr_children go te}
+     in
+    go te
+
+  pub let try_const_fold pure_fns te =
+    match te.expr with
+    | TEBinop ((Ast.Add, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a + b)}
+    | TEBinop ((Ast.Sub, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a - b)}
+    | TEBinop ((Ast.Mul, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a * b)}
+    | TEBinop ((Ast.Div, {expr = TEInt a; _}, {expr = TEInt b; _})) when b <> 0 -> {te with expr = TEInt (a / b)}
+    | TEBinop ((Ast.Mod, {expr = TEInt a; _}, {expr = TEInt b; _})) when b <> 0 -> {te with expr = TEInt (a mod b)}
+    | TEBinop ((Ast.Add, {expr = TEFloat a; _}, {expr = TEFloat b; _})) -> {te with expr = TEFloat (a + b)}
+    | TEBinop ((Ast.Sub, {expr = TEFloat a; _}, {expr = TEFloat b; _})) -> {te with expr = TEFloat (a - b)}
+    | TEBinop ((Ast.Mul, {expr = TEFloat a; _}, {expr = TEFloat b; _})) -> {te with expr = TEFloat (a * b)}
+    | TEBinop ((Ast.Div, {expr = TEFloat a; _}, {expr = TEFloat b; _})) when b <> 0.0 -> {te with expr = TEFloat (a / b)}
+    | TEBinop ((Ast.Eq, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEBool (a = b)}
+    | TEBinop ((Ast.Neq, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEBool (a <> b)}
+    | TEBinop ((Ast.Lt, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEBool (a < b)}
+    | TEBinop ((Ast.Gt, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEBool (a > b)}
+    | TEBinop ((Ast.Le, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEBool (a <= b)}
+    | TEBinop ((Ast.Ge, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEBool (a >= b)}
+    | TEBinop ((Ast.And, {expr = TEBool a; _}, {expr = TEBool b; _})) -> {te with expr = TEBool (a && b)}
+    | TEBinop ((Ast.Or, {expr = TEBool a; _}, {expr = TEBool b; _})) -> {te with expr = TEBool (a || b)}
+    | TEBinop ((Ast.Eq, {expr = TEBool a; _}, {expr = TEBool b; _})) -> {te with expr = TEBool (a = b)}
+    | TEBinop ((Ast.Neq, {expr = TEBool a; _}, {expr = TEBool b; _})) -> {te with expr = TEBool (a <> b)}
+    | TEBinop ((Ast.Concat, {expr = TEString a; _}, {expr = TEString b; _})) -> {te with expr = TEString (a ^ b)}
+    | TEBinop ((Ast.Eq, {expr = TEString a; _}, {expr = TEString b; _})) -> {te with expr = TEBool (a = b)}
+    | TEBinop ((Ast.Neq, {expr = TEString a; _}, {expr = TEString b; _})) -> {te with expr = TEBool (not (a = b))}
+    | TEUnop ((Ast.Not, {expr = TEBool b; _})) -> {te with expr = TEBool (not b)}
+    | TEUnop ((Ast.Neg, {expr = TEInt n; _})) -> {te with expr = TEInt (-(n))}
+    | TEUnop ((Ast.Neg, {expr = TEFloat f; _})) -> {te with expr = TEFloat (-(f))}
+    | TEUnop ((Ast.Lnot, {expr = TEInt n; _})) -> {te with expr = TEInt (lnot n)}
+    | TEBinop ((Ast.Land, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a land b)}
+    | TEBinop ((Ast.Lor, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a lor b)}
+    | TEBinop ((Ast.Lxor, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a lxor b)}
+    | TEBinop ((Ast.Lsl, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a lsl b)}
+    | TEBinop ((Ast.Lsr, {expr = TEInt a; _}, {expr = TEInt b; _})) -> {te with expr = TEInt (a lsr b)}
+    | TEIf (({expr = TEBool true; _}, then_branch, _)) -> then_branch
+    | TEIf (({expr = TEBool false; _}, _, else_branch)) -> else_branch
+    | (TEBinop ((Ast.Add, e, {expr = TEInt 0; _})) | TEBinop ((Ast.Add, {expr = TEInt 0; _}, e))) -> e
+    | TEBinop ((Ast.Sub, e, {expr = TEInt 0; _})) -> e
+    | (TEBinop ((Ast.Mul, e, {expr = TEInt 1; _})) | TEBinop ((Ast.Mul, {expr = TEInt 1; _}, e))) -> e
+    | (TEBinop ((Ast.Concat, e, {expr = TEString ""; _})) | TEBinop ((Ast.Concat, {expr = TEString ""; _}, e))) -> e
+    | TEBinop ((Ast.And, {expr = TEBool false; _} as e, _)) -> e
+    | TEBinop ((Ast.And, {expr = TEBool true; _}, e)) -> e
+    | TEBinop ((Ast.Or, {expr = TEBool true; _} as e, _)) -> e
+    | TEBinop ((Ast.Or, {expr = TEBool false; _}, e)) -> e
+    | TEBinop ((Ast.Mul, {expr = TEInt 0; _} as zero, other)) when is_pure ss_empty pure_fns other -> zero
+    | TEBinop ((Ast.Mul, other, {expr = TEInt 0; _} as zero)) when is_pure ss_empty pure_fns other -> zero
+    | _ -> te
+
+
+  pub let rec optimize_expr mutables pure_fns te =
+    let te =
+      match te.expr with
+      | TELetMut ((name, rhs, body)) -> 
+        let rhs' = optimize_expr mutables pure_fns rhs in
+        let body' = optimize_expr (ss_add name mutables) pure_fns body in
+        {te with expr = TELetMut (name, rhs', body')}
+      | _ -> {te with expr = map_texpr_children (optimize_expr mutables pure_fns) te}
+     in
+    match te.expr with
+    | TELet ((name, _scheme, rhs, body)) -> 
+      let uses = count_free_uses name body in
+      if (uses = 0) && (not (has_pin_reference name body)) do
+        if is_pure mutables pure_fns rhs do
+          optimize_expr mutables pure_fns body
+        else
+          optimize_expr mutables pure_fns {te with expr = TESeq (rhs, body)}
+      else if (uses = 1) && (is_pure mutables pure_fns rhs) do
+        if not (has_pin_reference name body) do
+          optimize_expr mutables pure_fns (subst name rhs body)
+        else
+          try_const_fold pure_fns te
+      else
+        try_const_fold pure_fns te
+    | _ -> try_const_fold pure_fns te
+
+
+  pub let rec optimize_decl mutables pure_fns decl =
+    match decl with
+    | TDLet ((n, e)) -> TDLet (n, optimize_expr mutables pure_fns e)
+    | TDLetMut ((n, e)) -> TDLetMut (n, optimize_expr mutables pure_fns e)
+    | TDLetRec ((n, e)) -> TDLetRec (n, optimize_expr mutables pure_fns e)
+    | TDExpr e -> TDExpr (optimize_expr mutables pure_fns e)
+    | TDLetRecAnd binds -> TDLetRecAnd (List.map (fn (n, e) -> (n, optimize_expr mutables pure_fns e)) binds)
+    | TDModule ((name, decls, schemes)) -> TDModule (name, List.map (optimize_decl mutables pure_fns) decls, schemes)
+    | d -> d
+
+
+  pub let optimize_program stdlib_programs (program : tprogram) : tprogram =
+    let rec collect_mutables acc =
+      fn
+        | [] -> acc
+        | TDLetMut ((name, _)) :: rest -> collect_mutables (ss_add name acc) rest
+        | TDModule ((_, decls, _)) :: rest -> 
+          let acc = collect_mutables acc decls in
+          collect_mutables acc rest
+        | _ :: rest -> collect_mutables acc rest
+     in
+    let mutables = collect_mutables ss_empty program in
+    let pure_fns = List.fold (fn acc p -> ss_union acc (collect_pure_externs p)) (collect_pure_externs program) stdlib_programs in
+    List.map (optimize_decl mutables pure_fns) program
+
+end

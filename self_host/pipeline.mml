@@ -1,0 +1,36 @@
+module Pipeline =
+  effect Invariant_violationExn =
+    invariant_violation : string -> 'a
+  end
+
+  pub let violation stage msg = perform invariant_violation ($"IR invariant violated after {stage}: {msg}")
+
+  pub let rec check_no_tematch stage (te : Typechecker.texpr) : unit =
+    do
+      match te.expr with
+      | Typechecker.TEMatch _ -> violation stage "TEMatch node survived match-tree lowering"
+      | _ -> ()
+
+    end;
+    (Typechecker.map_texpr_children (fn child -> check_no_tematch stage child;
+    child) te; ())
+
+  pub let rec validate_lowered stage (program : Typechecker.tprogram) : unit = List.iter (fn decl ->
+    do
+      match decl with
+      | (((Typechecker.TDLet ((_, e)) | Typechecker.TDLetMut ((_, e))) | Typechecker.TDLetRec ((_, e))) | Typechecker.TDExpr e) -> check_no_tematch stage e
+      | Typechecker.TDLetRecAnd binds -> List.iter (fn (_, e) -> check_no_tematch stage e) binds
+      | Typechecker.TDModule ((_, decls, _)) -> validate_lowered stage decls
+      | ((((Typechecker.TDEffect _ | Typechecker.TDType _) | Typechecker.TDClass _) | Typechecker.TDExtern _) | Typechecker.TDOpen _) -> ()
+
+    end) program
+
+  pub let lower inline_handlers stdlib_programs type_env (typed_program : Typechecker.tprogram) : Typechecker.tprogram =
+    let p = Typechecker.classify_handlers_with inline_handlers typed_program in
+    let p = Match_tree.lower_program type_env p in
+    validate_lowered "match-tree lowering" p;
+    let p = Texpr_opt.optimize_program stdlib_programs p in
+    validate_lowered "texpr optimization" p;
+    p
+
+end

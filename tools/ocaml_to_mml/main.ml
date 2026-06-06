@@ -112,6 +112,15 @@ let translate_qualified modname funcname =
 let translate_op op =
   match op with
   | "+" | "-" | "*" | "/" | "mod" -> op
+  (* MiniML overloads +,-,*,/ for floats (the Num typeclass) and has no
+     dedicated float operators, so OCaml's +. -. *. /. map to the same tokens.
+     (Without this, `a +. b` lexes in MiniML as `a + .b`, where `.b` is a field
+     accessor — the source of a baffling "cannot unify float with {b;..}->.."
+     type error when texpr_opt.ml's float constant folding was first translated.) *)
+  | "+." -> "+"
+  | "-." -> "-"
+  | "*." -> "*"
+  | "/." -> "/"
   | "=" | "<>" | "<" | ">" | "<=" | ">=" -> op
   | "==" -> "=" (* physical equality → structural equality *)
   | "!=" -> "<>" (* physical inequality → structural inequality *)
