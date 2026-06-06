@@ -11,7 +11,19 @@
    TELet, TELetRec, TEFun, TELetMut, TELetRecAnd, TEMatch, TEMatchTree, TEHandle. *)
 
 open Typechecker
-module SS = Set.Make (String)
+
+(* Name-sets here are small, scope-local (mutable-var names, pure-fn names) and
+   used PERSISTENTLY — `ss_add` returns a NEW set, so adding a name for a child
+   scope never disturbs the parent's set. They are plain immutable string lists
+   rather than Set.Make(String): this file is shared with the self-hosted
+   compiler via tools/ocaml_to_mml, whose translator has no functor support, and
+   the rest of the translatable compiler likewise avoids functors (roadmap #3b).
+   The lists are tiny, so the O(n) membership cost is immaterial. *)
+let ss_empty : string list = []
+let ss_mem (x : string) (s : string list) = List.mem x s
+let ss_add (x : string) (s : string list) = if List.mem x s then s else x :: s
+let ss_union (a : string list) (b : string list) =
+  List.fold_left (fun acc x -> ss_add x acc) a b
 
 (* === Purity analysis === *)
 
@@ -32,9 +44,9 @@ let rec all_arrows_pure ty =
 
 (* Collect names of pure extern functions from the typed program *)
 let collect_pure_externs program =
-  let set = ref SS.empty in
+  let set = ref ss_empty in
   let check name (scheme : Types.scheme) =
-    if all_arrows_pure scheme.Types.body then set := SS.add name !set
+    if all_arrows_pure scheme.Types.body then set := ss_add name !set
   in
   List.iter
     (fun decl ->
@@ -56,7 +68,7 @@ let rec is_pure ~mutables ~pure_fns te =
   | TEInt _ | TEFloat _ | TEBool _ | TEString _ | TEByte _ | TERune _ | TEUnit
   | TENil | TEContinueLoop ->
       true
-  | TEVar name -> not (SS.mem name mutables)
+  | TEVar name -> not (ss_mem name mutables)
   | TEFun _ -> true
   | TETuple es | TEArray es -> List.for_all (is_pure ~mutables ~pure_fns) es
   | TERecord fields ->
@@ -91,7 +103,7 @@ let rec is_pure ~mutables ~pure_fns te =
       in
       let head = get_head te in
       match head.expr with
-      | TEVar name when SS.mem name pure_fns ->
+      | TEVar name when ss_mem name pure_fns ->
           let rec all_args_pure e =
             match e.expr with
             | TEApp (f, arg) ->
@@ -129,10 +141,10 @@ let rec pattern_binds name = function
    Used conservatively: if our target name appears in ANY tree binding,
    we skip the arm bodies (overcounting is safe, undercounting is not). *)
 let collect_tree_binding_names tree =
-  let names = ref SS.empty in
+  let names = ref ss_empty in
   let add binds =
     List.iter
-      (fun b -> names := SS.add b.Match_tree_types.var_name !names)
+      (fun b -> names := ss_add b.Match_tree_types.var_name !names)
       binds
   in
   let rec walk = function
@@ -249,7 +261,7 @@ let count_free_uses name te =
     | TEMatchTree cm ->
         go cm.Match_tree_types.scrutinee;
         let tree_names = collect_tree_binding_names cm.tree in
-        if not (SS.mem name tree_names) then begin
+        if not (ss_mem name tree_names) then begin
           (* Name not shadowed by any match binding — safe to walk everything *)
           Array.iter (fun arm -> go arm.Match_tree_types.arm_body) cm.match_arms;
           let rec walk_guards = function
@@ -330,7 +342,7 @@ let subst name repl te =
     | TEMatchTree cm ->
         let scrutinee' = go cm.Match_tree_types.scrutinee in
         let tree_names = collect_tree_binding_names cm.tree in
-        if SS.mem name tree_names then
+        if ss_mem name tree_names then
           (* Name shadowed by match binding — only substitute in scrutinee *)
           {
             te with
@@ -497,10 +509,10 @@ let try_const_fold ~pure_fns te =
   | TEBinop (Ast.Or, { expr = TEBool false; _ }, e) -> e
   (* Multiply by zero — only if other side is pure *)
   | TEBinop (Ast.Mul, ({ expr = TEInt 0; _ } as zero), other)
-    when is_pure ~mutables:SS.empty ~pure_fns other ->
+    when is_pure ~mutables:ss_empty ~pure_fns other ->
       zero
   | TEBinop (Ast.Mul, other, ({ expr = TEInt 0; _ } as zero))
-    when is_pure ~mutables:SS.empty ~pure_fns other ->
+    when is_pure ~mutables:ss_empty ~pure_fns other ->
       zero
   (* No fold possible *)
   | _ -> te
@@ -518,7 +530,7 @@ let rec optimize_expr ~mutables ~pure_fns te =
     | TELetMut (name, rhs, body) ->
         let rhs' = optimize_expr ~mutables ~pure_fns rhs in
         let body' =
-          optimize_expr ~mutables:(SS.add name mutables) ~pure_fns body
+          optimize_expr ~mutables:(ss_add name mutables) ~pure_fns body
         in
         { te with expr = TELetMut (name, rhs', body') }
     | _ ->
@@ -572,17 +584,17 @@ let optimize_program ?(stdlib_programs = []) (program : tprogram) : tprogram =
   (* Collect all top-level mutable names (including inside modules) *)
   let rec collect_mutables acc = function
     | [] -> acc
-    | TDLetMut (name, _) :: rest -> collect_mutables (SS.add name acc) rest
+    | TDLetMut (name, _) :: rest -> collect_mutables (ss_add name acc) rest
     | TDModule (_, decls, _) :: rest ->
         let acc = collect_mutables acc decls in
         collect_mutables acc rest
     | _ :: rest -> collect_mutables acc rest
   in
-  let mutables = collect_mutables SS.empty program in
+  let mutables = collect_mutables ss_empty program in
   (* Collect known-pure extern functions from this program and all stdlib programs *)
   let pure_fns =
     List.fold_left
-      (fun acc p -> SS.union acc (collect_pure_externs p))
+      (fun acc p -> ss_union acc (collect_pure_externs p))
       (collect_pure_externs program)
       stdlib_programs
   in

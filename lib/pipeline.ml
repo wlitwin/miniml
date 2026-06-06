@@ -25,13 +25,13 @@
 
 exception Invariant_violation of string
 
-let violation stage fmt =
-  Printf.ksprintf
-    (fun msg ->
-      raise
-        (Invariant_violation
-           (Printf.sprintf "IR invariant violated after %s: %s" stage msg)))
-    fmt
+(* Plain (non-format) message — the validators pass a fixed string. Kept simple
+   so the self-hosted translation needs only Printf.sprintf (which ocaml_to_mml
+   lowers to string interpolation), not Printf.ksprintf. *)
+let violation stage msg =
+  raise
+    (Invariant_violation
+       (Printf.sprintf "IR invariant violated after %s: %s" stage msg))
 
 (* Walk every texpr in the tree (including match-tree guards/arms and handler
    arms, via map_texpr_children) and check no TEMatch survived lowering. *)
