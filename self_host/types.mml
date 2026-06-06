@@ -89,7 +89,10 @@ module Types =
 
   pub let polyvar_tag_mask = 0x3FFFFFFF
 
-  pub let polyvar_tag name = ((hash (name))) land polyvar_tag_mask
+  pub let polyvar_tag name =
+    let h = Ref.create 0 in
+    String.iter (fn c -> Ref.set h ((((Ref.get h) * 31) + (Byte.to_int c)) land polyvar_tag_mask)) name;
+    Ref.get h
 
   pub let next_id = Ref.create 0
 
