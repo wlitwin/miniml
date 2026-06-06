@@ -4,7 +4,7 @@
 .PHONY: all build clean test repl help \
         test-unit test-emit-js test-parity test-playground test-oracle test-translate test-all check \
         check-run-unit check-run-diff check-run-translate \
-        check-run-emit-js check-run-playground check-run-native check-run-oracle check-run-parity \
+        check-run-emit-js check-run-playground check-run-native check-run-oracle check-run-parity check-run-ir-parity \
         check-run-fuzz test-fuzz \
         test-diff diff fuzz shrink \
         run emit-json emit-binary run-json run-binary \
@@ -138,7 +138,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -212,6 +212,8 @@ check-run-oracle:
 	$(CHECK_BIN)/cross_test/runner.exe --oracle cross_test/tests/*.tests
 check-run-parity:
 	$(CHECK_BIN)/compiler_test/parity_runner.exe cross_test/tests/*.tests
+check-run-ir-parity:
+	$(CHECK_BIN)/compiler_test/ir_parity_runner.exe cross_test/tests/*.tests
 check-run-fuzz:
 	$(CHECK_BIN)/diff_test/fuzz_runner.exe --count 50 --seed 1 --fast
 
@@ -345,7 +347,7 @@ emit-ir-typed: build  ## Dump the lowered typed IR (S-expr) for a MiniML file: m
 ir-parity: self-host-compile-js  ## Cross-compiler IR parity: both compilers must lower a curated corpus to identical IR (roadmap #13)
 	bash compiler_test/ir_parity.sh
 
-ir-parity-full: self-host-compile-js  ## Diagnostic: cross-compiler IR parity over the FULL cross_test corpus (not yet gate-clean — see roadmap #13)
+ir-parity-full: self-host-compile-js  ## Full-corpus cross-compiler IR parity (also a `make check` stage; tolerates a documented baseline of alpha-equivalent residuals — roadmap #13)
 	dune exec compiler_test/ir_parity_runner.exe -- cross_test/tests/*.tests
 
 test-native: build  ## Run native compiler tests: make test-native [FILTER="name"]
