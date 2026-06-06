@@ -496,11 +496,13 @@ and parse_ty_record_fields p =
     end
     else begin
       first := false;
+      start_node p CstRecordField;
       let is_mut = peek_kind p = Token.MUT in
       if is_mut then ignore (advance p);
       let name = expect_ident p in
       expect p Token.COLON;
       let ty = parse_ty p in
+      finish_node p;
       fields :=
         Ast.{ rfd_mutable = is_mut; rfd_name = name; rfd_type = ty } :: !fields
     end
@@ -725,6 +727,7 @@ and parse_pattern_record_fields p =
     if peek_kind p = Token.RBRACE then () (* trailing semicolon *)
     else begin
       first := false;
+      start_node p CstRecordField;
       if peek_kind p = Token.UNDERSCORE then ignore (advance p)
         (* {x; _} wildcard — just skip *)
       else begin
@@ -737,7 +740,8 @@ and parse_pattern_record_fields p =
           else Ast.PatVar name
         in
         fields := (name, pat) :: !fields
-      end
+      end;
+      finish_node p
     end
   done;
   List.rev !fields
@@ -1404,7 +1408,9 @@ and peek_next_kind p =
   else None
 
 (* Parse a fn parameter that may be a destructuring pattern *)
-and parse_fun_param p =
+and parse_fun_param p = with_node p CstParam (fun () -> parse_fun_param_inner p)
+
+and parse_fun_param_inner p =
   match peek_kind p with
   | Token.LPAREN ->
       ignore (advance p);
@@ -1472,6 +1478,7 @@ and parse_fun p =
     let arms = ref [] in
     let continue = ref true in
     while !continue do
+      start_node p CstMatchArm;
       let pat = parse_pattern p in
       let guard =
         if peek_kind p = Token.WHEN then begin
@@ -1482,6 +1489,7 @@ and parse_fun p =
       in
       expect p Token.ARROW;
       let body = parse_expr p in
+      finish_node p;
       arms := (pat, guard, body) :: !arms;
       if peek_kind p = Token.PIPE then ignore (advance p) else continue := false
     done;
@@ -1706,14 +1714,17 @@ and parse_handle_expr p =
   while !continue_parsing do
     match peek_kind p with
     | Token.RETURN ->
+        start_node p CstHandlerArm;
         ignore (advance p);
         let name = expect_ident p in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         arms := Ast.HReturn (name, handler_body) :: !arms;
         if peek_kind p = Token.PIPE then ignore (advance p)
         else continue_parsing := false
     | Token.IDENT s ->
+        start_node p CstHandlerArm;
         ignore (advance p);
         (* Unit/wildcard elision for handle arms:
          | op ->           =>  | op _ __k ->   (no arg, no k)
@@ -1738,6 +1749,7 @@ and parse_handle_expr p =
         in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         arms :=
           Ast.HOp
             { op_name = s; arg = arg_name; k = k_name; body = handler_body }
@@ -1770,6 +1782,7 @@ and parse_try_expr p =
   while !continue_parsing do
     match peek_kind p with
     | Token.IDENT s ->
+        start_node p CstHandlerArm;
         ignore (advance p);
         (* Wildcard elision: | op -> body  =>  | op _ -> body *)
         let arg_name =
@@ -1783,6 +1796,7 @@ and parse_try_expr p =
         in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         arms :=
           Ast.HOp
             { op_name = s; arg = arg_name; k = "__k"; body = handler_body }
@@ -1804,6 +1818,7 @@ and parse_provide_expr p =
   while !continue_parsing do
     match peek_kind p with
     | Token.IDENT s ->
+        start_node p CstHandlerArm;
         ignore (advance p);
         (* Wildcard elision: | op -> body  =>  | op _ -> body *)
         let arg_name =
@@ -1817,6 +1832,7 @@ and parse_provide_expr p =
         in
         expect p Token.ARROW;
         let handler_body = parse_expr p in
+        finish_node p;
         (* Desugar: wrap body in resume __k (body) *)
         let resume_expr = Ast.EResume (Ast.EVar "__k", handler_body) in
         arms :=
@@ -2009,6 +2025,7 @@ and parse_record_fields p =
     if peek_kind p = Token.RBRACE then () (* trailing semicolon *)
     else begin
       first := false;
+      start_node p CstRecordField;
       let name = expect_ident p in
       let expr =
         if peek_kind p = Token.EQ then begin
@@ -2017,6 +2034,7 @@ and parse_record_fields p =
         end
         else Ast.EVar name
       in
+      finish_node p;
       fields := (name, expr) :: !fields
     end
   done;

@@ -169,6 +169,36 @@ let () =
       let n = count_nodes Cst.MatchArm t in
       if n <> 3 then failwith (Printf.sprintf "expected 3 MatchArm nodes, got %d" n));
 
+  (* Increment 3c: params, record fields, handler arms, fn-match arms. *)
+  test "parsed: Param node per parameter" (fun () ->
+      let t = Cst_build.cst_of_source "let f x (y : int) z = x" in
+      let n = count_nodes Cst.Param t in
+      if n <> 3 then failwith (Printf.sprintf "expected 3 Param nodes, got %d" n));
+
+  test "parsed: RecordField nodes (expr)" (fun () ->
+      let t = Cst_build.cst_of_source "let r = { a = 1; b = 2; c = 3 }" in
+      let n = count_nodes Cst.RecordField t in
+      if n <> 3 then failwith (Printf.sprintf "expected 3 RecordField nodes, got %d" n));
+
+  test "parsed: RecordField nodes (type decl)" (fun () ->
+      let t = Cst_build.cst_of_source "type point = { x : int; y : int }" in
+      let n = count_nodes Cst.RecordField t in
+      if n <> 2 then failwith (Printf.sprintf "expected 2 type RecordField nodes, got %d" n));
+
+  test "parsed: HandlerArm nodes" (fun () ->
+      let src =
+        "let r = handle f () with | get _ k -> k 1 | put v k -> k () | return x -> x"
+      in
+      let t = Cst_build.cst_of_source src in
+      let n = count_nodes Cst.HandlerArm t in
+      if n <> 3 then failwith (Printf.sprintf "expected 3 HandlerArm nodes, got %d" n);
+      if Cst.to_source t <> src then failwith "handler round-trip failed");
+
+  test "parsed: fn-match arms are MatchArm nodes" (fun () ->
+      let t = Cst_build.cst_of_source "let g = fn | 0 -> true | _ -> false" in
+      let n = count_nodes Cst.MatchArm t in
+      if n <> 2 then failwith (Printf.sprintf "expected 2 fn-match MatchArm nodes, got %d" n));
+
   (* Type and pattern atoms get their own nodes. *)
   test "parsed: type and pattern nodes present" (fun () ->
       let t =
