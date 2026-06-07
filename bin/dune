@@ -1,4 +1,10 @@
 (executable
  (public_name interpreter)
  (name main)
+ (modules main)
+ (libraries interpreter))
+
+(executable
+ (name lsp_main)
+ (modules lsp_main)
  (libraries interpreter))

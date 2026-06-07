@@ -72,3 +72,8 @@
  (name test_hover)
  (libraries interpreter test_helpers)
  (modules test_hover))
+
+(test
+ (name test_lsp)
+ (libraries interpreter test_helpers)
+ (modules test_lsp))
