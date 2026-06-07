@@ -25,10 +25,13 @@
    at declaration boundaries — at top level, in module bodies, and recursively.
    Inline (intra-declaration) comments are re-anchored to the next significant
    token and flushed own-line at that token during rendering (see [render] /
-   [Mark]): statement comments in expression bodies, and comments between
+   [Mark]): statement comments in expression bodies, comments between
    class/instance/effect members (the parser brackets members in CstDecl nodes
-   so their offsets are recoverable). A comment with no anchor (e.g. between
-   operands of `+`) is still dropped — always safe for the invariants. *)
+   so their offsets are recoverable), and — via an entry [Mark] on every
+   expression — comments before ANY sub-expression (an application argument, a
+   list element, a binop operand). The only comments still dropped sit before a
+   bare delimiter or keyword the AST does not model a position for (`in`, `)`,
+   `->`); dropping is always safe for the invariants. *)
 
 exception Unsupported of string
 
@@ -587,6 +590,15 @@ let member_mark i : doc =
   | _ -> Nil
 
 let rec doc_expr (e : Ast.expr) : doc =
+  (* An entry [Mark] at every expression catches inline comments that sit before
+     ANY token, not just statement anchors — `f a (* c *) b`, a comment before a
+     list element, etc. A [Mark] whose offset no pending comment targets is inert
+     (no width or layout effect), so comment-free output is unchanged; when one
+     fires it forces the enclosing width group to break and lands the comment on
+     its own line just before the token. *)
+  mark e ^^ doc_expr_body e
+
+and doc_expr_body (e : Ast.expr) : doc =
   match strip_loc e with
   | Ast.EInt n -> text (string_of_int n)
   | Ast.EFloat f -> text (float_lit f)
