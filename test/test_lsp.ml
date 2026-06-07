@@ -61,6 +61,27 @@ let () =
       let value = jstr (field "value" (field "contents" (field "result" r))) in
       if value <> "int" then failwith ("hover got: " ^ value));
 
+  test "initialize advertises definitionProvider" (fun () ->
+      let r = one {|{"jsonrpc":"2.0","id":3,"method":"initialize","params":{}}|} in
+      let caps = field "capabilities" (field "result" r) in
+      if not (jbool (field "definitionProvider" caps)) then failwith "no definitionProvider");
+
+  test "definition returns a Location" (fun () ->
+      ignore
+        (send
+           {|{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///d.mml","text":"let foo = 1\nlet bar = foo"}}}|});
+      (* 0-based line 1, char 10 = the `foo` use on line 2 *)
+      let r =
+        one
+          {|{"jsonrpc":"2.0","id":4,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///d.mml"},"position":{"line":1,"character":10}}}|}
+      in
+      let result = field "result" r in
+      if jstr (field "uri" result) <> "file:///d.mml" then failwith "wrong uri";
+      let start = field "start" (field "range" result) in
+      (* def `foo` is at 0-based line 0, char 4 *)
+      if J.json_int (field "line" start) <> 0 || J.json_int (field "character" start) <> 4
+      then failwith "wrong definition position");
+
   test "shutdown responds, exit is silent" (fun () ->
       let r = one {|{"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}|} in
       if field "result" r <> J.JNull then failwith "shutdown result not null";

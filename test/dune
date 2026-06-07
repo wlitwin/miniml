@@ -77,3 +77,8 @@
  (name test_lsp)
  (libraries interpreter test_helpers)
  (modules test_lsp))
+
+(test
+ (name test_definition)
+ (libraries interpreter test_helpers)
+ (modules test_definition))

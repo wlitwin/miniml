@@ -21,25 +21,70 @@ let is_decl_start = function
       true
   | _ -> false
 
+(* The name a top-level declaration binds, and the token that names it, read off
+   the declaration's leading tokens — so a nested let-binding in the body is not
+   mistaken for the declaration's own name. *)
+let decl_name (toks : Token.token list) : (string * Token.loc) option =
+  let rec drop_vis = function
+    | (t : Token.token) :: r when t.kind = Token.PUB || t.kind = Token.OPAQUE ->
+        drop_vis r
+    | ts -> ts
+  in
+  let ident_tok = function
+    | (t : Token.token) :: _ -> (
+        match t.kind with
+        | Token.IDENT n | Token.UIDENT n -> Some (n, t.loc)
+        | _ -> None)
+    | [] -> None
+  in
+  match drop_vis toks with
+  | { kind = Token.LET; _ } :: rest ->
+      let rec drop_rm = function
+        | (t : Token.token) :: r when t.kind = Token.REC || t.kind = Token.MUT ->
+            drop_rm r
+        | ts -> ts
+      in
+      ident_tok (drop_rm rest)
+  | { kind = Token.TYPE | Token.NEWTYPE; _ } :: rest ->
+      (* the name is the last identifier before `=` (after any type params) *)
+      let rec last best = function
+        | ({ kind = Token.EQ; _ } : Token.token) :: _ -> best
+        | { kind = Token.IDENT n | Token.UIDENT n; loc; _ } :: r ->
+            last (Some (n, loc)) r
+        | _ :: r -> last best r
+        | [] -> best
+      in
+      last None rest
+  | { kind = Token.MODULE | Token.EFFECT | Token.CLASS | Token.EXTERN; _ } :: rest
+    ->
+      ident_tok rest
+  | _ -> None
+
 (* Parse [tokens] with panic-mode recovery at declaration boundaries (roadmap
    #18): a failed declaration becomes a diagnostic and the parser resyncs to the
    next `;;` / declaration keyword / EOF, so a single syntax error doesn't blank
    the rest of the file. Returns the partial program (the declarations that DID
-   parse — what hover/go-to-def will run on) and every parse diagnostic.
+   parse — what hover/go-to-def will run on), every parse diagnostic, and the
+   name token of each top-level declaration (for go-to-def — collected here so it
+   tolerates syntax errors, which the CST parser does not).
 
    Resync always makes progress (it advances at least one token), so it cannot
    loop. Reuses the real [parse_decl]; the recovery is OCaml-only, so the
    self-hosted parser is untouched. *)
 let parse_recover (src : string) (tokens : Token.token list) :
-    Ast.program * Diagnostic.t list =
+    Ast.program * Diagnostic.t list * (string * Token.loc) list =
   Parser.fresh_param_counter := 0;
   let p = Parser.create tokens in
-  let decls = ref [] and diags = ref [] in
+  let decls = ref [] and diags = ref [] and defs = ref [] in
   while Parser.peek_kind p <> Token.EOF do
     p.Parser.suppress_do <- false;
     let before = p.Parser.pos in
     (match Parser.parse_decl p with
-    | ds -> decls := List.rev_append ds !decls
+    | ds ->
+        (match decl_name (Array.to_list (Array.sub p.Parser.tokens before (p.Parser.pos - before))) with
+        | Some nl -> defs := nl :: !defs
+        | None -> ());
+        decls := List.rev_append ds !decls
     | exception Parser.Parse_error (msg, loc) ->
         diags :=
           Diagnostic.make ~code:"parse" ~span:(Diagnostic.span_at src loc) msg :: !diags;
@@ -53,7 +98,7 @@ let parse_recover (src : string) (tokens : Token.token list) :
         done);
     if Parser.peek_kind p = Token.DOUBLE_SEMICOLON then ignore (Parser.advance p)
   done;
-  (List.rev !decls, List.rev !diags)
+  (List.rev !decls, List.rev !diags, List.rev !defs)
 
 (* Typecheck [src] against [state]'s stdlib context and return its diagnostics.
    Lex errors stop early (one diagnostic). Otherwise parsing recovers at
@@ -71,7 +116,7 @@ let diagnostics (state : state) (src : string) : Diagnostic.t list =
   | exception Lexer.Lex_error (msg, loc) ->
       [ Diagnostic.make ~code:"lex" ~span:(Diagnostic.span_at src loc) msg ]
   | tokens ->
-      let program, parse_diags = parse_recover src tokens in
+      let program, parse_diags, _ = parse_recover src tokens in
       let type_diags =
         match
           let ctx', typed =
@@ -170,10 +215,75 @@ let hover (state : state) (src : string) ~line ~col : string option =
   | None -> None
   | Some tok ->
       let target = tok.loc.offset in
-      let program, _ = parse_recover src (Lexer.tokenize src) in
+      let program, _, _ = parse_recover src (Lexer.tokenize src) in
       let best = ref None in
       List.iter
         (visit_tdecl (fun te ->
              if te.Typechecker.loc.offset = target then best := Some te.Typechecker.ty))
         (typed_recover state program);
       Option.map Types.pp_ty !best
+
+(* --- Go to definition --------------------------------------------------- *)
+
+(* Walk a typed declaration tracking the local bindings in scope; when the typed
+   node at [target] is a variable, record the innermost binder of its name (its
+   defining construct's location) into [found]. Patterns (match/fun multi-arg)
+   bind via the desugared TEFun/TELet chain, so the common cases are covered. *)
+let rec resolve_local (target : int) (found : Token.loc option ref)
+    (td : Typechecker.tdecl) : unit =
+  let open Typechecker in
+  let rec walk scope (te : texpr) : unit =
+    (match te.expr with
+    | TEVar name when te.loc.offset = target && !found = None ->
+        (match List.assoc_opt name scope with Some loc -> found := Some loc | None -> ())
+    | _ -> ());
+    match te.expr with
+    | TELet (name, _, v, body) | TELetMut (name, v, body) ->
+        walk scope v;
+        walk ((name, te.loc) :: scope) body
+    | TELetRec (name, _, v, body) ->
+        let scope = (name, te.loc) :: scope in
+        walk scope v;
+        walk scope body
+    | TELetRecAnd (binds, body) ->
+        let scope = List.map (fun (n, _) -> (n, te.loc)) binds @ scope in
+        List.iter (fun (_, e) -> walk scope e) binds;
+        walk scope body
+    | TEFun (param, body, _) -> walk ((param, te.loc) :: scope) body
+    | _ -> iter_texpr_children (walk scope) te
+  in
+  match td with
+  | TDLet (_, te) | TDLetMut (_, te) | TDLetRec (_, te) | TDExpr te -> walk [] te
+  | TDLetRecAnd binds -> List.iter (fun (_, te) -> walk [] te) binds
+  | TDModule (_, decls, _) -> List.iter (fun d -> resolve_local target found d) decls
+  | _ -> ()
+
+(* The definition location of the identifier at 1-based [line]/[col], as a
+   1-based (line, col), or [None]. A locally-bound name resolves to its binder;
+   otherwise a top-level declaration of that name. *)
+let definition (state : state) (src : string) ~line ~col : (int * int) option =
+  let cursor = offset_of_line_col src ~line ~col in
+  match token_at src cursor with
+  | None -> None
+  | Some tok -> (
+      let name =
+        match tok.kind with Token.IDENT n | Token.UIDENT n -> Some n | _ -> None
+      in
+      match name with
+      | None -> None
+      | Some name ->
+          let program, _, defs = parse_recover src (Lexer.tokenize src) in
+          let found = ref None in
+          List.iter (resolve_local tok.loc.offset found) (typed_recover state program);
+          let loc =
+            match !found with
+            | Some loc -> Some loc
+            | None -> List.assoc_opt name defs
+          in
+          (* A binder with no real location (e.g. a desugared function parameter,
+             whose position the typed tree doesn't carry) yields line 0 — don't
+             jump to the start of the file; report no definition instead. *)
+          (match loc with
+          | Some (l : Token.loc) when l.line > 0 -> Some (l.line, l.col)
+          | _ -> None))
+

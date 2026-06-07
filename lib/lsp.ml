@@ -110,6 +110,7 @@ let capabilities () : json =
           [
             ("textDocumentSync", J.JInt 1) (* full document sync *);
             ("hoverProvider", J.JBool true);
+            ("definitionProvider", J.JBool true);
           ] );
       ("serverInfo", obj [ ("name", J.JString "miniml-lsp") ]);
     ]
@@ -163,6 +164,21 @@ let handle (srv : t) (msg : json) : json list =
                     ( "contents",
                       obj [ ("kind", J.JString "plaintext"); ("value", J.JString ty) ] );
                   ]
+            | None -> J.JNull)
+        | None -> J.JNull
+      in
+      [ response result ]
+  | "textDocument/definition" ->
+      let uri = doc_uri () in
+      let pos = field "position" params in
+      let line = int (field "line" pos) + 1 and col = int (field "character" pos) + 1 in
+      let result =
+        match Hashtbl.find_opt srv.docs uri with
+        | Some text -> (
+            match Analysis.definition srv.analysis text ~line ~col with
+            | Some (l, c) ->
+                let p = obj [ ("line", J.JInt (l - 1)); ("character", J.JInt (c - 1)) ] in
+                obj [ ("uri", J.JString uri); ("range", obj [ ("start", p); ("end", p) ]) ]
             | None -> J.JNull)
         | None -> J.JNull
       in
