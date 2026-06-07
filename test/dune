@@ -67,3 +67,8 @@
  (name test_diagnostics)
  (libraries interpreter test_helpers)
  (modules test_diagnostics))
+
+(test
+ (name test_hover)
+ (libraries interpreter test_helpers)
+ (modules test_hover))

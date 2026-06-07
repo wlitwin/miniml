@@ -329,6 +329,18 @@ let () =
           (Interpreter.Analysis.diagnostics state src)
       done;
       if !had_error then exit 1)
+  | () when argc = 5 && Sys.argv.(1) = "--hover" -> (
+      (* `--hover <file> <line> <col>` (1-based): print the inferred type at that
+         position, or nothing. A thin shell over Interpreter.Analysis.hover. *)
+      let path = Sys.argv.(2) in
+      let line = int_of_string Sys.argv.(3) and col = int_of_string Sys.argv.(4) in
+      let ic = open_in path in
+      let src = In_channel.input_all ic in
+      close_in ic;
+      let state = Interpreter.Analysis.make_state () in
+      match Interpreter.Analysis.hover state src ~line ~col with
+      | Some ty -> print_endline ty
+      | None -> ())
   | () when argc >= 3 && Sys.argv.(1) = "--analyze" -> (
       try
         let state =
