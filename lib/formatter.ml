@@ -461,6 +461,18 @@ let operand_kind (e : Ast.expr) : operand_kind =
       Tight
   | _ -> Loose
 
+(* Flatten the left spine of a same-precedence binop chain into a head operand
+   and a list of (operator, operand) steps, so the whole chain wraps as one
+   group (operators starting each continuation line) instead of nesting. Only
+   same-precedence (associative) steps are pulled in; a differently-bound operand
+   stays a single sub-expression (its own group / parenthesized as needed). *)
+let rec flatten_binop prec (e : Ast.expr) : Ast.expr * (Ast.binop * Ast.expr) list =
+  match strip_loc e with
+  | Ast.EBinop (op, l, r) when binop_prec op = prec ->
+      let first, rest = flatten_binop prec l in
+      (first, rest @ [ (op, r) ])
+  | _ -> (e, [])
+
 (* A "greedy" expression's printed form ends with an open sub-expression that
    would swallow following tokens (e.g. a match arm body, a let-in body, a fn
    body absorbs a trailing `;`). Safe in tail positions; must be parenthesized
@@ -550,11 +562,21 @@ let rec doc_expr (e : Ast.expr) : doc =
       doc_oper ~parent_prec:cons_prec ~parent_right:true ~left:true a
       ^^ text " :: "
       ^^ doc_oper ~parent_prec:cons_prec ~parent_right:true ~left:false b
-  | Ast.EBinop (op, l, r) ->
+  | Ast.EBinop (op, _, _) ->
+      (* Flatten the same-precedence chain and lay it out as one group: flat on
+         one line, or each subsequent operand on its own line led by its
+         operator (`a\n+ b\n+ c`). *)
       let p = binop_prec op in
-      doc_oper ~parent_prec:p ~parent_right:false ~left:true l
-      ^^ text (" " ^ binop_str op ^ " ")
-      ^^ doc_oper ~parent_prec:p ~parent_right:false ~left:false r
+      let first, steps = flatten_binop p (strip_loc e) in
+      group
+        (doc_oper ~parent_prec:p ~parent_right:false ~left:true first
+        ^^ concat
+             (List.map
+                (fun (o, operand) ->
+                  GLine
+                  ^^ text (binop_str o ^ " ")
+                  ^^ doc_oper ~parent_prec:p ~parent_right:false ~left:false operand)
+                steps))
   | Ast.EUnop (op, e) -> text (unop_str op) ^^ doc_atom e
   | Ast.EApp _ as app -> doc_app app
   | Ast.EAnnot (e, t) -> parens (doc_expr e ^^ text " : " ^^ doc_ty t)
