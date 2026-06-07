@@ -62,3 +62,8 @@
  (name test_formatter)
  (libraries interpreter test_helpers)
  (modules test_formatter))
+
+(test
+ (name test_diagnostics)
+ (libraries interpreter test_helpers)
+ (modules test_diagnostics))
