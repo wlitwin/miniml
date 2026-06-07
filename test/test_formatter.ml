@@ -118,6 +118,7 @@ let () =
       ("greedy else in sequence lhs", "let f c a b d =\n  if c do\n    a\n  else do\n    let y = b in y\n  end;\n  d");
       ("long match arm body wraps", "let f x = match x with | A -> 1 | B -> some_constructor aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd | C -> 2");
       ("block-bodied match arm stays inline", "let f x = match x with | A -> let y = g x in y | B -> 2");
+      ("nested multi-line block comment reindents", "module M =\n  (* line one\n     line two *)\n  pub let x = 1\nend");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
