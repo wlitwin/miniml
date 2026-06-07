@@ -100,6 +100,11 @@ let () =
       ("inline comment in if branch", "let f x =\n  if x do\n    -- yes\n    1\n  else\n    -- no\n    2");
       ("trailing inline comment hoists", "let f x =\n  let a = x in -- note\n  a");
       ("multi-line inline comment", "let f x =\n  -- one\n  -- two\n  x");
+      (* comment increment 4: class/instance/effect member comments *)
+      ("class method comment", "class Hash 'a =\n  -- hashing\n  hash : 'a -> int\nend");
+      ("instance method comment", "instance Show int =\n  -- render it\n  let show n = \"n\"\nend");
+      ("effect op comment", "effect State 'a =\n  -- read\n  get : unit -> 'a\n  -- write\n  put : 'a -> unit\nend");
+      ("multi-line instance method comment", "instance Hash int =\n  -- line one\n  -- line two\n  let hash n = n\nend");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)

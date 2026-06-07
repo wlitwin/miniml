@@ -2624,10 +2624,17 @@ let parse_class_decl p =
   expect p Token.EQ;
   let methods = ref [] in
   while peek_kind p <> Token.END do
-    let s = parse_op_or_ident p in
-    expect p Token.COLON;
-    let ty = parse_ty p in
-    methods := (s, ty) :: !methods;
+    (* Bracket each method signature in a CstDecl node so the lossless CST
+       records method boundaries (for formatter comment weaving). No-op unless
+       [record_cst]. *)
+    let m =
+      with_node p CstDecl (fun () ->
+          let s = parse_op_or_ident p in
+          expect p Token.COLON;
+          let ty = parse_ty p in
+          (s, ty))
+    in
+    methods := m :: !methods;
     if peek_kind p = Token.SEMICOLON then ignore (advance p)
   done;
   expect p Token.END;
@@ -2648,36 +2655,41 @@ let parse_instance_decl p =
   expect p Token.EQ;
   let methods = ref [] in
   while peek_kind p <> Token.END do
-    expect p Token.LET;
-    let method_name = parse_op_or_ident p in
-    let params = ref [] in
-    while
-      peek_kind p <> Token.EQ
-      && peek_kind p <> Token.COLON
-      && peek_kind p <> Token.WHERE
-    do
-      params := parse_param p :: !params
-    done;
-    let ret_annot =
-      if peek_kind p = Token.COLON then begin
-        ignore (advance p);
-        Some (parse_ty p)
-      end
-      else None
+    (* Bracket each method in a CstDecl node (see parse_class_decl). *)
+    let m =
+      with_node p CstDecl (fun () ->
+          expect p Token.LET;
+          let method_name = parse_op_or_ident p in
+          let params = ref [] in
+          while
+            peek_kind p <> Token.EQ
+            && peek_kind p <> Token.COLON
+            && peek_kind p <> Token.WHERE
+          do
+            params := parse_param p :: !params
+          done;
+          let ret_annot =
+            if peek_kind p = Token.COLON then begin
+              ignore (advance p);
+              Some (parse_ty p)
+            end
+            else None
+          in
+          let method_constraints = parse_constraints p in
+          if method_constraints <> [] then
+            error p "constraints on individual instance methods are not supported";
+          expect p Token.EQ;
+          let body = parse_expr p in
+          let fun_params = List.rev !params in
+          let plain_params, body =
+            resolve_fun_params ~is_generated:true fun_params body
+          in
+          let body =
+            match ret_annot with Some ty -> Ast.EAnnot (body, ty) | None -> body
+          in
+          (method_name, plain_params, body))
     in
-    let method_constraints = parse_constraints p in
-    if method_constraints <> [] then
-      error p "constraints on individual instance methods are not supported";
-    expect p Token.EQ;
-    let body = parse_expr p in
-    let fun_params = List.rev !params in
-    let plain_params, body =
-      resolve_fun_params ~is_generated:true fun_params body
-    in
-    let body =
-      match ret_annot with Some ty -> Ast.EAnnot (body, ty) | None -> body
-    in
-    methods := (method_name, plain_params, body) :: !methods
+    methods := m :: !methods
   done;
   expect p Token.END;
   if !methods = [] then error p "instance must implement at least one method";
@@ -2703,10 +2715,15 @@ let parse_effect_decl p =
   expect p Token.EQ;
   let ops = ref [] in
   while peek_kind p <> Token.END do
-    let s = expect_ident p in
-    expect p Token.COLON;
-    let ty = parse_ty p in
-    ops := (s, ty) :: !ops;
+    (* Bracket each operation in a CstDecl node (see parse_class_decl). *)
+    let o =
+      with_node p CstDecl (fun () ->
+          let s = expect_ident p in
+          expect p Token.COLON;
+          let ty = parse_ty p in
+          (s, ty))
+    in
+    ops := o :: !ops;
     if peek_kind p = Token.SEMICOLON then ignore (advance p)
   done;
   expect p Token.END;
