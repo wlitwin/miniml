@@ -105,6 +105,12 @@ let () =
       ("instance method comment", "instance Show int =\n  -- render it\n  let show n = \"n\"\nend");
       ("effect op comment", "effect State 'a =\n  -- read\n  get : unit -> 'a\n  -- write\n  put : 'a -> unit\nend");
       ("multi-line instance method comment", "instance Hash int =\n  -- line one\n  -- line two\n  let hash n = n\nend");
+      (* width-based wrapping: round-trips whether flat or broken *)
+      ("short list flat", "let a = [1; 2; 3]");
+      ("long list wraps", "let a = [100000; 200000; 300000; 400000; 500000; 600000; 700000; 800000; 900000]");
+      ("long record wraps", "let r = { alpha = 1; beta = 2; gamma = 3; delta = 4; epsilon = 5; zeta = 6; eta = 7 }");
+      ("long application wraps", "let v = some_function aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff");
+      ("long tuple wraps", "let t = (aaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd, eeeeeeeeee, ffffffffff, gggggg)");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
@@ -131,5 +137,23 @@ let () =
     (formats_to "let a = x - (y - z)" "let a =\n  x - (y - z)\n");
   test "canonical: cons is right-assoc, no parens"
     (formats_to "let a = 1 :: 2 :: 3 :: []" "let a =\n  1 :: 2 :: 3 :: []\n");
+  (* width-based wrapping: a short collection stays on one line *)
+  test "canonical: short list stays flat"
+    (formats_to "let a = [ 1 ; 2 ; 3 ]" "let a =\n  [1; 2; 3]\n");
+  test "canonical: width-overflowing list breaks, fits stays flat" (fun () ->
+      (* short list: stays on the body line *)
+      let short = F.format_source "let a = [1; 2; 3; 4; 5]" in
+      if short <> "let a =\n  [1; 2; 3; 4; 5]\n" then failwith ("short: " ^ short);
+      (* long list: breaks one element per line, every line within the width *)
+      let long =
+        F.format_source
+          "let a = [111111; 222222; 333333; 444444; 555555; 666666; 777777; 888888; 999999; \
+           101010; 202020; 303030; 404040; 505050; 606060]"
+      in
+      if not (List.length (String.split_on_char '\n' long) > 3) then
+        failwith ("long did not wrap: " ^ long);
+      List.iter
+        (fun l -> if String.length l > 80 then failwith ("over width: " ^ l))
+        (String.split_on_char '\n' long));
 
   print_summary ()
