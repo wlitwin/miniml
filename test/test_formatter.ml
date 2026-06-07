@@ -111,6 +111,8 @@ let () =
       ("long record wraps", "let r = { alpha = 1; beta = 2; gamma = 3; delta = 4; epsilon = 5; zeta = 6; eta = 7 }");
       ("long application wraps", "let v = some_function aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee ffffffffff");
       ("long tuple wraps", "let t = (aaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd, eeeeeeeeee, ffffffffff, gggggg)");
+      ("long binop chain wraps", "let s = aaaaaaaaaa + bbbbbbbbbb + cccccccccc + dddddddddd + eeeeeeeeee + ffffffffff");
+      ("long boolean chain wraps", "let b = aaaaaaaaaa && bbbbbbbbbb && cccccccccc && dddddddddd && eeeeeeeeee && ffffff");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
@@ -137,6 +139,21 @@ let () =
     (formats_to "let a = x - (y - z)" "let a =\n  x - (y - z)\n");
   test "canonical: cons is right-assoc, no parens"
     (formats_to "let a = 1 :: 2 :: 3 :: []" "let a =\n  1 :: 2 :: 3 :: []\n");
+  test "canonical: short binop chain stays flat"
+    (formats_to "let a = b + c * d - e" "let a =\n  b + c * d - e\n");
+  test "canonical: long binop chain breaks with leading operators" (fun () ->
+      let out =
+        F.format_source
+          "let a = aaaaaaaaaa + bbbbbbbbbb + cccccccccc + dddddddddd + eeeeeeeeee + ffffffffff \
+           + gggggggggg + hhhhhhhhhh"
+      in
+      (* operators lead the continuation lines *)
+      let lines = String.split_on_char '\n' out in
+      let cont = List.filter (fun l -> String.length l > 2 && l.[2] = '+') lines in
+      if List.length cont < 4 then failwith ("binop chain did not wrap: " ^ out);
+      List.iter
+        (fun l -> if String.length l > 80 then failwith ("over width: " ^ l))
+        lines);
   (* width-based wrapping: a short collection stays on one line *)
   test "canonical: short list stays flat"
     (formats_to "let a = [ 1 ; 2 ; 3 ]" "let a =\n  [1; 2; 3]\n");
