@@ -9,7 +9,9 @@
        sequence/let-scope associativity). Guaranteed largely by being
        PAREN-LIBERAL — wrapping any non-atomic sub-expression in parentheses,
        which never changes the parsed AST — plus context-specific delimiting
-       where a `;` or `|` would otherwise be absorbed.
+       where a `;` or `|` would otherwise be absorbed. Binop/cons operands are
+       the one refinement: redundant parens are dropped by a precedence model
+       (binop_prec) that mirrors the parser's binding powers exactly.
      - IDEMPOTENCE: format (format src) = format src.
 
    Increment 1: expression + core-declaration core. Increment 2: module / class /
@@ -338,6 +340,40 @@ let is_atom (e : Ast.expr) : bool =
       true
   | _ -> false
 
+(* Operator precedence for parenthesizing binop operands — higher binds tighter.
+   Mirrors the parser's binding powers (parser.ml: bp_of_binop): |> < || < && <
+   comparisons < (`::` = 6) < +/-/^/lor/lxor < *///mod/land/lsl/lsr. All
+   left-associative except `::` (right). Used only to DROP parentheses the
+   paren-liberal printer would otherwise add; getting it wrong can only fail the
+   semantic-preservation gate, never silently change meaning. *)
+let binop_prec = function
+  | Ast.Pipe -> 1
+  | Ast.Or -> 2
+  | Ast.And -> 3
+  | Ast.Eq | Ast.Neq | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge -> 4
+  | Ast.Add | Ast.Sub | Ast.Concat | Ast.Lor | Ast.Lxor -> 7
+  | Ast.Mul | Ast.Div | Ast.Mod | Ast.Land | Ast.Lsl | Ast.Lsr -> 8
+
+let cons_prec = 6
+
+(* How an operand parenthesizes against an enclosing operator: a self-delimiting
+   or tighter-than-any-operator expression never needs parens; an operator child
+   is compared by precedence/associativity; anything else (let / if / match / fn
+   / seq / unop / annot / ...) stays parenthesized (paren-liberal, always safe). *)
+type operand_kind = Tight | OpK of int | Loose
+
+let operand_kind (e : Ast.expr) : operand_kind =
+  match strip_loc e with
+  | Ast.EBinop (op, _, _) -> OpK (binop_prec op)
+  | Ast.ECons _ -> OpK cons_prec
+  | Ast.EInt _ | Ast.EFloat _ | Ast.EBool _ | Ast.EString _ | Ast.EByte _
+  | Ast.ERune _ | Ast.EUnit | Ast.EVar _ | Ast.ENil | Ast.ETuple _ | Ast.EList _
+  | Ast.EArray _ | Ast.ERecord _ | Ast.ERecordUpdate _ | Ast.EMap _ | Ast.ESet _
+  | Ast.EConstruct (_, None) | Ast.EPolyVariant (_, None) | Ast.EField _
+  | Ast.EIndex _ | Ast.EApp _ ->
+      Tight
+  | _ -> Loose
+
 (* A "greedy" expression's printed form ends with an open sub-expression that
    would swallow following tokens (e.g. a match arm body, a let-in body, a fn
    body absorbs a trailing `;`). Safe in tail positions; must be parenthesized
@@ -423,9 +459,15 @@ let rec doc_expr (e : Ast.expr) : doc =
   | Ast.EConstruct (name, Some arg) -> text name ^^ text " " ^^ doc_arg arg
   | Ast.EPolyVariant (tag, None) -> text ("`" ^ tag)
   | Ast.EPolyVariant (tag, Some arg) -> text ("`" ^ tag ^ " ") ^^ doc_arg arg
-  | Ast.ECons (a, b) -> doc_atom a ^^ text " :: " ^^ doc_atom b
+  | Ast.ECons (a, b) ->
+      doc_oper ~parent_prec:cons_prec ~parent_right:true ~left:true a
+      ^^ text " :: "
+      ^^ doc_oper ~parent_prec:cons_prec ~parent_right:true ~left:false b
   | Ast.EBinop (op, l, r) ->
-      doc_atom l ^^ text (" " ^ binop_str op ^ " ") ^^ doc_atom r
+      let p = binop_prec op in
+      doc_oper ~parent_prec:p ~parent_right:false ~left:true l
+      ^^ text (" " ^ binop_str op ^ " ")
+      ^^ doc_oper ~parent_prec:p ~parent_right:false ~left:false r
   | Ast.EUnop (op, e) -> text (unop_str op) ^^ doc_atom e
   | Ast.EApp _ as app -> doc_app app
   | Ast.EAnnot (e, t) -> parens (doc_expr e ^^ text " : " ^^ doc_ty t)
@@ -517,6 +559,25 @@ and doc_map pairs =
    else is parenthesized (paren-liberal => always semantics-preserving). *)
 and doc_atom (e : Ast.expr) : doc =
   if is_atom e then doc_expr e else parens (doc_expr e)
+
+(* A binop / cons operand: drop the parentheses [doc_atom] would add when
+   precedence and associativity make them redundant. [parent_prec] is the
+   enclosing operator's precedence, [parent_right] its right-associativity, and
+   [left] which side this operand is on. An equal-precedence child needs parens
+   only on the associativity's "wrong" side (right child of a left-assoc op, or
+   left child of a right-assoc op); a looser child always, a tighter child
+   never. Non-operator/keyword operands stay parenthesized. *)
+and doc_oper ~parent_prec ~parent_right ~left (e : Ast.expr) : doc =
+  let needs =
+    match operand_kind e with
+    | Tight -> false
+    | Loose -> true
+    | OpK cp ->
+        if cp <> parent_prec then cp < parent_prec
+        else if left then parent_right
+        else not parent_right
+  in
+  if needs then parens (doc_expr e) else doc_expr e
 
 (* An argument in application / constructor position: nullary constructors and
    polyvariants would grab the following argument as their own ([f None x] would

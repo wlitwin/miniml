@@ -120,5 +120,16 @@ let () =
        "let a =\n  1;; -- note\n\nlet b =\n  2\n");
   test "canonical: line comments are right-trimmed"
     (formats_to "-- trailing spaces   \nlet a = 1" "-- trailing spaces\nlet a =\n  1\n");
+  (* paren pruning: precedence/associativity drop redundant parens *)
+  test "canonical: precedence drops parens"
+    (formats_to "let a = 1 + 2 * 3 - 4" "let a =\n  1 + 2 * 3 - 4\n");
+  test "canonical: lower-precedence operand keeps parens"
+    (formats_to "let a = (1 + 2) * 3" "let a =\n  (1 + 2) * 3\n");
+  test "canonical: left-assoc same level drops parens"
+    (formats_to "let a = x - y - z" "let a =\n  x - y - z\n");
+  test "canonical: right operand of left-assoc keeps parens"
+    (formats_to "let a = x - (y - z)" "let a =\n  x - (y - z)\n");
+  test "canonical: cons is right-assoc, no parens"
+    (formats_to "let a = 1 :: 2 :: 3 :: []" "let a =\n  1 :: 2 :: 3 :: []\n");
 
   print_summary ()
