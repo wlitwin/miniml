@@ -2598,7 +2598,7 @@ module Parser =
     expect p Token.EQ;
     let items = Ref.create [] in
     for (peek_kind p) <> Token.END do
-      let module_items = parse_module_body_item p in
+      let module_items = with_node p CstDecl (fn () -> parse_module_body_item p) in
       Ref.set items (List.rev_append module_items (Ref.get items));
       if (peek_kind p) = Token.DOUBLE_SEMICOLON do
         (advance p; ())
