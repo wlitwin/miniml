@@ -56,14 +56,27 @@ let render_pending : comment list ref = ref []
    plain path — no member marks. *)
 let member_marks : int array option ref = ref None
 
-(* --- A minimal Wadler-style document combinator (no width-based wrapping yet;
-   breaks exactly where [line] says). ------------------------------------- *)
+(* --- A Wadler/Prettier-style document combinator with width-based wrapping.
+
+   [Line] is a HARD break (always a newline) — the structural separators the
+   printer has always emitted, plus the comment [Mark] anchors. [GLine]/[GSoft]
+   are SOFT breaks that only exist inside a [Group]: the group is laid out flat
+   (GLine -> space, GSoft -> nothing) when its flattened form fits the remaining
+   width, otherwise broken (both -> newline + indent). A group that contains a
+   hard break or a comment-flushing [Mark] is forced to break.
+
+   Crucially the flat-or-break choice depends ONLY on the document (derived from
+   the AST), never on the input's whitespace — so width wrapping stays
+   idempotent and semantics-preserving. *)
 type doc =
   | Nil
   | Text of string
-  | Line (* newline + current indentation *)
+  | Line (* hard break: newline + current indentation *)
+  | GLine (* soft break: space when flat, newline+indent when broken *)
+  | GSoft (* soft break: nothing when flat, newline+indent when broken *)
   | Cat of doc * doc
   | Nest of int * doc (* indent sub-document by N more spaces *)
+  | Group of doc (* lay out flat if it fits, else break its soft lines *)
   | Mark of int
     (* a re-anchor point at source offset N: at render time, flush every pending
        inline comment whose [cnext] is N, each on its own line at the current
@@ -80,6 +93,8 @@ let rec sepby sep = function
   | [ d ] -> d
   | d :: rest -> d ^^ sep ^^ sepby sep rest
 
+let max_width = 80
+
 let render (d : doc) : string =
   let buf = Buffer.create 1024 in
   let newline indent =
@@ -88,34 +103,106 @@ let render (d : doc) : string =
       Buffer.add_char buf ' '
     done
   in
-  let rec go indent = function
-    | Nil -> ()
-    | Text s -> Buffer.add_string buf s
-    | Line -> newline indent
-    | Cat (a, b) ->
-        go indent a;
-        go indent b
-    | Nest (n, a) -> go (indent + n) a
-    | Mark off ->
-        (* Emit, in source order, every pending inline comment anchored here;
-           each sits on its own line at the current indentation. *)
-        render_pending :=
-          List.filter
-            (fun c ->
-              if c.cnext = off then begin
-                Buffer.add_string buf c.ctext;
-                newline indent;
-                false
-              end
-              else true)
-            !render_pending
+  let will_flush off = List.exists (fun c -> c.cnext = off) !render_pending in
+  (* A group must break if it contains a hard [Line] or a comment-flushing
+     [Mark] anywhere (those emit a newline regardless of mode). *)
+  let rec forces_break = function
+    | Line -> true
+    | Mark off -> will_flush off
+    | Cat (a, b) -> forces_break a || forces_break b
+    | Nest (_, a) | Group a -> forces_break a
+    | _ -> false
   in
-  go 0 d;
+  (* Does the flat layout of [items] fit before the next newline within [rem]
+     columns? [items] is a stack of (indent, flat?, doc). *)
+  let rec fits rem items =
+    if rem < 0 then false
+    else
+      match items with
+      | [] -> true
+      | (i, flat, d) :: rest -> (
+          match d with
+          | Nil -> fits rem rest
+          | Text s -> fits (rem - String.length s) rest
+          | Cat (a, b) -> fits rem ((i, flat, a) :: (i, flat, b) :: rest)
+          | Nest (n, a) -> fits rem ((i + n, flat, a) :: rest)
+          | Group a -> fits rem ((i, true, a) :: rest)
+          | Line -> true
+          | GLine -> if flat then fits (rem - 1) rest else true
+          | GSoft -> if flat then fits rem rest else true
+          | Mark off -> if will_flush off then true else fits rem rest)
+  in
+  let rec go col stack =
+    match stack with
+    | [] -> ()
+    | (i, flat, d) :: rest -> (
+        match d with
+        | Nil -> go col rest
+        | Text s ->
+            Buffer.add_string buf s;
+            go (col + String.length s) rest
+        | Cat (a, b) -> go col ((i, flat, a) :: (i, flat, b) :: rest)
+        | Nest (n, a) -> go col ((i + n, flat, a) :: rest)
+        | Line ->
+            newline i;
+            go i rest
+        | GLine ->
+            if flat then begin
+              Buffer.add_char buf ' ';
+              go (col + 1) rest
+            end
+            else begin
+              newline i;
+              go i rest
+            end
+        | GSoft ->
+            if flat then go col rest
+            else begin
+              newline i;
+              go i rest
+            end
+        | Group a ->
+            let flat' =
+              (not (forces_break a)) && fits (max_width - col) ((i, true, a) :: rest)
+            in
+            go col ((i, flat', a) :: rest)
+        | Mark off ->
+            (* Flush, in source order, every pending inline comment anchored
+               here; each on its own line at the current indentation. *)
+            let flushed = ref false in
+            render_pending :=
+              List.filter
+                (fun c ->
+                  if c.cnext = off then begin
+                    Buffer.add_string buf c.ctext;
+                    newline i;
+                    flushed := true;
+                    false
+                  end
+                  else true)
+                !render_pending;
+            go (if !flushed then i else col) rest)
+  in
+  go 0 [ (0, false, d) ];
   Buffer.contents buf
 
 let indent_width = 2
 let nest d = Nest (indent_width, d)
 let parens d = text "(" ^^ d ^^ text ")"
+let group d = Group d
+
+(* A bracketed, width-wrappable sequence: flat on one line when it fits, else
+   one element per line, the delimiters on their own lines. [pad] puts a space
+   inside the delimiters when flat (records); otherwise they hug (lists, etc.).*)
+let wrap ~op ~cl ~pad ~sep (items : doc list) : doc =
+  match items with
+  | [] -> text op ^^ text cl
+  | _ ->
+      let edge = if pad then GLine else GSoft in
+      group
+        (text op
+        ^^ nest (edge ^^ sepby (text sep ^^ GLine) items)
+        ^^ edge ^^ text cl)
 
 (* --- Names / literals --------------------------------------------------- *)
 
@@ -444,9 +531,9 @@ let rec doc_expr (e : Ast.expr) : doc =
   | Ast.EUnit -> text "()"
   | Ast.EVar s -> doc_var s
   | Ast.ENil -> text "[]"
-  | Ast.ETuple es -> parens (sepby (text ", ") (List.map doc_expr es))
-  | Ast.EList es -> text "[" ^^ sepby (text "; ") (List.map doc_expr es) ^^ text "]"
-  | Ast.EArray es -> text "#[" ^^ sepby (text "; ") (List.map doc_expr es) ^^ text "]"
+  | Ast.ETuple es -> wrap ~op:"(" ~cl:")" ~pad:false ~sep:"," (List.map doc_expr es)
+  | Ast.EList es -> wrap ~op:"[" ~cl:"]" ~pad:false ~sep:";" (List.map doc_expr es)
+  | Ast.EArray es -> wrap ~op:"#[" ~cl:"]" ~pad:false ~sep:";" (List.map doc_expr es)
   | Ast.ERecord fields -> doc_record_fields fields
   | Ast.ERecordUpdate (base, fields) ->
       text "{ " ^^ doc_atom base ^^ text " with "
@@ -520,7 +607,7 @@ let rec doc_expr (e : Ast.expr) : doc =
       ^^ nest (line ^^ mark body ^^ doc_expr body) ^^ line ^^ text "end"
   | Ast.EHandle (body, arms) -> doc_handle body arms
   | Ast.EMap pairs -> doc_map pairs
-  | Ast.ESet es -> text "#{" ^^ sepby (text "; ") (List.map doc_expr es) ^^ text "}"
+  | Ast.ESet es -> wrap ~op:"#{" ~cl:"}" ~pad:false ~sep:";" (List.map doc_expr es)
   | Ast.ELetRecAnd (bindings, body) -> (
       let one kw (name, tps, e) =
         text kw ^^ tp_clause tps ^^ text " " ^^ doc_var name ^^ text " = " ^^ doc_expr e
@@ -534,26 +621,20 @@ let rec doc_expr (e : Ast.expr) : doc =
   (* Type-annotated collection literals: `#Name[..]` (list/array/set) and
      `#Name{k: v; ..}` (map). *)
   | Ast.ECollTyped (name, elems) ->
-      text ("#" ^ name ^ "[") ^^ sepby (text "; ") (List.map doc_expr elems) ^^ text "]"
+      wrap ~op:("#" ^ name ^ "[") ~cl:"]" ~pad:false ~sep:";" (List.map doc_expr elems)
   | Ast.EMapTyped (_, []) -> raise (Unsupported "empty typed map literal")
   | Ast.EMapTyped (name, pairs) ->
-      text ("#" ^ name ^ "{")
-      ^^ sepby (text "; ")
-           (List.map (fun (k, v) -> doc_expr k ^^ text ": " ^^ doc_expr v) pairs)
-      ^^ text "}"
+      wrap ~op:("#" ^ name ^ "{") ~cl:"}" ~pad:false ~sep:";"
+        (List.map (fun (k, v) -> doc_expr k ^^ text ": " ^^ doc_expr v) pairs)
   | Ast.ELoc _ -> assert false (* stripped above *)
 
 and doc_record_fields fields =
-  text "{ "
-  ^^ sepby (text "; ")
-       (List.map (fun (n, e) -> text (n ^ " = ") ^^ doc_expr e) fields)
-  ^^ text " }"
+  wrap ~op:"{" ~cl:"}" ~pad:true ~sep:";"
+    (List.map (fun (n, e) -> text (n ^ " = ") ^^ doc_expr e) fields)
 
 and doc_map pairs =
-  text "#{"
-  ^^ sepby (text "; ")
-       (List.map (fun (k, v) -> doc_expr k ^^ text ": " ^^ doc_expr v) pairs)
-  ^^ text "}"
+  wrap ~op:"#{" ~cl:"}" ~pad:false ~sep:";"
+    (List.map (fun (k, v) -> doc_expr k ^^ text ": " ^^ doc_expr v) pairs)
 
 (* An expression used as an operand / argument: atoms print bare, everything
    else is parenthesized (paren-liberal => always semantics-preserving). *)
@@ -603,7 +684,9 @@ and doc_app (e : Ast.expr) : doc =
     match strip_loc e with Ast.EApp (f, x) -> flatten (x :: acc) f | head -> (head, acc)
   in
   let head, args = flatten [] e in
-  doc_atom head ^^ concat (List.map (fun a -> text " " ^^ doc_arg a) args)
+  (* Flat: `head a b c`. Too wide: the head stays, each argument on its own
+     indented line. *)
+  group (doc_atom head ^^ nest (concat (List.map (fun a -> GLine ^^ doc_arg a) args)))
 
 and doc_if c t f =
   (* `if c do A else B` takes NO `end` (the parser consumes `end` only for the
