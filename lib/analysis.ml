@@ -92,3 +92,88 @@ let diagnostics (state : state) (src : string) : Diagnostic.t list =
             []
       in
       parse_diags @ type_diags
+
+(* --- Positions ---------------------------------------------------------- *)
+
+(* The byte offset of 1-based [line]/[col] in [src] (the compiler's convention;
+   the LSP server converts from its 0-based line/character at the boundary). *)
+let offset_of_line_col (src : string) ~line ~col : int =
+  let n = String.length src in
+  let off = ref 0 and ln = ref 1 in
+  while !ln < line && !off < n do
+    (if src.[!off] = '\n' then incr ln);
+    incr off
+  done;
+  min n (!off + (col - 1))
+
+(* The significant token whose span covers byte [cursor], if any. *)
+let token_at (src : string) (cursor : int) : Token.token option =
+  match Lexer.tokenize src with
+  | exception _ -> None
+  | toks ->
+      List.find_opt
+        (fun (t : Token.token) -> t.loc.offset <= cursor && cursor < t.end_offset)
+        toks
+
+(* --- Typed tree (with per-declaration error isolation) ------------------ *)
+
+(* Apply [f] to [te] and every typed sub-expression, parent before child. *)
+let rec visit_texpr f (te : Typechecker.texpr) : unit =
+  f te;
+  Typechecker.iter_texpr_children (visit_texpr f) te
+
+(* Apply [f] to every typed sub-expression of a declaration, recursing into
+   module bodies. *)
+let rec visit_tdecl f (td : Typechecker.tdecl) : unit =
+  match td with
+  | Typechecker.TDLet (_, te)
+  | Typechecker.TDLetMut (_, te)
+  | Typechecker.TDLetRec (_, te)
+  | Typechecker.TDExpr te ->
+      visit_texpr f te
+  | Typechecker.TDLetRecAnd binds -> List.iter (fun (_, te) -> visit_texpr f te) binds
+  | Typechecker.TDModule (_, decls, _) -> List.iter (visit_tdecl f) decls
+  | Typechecker.TDType _ | Typechecker.TDClass _ | Typechecker.TDEffect _
+  | Typechecker.TDExtern _ | Typechecker.TDOpen _ ->
+      ()
+
+(* Typecheck [program] one declaration at a time against [state]'s context,
+   threading the context but ISOLATING failures: a declaration that doesn't
+   typecheck is skipped (it contributes no bindings), so a type error in one
+   place doesn't blank the typed tree the rest of the file produces. This is the
+   typed-side analogue of [parse_recover] and what hover / go-to-def run on. *)
+let typed_recover (state : state) (program : Ast.program) :
+    Typechecker.tdecl list =
+  let ctx = ref state.Interp.ctx and acc = ref [] in
+  List.iter
+    (fun decl ->
+      match Typechecker.check_program_in_ctx !ctx [ decl ] with
+      | ctx', tds ->
+          ctx := ctx';
+          acc := List.rev_append tds !acc
+      | exception _ -> ())
+    program;
+  ignore (Typechecker.take_warnings ());
+  List.rev !acc
+
+(* --- Hover -------------------------------------------------------------- *)
+
+(* The inferred type at 1-based [line]/[col], rendered for display, or [None] if
+   the position isn't on a typed sub-expression. Finds the token under the
+   cursor, then the DEEPEST typed node starting at that token (pre-order visits
+   parent before child, so the last match at the token's offset is the
+   innermost). Works declaration-by-declaration, so a type error elsewhere in
+   the file doesn't suppress hover here. *)
+let hover (state : state) (src : string) ~line ~col : string option =
+  let cursor = offset_of_line_col src ~line ~col in
+  match token_at src cursor with
+  | None -> None
+  | Some tok ->
+      let target = tok.loc.offset in
+      let program, _ = parse_recover src (Lexer.tokenize src) in
+      let best = ref None in
+      List.iter
+        (visit_tdecl (fun te ->
+             if te.Typechecker.loc.offset = target then best := Some te.Typechecker.ty))
+        (typed_recover state program);
+      Option.map Types.pp_ty !best
