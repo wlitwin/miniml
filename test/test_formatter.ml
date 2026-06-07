@@ -67,6 +67,17 @@ let () =
       ("nested module", "module Outer =\n  module Inner =\n    pub let v = 1\n  end\nend");
       ("seq with match in middle", "let f x = (match x with | 0 -> () | _ -> ()); x");
       ("string with escapes", "let s = \"line1\\nline2\\ttab\\\\back\"");
+      (* increment 3: remaining constructs *)
+      ("GADT", "type 'a expr =\n  | IntLit : int -> int expr\n  | If : bool expr * 'a expr * 'a expr -> 'a expr");
+      ("GADT fn-typed ctor", "type 'a t =\n  | Fn : ('a -> 'a) -> 'a t");
+      ("map pattern", "let f m = match m with | #{\"a\": x} -> x | _ -> 0");
+      ("set pattern", "let f s = match s with | #{1; 2} -> true | _ -> false");
+      ("typed array", "Array.length #Array[1; 2; 3]");
+      ("typed array empty", "Array.length #Array[]");
+      ("typed set", "Set.size #Set{10; 20; 30}");
+      ("polyvariant type", "let f (x : [> `A | `B of int ]) = x");
+      ("expr let-rec-and", "let r = let rec ev x = od x and od x = ev x in ev 3 in r");
+      ("LAT expr let rec", "let r = let rec (type 'a) id (x : 'a) : 'a = x in id 5");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
