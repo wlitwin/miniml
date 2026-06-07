@@ -50,7 +50,9 @@ let () =
     match parse_ast src with
     | exception _ -> incr skip_parse
     | original -> (
-        match F.format_program original with
+        (* Format from SOURCE (not the bare AST) so comment preservation is
+           exercised over the whole corpus, not just the structural skeleton. *)
+        match F.format_source src with
         | exception F.Unsupported _ -> incr skip_unsupported
         | exception e ->
             incr failed;
@@ -72,7 +74,7 @@ let () =
                 end
                 else
                   (* idempotence *)
-                  match F.format_program reparsed with
+                  match F.format_source formatted with
                   | exception _ ->
                       incr failed;
                       failures := (label, "second format raised") :: !failures
