@@ -56,6 +56,36 @@ let render_pending : comment list ref = ref []
    plain path — no member marks. *)
 let member_marks : int array option ref = ref None
 
+(* A comment split into the lines it should render as. The first line is verbatim
+   (placed wherever the cursor is); a multi-line block comment's continuation
+   lines are re-based — their common leading indentation removed — so the caller
+   can re-emit them at the current indentation (continuations otherwise keep
+   their original absolute column and drift out of alignment under nesting).
+   Single-line comments (every `--` comment) yield one line, unchanged. *)
+let comment_lines (c : comment) : string list =
+  let lead l =
+    let n = ref 0 in
+    while !n < String.length l && (l.[!n] = ' ' || l.[!n] = '\t') do
+      incr n
+    done;
+    !n
+  in
+  match String.split_on_char '\n' c.ctext with
+  | ([] | [ _ ]) as ls -> ls
+  | first :: rest ->
+      let nonblank = List.filter (fun l -> String.trim l <> "") rest in
+      let minlead =
+        List.fold_left (fun m l -> min m (lead l)) max_int nonblank
+      in
+      let minlead = if minlead = max_int then 0 else minlead in
+      let fix l =
+        if String.trim l = "" then ""
+        else
+          let li = lead l in
+          String.make (li - minlead) ' ' ^ String.sub l li (String.length l - li)
+      in
+      first :: List.map fix rest
+
 (* --- A Wadler/Prettier-style document combinator with width-based wrapping.
 
    [Line] is a HARD break (always a newline) — the structural separators the
@@ -174,7 +204,15 @@ let render (d : doc) : string =
               List.filter
                 (fun c ->
                   if c.cnext = off then begin
-                    Buffer.add_string buf c.ctext;
+                    (match comment_lines c with
+                    | [] -> ()
+                    | first :: conts ->
+                        Buffer.add_string buf first;
+                        List.iter
+                          (fun l ->
+                            newline i;
+                            Buffer.add_string buf l)
+                          conts);
                     newline i;
                     flushed := true;
                     false
@@ -1152,7 +1190,11 @@ let segment (counts : int list) (items : 'a list) : 'a list list =
 (* A comment renders as its exact source spelling. Multi-line block comments
    keep their internal bytes verbatim (idempotent, lossless); only the first
    line picks up the surrounding indentation. *)
-let doc_comment (c : comment) : doc = text c.ctext
+let doc_comment (c : comment) : doc =
+  match comment_lines c with
+  | [] -> Nil
+  | first :: conts ->
+      text first ^^ concat (List.map (fun l -> line ^^ text l) conts)
 
 (* Render a sequence of sibling declarations (a SourceFile's or a module body's)
    with the comments in the gaps between them woven back. [top] selects the
