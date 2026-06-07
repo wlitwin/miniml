@@ -293,6 +293,23 @@ let () =
       with Interpreter.Interp.Error msg ->
         Printf.eprintf "%s\n" msg;
         exit 1)
+  | () when argc >= 3 && Sys.argv.(1) = "--format" -> (
+      (* Opinionated formatter (roadmap #21): canonical-reformat each file and
+         print to stdout. Comments are not yet preserved (increment 2). *)
+      try
+        for i = 2 to argc - 1 do
+          let ic = open_in Sys.argv.(i) in
+          let src = In_channel.input_all ic in
+          close_in ic;
+          print_string (Interpreter.Formatter.format_source src)
+        done
+      with
+      | Interpreter.Formatter.Unsupported what ->
+          Printf.eprintf "format: unsupported construct (%s)\n" what;
+          exit 1
+      | e ->
+          Printf.eprintf "format: %s\n" (Printexc.to_string e);
+          exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--analyze" -> (
       try
         let state =

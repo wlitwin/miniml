@@ -57,3 +57,8 @@
  (name test_cst)
  (libraries interpreter test_helpers)
  (modules test_cst))
+
+(test
+ (name test_formatter)
+ (libraries interpreter test_helpers)
+ (modules test_formatter))
