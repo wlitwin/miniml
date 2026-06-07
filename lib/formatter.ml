@@ -18,12 +18,33 @@
    Increment 3: GADT constructors, map/set patterns, typed-collection (#Name[..]
    / #Name{..}) and poly-variant-type literals, expression-level let-rec(-and) —
    the corpus is now ~fully covered (only empty typed-map literals are unhandled).
-   Comment increment 1: TOP-LEVEL declaration comments (leading own-line +
+   Comment preservation (incr 1-3): declaration comments (leading own-line +
    trailing same-line) are recovered from the lossless CST trivia and woven back
-   at declaration boundaries; intra-declaration / module-body comments are still
-   dropped and come in a later increment. *)
+   at declaration boundaries — at top level, in module bodies, and recursively.
+   Inline (intra-declaration) comments are re-anchored to the next significant
+   token and flushed own-line at that token during rendering (see [render] /
+   [Mark]); a comment with no statement anchor (e.g. mid-expression, or before a
+   class/instance method) is still dropped — always safe for the invariants. *)
 
 exception Unsupported of string
+
+(* A recovered comment, with the offset of the significant token it precedes
+   ([cnext]) so it can be re-anchored to that token during rendering. Defined
+   here (above [render]) because [render] flushes inline comments at [Mark]s. *)
+type comment = {
+  cs : int; (* absolute start offset *)
+  ce : int; (* absolute end offset (exclusive) *)
+  cnext : int; (* offset of the next significant token (the re-anchor point) *)
+  ctext : string; (* exact source spelling, line comments right-trimmed *)
+  cown : bool; (* starts its own line (vs. trailing code on the same line) *)
+}
+
+(* Inline (intra-declaration) comments awaiting emission, sorted by [cs]. The
+   renderer consumes this as it reaches each [Mark]; comments whose anchor is
+   never reached stay here and are simply dropped (always safe). Set per format
+   by [format_source_with_comments]; empty for the plain ([format_program])
+   path, which makes every [Mark] a no-op. *)
+let render_pending : comment list ref = ref []
 
 (* --- A minimal Wadler-style document combinator (no width-based wrapping yet;
    breaks exactly where [line] says). ------------------------------------- *)
@@ -33,6 +54,10 @@ type doc =
   | Line (* newline + current indentation *)
   | Cat of doc * doc
   | Nest of int * doc (* indent sub-document by N more spaces *)
+  | Mark of int
+    (* a re-anchor point at source offset N: at render time, flush every pending
+       inline comment whose [cnext] is N, each on its own line at the current
+       indentation. A no-op when nothing matches. *)
 
 let ( ^^ ) a b = Cat (a, b)
 let text s = Text s
@@ -47,18 +72,33 @@ let rec sepby sep = function
 
 let render (d : doc) : string =
   let buf = Buffer.create 1024 in
+  let newline indent =
+    Buffer.add_char buf '\n';
+    for _ = 1 to indent do
+      Buffer.add_char buf ' '
+    done
+  in
   let rec go indent = function
     | Nil -> ()
     | Text s -> Buffer.add_string buf s
-    | Line ->
-        Buffer.add_char buf '\n';
-        for _ = 1 to indent do
-          Buffer.add_char buf ' '
-        done
+    | Line -> newline indent
     | Cat (a, b) ->
         go indent a;
         go indent b
     | Nest (n, a) -> go (indent + n) a
+    | Mark off ->
+        (* Emit, in source order, every pending inline comment anchored here;
+           each sits on its own line at the current indentation. *)
+        render_pending :=
+          List.filter
+            (fun c ->
+              if c.cnext = off then begin
+                Buffer.add_string buf c.ctext;
+                newline indent;
+                false
+              end
+              else true)
+            !render_pending
   in
   go 0 d;
   Buffer.contents buf
@@ -324,6 +364,24 @@ let rec absorbs_pipe (e : Ast.expr) : bool =
   | Ast.ESeq (_, b) -> absorbs_pipe b
   | _ -> false
 
+(* The source offset where [e] begins (its leftmost token), if known. Drives
+   [mark]: inline comments are re-anchored to the next token's offset, and a
+   statement printed at a line break is preceded by a [Mark] of its start. *)
+let rec start_offset (e : Ast.expr) : int option =
+  match e with
+  | Ast.ELoc (loc, _) -> Some loc.offset
+  | Ast.ESeq (a, _) | Ast.EBinop (_, a, _) | Ast.ECons (a, _) | Ast.EApp (a, _)
+  | Ast.EField (a, _) | Ast.EIndex (a, _) ->
+      start_offset a
+  | _ -> None
+
+(* A re-anchor point for inline comments immediately preceding statement [e].
+   Placed right after the [line] that opens [e]'s line, so flushed comments land
+   own-line at the right indentation. A no-op when [e]'s start is unknown or no
+   pending comment anchors there. *)
+let mark (e : Ast.expr) : doc =
+  match start_offset e with Some o -> Mark o | None -> Nil
+
 let rec doc_expr (e : Ast.expr) : doc =
   match strip_loc e with
   | Ast.EInt n -> text (string_of_int n)
@@ -362,15 +420,17 @@ let rec doc_expr (e : Ast.expr) : doc =
       doc_atom obj ^^ text ("." ^ f ^ " := ") ^^ doc_seq_lhs e
   | Ast.EIf (c, t, f) -> doc_if c t f
   | Ast.ELet (name, v, body) ->
-      text ("let " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
+      text ("let " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line
+      ^^ mark body ^^ doc_expr body
   | Ast.ELetMut (name, v, body) ->
-      text ("let mut " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
+      text ("let mut " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line
+      ^^ mark body ^^ doc_expr body
   | Ast.ELetRec (name, type_params, v, body) ->
       (* the string list is locally-abstract TYPE params; value params are
          already wrapped inside [v]. *)
       text "let rec" ^^ tp_clause type_params ^^ text " " ^^ doc_var name
-      ^^ text " = " ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
-  | Ast.ESeq (a, b) -> doc_seq_lhs a ^^ text ";" ^^ line ^^ doc_expr b
+      ^^ text " = " ^^ doc_expr v ^^ text " in" ^^ line ^^ mark body ^^ doc_expr body
+  | Ast.ESeq (a, b) -> doc_seq_lhs a ^^ text ";" ^^ line ^^ mark b ^^ doc_expr b
   | Ast.EFun (param, body) -> doc_fun [ param ] body
   | Ast.EMatch (scrut, arms, kind) -> doc_match scrut arms kind
   | Ast.EReturn e -> text "return " ^^ doc_atom e
@@ -384,23 +444,23 @@ let rec doc_expr (e : Ast.expr) : doc =
   | Ast.EWhile { while_cond; while_body } ->
       (* No `while` keyword in MiniML: a while-loop is `for cond do body end`. *)
       text "for " ^^ doc_expr while_cond ^^ text " do"
-      ^^ nest (line ^^ doc_expr while_body) ^^ line ^^ text "end"
+      ^^ nest (line ^^ mark while_body ^^ doc_expr while_body) ^^ line ^^ text "end"
   | Ast.EForNumeric { fn_var; fn_init; fn_cond; fn_step; fn_body } ->
       text ("for " ^ fn_var ^ " = ") ^^ doc_expr fn_init ^^ text "; "
       ^^ doc_expr fn_cond ^^ text "; " ^^ doc_expr fn_step ^^ text " do"
-      ^^ nest (line ^^ doc_expr fn_body) ^^ line ^^ text "end"
+      ^^ nest (line ^^ mark fn_body ^^ doc_expr fn_body) ^^ line ^^ text "end"
   | Ast.EFor { for_var; for_iter; for_body; for_index } ->
       let idx = match for_index with Some i -> text (" with index " ^ i) | None -> Nil in
       text ("for " ^ for_var ^ " in ") ^^ doc_expr for_iter ^^ idx ^^ text " do"
-      ^^ nest (line ^^ doc_expr for_body) ^^ line ^^ text "end"
+      ^^ nest (line ^^ mark for_body ^^ doc_expr for_body) ^^ line ^^ text "end"
   | Ast.EForFold { loop_var; loop_iter; accum_var; accum_init; fold_body; fold_index } ->
       let idx = match fold_index with Some i -> text (" with index " ^ i) | None -> Nil in
       text ("for " ^ loop_var ^ " in ") ^^ doc_expr loop_iter ^^ idx
       ^^ text (" with " ^ accum_var ^ " = ") ^^ doc_expr accum_init ^^ text " do"
-      ^^ nest (line ^^ doc_expr fold_body) ^^ line ^^ text "end"
+      ^^ nest (line ^^ mark fold_body ^^ doc_expr fold_body) ^^ line ^^ text "end"
   | Ast.EWhileLet (pat, e, body) ->
       text "for let " ^^ doc_pat pat ^^ text " = " ^^ doc_expr e ^^ text " do"
-      ^^ nest (line ^^ doc_expr body) ^^ line ^^ text "end"
+      ^^ nest (line ^^ mark body ^^ doc_expr body) ^^ line ^^ text "end"
   | Ast.EHandle (body, arms) -> doc_handle body arms
   | Ast.EMap pairs -> doc_map pairs
   | Ast.ESet es -> text "#{" ^^ sepby (text "; ") (List.map doc_expr es) ^^ text "}"
@@ -413,7 +473,7 @@ let rec doc_expr (e : Ast.expr) : doc =
       | first :: rest ->
           one "let rec" first
           ^^ concat (List.map (fun b -> line ^^ one "and" b) rest)
-          ^^ text " in" ^^ line ^^ doc_expr body)
+          ^^ text " in" ^^ line ^^ mark body ^^ doc_expr body)
   (* Type-annotated collection literals: `#Name[..]` (list/array/set) and
      `#Name{k: v; ..}` (map). *)
   | Ast.ECollTyped (name, elems) ->
@@ -475,17 +535,22 @@ and doc_if c t f =
   match strip_loc f with
   | Ast.EUnit ->
       text "if " ^^ doc_expr c ^^ text " do"
-      ^^ nest (line ^^ doc_expr t) ^^ line ^^ text "end"
+      ^^ nest (line ^^ mark t ^^ doc_expr t) ^^ line ^^ text "end"
   | _ ->
       (* The else-branch is parsed with parse_expr_no_seq, so a bare `;`
-         sequence there must be parenthesized to stay inside the branch. *)
-      let f_doc =
-        match strip_loc f with Ast.ESeq _ -> parens (doc_expr f) | _ -> doc_expr f
+         sequence there must be parenthesized to stay inside the branch. A
+         parenthesized branch gets a formatter-added `(`, so its start no longer
+         matches a comment's next-token offset — skip [mark] there to stay
+         idempotent. *)
+      let f_doc, f_mark =
+        match strip_loc f with
+        | Ast.ESeq _ -> (parens (doc_expr f), Nil)
+        | _ -> (doc_expr f, mark f)
       in
       text "if " ^^ doc_expr c ^^ text " do"
-      ^^ nest (line ^^ doc_expr t)
+      ^^ nest (line ^^ mark t ^^ doc_expr t)
       ^^ line ^^ text "else"
-      ^^ nest (line ^^ f_doc)
+      ^^ nest (line ^^ f_mark ^^ f_doc)
 
 and doc_fun params body =
   text "fn "
@@ -508,7 +573,7 @@ and doc_match scrut arms kind =
      refractor genuine destructures. *)
   | Ast.Partial, [ (pat, None, body) ] when is_destructure_pat pat ->
       text "let " ^^ doc_pat pat ^^ text " = " ^^ doc_expr scrut ^^ text " in"
-      ^^ line ^^ doc_expr body
+      ^^ line ^^ mark body ^^ doc_expr body
   | _ -> doc_match_full scrut arms kind
 
 and doc_match_full scrut arms kind =
@@ -594,18 +659,22 @@ let rec doc_decl (d : Ast.decl) : doc =
   match d with
   | Ast.DLet { name; params; ret_annot; constraints; body } ->
       text "let " ^^ doc_var name ^^ doc_params params ^^ doc_ret_annot ret_annot
-      ^^ doc_constraints constraints ^^ text " =" ^^ nest (line ^^ doc_expr body)
+      ^^ doc_constraints constraints ^^ text " ="
+      ^^ nest (line ^^ mark body ^^ doc_expr body)
   | Ast.DLetMut (name, body) ->
-      text "let mut " ^^ doc_var name ^^ text " =" ^^ nest (line ^^ doc_expr body)
+      text "let mut " ^^ doc_var name ^^ text " ="
+      ^^ nest (line ^^ mark body ^^ doc_expr body)
   | Ast.DLetRec b ->
       text "let rec" ^^ tp_clause b.type_params ^^ text " " ^^ doc_var b.lr_name
       ^^ doc_params b.params ^^ doc_ret_annot b.ret_annot
-      ^^ doc_constraints b.constraints ^^ text " =" ^^ nest (line ^^ doc_expr b.body)
+      ^^ doc_constraints b.constraints ^^ text " ="
+      ^^ nest (line ^^ mark b.body ^^ doc_expr b.body)
   | Ast.DLetRecAnd bs ->
       let one kw (b : Ast.letrec_binding) =
         text kw ^^ tp_clause b.type_params ^^ text " " ^^ doc_var b.lr_name
         ^^ doc_params b.params ^^ doc_ret_annot b.ret_annot
-        ^^ doc_constraints b.constraints ^^ text " =" ^^ nest (line ^^ doc_expr b.body)
+        ^^ doc_constraints b.constraints ^^ text " ="
+        ^^ nest (line ^^ mark b.body ^^ doc_expr b.body)
       in
       (match bs with
       | [] -> Nil
@@ -668,6 +737,8 @@ and doc_module_decl (md : Ast.module_decl) : doc =
   text vis ^^ doc_decl md.decl
 
 let format_program (prog : Ast.program) : string =
+  (* No source, hence no comments to weave: every [Mark] must be inert. *)
+  render_pending := [];
   let docs = List.map doc_decl prog in
   (* Separate top-level declarations with `;;` so adjacent decls never merge
      (e.g. a `let mut x = 0` followed by `x := 5`, or a decl body absorbing the
@@ -691,14 +762,13 @@ let format_program (prog : Ast.program) : string =
    comment. Comments INSIDE a declaration's span (intra-expression, module
    bodies) are dropped for now — exactly as before this increment — and woven
    in by later increments. Dropping is always safe for the formatter's two
-   invariants (it can neither change the parsed AST nor break idempotence). *)
+   invariants (it can neither change the parsed AST nor break idempotence).
 
-type comment = {
-  cs : int; (* absolute start offset *)
-  ce : int; (* absolute end offset (exclusive) *)
-  ctext : string; (* exact source spelling, line comments right-trimmed *)
-  cown : bool; (* starts its own line (vs. trailing code on the same line) *)
-}
+   Increment 3 adds INTRA-declaration (inline) comments: comments inside a leaf
+   declaration's span are re-anchored to the next significant token and emitted
+   own-line at that token's [Mark] during rendering (see [render]). A comment
+   whose next token is not a statement anchor (e.g. between operands of `+`) has
+   no [Mark] and is dropped. ([comment] itself is defined above [render].) *)
 
 let rstrip s =
   let n = ref (String.length s) in
@@ -711,7 +781,7 @@ let rstrip s =
    [abs]. Trivia is whitespace and comments only (the lexer guarantees no string
    literals leak in), so a flat scan is safe. [cown] is true when a newline
    separates the comment from the previous significant content. *)
-let scan_trivia abs (s : string) : comment list =
+let scan_trivia abs ~cnext (s : string) : comment list =
   let n = String.length s in
   let out = ref [] in
   let i = ref 0 in
@@ -739,7 +809,13 @@ let scan_trivia abs (s : string) : comment list =
         else incr i
       done;
       out :=
-        { cs = abs + start; ce = abs + !i; ctext = String.sub s start (!i - start); cown = !nl }
+        {
+          cs = abs + start;
+          ce = abs + !i;
+          cnext;
+          ctext = String.sub s start (!i - start);
+          cown = !nl;
+        }
         :: !out;
       nl := false
     end
@@ -752,6 +828,7 @@ let scan_trivia abs (s : string) : comment list =
         {
           cs = abs + start;
           ce = abs + !i;
+          cnext;
           ctext = rstrip (String.sub s start (!i - start));
           cown = !nl;
         }
@@ -762,14 +839,16 @@ let scan_trivia abs (s : string) : comment list =
   done;
   List.rev !out
 
-(* Every comment in [src], in source order, recovered from token trivia. *)
+(* Every comment in [src], in source order, recovered from token trivia. Each
+   comment records [cnext] = the offset of the token whose leading trivia it
+   sits in (the token it immediately precedes). *)
 let all_comments (src : string) : comment list =
   let prev = ref 0 in
   List.concat_map
     (fun (p : Cst.piece) ->
       let abs = !prev in
       prev := p.token.end_offset;
-      scan_trivia abs p.leading)
+      scan_trivia abs ~cnext:p.token.loc.offset p.leading)
     (Cst.of_source src)
 
 (* The [start, end) source span of a CST node (excludes its leading trivia, so
@@ -781,6 +860,20 @@ let node_span (node : Cst.tree) : int * int =
       let first = List.hd ls in
       let last = List.nth ls (List.length ls - 1) in
       (first.token.loc.offset, last.token.end_offset)
+
+(* Spans of the LEAF declaration nodes — Decl nodes with no nested Decl node
+   (every form but a non-empty module). Inline (intra-declaration) comments are
+   exactly those inside a leaf span: comments in a module's own body sit between
+   its inner Decl nodes and are handled by the recursive declaration weaver, not
+   here. *)
+let rec leaf_spans (t : Cst.tree) : (int * int) list =
+  match t with
+  | Cst.Node (Cst.Decl, children) ->
+      if List.exists (function Cst.Node (Cst.Decl, _) -> true | _ -> false) children
+      then List.concat_map leaf_spans children
+      else [ node_span t ]
+  | Cst.Node (_, children) -> List.concat_map leaf_spans children
+  | Cst.Leaf _ -> []
 
 (* The direct child CstDecl nodes of [node], in source order. For SourceFile
    these are the top-level decls; for a module's Decl node they are its body
@@ -928,8 +1021,7 @@ let rec doc_level ~top (src : string) (nodes : Cst.tree array)
 
 (* Render one declaration item, comment-aware: a nested module recurses so its
    body comments are woven in; everything else delegates to the plain printer
-   (only top-level / module-body — i.e. declaration-boundary — comments are
-   handled; intra-expression comments are a later increment). *)
+   (whose [Mark]s flush this declaration's inline comments during rendering). *)
 and doc_module_decl_c (src : string) (node : Cst.tree) (comments : comment list)
     (md : Ast.module_decl) : doc =
   let vis =
@@ -967,9 +1059,21 @@ let format_source_with_comments (src : string) (prog : Ast.program) : string =
   let items = List.map (fun d -> Ast.{ vis = Private; decl = d }) prog in
   let groups = Array.of_list (segment counts items) in
   if Array.length groups <> Array.length top_nodes then raise Exit;
-  render
-    (doc_level ~top:true src top_nodes groups comments ~lo:0 ~hi:(String.length src))
-  ^ "\n"
+  (* Inline comments — those inside a leaf declaration's span — are flushed at
+     render time by their anchoring [Mark]s; the declaration weaver ([doc_level])
+     handles the rest (gaps between declarations). *)
+  let leaves = leaf_spans tree in
+  render_pending :=
+    List.filter
+      (fun c -> List.exists (fun (s, e) -> s <= c.cs && c.cs < e) leaves)
+      comments;
+  let result =
+    render
+      (doc_level ~top:true src top_nodes groups comments ~lo:0 ~hi:(String.length src))
+    ^ "\n"
+  in
+  render_pending := [];
+  result
 
 let format_source (src : string) : string =
   let tokens = Lexer.tokenize src in

@@ -92,6 +92,14 @@ let () =
       ("comment before module end", "module M =\n  pub let x = 1\n  -- last\nend");
       ("nested module comment", "module M =\n  module N =\n    -- deep\n    pub let z = 1\n  end\nend");
       ("comment on module decl itself", "-- the module\nmodule M =\n  pub let x = 1\nend");
+      (* comment increment 3: inline (intra-declaration) statement comments *)
+      ("inline comment in let-chain", "let f x =\n  -- base\n  let b = x in\n  b + 1");
+      ("inline comment in sequence", "let f x =\n  print x;\n  -- then\n  x");
+      ("inline comment before body", "let f x =\n  -- start\n  x + 1");
+      ("inline comment in loop body", "let f xs =\n  for x in xs do\n    -- each\n    print x\n  end");
+      ("inline comment in if branch", "let f x =\n  if x do\n    -- yes\n    1\n  else\n    -- no\n    2");
+      ("trailing inline comment hoists", "let f x =\n  let a = x in -- note\n  a");
+      ("multi-line inline comment", "let f x =\n  -- one\n  -- two\n  x");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
