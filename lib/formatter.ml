@@ -1,19 +1,23 @@
-(* Opinionated / canonical formatter (roadmap #21), increment 1.
+(* Opinionated / canonical formatter (roadmap #21).
 
    Pretty-prints the AST to a canonical surface syntax: the AST carries the full
    structure needed for layout and precedence, so formatting is a structural
    walk. Two invariants make this safe to apply to real code, both checked over
    the corpus by compiler_test/format_runner.ml:
      - SEMANTIC PRESERVATION: parse (format src) is structurally equal to
-       parse src (modulo source locations). Guaranteed here by being
+       parse src (modulo source locations, the is_generated hint, and
+       sequence/let-scope associativity). Guaranteed largely by being
        PAREN-LIBERAL — wrapping any non-atomic sub-expression in parentheses,
-       which never changes the parsed AST — so we never need delicate precedence
-       reasoning to stay correct. Later increments prune redundant parens.
+       which never changes the parsed AST — plus context-specific delimiting
+       where a `;` or `|` would otherwise be absorbed.
      - IDEMPOTENCE: format (format src) = format src.
 
-   Comments are NOT yet preserved (increment 2 will weave them in from the CST
-   trivia). Constructs not yet handled raise [Unsupported]; the runner skips
-   those sources, and coverage grows as the printer learns them. *)
+   Increment 1: expression + core-declaration core. Increment 2: module / class /
+   instance / effect declarations, faithful string/rune/float literals, and the
+   sequence/arm/destructure delimiting that real (self-host) code exercises.
+   NOT yet: COMMENTS (a later increment weaves them in from the CST trivia),
+   GADT constructors, map/set patterns, typed-collection and poly-variant-type
+   literals (these raise [Unsupported]; the runner skips those sources). *)
 
 exception Unsupported of string
 
@@ -61,7 +65,23 @@ let parens d = text "(" ^^ d ^^ text ")"
 
 (* --- Names / literals --------------------------------------------------- *)
 
-let string_lit s = Printf.sprintf "%S" s
+(* MiniML string literal: the lexer supports only the backslash escapes n, t,
+   backslash, and double-quote; every other byte (including CR and UTF-8) is
+   taken literally, so emit it raw. *)
+let string_lit s =
+  let buf = Buffer.create (String.length s + 2) in
+  Buffer.add_char buf '"';
+  String.iter
+    (fun c ->
+      match c with
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | c -> Buffer.add_char buf c)
+    s;
+  Buffer.add_char buf '"';
+  Buffer.contents buf
 
 (* A rune literal: a character in single quotes ('a', '\n', or a UTF-8 char). *)
 let rune_lit cp =
@@ -212,7 +232,7 @@ let unop_str = function Ast.Neg -> "-" | Ast.Not -> "not " | Ast.Lnot -> "lnot "
 (* An identifier that is actually an operator (e.g. used as a value, [fold (+)])
    must be parenthesized to print/reparse as a value. *)
 let is_keyword_operator = function
-  | "land" | "lor" | "lxor" | "lsl" | "lsr" | "mod" | "not" -> true
+  | "land" | "lor" | "lxor" | "lsl" | "lsr" | "lnot" | "mod" | "not" -> true
   | _ -> false
 
 let is_operator_name s =
@@ -249,11 +269,34 @@ let is_atom (e : Ast.expr) : bool =
    would swallow following tokens (e.g. a match arm body, a let-in body, a fn
    body absorbs a trailing `;`). Safe in tail positions; must be parenthesized
    as the left of a sequence or the right of an assignment. *)
-let is_greedy (e : Ast.expr) : bool =
+(* Patterns we render as a destructure-let (`let (a, b) = e in ..`) when they are
+   the sole arm of a partial match. Restricted to tuple/record: these always
+   reparse to the same single-arm partial EMatch. Cons/constructor/literal/var
+   patterns either don't round-trip through let-binding or parse as a different
+   node, so those stay as an explicit `@partial match`. *)
+let is_destructure_pat (p : Ast.pattern) : bool =
+  match p with Ast.PatTuple _ | Ast.PatRecord _ -> true | _ -> false
+
+(* Would a following `; stmt` be swallowed? (left of a sequence / assignment RHS)
+   let/fn/match/handle bodies extend greedily; a sequence inherits from its tail.
+   if/else does NOT — its else-branch is parsed stop-at-`;`. *)
+let rec absorbs_semicolon (e : Ast.expr) : bool =
   match strip_loc e with
   | Ast.EFun _ | Ast.EMatch _ | Ast.EHandle _ | Ast.ELet _ | Ast.ELetRec _
   | Ast.ELetMut _ | Ast.ELetRecAnd _ ->
       true
+  | Ast.ESeq (_, b) -> absorbs_semicolon b
+  | _ -> false
+
+(* Would a following `| arm` be swallowed? (a match/handler arm body) Only an
+   open arm-list (match/handle) does — plus anything whose TAIL is one. *)
+let rec absorbs_pipe (e : Ast.expr) : bool =
+  match strip_loc e with
+  | Ast.EMatch _ | Ast.EHandle _ -> true
+  | Ast.ELet (_, _, b) | Ast.ELetMut (_, _, b) | Ast.ELetRec (_, _, _, b) -> absorbs_pipe b
+  | Ast.ELetRecAnd (_, b) | Ast.EFun (_, b) -> absorbs_pipe b
+  | Ast.EIf (_, _, f) -> ( match strip_loc f with Ast.EUnit -> false | _ -> absorbs_pipe f)
+  | Ast.ESeq (_, b) -> absorbs_pipe b
   | _ -> false
 
 let rec doc_expr (e : Ast.expr) : doc =
@@ -289,9 +332,9 @@ let rec doc_expr (e : Ast.expr) : doc =
   | Ast.EApp _ as app -> doc_app app
   | Ast.EAnnot (e, t) -> parens (doc_expr e ^^ text " : " ^^ doc_ty t)
   | Ast.ECoerce (e, t) -> parens (doc_expr e ^^ text " :> " ^^ doc_ty t)
-  | Ast.EAssign (name, e) -> text (name ^ " := ") ^^ doc_greedy e
+  | Ast.EAssign (name, e) -> text (name ^ " := ") ^^ doc_seq_lhs e
   | Ast.EFieldAssign (obj, f, e) ->
-      doc_atom obj ^^ text ("." ^ f ^ " := ") ^^ doc_greedy e
+      doc_atom obj ^^ text ("." ^ f ^ " := ") ^^ doc_seq_lhs e
   | Ast.EIf (c, t, f) -> doc_if c t f
   | Ast.ELet (name, v, body) ->
       text ("let " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
@@ -301,7 +344,7 @@ let rec doc_expr (e : Ast.expr) : doc =
       text ("let rec " ^ name)
       ^^ concat (List.map (fun p -> text (" " ^ p)) params)
       ^^ text " = " ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
-  | Ast.ESeq (a, b) -> doc_greedy a ^^ text ";" ^^ line ^^ doc_expr b
+  | Ast.ESeq (a, b) -> doc_seq_lhs a ^^ text ";" ^^ line ^^ doc_expr b
   | Ast.EFun (param, body) -> doc_fun [ param ] body
   | Ast.EMatch (scrut, arms, kind) -> doc_match scrut arms kind
   | Ast.EReturn e -> text "return " ^^ doc_atom e
@@ -365,8 +408,14 @@ and doc_arg (e : Ast.expr) : doc =
   | Ast.EConstruct _ | Ast.EPolyVariant _ -> parens (doc_expr e)
   | _ -> doc_atom e
 
-and doc_greedy (e : Ast.expr) : doc =
-  if is_greedy e then parens (doc_expr e) else doc_expr e
+(* In a sequence-LHS / assignment-RHS position, parenthesize if a following `;`
+   would be absorbed. *)
+and doc_seq_lhs (e : Ast.expr) : doc =
+  if absorbs_semicolon e then parens (doc_expr e) else doc_expr e
+
+(* In a match/handler arm body, parenthesize if a following `|` would be absorbed. *)
+and doc_arm_body (e : Ast.expr) : doc =
+  if absorbs_pipe e then parens (doc_expr e) else doc_expr e
 
 and doc_app (e : Ast.expr) : doc =
   (* flatten left-nested application *)
@@ -408,10 +457,22 @@ and doc_param (p : Ast.param) : doc =
   | _, Some t -> parens (text p.name ^^ text " : " ^^ doc_ty t)
 
 and doc_match scrut arms kind =
+  match (kind, arms) with
+  (* A single-arm partial match over a DESTRUCTURE pattern is a destructure-let;
+     print it that way (canonical, and avoids `@partial` which can't follow `;`).
+     A var/wildcard pattern would instead parse as a plain ELet/etc., so only
+     refractor genuine destructures. *)
+  | Ast.Partial, [ (pat, None, body) ] when is_destructure_pat pat ->
+      text "let " ^^ doc_pat pat ^^ text " = " ^^ doc_expr scrut ^^ text " in"
+      ^^ line ^^ doc_expr body
+  | _ -> doc_match_full scrut arms kind
+
+and doc_match_full scrut arms kind =
   let prefix = match kind with Ast.Partial -> text "@partial" ^^ line | Ast.Total -> Nil in
   let arm (pat, guard, body) =
     let g = match guard with Some e -> text " when " ^^ doc_expr e | None -> Nil in
-    line ^^ text "| " ^^ doc_pat pat ^^ g ^^ text " -> " ^^ doc_expr body
+    (* A match/handle body would absorb the next arm's `|`; parenthesize it. *)
+    line ^^ text "| " ^^ doc_pat pat ^^ g ^^ text " -> " ^^ doc_arm_body body
   in
   prefix ^^ text "match " ^^ doc_expr scrut ^^ text " with"
   ^^ concat (List.map arm arms)
@@ -419,9 +480,9 @@ and doc_match scrut arms kind =
 and doc_handle body arms =
   let arm = function
     | Ast.HReturn (name, b) ->
-        line ^^ text ("| return " ^ name ^ " -> ") ^^ doc_expr b
+        line ^^ text ("| return " ^ name ^ " -> ") ^^ doc_arm_body b
     | Ast.HOp { op_name; arg; k; body } ->
-        line ^^ text (Printf.sprintf "| %s %s %s -> " op_name arg k) ^^ doc_expr body
+        line ^^ text (Printf.sprintf "| %s %s %s -> " op_name arg k) ^^ doc_arm_body body
   in
   text "handle " ^^ doc_expr body ^^ text " with" ^^ concat (List.map arm arms)
 
@@ -486,7 +547,7 @@ let doc_type_params = function
   | [] -> Nil
   | tps -> text " (type " ^^ sepby (text " ") (List.map (fun t -> text ("'" ^ t)) tps) ^^ text ")"
 
-let doc_decl (d : Ast.decl) : doc =
+let rec doc_decl (d : Ast.decl) : doc =
   match d with
   | Ast.DLet { name; params; ret_annot; constraints; body } ->
       text "let " ^^ doc_var name ^^ doc_params params ^^ doc_ret_annot ret_annot
@@ -518,11 +579,50 @@ let doc_decl (d : Ast.decl) : doc =
   | Ast.DExpr e -> doc_expr e
   | Ast.DExtern (name, t) -> text "extern " ^^ doc_var name ^^ text " : " ^^ doc_ty t
   | Ast.DOpen (m, None) -> text ("open " ^ m)
-  | Ast.DOpen (m, Some names) -> text (Printf.sprintf "open %s.{%s}" m (String.concat ", " names))
-  | Ast.DClass _ -> raise (Unsupported "class declaration")
-  | Ast.DInstance _ -> raise (Unsupported "instance declaration")
-  | Ast.DEffect _ -> raise (Unsupported "effect declaration")
-  | Ast.DModule _ -> raise (Unsupported "module declaration")
+  | Ast.DOpen (m, Some names) -> text (Printf.sprintf "open %s (%s)" m (String.concat ", " names))
+  | Ast.DClass { class_name; tyvars; fundeps; methods } ->
+      let tvs = concat (List.map (fun v -> text (" '" ^ v)) tyvars) in
+      let fds =
+        match fundeps with
+        | [] -> Nil
+        | _ ->
+            let dep (from_vs, to_vs) =
+              let vs vs = String.concat " " (List.map (fun v -> "'" ^ v) vs) in
+              text (vs from_vs ^ " -> " ^ vs to_vs)
+            in
+            text " where " ^^ sepby (text ", ") (List.map dep fundeps)
+      in
+      let meth (name, t) = line ^^ doc_var name ^^ text " : " ^^ doc_ty t in
+      text "class " ^^ text class_name ^^ tvs ^^ fds ^^ text " ="
+      ^^ nest (concat (List.map meth methods))
+      ^^ line ^^ text "end"
+  | Ast.DInstance { inst_class; inst_types; inst_constraints; inst_methods } ->
+      let tys = concat (List.map (fun t -> text " " ^^ doc_ty_atom t) inst_types) in
+      let meth (name, params, body) =
+        line ^^ text "let " ^^ doc_var name ^^ doc_params params ^^ text " = "
+        ^^ doc_expr body
+      in
+      text "instance " ^^ text inst_class ^^ tys
+      ^^ doc_constraints inst_constraints ^^ text " ="
+      ^^ nest (concat (List.map meth inst_methods))
+      ^^ line ^^ text "end"
+  | Ast.DEffect (name, type_params, ops) ->
+      let tps = concat (List.map (fun v -> text (" '" ^ v)) type_params) in
+      let op (n, t) = line ^^ text (n ^ " : ") ^^ doc_ty t in
+      text "effect " ^^ text name ^^ tps ^^ text " ="
+      ^^ nest (concat (List.map op ops))
+      ^^ line ^^ text "end"
+  | Ast.DModule (name, items) ->
+      (* Separate inner decls with `;;` (an optional module separator) so none
+         can merge with the next on reparse, mirroring top-level. *)
+      let item md = doc_module_decl md ^^ text ";;" in
+      text ("module " ^ name ^ " =")
+      ^^ nest (concat (List.map (fun md -> line ^^ item md) items))
+      ^^ line ^^ text "end"
+
+and doc_module_decl (md : Ast.module_decl) : doc =
+  let vis = match md.vis with Ast.Public -> "pub " | Ast.Private -> "" | Ast.Opaque -> "opaque " in
+  text vis ^^ doc_decl md.decl
 
 let format_program (prog : Ast.program) : string =
   let docs = List.map doc_decl prog in
@@ -578,7 +678,22 @@ let rec strip_e (e : Ast.expr) : Ast.expr =
   | Ast.ELetMut (n, a, b) -> Ast.ELetMut (n, strip_e a, strip_e b)
   | Ast.EAssign (n, e) -> Ast.EAssign (n, strip_e e)
   | Ast.EFieldAssign (o, f, e) -> Ast.EFieldAssign (strip_e o, f, strip_e e)
-  | Ast.ESeq (a, b) -> Ast.ESeq (strip_e a, strip_e b)
+  | Ast.ESeq _ ->
+      (* Sequencing is associative: `(a; b); c` and `a; b; c` mean the same but
+         nest differently. Canonicalize to a right-nested chain so structural
+         equality reflects meaning (the formatter flattens seq layout anyway). *)
+      let rec flatten e =
+        match e with
+        | Ast.ELoc (_, e) -> flatten e
+        | Ast.ESeq (a, b) -> flatten a @ flatten b
+        | e -> [ strip_e e ]
+      in
+      let rec rebuild = function
+        | [] -> Ast.EUnit
+        | [ x ] -> x
+        | x :: rest -> Ast.ESeq (x, rebuild rest)
+      in
+      rebuild (flatten e)
   | Ast.EAnnot (e, t) -> Ast.EAnnot (strip_e e, t)
   | Ast.EWhile { while_cond; while_body } ->
       Ast.EWhile { while_cond = strip_e while_cond; while_body = strip_e while_body }
@@ -616,7 +731,7 @@ let rec strip_e (e : Ast.expr) : Ast.expr =
 let strip_letrec (b : Ast.letrec_binding) : Ast.letrec_binding =
   { b with params = List.map norm_param b.params; body = strip_e b.body }
 
-let strip_decl (d : Ast.decl) : Ast.decl =
+let rec strip_decl (d : Ast.decl) : Ast.decl =
   match d with
   | Ast.DLet r ->
       Ast.DLet { r with params = List.map norm_param r.params; body = strip_e r.body }
@@ -627,8 +742,11 @@ let strip_decl (d : Ast.decl) : Ast.decl =
   | Ast.DInstance r ->
       Ast.DInstance
         { r with inst_methods = List.map (fun (n, ps, e) -> (n, List.map norm_param ps, strip_e e)) r.inst_methods }
+  | Ast.DModule (n, items) ->
+      Ast.DModule
+        (n, List.map (fun (md : Ast.module_decl) -> { md with Ast.decl = strip_decl md.decl }) items)
   | (Ast.DType _ | Ast.DTypeAnd _ | Ast.DClass _ | Ast.DEffect _ | Ast.DExtern _
-    | Ast.DModule _ | Ast.DOpen _) as d ->
+    | Ast.DOpen _) as d ->
       d
 
 let strip_program (p : Ast.program) : Ast.program = List.map strip_decl p

@@ -58,6 +58,15 @@ let () =
       ("extern operator", "extern (^) : string -> string -> string");
       ("effect arrow type", "extern print : 'a -> unit / IO");
       ("top-level mutable then assign", "let mut x = 0;; x := 5;; x");
+      (* increment 2: declaration forms *)
+      ("module", "module M =\n  pub let x = 42\n  let secret = 99\nend\n;;\nM.x");
+      ("class", "class Eq 'a =\n  (=) : 'a -> 'a -> bool\n  (<>) : 'a -> 'a -> bool\nend");
+      ("instance", "instance Show ('a option) where Show 'a =\n  let show o = match o with | None -> \"None\" | Some x -> show x\nend");
+      ("effect", "effect State 'a =\n  get : unit -> 'a\n  put : 'a -> unit\nend");
+      ("selective open", "module M =\n  pub let a = 1\n  pub let b = 2\nend\n;;\nopen M (a, b)");
+      ("nested module", "module Outer =\n  module Inner =\n    pub let v = 1\n  end\nend");
+      ("seq with match in middle", "let f x = (match x with | 0 -> () | _ -> ()); x");
+      ("string with escapes", "let s = \"line1\\nline2\\ttab\\\\back\"");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
