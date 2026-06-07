@@ -427,6 +427,18 @@ let is_atom (e : Ast.expr) : bool =
       true
   | _ -> false
 
+(* A match/handler arm body that renders as its own multi-line block stays on
+   the arm line right after `->` (the block breaks internally). A flatter body
+   is wrapped in a group so an over-wide one breaks onto the next line instead
+   of overflowing. *)
+let body_stays_inline (e : Ast.expr) : bool =
+  match strip_loc e with
+  | Ast.ELet _ | Ast.ELetMut _ | Ast.ELetRec _ | Ast.ELetRecAnd _ | Ast.ESeq _
+  | Ast.EMatch _ | Ast.EHandle _ | Ast.EIf _ | Ast.EWhile _ | Ast.EFor _
+  | Ast.EForFold _ | Ast.EForNumeric _ | Ast.EWhileLet _ ->
+      true
+  | _ -> false
+
 (* Operator precedence for parenthesizing binop operands — higher binds tighter.
    Mirrors the parser's binding powers (parser.ml: bp_of_binop): |> < || < && <
    comparisons < (`::` = 6) < +/-/^/lor/lxor < *///mod/land/lsl/lsr. All
@@ -761,22 +773,27 @@ and doc_match scrut arms kind =
       ^^ line ^^ mark body ^^ doc_expr body
   | _ -> doc_match_full scrut arms kind
 
+(* Attach an arm body after its `[head] ->`: inline for a block-like body, else
+   in a group so an over-wide body breaks onto the next indented line. *)
+and doc_arm body_doc body =
+  if body_stays_inline body then body_doc ^^ text " " ^^ doc_arm_body body
+  else body_doc ^^ group (nest (GLine ^^ doc_arm_body body))
+
 and doc_match_full scrut arms kind =
   let prefix = match kind with Ast.Partial -> text "@partial" ^^ line | Ast.Total -> Nil in
   let arm (pat, guard, body) =
     let g = match guard with Some e -> text " when " ^^ doc_expr e | None -> Nil in
     (* A match/handle body would absorb the next arm's `|`; parenthesize it. *)
-    line ^^ text "| " ^^ doc_pat pat ^^ g ^^ text " -> " ^^ doc_arm_body body
+    doc_arm (line ^^ text "| " ^^ doc_pat pat ^^ g ^^ text " ->") body
   in
   prefix ^^ text "match " ^^ doc_expr scrut ^^ text " with"
   ^^ concat (List.map arm arms)
 
 and doc_handle body arms =
   let arm = function
-    | Ast.HReturn (name, b) ->
-        line ^^ text ("| return " ^ name ^ " -> ") ^^ doc_arm_body b
+    | Ast.HReturn (name, b) -> doc_arm (line ^^ text ("| return " ^ name ^ " ->")) b
     | Ast.HOp { op_name; arg; k; body } ->
-        line ^^ text (Printf.sprintf "| %s %s %s -> " op_name arg k) ^^ doc_arm_body body
+        doc_arm (line ^^ text (Printf.sprintf "| %s %s %s ->" op_name arg k)) body
   in
   text "handle " ^^ doc_expr body ^^ text " with" ^^ concat (List.map arm arms)
 
