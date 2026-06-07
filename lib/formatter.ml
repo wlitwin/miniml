@@ -15,9 +15,10 @@
    Increment 1: expression + core-declaration core. Increment 2: module / class /
    instance / effect declarations, faithful string/rune/float literals, and the
    sequence/arm/destructure delimiting that real (self-host) code exercises.
-   NOT yet: COMMENTS (a later increment weaves them in from the CST trivia),
-   GADT constructors, map/set patterns, typed-collection and poly-variant-type
-   literals (these raise [Unsupported]; the runner skips those sources). *)
+   Increment 3: GADT constructors, map/set patterns, typed-collection (#Name[..]
+   / #Name{..}) and poly-variant-type literals, expression-level let-rec(-and) —
+   the corpus is now ~fully covered (only empty typed-map literals are unhandled).
+   NOT yet: COMMENTS — a later increment weaves them in from the CST trivia. *)
 
 exception Unsupported of string
 
@@ -155,7 +156,16 @@ let rec doc_ty (t : Ast.ty_annot) : doc =
       in
       text "{ " ^^ sepby (text "; ") fs ^^ text " }"
   | Ast.TyWithEffect (t, e) -> doc_ty t ^^ text " / " ^^ doc_eff_bare e
-  | Ast.TyPolyVariant _ -> raise (Unsupported "polyvariant type annotation")
+  | Ast.TyPolyVariant (kind, tags) ->
+      let open_marker =
+        match kind with Ast.PVExact -> "" | Ast.PVLower -> "> " | Ast.PVUpper -> "< "
+      in
+      let tag (name, payload) =
+        match payload with
+        | None -> text ("`" ^ name)
+        | Some t -> text ("`" ^ name ^ " of ") ^^ doc_ty t
+      in
+      text ("[" ^ open_marker) ^^ sepby (text " | ") (List.map tag tags) ^^ text "]"
 
 and doc_eff (e : Ast.eff_annot) : doc =
   (* rendered inside an arrow: -<eff>-> *)
@@ -176,7 +186,9 @@ and doc_eff_bare (e : Ast.eff_annot) : doc =
 
 and doc_ty_atom (t : Ast.ty_annot) : doc =
   match t with
-  | Ast.TyName _ | Ast.TyVar _ | Ast.TyQualified _ | Ast.TyRecord _ -> doc_ty t
+  | Ast.TyName _ | Ast.TyVar _ | Ast.TyQualified _ | Ast.TyRecord _
+  | Ast.TyPolyVariant _ ->
+      doc_ty t
   | _ -> parens (doc_ty t)
 
 (* --- Patterns ----------------------------------------------------------- *)
@@ -207,14 +219,19 @@ let rec doc_pat (p : Ast.pattern) : doc =
   | Ast.PatPolyVariant (tag, Some p) -> text ("`" ^ tag ^ " ") ^^ doc_pat_atom p
   | Ast.PatPin name -> text ("^" ^ name)
   | Ast.PatAnnot (p, t) -> parens (doc_pat p ^^ text " : " ^^ doc_ty t)
-  | Ast.PatMap _ | Ast.PatSet _ -> raise (Unsupported "map/set pattern")
+  | Ast.PatMap entries ->
+      text "#{"
+      ^^ sepby (text "; ")
+           (List.map (fun (k, v) -> doc_pat k ^^ text ": " ^^ doc_pat v) entries)
+      ^^ text "}"
+  | Ast.PatSet elems -> text "#{" ^^ sepby (text "; ") (List.map doc_pat elems) ^^ text "}"
 
 and doc_pat_atom (p : Ast.pattern) : doc =
   match p with
   | Ast.PatWild | Ast.PatVar _ | Ast.PatInt _ | Ast.PatFloat _ | Ast.PatBool _
   | Ast.PatString _ | Ast.PatUnit | Ast.PatNil | Ast.PatTuple _ | Ast.PatRecord _
   | Ast.PatArray _ | Ast.PatConstruct (_, None) | Ast.PatPolyVariant (_, None)
-  | Ast.PatPin _ ->
+  | Ast.PatPin _ | Ast.PatMap _ | Ast.PatSet _ ->
       doc_pat p
   | _ -> parens (doc_pat p)
 
@@ -251,6 +268,11 @@ let doc_var s =
       let last = String.sub s (i + 1) (String.length s - i - 1) in
       if is_operator_name last then text (modpath ^ ".(" ^ last ^ ")") else text s
   | _ -> if is_operator_name s then text ("(" ^ s ^ ")") else text s
+
+(* `(type 'a 'b)` locally-abstract-type clause for `let rec`. *)
+let tp_clause = function
+  | [] -> Nil
+  | tps -> text " (type " ^^ sepby (text " ") (List.map (fun t -> text ("'" ^ t)) tps) ^^ text ")"
 
 let rec strip_loc (e : Ast.expr) : Ast.expr =
   match e with Ast.ELoc (_, e) -> strip_loc e | e -> e
@@ -340,9 +362,10 @@ let rec doc_expr (e : Ast.expr) : doc =
       text ("let " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
   | Ast.ELetMut (name, v, body) ->
       text ("let mut " ^ name ^ " = ") ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
-  | Ast.ELetRec (name, params, v, body) ->
-      text ("let rec " ^ name)
-      ^^ concat (List.map (fun p -> text (" " ^ p)) params)
+  | Ast.ELetRec (name, type_params, v, body) ->
+      (* the string list is locally-abstract TYPE params; value params are
+         already wrapped inside [v]. *)
+      text "let rec" ^^ tp_clause type_params ^^ text " " ^^ doc_var name
       ^^ text " = " ^^ doc_expr v ^^ text " in" ^^ line ^^ doc_expr body
   | Ast.ESeq (a, b) -> doc_seq_lhs a ^^ text ";" ^^ line ^^ doc_expr b
   | Ast.EFun (param, body) -> doc_fun [ param ] body
@@ -378,8 +401,26 @@ let rec doc_expr (e : Ast.expr) : doc =
   | Ast.EHandle (body, arms) -> doc_handle body arms
   | Ast.EMap pairs -> doc_map pairs
   | Ast.ESet es -> text "#{" ^^ sepby (text "; ") (List.map doc_expr es) ^^ text "}"
-  | Ast.ELetRecAnd _ -> raise (Unsupported "let rec ... and (expr)")
-  | Ast.EMapTyped _ | Ast.ECollTyped _ -> raise (Unsupported "typed collection literal")
+  | Ast.ELetRecAnd (bindings, body) -> (
+      let one kw (name, tps, e) =
+        text kw ^^ tp_clause tps ^^ text " " ^^ doc_var name ^^ text " = " ^^ doc_expr e
+      in
+      match bindings with
+      | [] -> doc_expr body
+      | first :: rest ->
+          one "let rec" first
+          ^^ concat (List.map (fun b -> line ^^ one "and" b) rest)
+          ^^ text " in" ^^ line ^^ doc_expr body)
+  (* Type-annotated collection literals: `#Name[..]` (list/array/set) and
+     `#Name{k: v; ..}` (map). *)
+  | Ast.ECollTyped (name, elems) ->
+      text ("#" ^ name ^ "[") ^^ sepby (text "; ") (List.map doc_expr elems) ^^ text "]"
+  | Ast.EMapTyped (_, []) -> raise (Unsupported "empty typed map literal")
+  | Ast.EMapTyped (name, pairs) ->
+      text ("#" ^ name ^ "{")
+      ^^ sepby (text "; ")
+           (List.map (fun (k, v) -> doc_expr k ^^ text ": " ^^ doc_expr v) pairs)
+      ^^ text "}"
   | Ast.ELoc _ -> assert false (* stripped above *)
 
 and doc_record_fields fields =
@@ -532,7 +573,11 @@ let doc_type_def_binding (b : Ast.type_def_binding) : doc =
           match (arg, ret) with
           | None, None -> text name
           | Some t, None -> text (name ^ " of ") ^^ doc_ty t
-          | _, Some _ -> raise (Unsupported "GADT constructor")
+          (* GADT: `Name : arg -> ret` (or `Name : ret` with no argument). The
+             arg uses doc_ty_atom so a function/tuple arg is parenthesized —
+             else `(a -> b) -> r` would reparse as the tuple-collapsed `a*b->r`. *)
+          | Some a, Some r -> text (name ^ " : ") ^^ doc_ty_atom a ^^ text " -> " ^^ doc_ty r
+          | None, Some r -> text (name ^ " : ") ^^ doc_ty r
         in
         sepby (text " | ") (List.map ctor ctors)
     | Ast.TDNewtype (cname, t) -> text (cname ^ " of ") ^^ doc_ty t
@@ -542,11 +587,6 @@ let doc_type_def_binding (b : Ast.type_def_binding) : doc =
 let type_kw (b : Ast.type_def_binding) =
   match b.td_def with Ast.TDNewtype _ -> "newtype " | _ -> "type "
 
-(* `(type 'a 'b)` locally-abstract-type clause for let rec. *)
-let doc_type_params = function
-  | [] -> Nil
-  | tps -> text " (type " ^^ sepby (text " ") (List.map (fun t -> text ("'" ^ t)) tps) ^^ text ")"
-
 let rec doc_decl (d : Ast.decl) : doc =
   match d with
   | Ast.DLet { name; params; ret_annot; constraints; body } ->
@@ -555,12 +595,12 @@ let rec doc_decl (d : Ast.decl) : doc =
   | Ast.DLetMut (name, body) ->
       text "let mut " ^^ doc_var name ^^ text " =" ^^ nest (line ^^ doc_expr body)
   | Ast.DLetRec b ->
-      text "let rec" ^^ doc_type_params b.type_params ^^ text " " ^^ doc_var b.lr_name
+      text "let rec" ^^ tp_clause b.type_params ^^ text " " ^^ doc_var b.lr_name
       ^^ doc_params b.params ^^ doc_ret_annot b.ret_annot
       ^^ doc_constraints b.constraints ^^ text " =" ^^ nest (line ^^ doc_expr b.body)
   | Ast.DLetRecAnd bs ->
       let one kw (b : Ast.letrec_binding) =
-        text kw ^^ doc_type_params b.type_params ^^ text " " ^^ doc_var b.lr_name
+        text kw ^^ tp_clause b.type_params ^^ text " " ^^ doc_var b.lr_name
         ^^ doc_params b.params ^^ doc_ret_annot b.ret_annot
         ^^ doc_constraints b.constraints ^^ text " =" ^^ nest (line ^^ doc_expr b.body)
       in
