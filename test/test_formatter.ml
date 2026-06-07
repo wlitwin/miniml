@@ -86,6 +86,12 @@ let () =
       ("stacked leading comments", "-- one\n-- two\nlet x = 1");
       ("tail comment at eof", "let x = 1\n-- bye");
       ("comment between decls", "let a = 1\n-- mid\nlet b = 2");
+      (* comment increment 2: module-body comments are preserved too *)
+      ("module-body leading comment", "module M =\n  -- doc\n  pub let x = 1\nend");
+      ("module-body trailing comment", "module M =\n  pub let x = 1 -- note\n  pub let y = 2\nend");
+      ("comment before module end", "module M =\n  pub let x = 1\n  -- last\nend");
+      ("nested module comment", "module M =\n  module N =\n    -- deep\n    pub let z = 1\n  end\nend");
+      ("comment on module decl itself", "-- the module\nmodule M =\n  pub let x = 1\nend");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)

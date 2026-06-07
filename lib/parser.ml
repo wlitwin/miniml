@@ -2768,7 +2768,11 @@ and parse_module_decl p =
   expect p Token.EQ;
   let items = ref [] in
   while peek_kind p <> Token.END do
-    let module_items = parse_module_body_item p in
+    (* Bracket each module-body item in a CstDecl node, mirroring the top-level
+       loop, so the lossless CST records module-inner declaration boundaries
+       (used by the formatter to weave in module-body comments). No-op unless
+       [record_cst] — the self-hosted parser path never sets it. *)
+    let module_items = with_node p CstDecl (fun () -> parse_module_body_item p) in
     items := List.rev_append module_items !items;
     (* Optional ;; separator *)
     if peek_kind p = Token.DOUBLE_SEMICOLON then ignore (advance p)

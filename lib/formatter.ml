@@ -772,105 +772,204 @@ let all_comments (src : string) : comment list =
       scan_trivia abs p.leading)
     (Cst.of_source src)
 
-(* The (start, end) spans of the top-level declarations, as the parser bracketed
-   them in the CST — one [Decl] node per `let`/`type`/`module`/... (a top-level
-   destructuring `let (a, b) = e` is a single node even though it desugars to
-   several AST decls). Span excludes leading trivia, so comments fall in gaps. *)
-let toplevel_spans (tree : Cst.tree) : (int * int) list =
-  let span node =
-    match Cst.leaves node with
-    | [] -> None
-    | ls ->
-        let first = List.hd ls in
-        let last = List.nth ls (List.length ls - 1) in
-        Some (first.token.loc.offset, last.token.end_offset)
-  in
-  match tree with
-  | Cst.Node (Cst.SourceFile, children) ->
-      List.filter_map
-        (function Cst.Node (Cst.Decl, _) as n -> span n | _ -> None)
-        children
-  | _ -> []
+(* The [start, end) source span of a CST node (excludes its leading trivia, so
+   comments always fall in the gaps between sibling spans). *)
+let node_span (node : Cst.tree) : int * int =
+  match Cst.leaves node with
+  | [] -> raise Exit
+  | ls ->
+      let first = List.hd ls in
+      let last = List.nth ls (List.length ls - 1) in
+      (first.token.loc.offset, last.token.end_offset)
 
-let comment_str (c : comment) : string = c.ctext
+(* The direct child CstDecl nodes of [node], in source order. For SourceFile
+   these are the top-level decls; for a module's Decl node they are its body
+   declarations (the parser brackets both, mirroring each other). *)
+let child_decl_nodes (node : Cst.tree) : Cst.tree array =
+  match node with
+  | Cst.Node (_, children) ->
+      Array.of_list
+        (List.filter (function Cst.Node (Cst.Decl, _) -> true | _ -> false) children)
+  | _ -> [||]
 
-(* Render with top-level comments interleaved. Falls back to the plain printer
-   on any structural surprise so comments can never make formatting worse. *)
-let format_source_with_comments (src : string) (prog : Ast.program) : string =
-  let tree = Cst_build.cst_of_source src in
-  let spans = Array.of_list (toplevel_spans tree) in
-  let nspans = Array.length spans in
-  (* Segment [prog] to match the spans: each span owns however many AST decls
-     re-parsing its source slice yields. Counting (not comparing) sidesteps the
-     fresh-name counter differing between a full parse and a slice parse. *)
-  let counts =
-    Array.map
-      (fun (s, e) ->
-        List.length (Parser.parse_program (Lexer.tokenize (String.sub src s (e - s)))))
-      spans
-  in
-  if Array.fold_left ( + ) 0 counts <> List.length prog then raise Exit;
-  let groups = Array.make nspans [] in
-  let rec fill i prog =
-    if i < nspans then begin
-      let rec take k xs acc =
-        if k = 0 then (List.rev acc, xs)
-        else match xs with [] -> raise Exit | x :: r -> take (k - 1) r (x :: acc)
+(* For a module's Decl node, the offset range of its BODY: from just after the
+   header `=` to the `end` keyword. Module-body comments live in this range
+   (minus the inner decl spans). *)
+let module_body_range (node : Cst.tree) : int * int =
+  match node with
+  | Cst.Node (_, children) ->
+      let rec find_lo before = function
+        | Cst.Node (Cst.Decl, _) :: _ -> before
+        | Cst.Leaf p :: rest -> find_lo p.token.end_offset rest
+        | _ :: rest -> find_lo before rest
+        | [] -> before
       in
-      let g, rest = take counts.(i) prog [] in
-      groups.(i) <- g;
-      fill (i + 1) rest
-    end
+      let lo = find_lo 0 children in
+      let ls = Cst.leaves node in
+      let hi = (List.nth ls (List.length ls - 1)).token.loc.offset in
+      (lo, hi)
+  | _ -> raise Exit
+
+(* How many AST decls a span's source slice parses to. Counting (not comparing)
+   sidesteps the fresh-param counter differing between a full parse and a slice
+   parse, and absorbs any 1-node-to-N-decls desugaring (top-level / module-body
+   `let (a, b) = e`). Module-body slices are parsed wrapped so `pub`/`opaque`
+   and the module-only grammar resolve. *)
+let decls_in_slice ~top (src : string) ((s, e) : int * int) : int =
+  let slice = String.sub src s (e - s) in
+  if top then List.length (Parser.parse_program (Lexer.tokenize slice))
+  else
+    match Parser.parse_program (Lexer.tokenize ("module Fmt__Wrap =\n" ^ slice ^ "\nend")) with
+    | [ Ast.DModule (_, items) ] -> List.length items
+    | _ -> raise Exit
+
+(* Split [items] into consecutive groups of the given [counts] (one group per
+   CST Decl node). Any length mismatch means our span/AST model is off — bail. *)
+let segment (counts : int list) (items : 'a list) : 'a list list =
+  let rec take k xs acc =
+    if k = 0 then (List.rev acc, xs)
+    else match xs with [] -> raise Exit | x :: r -> take (k - 1) r (x :: acc)
   in
-  fill 0 prog;
-  (* Bucket comments into the gap slots between spans (0 = before first span,
-     i = after span i-1 and before span i, nspans = after last span). Comments
-     inside a span are intra-declaration — dropped this increment. *)
-  let slot_of cs =
-    let count = ref 0 in
-    Array.iter (fun (_, e) -> if e <= cs then incr count) spans;
-    !count
+  let rec go counts items acc =
+    match counts with
+    | [] -> if items <> [] then raise Exit else List.rev acc
+    | k :: rest ->
+        let g, items' = take k items [] in
+        go rest items' (g :: acc)
   in
+  go counts items []
+
+(* A comment renders as its exact source spelling. Multi-line block comments
+   keep their internal bytes verbatim (idempotent, lossless); only the first
+   line picks up the surrounding indentation. *)
+let doc_comment (c : comment) : doc = text c.ctext
+
+(* Render a sequence of sibling declarations (a SourceFile's or a module body's)
+   with the comments in the gaps between them woven back. [top] selects the
+   top-level vs module-body layout (`;;`-and-blank-line vs one-`;;`-per-line),
+   [nodes]/[groups] are the CST Decl nodes and the AST decls segmented to match,
+   and [lo, hi) bounds the comment range owned by this level. *)
+let rec doc_level ~top (src : string) (nodes : Cst.tree array)
+    (groups : Ast.module_decl list array) (comments : comment list) ~lo ~hi : doc =
+  let n = Array.length nodes in
+  let spans = Array.map node_span nodes in
   let inside cs = Array.exists (fun (s, e) -> s <= cs && cs < e) spans in
-  let slots = Array.make (nspans + 1) [] in
+  let slot_of cs =
+    let c = ref 0 in
+    Array.iter (fun (_, e) -> if e <= cs then incr c) spans;
+    !c
+  in
+  (* Bucket the comments owned by this level into the n+1 gap slots. Comments
+     inside an inner span belong to that node (handled by recursion for modules,
+     dropped for leaf decls — intra-expression, a later increment). *)
+  let slots = Array.make (n + 1) [] in
   List.iter
-    (fun c -> if not (inside c.cs) then slots.(slot_of c.cs) <- c :: slots.(slot_of c.cs))
-    (all_comments src);
+    (fun c ->
+      if c.cs >= lo && c.cs < hi && not (inside c.cs) then
+        slots.(slot_of c.cs) <- c :: slots.(slot_of c.cs))
+    comments;
   Array.iteri (fun i l -> slots.(i) <- List.rev l) slots;
-  (* leading.(i): own-line comments printed above block i; trailing.(i): a
-     same-line comment after block i; tail: own-line comments after the file. *)
-  let leading = Array.make (max nspans 1) [] in
-  let trailing = Array.make (max nspans 1) None in
+  (* leading.(i): own-line comments above node i; trailing.(i): a same-line
+     comment after node i; tail: own-line comments after the last node. *)
+  let leading = Array.make (max n 1) [] in
+  let trailing = Array.make (max n 1) None in
   let tail = ref [] in
   Array.iteri
     (fun i cs ->
-      let cs, set_trailing =
+      let cs, tr =
         match cs with
         | first :: rest when i >= 1 && not first.cown -> (rest, Some first)
         | _ -> (cs, None)
       in
-      (match set_trailing with Some c -> trailing.(i - 1) <- Some c | None -> ());
-      if i < nspans then leading.(i) <- cs else tail := cs)
+      (match tr with Some c -> trailing.(i - 1) <- Some c | None -> ());
+      if i < n then leading.(i) <- cs else tail := cs)
     slots;
-  let buf = Buffer.create 1024 in
-  let block_str group = render (sepby (text ";;" ^^ line ^^ line) (List.map doc_decl group)) in
-  Array.iteri
-    (fun i group ->
-      List.iter (fun c -> Buffer.add_string buf (comment_str c); Buffer.add_char buf '\n') leading.(i);
-      Buffer.add_string buf (block_str group);
-      if i < nspans - 1 then Buffer.add_string buf ";;";
-      (match trailing.(i) with
-      | Some c -> Buffer.add_char buf ' '; Buffer.add_string buf (comment_str c)
-      | None -> ());
-      if i < nspans - 1 then Buffer.add_string buf "\n\n")
-    groups;
-  List.iteri
-    (fun j c ->
-      if j > 0 || nspans > 0 then Buffer.add_char buf '\n';
-      Buffer.add_string buf (comment_str c))
-    !tail;
-  Buffer.add_char buf '\n';
-  Buffer.contents buf
+  let trail_doc i =
+    match trailing.(i) with Some c -> text " " ^^ doc_comment c | None -> Nil
+  in
+  if top then begin
+    let frag i =
+      let lead = concat (List.map (fun c -> doc_comment c ^^ line) leading.(i)) in
+      let body =
+        sepby (text ";;" ^^ line ^^ line)
+          (List.map (doc_module_decl_c src nodes.(i) comments) groups.(i))
+      in
+      let sep_after = if i < n - 1 then text ";;" else Nil in
+      let gap = if i < n - 1 then line ^^ line else Nil in
+      lead ^^ body ^^ sep_after ^^ trail_doc i ^^ gap
+    in
+    let all = concat (List.init n frag) in
+    let tail_doc =
+      concat
+        (List.mapi (fun j c -> (if j > 0 || n > 0 then line else Nil) ^^ doc_comment c) !tail)
+    in
+    all ^^ tail_doc
+  end
+  else begin
+    (* Module body: every item on its own line, each suffixed with `;;`. *)
+    let frag i =
+      let lead = concat (List.map (fun c -> line ^^ doc_comment c) leading.(i)) in
+      let items = groups.(i) in
+      let last = List.length items - 1 in
+      concat
+        (List.mapi
+           (fun j md ->
+             (if j = 0 then lead else Nil)
+             ^^ line
+             ^^ doc_module_decl_c src nodes.(i) comments md
+             ^^ text ";;"
+             ^^ if j = last then trail_doc i else Nil)
+           items)
+    in
+    let all = concat (List.init n frag) in
+    let tail_doc = concat (List.map (fun c -> line ^^ doc_comment c) !tail) in
+    all ^^ tail_doc
+  end
+
+(* Render one declaration item, comment-aware: a nested module recurses so its
+   body comments are woven in; everything else delegates to the plain printer
+   (only top-level / module-body — i.e. declaration-boundary — comments are
+   handled; intra-expression comments are a later increment). *)
+and doc_module_decl_c (src : string) (node : Cst.tree) (comments : comment list)
+    (md : Ast.module_decl) : doc =
+  let vis =
+    match md.Ast.vis with Ast.Public -> "pub " | Ast.Private -> "" | Ast.Opaque -> "opaque "
+  in
+  match md.Ast.decl with
+  | Ast.DModule (name, inner_items) ->
+      let inner_nodes = child_decl_nodes node in
+      let lo, hi = module_body_range node in
+      let counts =
+        Array.to_list
+          (Array.map (fun nd -> decls_in_slice ~top:false src (node_span nd)) inner_nodes)
+      in
+      let groups = Array.of_list (segment counts inner_items) in
+      if Array.length groups <> Array.length inner_nodes then raise Exit;
+      text vis
+      ^^ text ("module " ^ name ^ " =")
+      ^^ nest (doc_level ~top:false src inner_nodes groups comments ~lo ~hi)
+      ^^ line ^^ text "end"
+  | _ -> text vis ^^ doc_decl md.Ast.decl
+
+(* Render with declaration comments interleaved. Falls back to the plain printer
+   on any structural surprise so comments can never make formatting worse. *)
+let format_source_with_comments (src : string) (prog : Ast.program) : string =
+  let tree = Cst_build.cst_of_source src in
+  let top_nodes =
+    match tree with
+    | Cst.Node (Cst.SourceFile, _) -> child_decl_nodes tree
+    | _ -> raise Exit
+  in
+  let comments = all_comments src in
+  let counts =
+    Array.to_list (Array.map (fun nd -> decls_in_slice ~top:true src (node_span nd)) top_nodes)
+  in
+  let items = List.map (fun d -> Ast.{ vis = Private; decl = d }) prog in
+  let groups = Array.of_list (segment counts items) in
+  if Array.length groups <> Array.length top_nodes then raise Exit;
+  render
+    (doc_level ~top:true src top_nodes groups comments ~lo:0 ~hi:(String.length src))
+  ^ "\n"
 
 let format_source (src : string) : string =
   let tokens = Lexer.tokenize src in
