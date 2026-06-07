@@ -102,6 +102,11 @@ let () =
       ("inline comment in if branch", "let f x =\n  if x do\n    -- yes\n    1\n  else\n    -- no\n    2");
       ("trailing inline comment hoists", "let f x =\n  let a = x in -- note\n  a");
       ("multi-line inline comment", "let f x =\n  -- one\n  -- two\n  x");
+      (* mid-expression comments (before any sub-expression) are preserved *)
+      ("comment before application arg", "let a = f arg1 (* note *) arg2 arg3");
+      ("comment before list element", "let a = [1; 2; (* important *) 3; 4]");
+      ("comment before binop operand", "let a = x + (* offset *) y + z");
+      ("comment before tuple element", "let a = (one, (* mid *) two, three)");
       (* comment increment 4: class/instance/effect member comments *)
       ("class method comment", "class Hash 'a =\n  -- hashing\n  hash : 'a -> int\nend");
       ("instance method comment", "instance Show int =\n  -- render it\n  let show n = \"n\"\nend");
