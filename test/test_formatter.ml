@@ -78,6 +78,14 @@ let () =
       ("polyvariant type", "let f (x : [> `A | `B of int ]) = x");
       ("expr let-rec-and", "let r = let rec ev x = od x and od x = ev x in ev 3 in r");
       ("LAT expr let rec", "let r = let rec (type 'a) id (x : 'a) : 'a = x in id 5");
+      (* comment increment 1: top-level comments are preserved *)
+      ("leading line comment", "-- doc for x\nlet x = 1");
+      ("trailing line comment", "let x = 1 -- trailing\nlet y = 2");
+      ("block comment", "(* a block *)\nlet x = 1");
+      ("multi-line block comment", "(* line one\n   line two *)\nlet x = 1");
+      ("stacked leading comments", "-- one\n-- two\nlet x = 1");
+      ("tail comment at eof", "let x = 1\n-- bye");
+      ("comment between decls", "let a = 1\n-- mid\nlet b = 2");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
@@ -86,5 +94,12 @@ let () =
   test "canonical: top-level decls get ;;"
     (formats_to "let a = 1\nlet b = 2"
        "let a =\n  1;;\n\nlet b =\n  2\n");
+  test "canonical: leading comment sits above its decl"
+    (formats_to "-- doc\nlet a = 1" "-- doc\nlet a =\n  1\n");
+  test "canonical: trailing comment stays on the decl line"
+    (formats_to "let a = 1 -- note\nlet b = 2"
+       "let a =\n  1;; -- note\n\nlet b =\n  2\n");
+  test "canonical: line comments are right-trimmed"
+    (formats_to "-- trailing spaces   \nlet a = 1" "-- trailing spaces\nlet a =\n  1\n");
 
   print_summary ()

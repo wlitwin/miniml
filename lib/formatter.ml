@@ -18,7 +18,10 @@
    Increment 3: GADT constructors, map/set patterns, typed-collection (#Name[..]
    / #Name{..}) and poly-variant-type literals, expression-level let-rec(-and) —
    the corpus is now ~fully covered (only empty typed-map literals are unhandled).
-   NOT yet: COMMENTS — a later increment weaves them in from the CST trivia. *)
+   Comment increment 1: TOP-LEVEL declaration comments (leading own-line +
+   trailing same-line) are recovered from the lossless CST trivia and woven back
+   at declaration boundaries; intra-declaration / module-body comments are still
+   dropped and come in a later increment. *)
 
 exception Unsupported of string
 
@@ -672,10 +675,209 @@ let format_program (prog : Ast.program) : string =
   let joined = sepby (text ";;" ^^ line ^^ line) docs in
   render joined ^ "\n"
 
+(* --- Comment preservation (roadmap #21, comment increment 1) -------------
+
+   The AST is desugared and carries source positions only on expression atoms
+   (ELoc), so it cannot, on its own, tell us where comments sat. The lossless
+   CST (cst.ml) can: every comment lives in the inter-token TRIVIA, and each
+   token's exact span tiles the source. So we recover comments straight from
+   that trivia and weave them back at DECLARATION boundaries — the boundaries
+   the CST records as [Decl] nodes, which exist even for the declaration forms
+   that have no AST position at all (type / open / extern / effect / class).
+
+   Increment 1 handles TOP-LEVEL declarations only: a comment in the gap before
+   a declaration becomes its leading comment (own its line) or, if it sits on
+   the same line as the preceding declaration, that declaration's trailing
+   comment. Comments INSIDE a declaration's span (intra-expression, module
+   bodies) are dropped for now — exactly as before this increment — and woven
+   in by later increments. Dropping is always safe for the formatter's two
+   invariants (it can neither change the parsed AST nor break idempotence). *)
+
+type comment = {
+  cs : int; (* absolute start offset *)
+  ce : int; (* absolute end offset (exclusive) *)
+  ctext : string; (* exact source spelling, line comments right-trimmed *)
+  cown : bool; (* starts its own line (vs. trailing code on the same line) *)
+}
+
+let rstrip s =
+  let n = ref (String.length s) in
+  while !n > 0 && (s.[!n - 1] = ' ' || s.[!n - 1] = '\t' || s.[!n - 1] = '\r') do
+    decr n
+  done;
+  String.sub s 0 !n
+
+(* Pull the comments out of one trivia run [s], which begins at absolute offset
+   [abs]. Trivia is whitespace and comments only (the lexer guarantees no string
+   literals leak in), so a flat scan is safe. [cown] is true when a newline
+   separates the comment from the previous significant content. *)
+let scan_trivia abs (s : string) : comment list =
+  let n = String.length s in
+  let out = ref [] in
+  let i = ref 0 in
+  let nl = ref false in
+  while !i < n do
+    let c = s.[!i] in
+    if c = '\n' then begin
+      nl := true;
+      incr i
+    end
+    else if c = ' ' || c = '\t' || c = '\r' then incr i
+    else if c = '(' && !i + 1 < n && s.[!i + 1] = '*' then begin
+      let start = !i in
+      i := !i + 2;
+      let depth = ref 1 in
+      while !depth > 0 && !i < n do
+        if !i + 1 < n && s.[!i] = '(' && s.[!i + 1] = '*' then begin
+          depth := !depth + 1;
+          i := !i + 2
+        end
+        else if !i + 1 < n && s.[!i] = '*' && s.[!i + 1] = ')' then begin
+          depth := !depth - 1;
+          i := !i + 2
+        end
+        else incr i
+      done;
+      out :=
+        { cs = abs + start; ce = abs + !i; ctext = String.sub s start (!i - start); cown = !nl }
+        :: !out;
+      nl := false
+    end
+    else if c = '-' && !i + 1 < n && s.[!i + 1] = '-' then begin
+      let start = !i in
+      while !i < n && s.[!i] <> '\n' do
+        incr i
+      done;
+      out :=
+        {
+          cs = abs + start;
+          ce = abs + !i;
+          ctext = rstrip (String.sub s start (!i - start));
+          cown = !nl;
+        }
+        :: !out;
+      nl := false
+    end
+    else incr i
+  done;
+  List.rev !out
+
+(* Every comment in [src], in source order, recovered from token trivia. *)
+let all_comments (src : string) : comment list =
+  let prev = ref 0 in
+  List.concat_map
+    (fun (p : Cst.piece) ->
+      let abs = !prev in
+      prev := p.token.end_offset;
+      scan_trivia abs p.leading)
+    (Cst.of_source src)
+
+(* The (start, end) spans of the top-level declarations, as the parser bracketed
+   them in the CST — one [Decl] node per `let`/`type`/`module`/... (a top-level
+   destructuring `let (a, b) = e` is a single node even though it desugars to
+   several AST decls). Span excludes leading trivia, so comments fall in gaps. *)
+let toplevel_spans (tree : Cst.tree) : (int * int) list =
+  let span node =
+    match Cst.leaves node with
+    | [] -> None
+    | ls ->
+        let first = List.hd ls in
+        let last = List.nth ls (List.length ls - 1) in
+        Some (first.token.loc.offset, last.token.end_offset)
+  in
+  match tree with
+  | Cst.Node (Cst.SourceFile, children) ->
+      List.filter_map
+        (function Cst.Node (Cst.Decl, _) as n -> span n | _ -> None)
+        children
+  | _ -> []
+
+let comment_str (c : comment) : string = c.ctext
+
+(* Render with top-level comments interleaved. Falls back to the plain printer
+   on any structural surprise so comments can never make formatting worse. *)
+let format_source_with_comments (src : string) (prog : Ast.program) : string =
+  let tree = Cst_build.cst_of_source src in
+  let spans = Array.of_list (toplevel_spans tree) in
+  let nspans = Array.length spans in
+  (* Segment [prog] to match the spans: each span owns however many AST decls
+     re-parsing its source slice yields. Counting (not comparing) sidesteps the
+     fresh-name counter differing between a full parse and a slice parse. *)
+  let counts =
+    Array.map
+      (fun (s, e) ->
+        List.length (Parser.parse_program (Lexer.tokenize (String.sub src s (e - s)))))
+      spans
+  in
+  if Array.fold_left ( + ) 0 counts <> List.length prog then raise Exit;
+  let groups = Array.make nspans [] in
+  let rec fill i prog =
+    if i < nspans then begin
+      let rec take k xs acc =
+        if k = 0 then (List.rev acc, xs)
+        else match xs with [] -> raise Exit | x :: r -> take (k - 1) r (x :: acc)
+      in
+      let g, rest = take counts.(i) prog [] in
+      groups.(i) <- g;
+      fill (i + 1) rest
+    end
+  in
+  fill 0 prog;
+  (* Bucket comments into the gap slots between spans (0 = before first span,
+     i = after span i-1 and before span i, nspans = after last span). Comments
+     inside a span are intra-declaration — dropped this increment. *)
+  let slot_of cs =
+    let count = ref 0 in
+    Array.iter (fun (_, e) -> if e <= cs then incr count) spans;
+    !count
+  in
+  let inside cs = Array.exists (fun (s, e) -> s <= cs && cs < e) spans in
+  let slots = Array.make (nspans + 1) [] in
+  List.iter
+    (fun c -> if not (inside c.cs) then slots.(slot_of c.cs) <- c :: slots.(slot_of c.cs))
+    (all_comments src);
+  Array.iteri (fun i l -> slots.(i) <- List.rev l) slots;
+  (* leading.(i): own-line comments printed above block i; trailing.(i): a
+     same-line comment after block i; tail: own-line comments after the file. *)
+  let leading = Array.make (max nspans 1) [] in
+  let trailing = Array.make (max nspans 1) None in
+  let tail = ref [] in
+  Array.iteri
+    (fun i cs ->
+      let cs, set_trailing =
+        match cs with
+        | first :: rest when i >= 1 && not first.cown -> (rest, Some first)
+        | _ -> (cs, None)
+      in
+      (match set_trailing with Some c -> trailing.(i - 1) <- Some c | None -> ());
+      if i < nspans then leading.(i) <- cs else tail := cs)
+    slots;
+  let buf = Buffer.create 1024 in
+  let block_str group = render (sepby (text ";;" ^^ line ^^ line) (List.map doc_decl group)) in
+  Array.iteri
+    (fun i group ->
+      List.iter (fun c -> Buffer.add_string buf (comment_str c); Buffer.add_char buf '\n') leading.(i);
+      Buffer.add_string buf (block_str group);
+      if i < nspans - 1 then Buffer.add_string buf ";;";
+      (match trailing.(i) with
+      | Some c -> Buffer.add_char buf ' '; Buffer.add_string buf (comment_str c)
+      | None -> ());
+      if i < nspans - 1 then Buffer.add_string buf "\n\n")
+    groups;
+  List.iteri
+    (fun j c ->
+      if j > 0 || nspans > 0 then Buffer.add_char buf '\n';
+      Buffer.add_string buf (comment_str c))
+    !tail;
+  Buffer.add_char buf '\n';
+  Buffer.contents buf
+
 let format_source (src : string) : string =
   let tokens = Lexer.tokenize src in
   let prog = Parser.parse_program tokens in
-  format_program prog
+  try format_source_with_comments src prog with
+  | Unsupported _ as e -> raise e
+  | _ -> format_program prog
 
 (* --- Deep loc-stripping, for the semantic-preservation property --------- *)
 
