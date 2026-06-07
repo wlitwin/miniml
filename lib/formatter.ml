@@ -18,13 +18,15 @@
    Increment 3: GADT constructors, map/set patterns, typed-collection (#Name[..]
    / #Name{..}) and poly-variant-type literals, expression-level let-rec(-and) —
    the corpus is now ~fully covered (only empty typed-map literals are unhandled).
-   Comment preservation (incr 1-3): declaration comments (leading own-line +
+   Comment preservation (incr 1-4): declaration comments (leading own-line +
    trailing same-line) are recovered from the lossless CST trivia and woven back
    at declaration boundaries — at top level, in module bodies, and recursively.
    Inline (intra-declaration) comments are re-anchored to the next significant
    token and flushed own-line at that token during rendering (see [render] /
-   [Mark]); a comment with no statement anchor (e.g. mid-expression, or before a
-   class/instance method) is still dropped — always safe for the invariants. *)
+   [Mark]): statement comments in expression bodies, and comments between
+   class/instance/effect members (the parser brackets members in CstDecl nodes
+   so their offsets are recoverable). A comment with no anchor (e.g. between
+   operands of `+`) is still dropped — always safe for the invariants. *)
 
 exception Unsupported of string
 
@@ -45,6 +47,12 @@ type comment = {
    by [format_source_with_comments]; empty for the plain ([format_program])
    path, which makes every [Mark] a no-op. *)
 let render_pending : comment list ref = ref []
+
+(* The start offsets of a class/instance/effect's members, set by the
+   declaration weaver around a [doc_decl] call so its member loop can emit a
+   leading [Mark] per member (anchoring comments between members). [None] on the
+   plain path — no member marks. *)
+let member_marks : int array option ref = ref None
 
 (* --- A minimal Wadler-style document combinator (no width-based wrapping yet;
    breaks exactly where [line] says). ------------------------------------- *)
@@ -382,6 +390,13 @@ let rec start_offset (e : Ast.expr) : int option =
 let mark (e : Ast.expr) : doc =
   match start_offset e with Some o -> Mark o | None -> Nil
 
+(* A leading [Mark] for the i-th class/instance/effect member, if the weaver has
+   supplied member offsets (anchors comments sitting between members). *)
+let member_mark i : doc =
+  match !member_marks with
+  | Some arr when i < Array.length arr -> Mark arr.(i)
+  | _ -> Nil
+
 let rec doc_expr (e : Ast.expr) : doc =
   match strip_loc e with
   | Ast.EInt n -> text (string_of_int n)
@@ -704,25 +719,27 @@ let rec doc_decl (d : Ast.decl) : doc =
             in
             text " where " ^^ sepby (text ", ") (List.map dep fundeps)
       in
-      let meth (name, t) = line ^^ doc_var name ^^ text " : " ^^ doc_ty t in
+      let meth i (name, t) =
+        line ^^ member_mark i ^^ doc_var name ^^ text " : " ^^ doc_ty t
+      in
       text "class " ^^ text class_name ^^ tvs ^^ fds ^^ text " ="
-      ^^ nest (concat (List.map meth methods))
+      ^^ nest (concat (List.mapi meth methods))
       ^^ line ^^ text "end"
   | Ast.DInstance { inst_class; inst_types; inst_constraints; inst_methods } ->
       let tys = concat (List.map (fun t -> text " " ^^ doc_ty_atom t) inst_types) in
-      let meth (name, params, body) =
-        line ^^ text "let " ^^ doc_var name ^^ doc_params params ^^ text " = "
-        ^^ doc_expr body
+      let meth i (name, params, body) =
+        line ^^ member_mark i ^^ text "let " ^^ doc_var name ^^ doc_params params
+        ^^ text " = " ^^ doc_expr body
       in
       text "instance " ^^ text inst_class ^^ tys
       ^^ doc_constraints inst_constraints ^^ text " ="
-      ^^ nest (concat (List.map meth inst_methods))
+      ^^ nest (concat (List.mapi meth inst_methods))
       ^^ line ^^ text "end"
   | Ast.DEffect (name, type_params, ops) ->
       let tps = concat (List.map (fun v -> text (" '" ^ v)) type_params) in
-      let op (n, t) = line ^^ text (n ^ " : ") ^^ doc_ty t in
+      let op i (n, t) = line ^^ member_mark i ^^ text (n ^ " : ") ^^ doc_ty t in
       text "effect " ^^ text name ^^ tps ^^ text " ="
-      ^^ nest (concat (List.map op ops))
+      ^^ nest (concat (List.mapi op ops))
       ^^ line ^^ text "end"
   | Ast.DModule (name, items) ->
       (* Separate inner decls with `;;` (an optional module separator) so none
@@ -861,16 +878,29 @@ let node_span (node : Cst.tree) : int * int =
       let last = List.nth ls (List.length ls - 1) in
       (first.token.loc.offset, last.token.end_offset)
 
-(* Spans of the LEAF declaration nodes — Decl nodes with no nested Decl node
-   (every form but a non-empty module). Inline (intra-declaration) comments are
-   exactly those inside a leaf span: comments in a module's own body sit between
-   its inner Decl nodes and are handled by the recursive declaration weaver, not
-   here. *)
+(* Whether a Decl node is a MODULE (its first significant token, skipping a
+   `pub`/`opaque` prefix, is `module`). Only modules have their body comments
+   handled by the recursive declaration weaver; a class/instance/effect also has
+   child Decl nodes now (one per member) but is a comment LEAF — its body
+   comments, between and inside members, are flushed by render-time [Mark]s. *)
+let is_module_node (node : Cst.tree) : bool =
+  let rec first = function
+    | (p : Cst.piece) :: rest -> (
+        match p.token.kind with
+        | Token.PUB | Token.OPAQUE -> first rest
+        | k -> k = Token.MODULE)
+    | [] -> false
+  in
+  first (Cst.leaves node)
+
+(* Spans of the LEAF declaration nodes — every declaration but a module (which
+   recurses). Inline (intra-declaration) comments are exactly those inside a leaf
+   span; a module's own body comments sit between its inner Decl nodes and are
+   handled by the recursive declaration weaver instead. *)
 let rec leaf_spans (t : Cst.tree) : (int * int) list =
   match t with
   | Cst.Node (Cst.Decl, children) ->
-      if List.exists (function Cst.Node (Cst.Decl, _) -> true | _ -> false) children
-      then List.concat_map leaf_spans children
+      if is_module_node t then List.concat_map leaf_spans children
       else [ node_span t ]
   | Cst.Node (_, children) -> List.concat_map leaf_spans children
   | Cst.Leaf _ -> []
@@ -1041,7 +1071,23 @@ and doc_module_decl_c (src : string) (node : Cst.tree) (comments : comment list)
       ^^ text ("module " ^ name ^ " =")
       ^^ nest (doc_level ~top:false src inner_nodes groups comments ~lo ~hi)
       ^^ line ^^ text "end"
+  | Ast.DClass { methods; _ } -> member_decl vis node (List.length methods) md.Ast.decl
+  | Ast.DInstance { inst_methods; _ } ->
+      member_decl vis node (List.length inst_methods) md.Ast.decl
+  | Ast.DEffect (_, _, ops) -> member_decl vis node (List.length ops) md.Ast.decl
   | _ -> text vis ^^ doc_decl md.Ast.decl
+
+(* Render a class/instance/effect, supplying [doc_decl] with the member start
+   offsets (from the CST member nodes) so its loop emits a leading [Mark] per
+   member — anchoring comments between members. Falls back to a plain render if
+   the CST member count doesn't match the AST. *)
+and member_decl vis (node : Cst.tree) (n_members : int) (decl : Ast.decl) : doc =
+  let mnodes = child_decl_nodes node in
+  if Array.length mnodes = n_members then
+    member_marks := Some (Array.map (fun nd -> fst (node_span nd)) mnodes);
+  let body = doc_decl decl in
+  member_marks := None;
+  text vis ^^ body
 
 (* Render with declaration comments interleaved. Falls back to the plain printer
    on any structural surprise so comments can never make formatting worse. *)

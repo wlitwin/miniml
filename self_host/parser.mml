@@ -2453,10 +2453,11 @@ module Parser =
     expect p Token.EQ;
     let methods = Ref.create [] in
     for (peek_kind p) <> Token.END do
-      let s = parse_op_or_ident p in
+      let m = with_node p CstDecl (fn () -> let s = parse_op_or_ident p in
       expect p Token.COLON;
       let ty = parse_ty p in
-      Ref.set methods ((s, ty) :: Ref.get methods);
+      (s, ty)) in
+      Ref.set methods (m :: Ref.get methods);
       if (peek_kind p) = Token.SEMICOLON do
         (advance p; ())
       end
@@ -2482,7 +2483,7 @@ module Parser =
     expect p Token.EQ;
     let methods = Ref.create [] in
     for (peek_kind p) <> Token.END do
-      expect p Token.LET;
+      let m = with_node p CstDecl (fn () -> expect p Token.LET;
       let method_name = parse_op_or_ident p in
       let params = Ref.create [] in
       for ((peek_kind p) <> Token.EQ) && (((peek_kind p) <> Token.COLON) && ((peek_kind p) <> Token.WHERE)) do
@@ -2507,7 +2508,8 @@ module Parser =
         | Some ty -> Ast.EAnnot (body, ty)
         | None -> body
        in
-      Ref.set methods ((method_name, plain_params, body) :: Ref.get methods)
+      (method_name, plain_params, body)) in
+      Ref.set methods (m :: Ref.get methods)
     end;
     expect p Token.END;
     if (Ref.get methods) = [] do
@@ -2532,10 +2534,11 @@ module Parser =
     expect p Token.EQ;
     let ops = Ref.create [] in
     for (peek_kind p) <> Token.END do
-      let s = expect_ident p in
+      let o = with_node p CstDecl (fn () -> let s = expect_ident p in
       expect p Token.COLON;
       let ty = parse_ty p in
-      Ref.set ops ((s, ty) :: Ref.get ops);
+      (s, ty)) in
+      Ref.set ops (o :: Ref.get ops);
       if (peek_kind p) = Token.SEMICOLON do
         (advance p; ())
       end
