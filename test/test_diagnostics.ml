@@ -56,4 +56,27 @@ let () =
       if d.D.span.D.hi.offset <= d.D.span.D.lo.offset then
         failwith (Printf.sprintf "zero-width span: %s" (D.to_string d)));
 
+  (* --- error recovery (#18): one broken declaration doesn't blank the file --- *)
+  let codes src = List.map (fun (d : D.t) -> d.D.code) (A.diagnostics st src) in
+
+  test "recovery: two independent parse errors both reported" (fun () ->
+      (* `let a = )` recovers; `let c = *` is a second, separate parse error *)
+      let cs = codes "let a = )\nlet b = 1\nlet c = *" in
+      if List.length cs < 2 then
+        failwith (Printf.sprintf "expected >=2 diagnostics, got %d" (List.length cs)));
+
+  test "recovery: parse error AND type error both surface" (fun () ->
+      let cs = codes "let a = )\nlet b = unbound_name_xyz" in
+      if not (List.mem "parse" cs && List.mem "type" cs) then
+        failwith (String.concat "," cs));
+
+  test "recovery: a valid decl after a broken one is still analyzed" (fun () ->
+      (* the type error proves the partial AST (with the broken decl skipped)
+         was typechecked *)
+      let cs = codes "let broken = )\nlet bad : int = \"a string\"" in
+      if not (List.mem "type" cs) then failwith ("no type diag: " ^ String.concat "," cs));
+
+  test "recovery still reports nothing for clean multi-decl source"
+    (clean "let a = 1;;\nlet b = 2;;\nlet c = a + b");
+
   print_summary ()
