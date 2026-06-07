@@ -310,6 +310,25 @@ let () =
       | e ->
           Printf.eprintf "format: %s\n" (Printexc.to_string e);
           exit 1)
+  | () when argc >= 3 && Sys.argv.(1) = "--check" -> (
+      (* Structured diagnostics (roadmap #19): typecheck each file and print its
+         diagnostics, one per line. Exits 1 if any diagnostic is an error — the
+         CLI is a thin shell over Interpreter.Analysis, the same API the LSP uses. *)
+      let state = Interpreter.Analysis.make_state () in
+      let had_error = ref false in
+      for i = 2 to argc - 1 do
+        let path = Sys.argv.(i) in
+        let ic = open_in path in
+        let src = In_channel.input_all ic in
+        close_in ic;
+        List.iter
+          (fun (d : Interpreter.Diagnostic.t) ->
+            if d.Interpreter.Diagnostic.severity = Interpreter.Diagnostic.Error then
+              had_error := true;
+            Printf.printf "%s:%s\n" path (Interpreter.Diagnostic.to_string d))
+          (Interpreter.Analysis.diagnostics state src)
+      done;
+      if !had_error then exit 1)
   | () when argc >= 3 && Sys.argv.(1) = "--analyze" -> (
       try
         let state =
