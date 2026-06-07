@@ -74,6 +74,8 @@ let () =
       ("set pattern", "let f s = match s with | #{1; 2} -> true | _ -> false");
       ("typed array", "Array.length #Array[1; 2; 3]");
       ("typed array empty", "Array.length #Array[]");
+      ("typed map empty", "let m = #IntMap{}");
+      ("typed map", "let m = #IntMap{1: 2; 3: 4}");
       ("typed set", "Set.size #Set{10; 20; 30}");
       ("polyvariant type", "let f (x : [> `A | `B of int ]) = x");
       ("expr let-rec-and", "let r = let rec ev x = od x and od x = ev x in ev 3 in r");

@@ -698,8 +698,10 @@ let rec doc_expr (e : Ast.expr) : doc =
      `#Name{k: v; ..}` (map). *)
   | Ast.ECollTyped (name, elems) ->
       wrap ~op:("#" ^ name ^ "[") ~cl:"]" ~pad:false ~sep:";" (List.map doc_expr elems)
-  | Ast.EMapTyped (_, []) -> raise (Unsupported "empty typed map literal")
   | Ast.EMapTyped (name, pairs) ->
+      (* The empty case prints as `#Name{}`, which the parser keeps as an empty
+         map (parse_set_or_map treats `#{}` as a map for backwards compat), so it
+         round-trips via [wrap]'s empty branch. *)
       wrap ~op:("#" ^ name ^ "{") ~cl:"}" ~pad:false ~sep:";"
         (List.map (fun (k, v) -> doc_expr k ^^ text ": " ^^ doc_expr v) pairs)
   | Ast.ELoc _ -> assert false (* stripped above *)
