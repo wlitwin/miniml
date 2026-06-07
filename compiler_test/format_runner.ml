@@ -102,14 +102,12 @@ let () =
   List.iter
     (fun path -> check (Filename.basename path) (read_file path))
     (List.concat_map mml_files (List.filter_map resolve [ "stdlib"; "self_host" ]));
-  (* Known, semantically-equivalent residual divergences (roadmap #21): two
-     deeply-nested self-host files where the canonical layout re-nests a
-     let-body vs. a following sequence statement. The reparsed AST differs
-     structurally but the program means the same (same side effects, same
-     result) — the same class as ESeq associativity, just not yet normalized in
-     the equality check. The gate tolerates exactly these and FAILS on any new
-     divergence (or if one of these starts passing — then remove it here). *)
-  let baseline = [ "parser.mml"; "js_codegen.mml" ] in
+  (* No tolerated divergences: every corpus source must round-trip exactly. The
+     two former residuals (parser.mml / js_codegen.mml) were a real latent bug —
+     a greedy else-branch in sequence-LHS position dropped its delimiters and
+     re-scoped a following statement — now fixed (absorbs_semicolon handles
+     EIf). The gate FAILS on any divergence. *)
+  let baseline = [] in
   List.iter
     (fun (label, why) -> Printf.printf "  FAIL  %s — %s\n" label why)
     (List.rev !failures);

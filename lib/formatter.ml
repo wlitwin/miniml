@@ -487,13 +487,17 @@ let is_destructure_pat (p : Ast.pattern) : bool =
 
 (* Would a following `; stmt` be swallowed? (left of a sequence / assignment RHS)
    let/fn/match/handle bodies extend greedily; a sequence inherits from its tail.
-   if/else does NOT — its else-branch is parsed stop-at-`;`. *)
+   if/else absorbs through its else-branch: the branch itself is parsed
+   stop-at-`;`, but a greedy tail there (a let-in body, match, fn) is parsed
+   with the full expression grammar and so swallows a following `;`. *)
 let rec absorbs_semicolon (e : Ast.expr) : bool =
   match strip_loc e with
   | Ast.EFun _ | Ast.EMatch _ | Ast.EHandle _ | Ast.ELet _ | Ast.ELetRec _
   | Ast.ELetMut _ | Ast.ELetRecAnd _ ->
       true
   | Ast.ESeq (_, b) -> absorbs_semicolon b
+  | Ast.EIf (_, _, f) -> (
+      match strip_loc f with Ast.EUnit -> false | _ -> absorbs_semicolon f)
   | _ -> false
 
 (* Would a following `| arm` be swallowed? (a match/handler arm body) Only an

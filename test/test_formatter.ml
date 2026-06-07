@@ -113,6 +113,9 @@ let () =
       ("long tuple wraps", "let t = (aaaaaaaaaa, bbbbbbbbbb, cccccccccc, dddddddddd, eeeeeeeeee, ffffffffff, gggggg)");
       ("long binop chain wraps", "let s = aaaaaaaaaa + bbbbbbbbbb + cccccccccc + dddddddddd + eeeeeeeeee + ffffffffff");
       ("long boolean chain wraps", "let b = aaaaaaaaaa && bbbbbbbbbb && cccccccccc && dddddddddd && eeeeeeeeee && ffffff");
+      (* regression: a greedy else-branch (let-in) in sequence-LHS position must
+         stay parenthesized, or the following `;` re-scopes into the let body *)
+      ("greedy else in sequence lhs", "let f c a b d =\n  if c do\n    a\n  else do\n    let y = b in y\n  end;\n  d");
     ];
 
   (* A couple of exact canonical-output checks (locks the style). *)
