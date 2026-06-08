@@ -20,6 +20,7 @@ let () =
         sh "git -C %s -c init.defaultBranch=main init -q" repo = 0
         && sh "git -C %s -c user.email=t@t -c user.name=t add -A" repo = 0
         && sh "git -C %s -c user.email=t@t -c user.name=t commit -q -m c" repo = 0
+        && sh "git -C %s tag v1.0.0" repo = 0
         && sh "git -C %s tag v1.2.0" repo = 0
       in
       if not ok then Printf.printf "  SKIP: git not usable here\n"
@@ -41,6 +42,21 @@ let () =
         test "fetching a nonexistent version fails cleanly" (fun () ->
             match F.ensure repo (v "v9.9.9") with
             | _ -> failwith "expected a fetch failure"
-            | exception F.Fetch_error _ -> ())
+            | exception F.Fetch_error _ -> ());
+
+        test "tree_hash is deterministic and content-sensitive" (fun () ->
+            let dir = F.ensure repo (v "v1.2.0") in
+            let h1 = F.tree_hash dir in
+            if h1 <> F.tree_hash dir then failwith "non-deterministic";
+            if not (String.length h1 > 3 && String.sub h1 0 3 = "h1:") then failwith "no h1: tag";
+            let oc = open_out (Filename.concat dir "extra.mml") in
+            output_string oc "pub let z = 0\n";
+            close_out oc;
+            if F.tree_hash dir = h1 then failwith "hash ignored a new file");
+
+        test "latest_version selects the greatest tag" (fun () ->
+            match F.latest_version repo with
+            | Some ver -> if S.to_string ver <> "v1.2.0" then failwith (S.to_string ver)
+            | None -> failwith "no version found")
       end);
   print_summary ()

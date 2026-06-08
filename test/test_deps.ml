@@ -86,4 +86,14 @@ let () =
       if r1 <> r2 then failwith "non-deterministic";
       if sel r1 "Base" <> Some (v "v1.3.0") then failwith "Base should be v1.3.0");
 
+  (* mml.sum checksum file *)
+  test "sumfile parses, looks up, and round-trips" (fun () ->
+      let module Sum = Interpreter.Sumfile in
+      let es = Sum.parse "ex.com/a v1.0.0 h1:abc\n\nex.com/b v2.1.0 h1:def\n" in
+      if List.length es <> 2 then failwith "parse count";
+      if Sum.lookup es "ex.com/a" "v1.0.0" <> Some "h1:abc" then failwith "lookup";
+      if Sum.lookup es "ex.com/a" "v9.9.9" <> None then failwith "lookup miss";
+      if Sum.lookup (Sum.parse (Sum.to_string es)) "ex.com/b" "v2.1.0" <> Some "h1:def" then
+        failwith "round-trip");
+
   print_summary ()
