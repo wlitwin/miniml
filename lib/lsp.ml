@@ -64,16 +64,54 @@ type t = {
 (* Build a server. Loads the standard library once (expensive). *)
 let create () : t = { docs = Hashtbl.create 16; analysis = Analysis.make_state () }
 
-(* --- LSP <-> Diagnostic conversion -------------------------------------- *)
+(* --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ---------------- *)
 
-(* LSP positions are 0-based (line, character); the compiler is 1-based
-   (line, col). Bytes vs UTF-16 code units coincide for ASCII (the common
-   case); multibyte columns are a later refinement. *)
-let lsp_pos (p : Diagnostic.pos) : json =
-  obj [ ("line", J.JInt (p.line - 1)); ("character", J.JInt (p.col - 1)) ]
+(* LSP positions are 0-based (line, character) and `character` counts UTF-16
+   CODE UNITS; the compiler works in 0-based lines and 1-based BYTE columns.
+   These coincide for ASCII but diverge once a line contains a multibyte
+   character (a unicode string/comment), so map through the document text. *)
 
-let lsp_range (s : Diagnostic.span) : json =
-  obj [ ("start", lsp_pos s.lo); ("end", lsp_pos s.hi) ]
+(* Line [n] (0-based) of [text], without its trailing newline. *)
+let nth_line (text : string) (n : int) : string =
+  match List.nth_opt (String.split_on_char '\n' text) n with Some l -> l | None -> ""
+
+let utf8_len b = if b < 0x80 then 1 else if b < 0xE0 then 2 else if b < 0xF0 then 3 else 4
+(* A code point above the BMP (4-byte UTF-8) is a UTF-16 surrogate pair = 2 units. *)
+let utf16_units b = if b < 0xF0 then 1 else 2
+
+(* Byte column (1-based) in [line] of UTF-16 code unit [u16] (0-based). *)
+let utf16_to_byte_col (line : string) (u16 : int) : int =
+  let n = String.length line in
+  let i = ref 0 and units = ref 0 in
+  while !i < n && !units < u16 do
+    let b = Char.code line.[!i] in
+    units := !units + utf16_units b;
+    i := !i + utf8_len b
+  done;
+  !i + 1
+
+(* UTF-16 code unit (0-based) in [line] at byte column [col] (1-based). *)
+let byte_col_to_utf16 (line : string) (col : int) : int =
+  let target = col - 1 and n = String.length line in
+  let i = ref 0 and units = ref 0 in
+  while !i < target && !i < n do
+    let b = Char.code line.[!i] in
+    units := !units + utf16_units b;
+    i := !i + utf8_len b
+  done;
+  !units
+
+(* The compiler 1-based (line, byte col) as an LSP 0-based (line, utf16 char),
+   mapping the column through [text]. *)
+let lsp_pos (text : string) (p : Diagnostic.pos) : json =
+  obj
+    [
+      ("line", J.JInt (p.line - 1));
+      ("character", J.JInt (byte_col_to_utf16 (nth_line text (p.line - 1)) p.col));
+    ]
+
+let lsp_range (text : string) (s : Diagnostic.span) : json =
+  obj [ ("start", lsp_pos text s.lo); ("end", lsp_pos text s.hi) ]
 
 let lsp_severity = function
   | Diagnostic.Error -> 1
@@ -81,10 +119,10 @@ let lsp_severity = function
   | Diagnostic.Information -> 3
   | Diagnostic.Hint -> 4
 
-let lsp_diagnostic (d : Diagnostic.t) : json =
+let lsp_diagnostic (text : string) (d : Diagnostic.t) : json =
   obj
     [
-      ("range", lsp_range d.span);
+      ("range", lsp_range text d.span);
       ("severity", J.JInt (lsp_severity d.severity));
       ("code", J.JString d.code);
       ("source", J.JString "miniml");
@@ -100,7 +138,8 @@ let publish (srv : t) (uri : string) : json =
   let text = match Hashtbl.find_opt srv.docs uri with Some t -> t | None -> "" in
   let diags = Analysis.diagnostics srv.analysis text in
   notification "textDocument/publishDiagnostics"
-    (obj [ ("uri", J.JString uri); ("diagnostics", arr (List.map lsp_diagnostic diags)) ])
+    (obj
+       [ ("uri", J.JString uri); ("diagnostics", arr (List.map (lsp_diagnostic text) diags)) ])
 
 let capabilities () : json =
   obj
@@ -154,11 +193,12 @@ let handle (srv : t) (msg : json) : json list =
   | "textDocument/hover" ->
       let uri = doc_uri () in
       let pos = field "position" params in
-      let line = int (field "line" pos) + 1 and col = int (field "character" pos) + 1 in
       let result =
         match Hashtbl.find_opt srv.docs uri with
         | Some text -> (
-            match Analysis.hover srv.analysis text ~line ~col with
+            let line0 = int (field "line" pos) in
+            let col = utf16_to_byte_col (nth_line text line0) (int (field "character" pos)) in
+            match Analysis.hover srv.analysis text ~line:(line0 + 1) ~col with
             | Some ty ->
                 obj
                   [
@@ -172,13 +212,15 @@ let handle (srv : t) (msg : json) : json list =
   | "textDocument/definition" ->
       let uri = doc_uri () in
       let pos = field "position" params in
-      let line = int (field "line" pos) + 1 and col = int (field "character" pos) + 1 in
       let result =
         match Hashtbl.find_opt srv.docs uri with
         | Some text -> (
-            match Analysis.definition srv.analysis text ~line ~col with
+            let line0 = int (field "line" pos) in
+            let col = utf16_to_byte_col (nth_line text line0) (int (field "character" pos)) in
+            match Analysis.definition srv.analysis text ~line:(line0 + 1) ~col with
             | Some (l, c) ->
-                let p = obj [ ("line", J.JInt (l - 1)); ("character", J.JInt (c - 1)) ] in
+                let ch = byte_col_to_utf16 (nth_line text (l - 1)) c in
+                let p = obj [ ("line", J.JInt (l - 1)); ("character", J.JInt ch) ] in
                 obj [ ("uri", J.JString uri); ("range", obj [ ("start", p); ("end", p) ]) ]
             | None -> J.JNull)
         | None -> J.JNull

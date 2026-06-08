@@ -82,6 +82,19 @@ let () =
       if J.json_int (field "line" start) <> 0 || J.json_int (field "character" start) <> 4
       then failwith "wrong definition position");
 
+  test "utf16<->byte column: ascii is identity" (fun () ->
+      let line = "let x = 1" in
+      if L.utf16_to_byte_col line 4 <> 5 then failwith "ascii u16->byte";
+      if L.byte_col_to_utf16 line 5 <> 4 then failwith "ascii byte->u16");
+
+  test "utf16<->byte column: multibyte char counts as one unit" (fun () ->
+      (* "a é b": é is 2 UTF-8 bytes but 1 UTF-16 unit; 'b' is u16 3, byte 4 *)
+      let line = "a\xc3\xa9 b" in
+      if L.utf16_to_byte_col line 3 <> 5 then
+        failwith (Printf.sprintf "u16->byte: %d" (L.utf16_to_byte_col line 3));
+      if L.byte_col_to_utf16 line 5 <> 3 then
+        failwith (Printf.sprintf "byte->u16: %d" (L.byte_col_to_utf16 line 5)));
+
   test "completion returns items" (fun () ->
       ignore
         (send
