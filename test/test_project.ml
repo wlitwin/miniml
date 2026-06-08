@@ -48,7 +48,7 @@ let () =
   test "combined source wraps libs and appends the entry" (fun () ->
       let a = mk "A" "pub let x = 1" in
       let b = mk "B" "pub let y = A.x" in
-      let proj = { P.name = "p"; entry = mk "Main" "let main = print B.y"; libs = [ b; a ] } in
+      let proj = { P.name = "p"; entry = mk "Main" "let main = print B.y"; libs = [ b; a ]; tests = [] } in
       let src = P.combined_source proj in
       if not (contains src "module A =") then failwith "no module A";
       if not (contains src "module B =") then failwith "no module B";
@@ -65,7 +65,7 @@ let () =
   (* line map: a combined-source line resolves back to (file, line) *)
   test "line map attributes combined lines to source files" (fun () ->
       let a = mk "A" "pub let x = 1\npub let y = 2" in
-      let proj = { P.name = "p"; entry = mk "Main" "let main = print A.x"; libs = [ a ] } in
+      let proj = { P.name = "p"; entry = mk "Main" "let main = print A.x"; libs = [ a ]; tests = [] } in
       let _, segs = P.combined_with_map proj in
       let check l ef el =
         let f, ln = P.map_line segs l in
@@ -75,6 +75,36 @@ let () =
       (* combined line 1 is `module A =`; A's source begins at line 2 *)
       check 2 "a.mml" 1;
       check 3 "a.mml" 2);
+
+  (* test discovery: top-level `let test_*` (incl. let rec), not other bindings *)
+  test "test_decl_names finds the test functions" (fun () ->
+      let u =
+        mk "Foo_test"
+          "let test_a () = true\nlet helper x = x\nlet test_b () = false\nlet rec test_c () = test_c ()"
+      in
+      let names = P.test_decl_names u in
+      if not (List.mem "test_a" names && List.mem "test_b" names && List.mem "test_c" names) then
+        failwith (String.concat "," names);
+      if List.mem "helper" names then failwith "helper is not a test");
+
+  (* `*_test.mml` is a test file, excluded from libs *)
+  test "load separates test files from libraries" (fun () ->
+      let write path s = let oc = open_out path in output_string oc s; close_out oc in
+      let root = Filename.temp_dir "mml_tst_" "" in
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.command (Printf.sprintf "rm -rf %s" root)))
+        (fun () ->
+          write (Filename.concat root "mml.mod") "module app\n";
+          write (Filename.concat root "calc.mml") "pub let add a b = a + b\n";
+          write (Filename.concat root "calc_test.mml") "let test_add () = Calc.add 1 1 = 2\n";
+          write (Filename.concat root "main.mml") "let main = ()\n";
+          let p = P.load root in
+          if List.exists (fun (u : P.unit_) -> u.P.name = "Calc_test") p.P.libs then
+            failwith "test file leaked into libs";
+          if not (List.exists (fun (u : P.unit_) -> u.P.name = "Calc_test") p.P.tests) then
+            failwith "test file not in tests";
+          if not (List.exists (fun (u : P.unit_) -> u.P.name = "Calc") p.P.libs) then
+            failwith "Calc lib missing"));
 
   (* a dependency's modules are gathered into the build (via a local replace) *)
   test "load resolves a replaced dependency's modules" (fun () ->

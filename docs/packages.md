@@ -60,9 +60,27 @@ mml get github.com/u/lib@v1.2.0     # fetch a specific version
   build writes it, later builds verify it, so a moved tag or tampered cache is
   caught.
 
+## Testing
+
+A `*_test.mml` file holds tests — top-level `let test_<name> () = <bool>`
+functions, each a predicate over the project's modules:
+
+```
+calc_test.mml:
+  let test_add () = Calc.add 2 3 = 5
+  let test_dec () = Calc.dec 10 = 9
+```
+
+```sh
+mml test            # run every test_* in *_test.mml; "ok"/"FAIL" per test + a summary
+```
+
+A test passes when it evaluates to `true`; `false`, a non-bool result, or a
+runtime error fail it. Each test runs in isolation (a crash in one doesn't
+affect the others). Test files are excluded from `mml build`/`run`.
+
 ## Status / not yet
 
 - Module-member / qualified-path granularity beyond whole-file modules.
 - Incremental (separate) compilation — builds are currently whole-program.
-- `mml test`, a `replace`-free private-host scheme, and a hosted checksum
-  database are future work.
+- A `replace`-free private-host scheme and a hosted checksum database.
