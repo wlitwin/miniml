@@ -111,6 +111,7 @@ let capabilities () : json =
             ("textDocumentSync", J.JInt 1) (* full document sync *);
             ("hoverProvider", J.JBool true);
             ("definitionProvider", J.JBool true);
+            ("completionProvider", obj []);
           ] );
       ("serverInfo", obj [ ("name", J.JString "miniml-lsp") ]);
     ]
@@ -183,6 +184,18 @@ let handle (srv : t) (msg : json) : json list =
         | None -> J.JNull
       in
       [ response result ]
+  | "textDocument/completion" ->
+      let uri = doc_uri () in
+      let items =
+        match Hashtbl.find_opt srv.docs uri with
+        | Some text ->
+            List.map
+              (fun (label, kind) ->
+                obj [ ("label", J.JString label); ("kind", J.JInt kind) ])
+              (Analysis.completions srv.analysis text)
+        | None -> []
+      in
+      [ response (arr items) ]
   | _ ->
       (* Unknown request -> null result (so the client isn't left waiting);
          unknown notification -> ignore. *)
