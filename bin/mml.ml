@@ -19,6 +19,7 @@ let usage =
   \                            compile to a native executable (default) or LLVM IR\n\
   \  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n\
   \  check <files...>          print diagnostics (exit 1 if any error)\n\
+  \  test [dir]                run `let test_* () = <bool>` in *_test.mml files\n\
   \  get <url>[@version]       fetch a dependency and add it to mml.mod\n\
   \  lsp                       start the language server (stdio JSON-RPC)\n\
   \  version                   print the version\n\
@@ -214,6 +215,48 @@ let cmd_get arg =
   write_file "mml.mod" text;
   Printf.printf "added require %s %s\n" url (I.Semver.to_string version)
 
+(* `mml test [dir]` — run each `let test_* = <bool>` in the project's
+   `*_test.mml` files (with the project's libraries available) and report
+   pass/fail. A test passes if it evaluates to `true`; `false`, the wrong type,
+   or a runtime error fail it. Each test runs in a fresh state, so one failure
+   doesn't affect another. *)
+let cmd_test target =
+  let proj =
+    try I.Project.load target
+    with I.Project.Build_error m ->
+      Printf.eprintf "mml test: %s\n" m;
+      exit 1
+  in
+  let total = ref 0 and failed = ref 0 in
+  List.iter
+    (fun (tf : I.Project.unit_) ->
+      List.iter
+        (fun name ->
+          incr total;
+          (* tests are unit-functions, so each runs only when applied — a crash
+             in one doesn't affect the others *)
+          let prog = I.Project.test_program proj tf (name ^ " ()") in
+          let label = Printf.sprintf "%s.%s" tf.I.Project.name name in
+          match
+            try Ok (I.Interp.wrap_errors (fun () ->
+                        I.Interp.run_string_in_state (I.Std.register_all (I.Interp.repl_state_init ())) prog))
+            with I.Interp.Error m -> Error m
+          with
+          | Ok (I.Bytecode.VBool true) -> Printf.printf "ok   %s\n" label
+          | Ok (I.Bytecode.VBool false) ->
+              incr failed;
+              Printf.printf "FAIL %s\n" label
+          | Ok _ ->
+              incr failed;
+              Printf.printf "FAIL %s (test did not evaluate to a bool)\n" label
+          | Error m ->
+              incr failed;
+              Printf.printf "FAIL %s: %s\n" label m)
+        (I.Project.test_decl_names tf))
+    proj.I.Project.tests;
+  Printf.printf "\n%d passed, %d failed (of %d)\n" (!total - !failed) !failed !total;
+  if !failed > 0 then exit 1
+
 let cmd_check targets =
   let st = I.Analysis.make_state () in
   let had_error = ref false in
@@ -236,6 +279,8 @@ let () =
   | _ :: "build" :: (_ :: _ as rest) -> cmd_build rest
   | _ :: "fmt" :: rest -> cmd_fmt rest
   | _ :: "check" :: (_ :: _ as files) -> cmd_check files
+  | [ _; "test" ] -> cmd_test "."
+  | [ _; "test"; dir ] -> cmd_test dir
   | [ _; "get"; arg ] -> cmd_get arg
   | _ :: "lsp" :: _ -> I.Lsp.serve stdin stdout
   | _ :: ("version" | "--version" | "-v") :: _ -> print_endline version

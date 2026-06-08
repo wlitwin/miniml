@@ -17,7 +17,7 @@
 exception Build_error of string
 
 type unit_ = { name : string; path : string; source : string }
-type t = { name : string; entry : unit_; libs : unit_ list }
+type t = { name : string; entry : unit_; libs : unit_ list; tests : unit_ list }
 
 let read_file path =
   let ic = open_in_bin path in
@@ -156,7 +156,12 @@ let load (dir : string) : t =
            let path = Filename.concat dir f in
            { name = module_name_of path; path; source = read_file path })
   in
-  let entry, own_libs = List.partition (fun u -> Filename.basename u.path = "main.mml") own in
+  (* main.mml is the entry; `*_test.mml` are test files (run only by `mml test`,
+     excluded from the build); everything else is a library module. *)
+  let entry, rest = List.partition (fun u -> Filename.basename u.path = "main.mml") own in
+  let tests, own_libs =
+    List.partition (fun (u : unit_) -> Filename.check_suffix u.path "_test.mml") rest
+  in
   let libs = dep_units @ own_libs in
   (* reject two modules with the same name (a dependency clashing with the
      project or another dependency) *)
@@ -169,7 +174,7 @@ let load (dir : string) : t =
       | None -> Hashtbl.replace seen u.name u.path)
     libs;
   match entry with
-  | [ e ] -> { name = mf.Manifest.name; entry = e; libs }
+  | [ e ] -> { name = mf.Manifest.name; entry = e; libs; tests }
   | [] -> raise (Build_error "no entry point (expected main.mml)")
   | _ -> raise (Build_error "more than one main.mml")
 
@@ -215,3 +220,34 @@ let map_line (segs : (int * string) list) (l : int) : string * int =
 let is_project (path : string) : bool =
   (try Sys.is_directory path with _ -> false)
   && Sys.file_exists (Filename.concat path "mml.mod")
+
+(* --- Tests (run by `mml test`) ------------------------------------------ *)
+
+(* The libraries wrapped as modules in dependency order — the prefix a test file
+   (or the entry) is compiled against. *)
+let libs_wrapped (p : t) : string =
+  let buf = Buffer.create 4096 in
+  List.iter
+    (fun (u : unit_) ->
+      Buffer.add_string buf (Printf.sprintf "module %s =\n%s\nend;;\n" u.name u.source))
+    (topo_order p.libs);
+  Buffer.contents buf
+
+(* A runnable program for a single test: the project's libraries, then the test
+   file's source (at top level — its `test_*` are plain top-level bindings that
+   can use the libraries via `Foo.bar`), then the test expression to evaluate. *)
+let test_program (p : t) (test_file : unit_) (expr : string) : string =
+  Printf.sprintf "%s\n%s\n;; %s\n" (libs_wrapped p) test_file.source expr
+
+(* The names of a test file's test bindings: top-level `let test_*` declarations
+   (the convention a test predicate follows). *)
+let test_decl_names (u : unit_) : string list =
+  match Parser.parse_program (Lexer.tokenize u.source) with
+  | exception _ -> []
+  | decls ->
+      List.filter_map
+        (function
+          | Ast.DLet { name; _ } when String.starts_with ~prefix:"test_" name -> Some name
+          | Ast.DLetRec b when String.starts_with ~prefix:"test_" b.Ast.lr_name -> Some b.Ast.lr_name
+          | _ -> None)
+        decls
