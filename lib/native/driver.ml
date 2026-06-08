@@ -71,7 +71,9 @@ let run_frontend source =
 
 (* ---- Compilation ---- *)
 
-let compile_ir (source : string) : string =
+(* Lower both the user program and the stdlib programs (shared by the
+   single-unit and multi-unit codegen paths). *)
+let lower_all source =
   let stdlib_programs, typed_program, type_env = run_frontend source in
   let typed_programs_for_externs = List.map snd stdlib_programs in
   (* Native runs all-THOpTry bodies as setjmp thunks and all-THOpProvide bodies
@@ -83,53 +85,64 @@ let compile_ir (source : string) : string =
       typed_program
   in
   let stdlib_programs =
-    List.map
-      (fun (te, p) -> (te, Pipeline.lower te p))
-      stdlib_programs
+    List.map (fun (te, p) -> (te, Pipeline.lower te p)) stdlib_programs
   in
+  (type_env, stdlib_programs, typed_program)
+
+(* Single combined LLVM unit (stdlib + user in one .ll). Used by --emit-ir. *)
+let compile_ir (source : string) : string =
+  let type_env, stdlib_programs, typed_program = lower_all source in
   Codegen.compile_program_with_stdlib type_env stdlib_programs typed_program
+
+(* Separately-linkable LLVM units: [(unit_name, ir)] in link order (stdlib, then
+   entry). The basis for incremental builds — each unit's object can be cached. *)
+let compile_units (source : string) : (string * string) list =
+  let type_env, stdlib_programs, typed_program = lower_all source in
+  Codegen.compile_units type_env stdlib_programs typed_program
+
+(* Discover Boehm GC link/compile flags for the platform. *)
+let gc_flags () =
+  if Sys.file_exists "/opt/homebrew/include/gc/gc.h" then
+    "-I/opt/homebrew/include -L/opt/homebrew/lib -lgc"
+  else if Sys.file_exists "/usr/local/include/gc/gc.h" then
+    "-I/usr/local/include -L/usr/local/lib -lgc"
+  else
+    let ic =
+      Unix.open_process_in "pkg-config --cflags --libs bdw-gc 2>/dev/null"
+    in
+    let flags = try input_line ic with End_of_file -> "-lgc" in
+    ignore (Unix.close_process_in ic);
+    flags
 
 let compile_to_native ~source_file ~output =
   let ic = open_in source_file in
   let source = In_channel.input_all ic in
   close_in ic;
 
-  let ir_text = compile_ir source in
-
-  (* Write .ll to temp file *)
-  let ll_file = Filename.temp_file "mml_" ".ll" in
+  (* Compile to separate units (stdlib, entry) and write each to a temp .ll. *)
+  let units = compile_units source in
+  let ll_files =
+    List.map
+      (fun (name, ir) ->
+        let f = Filename.temp_file ("mml_" ^ name ^ "_") ".ll" in
+        let oc = open_out f in
+        output_string oc ir;
+        close_out oc;
+        f)
+      units
+  in
   Fun.protect
-    ~finally:(fun () -> try Sys.remove ll_file with _ -> ())
+    ~finally:(fun () ->
+      List.iter (fun f -> try Sys.remove f with _ -> ()) ll_files)
     (fun () ->
-      let oc = open_out ll_file in
-      output_string oc ir_text;
-      close_out oc;
-
       let runtime_c = find_runtime_c () in
       let context_asm = find_context_asm () in
-
-      (* Discover Boehm GC flags for the platform *)
-      let gc_flags =
-        if Sys.file_exists "/opt/homebrew/include/gc/gc.h" then
-          "-I/opt/homebrew/include -L/opt/homebrew/lib -lgc"
-        else if Sys.file_exists "/usr/local/include/gc/gc.h" then
-          "-I/usr/local/include -L/usr/local/lib -lgc"
-        else
-          (* Fallback: try pkg-config, else bare -lgc *)
-          let ic =
-            Unix.open_process_in "pkg-config --cflags --libs bdw-gc 2>/dev/null"
-          in
-          let flags = try input_line ic with End_of_file -> "-lgc" in
-          ignore (Unix.close_process_in ic);
-          flags
-      in
-
-      (* Invoke clang: compile .ll + runtime.c + context asm -> binary *)
+      (* clang links all unit .ll files + runtime.c + context asm -> binary. *)
       let cmd =
-        Printf.sprintf "clang -O2 %s -o %s %s %s %s" gc_flags
+        Printf.sprintf "clang -O2 %s -o %s %s %s %s" (gc_flags ())
           (Filename.quote output) (Filename.quote runtime_c)
           (Filename.quote context_asm)
-          (Filename.quote ll_file)
+          (String.concat " " (List.map Filename.quote ll_files))
       in
       let exit_code = Sys.command cmd in
       if exit_code <> 0 then
