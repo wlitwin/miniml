@@ -19,6 +19,7 @@ let usage =
   \                            compile to a native executable (default) or LLVM IR\n\
   \  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n\
   \  check <files...>          print diagnostics (exit 1 if any error)\n\
+  \  get <url>[@version]       fetch a dependency and add it to mml.mod\n\
   \  lsp                       start the language server (stdio JSON-RPC)\n\
   \  version                   print the version\n\
   \  help                      show this help\n"
@@ -166,6 +167,53 @@ let cmd_build args =
           Printf.eprintf "mml build: %s\n" msg;
           exit 1)
 
+(* `mml get <url>[@version]` — fetch a dependency and add it to ./mml.mod. With
+   no version, the latest released tag is used. mml.sum is updated on the next
+   load (build/run/check). *)
+let cmd_get arg =
+  let url, ver =
+    match String.rindex_opt arg '@' with
+    | Some i -> (String.sub arg 0 i, Some (String.sub arg (i + 1) (String.length arg - i - 1)))
+    | None -> (arg, None)
+  in
+  let version =
+    match ver with
+    | Some v -> (
+        match I.Semver.parse v with
+        | Some v -> v
+        | None ->
+            Printf.eprintf "mml get: %S is not a version (vMAJOR.MINOR.PATCH)\n" v;
+            exit 1)
+    | None -> (
+        match I.Fetch.latest_version url with
+        | Some v -> v
+        | None ->
+            Printf.eprintf "mml get: no released (semver-tagged) versions found for %s\n" url;
+            exit 1)
+  in
+  (try ignore (I.Fetch.ensure url version)
+   with I.Fetch.Fetch_error m ->
+     Printf.eprintf "mml get: %s\n" m;
+     exit 1);
+  if not (Sys.file_exists "mml.mod") then begin
+    Printf.eprintf "mml get: no mml.mod in the current directory\n";
+    exit 1
+  end;
+  (* rewrite mml.mod: drop any existing require for this module, append the new *)
+  let lines = String.split_on_char '\n' (read_file "mml.mod") in
+  let keep line =
+    match String.split_on_char ' ' (String.trim line) |> List.filter (( <> ) "") with
+    | "require" :: m :: _ when m = url -> false
+    | _ -> true
+  in
+  let kept = List.filter keep lines in
+  let kept = List.filter (fun l -> String.trim l <> "") kept in
+  let text =
+    String.concat "\n" kept ^ Printf.sprintf "\nrequire %s %s\n" url (I.Semver.to_string version)
+  in
+  write_file "mml.mod" text;
+  Printf.printf "added require %s %s\n" url (I.Semver.to_string version)
+
 let cmd_check targets =
   let st = I.Analysis.make_state () in
   let had_error = ref false in
@@ -188,6 +236,7 @@ let () =
   | _ :: "build" :: (_ :: _ as rest) -> cmd_build rest
   | _ :: "fmt" :: rest -> cmd_fmt rest
   | _ :: "check" :: (_ :: _ as files) -> cmd_check files
+  | [ _; "get"; arg ] -> cmd_get arg
   | _ :: "lsp" :: _ -> I.Lsp.serve stdin stdout
   | _ :: ("version" | "--version" | "-v") :: _ -> print_endline version
   | (_ :: ("help" | "--help" | "-h") :: _) | [ _ ] -> print_string usage

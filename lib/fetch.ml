@@ -60,3 +60,56 @@ let ensure (module_path : string) (version : Semver.t) : string =
     (try Sys.rename tmp dest with _ -> rm_rf tmp);
     dest
   end
+
+(* A content hash of a fetched module tree, for mml.sum integrity. Every file's
+   relative path and bytes are folded in, in sorted order, so it is
+   deterministic and independent of read order. `h1:` tags the scheme (MD5 via
+   the stdlib's Digest — no crypto dependency; strengthen to SHA-256 later). *)
+let tree_hash (dir : string) : string =
+  let rec files prefix =
+    Sys.readdir (if prefix = "" then dir else Filename.concat dir prefix)
+    |> Array.to_list |> List.sort String.compare
+    |> List.concat_map (fun name ->
+           let rel = if prefix = "" then name else Filename.concat prefix name in
+           if (try Sys.is_directory (Filename.concat dir rel) with _ -> false) then files rel
+           else [ rel ])
+  in
+  let buf = Buffer.create 4096 in
+  List.iter
+    (fun rel ->
+      Buffer.add_string buf rel;
+      Buffer.add_char buf '\n';
+      let ic = open_in_bin (Filename.concat dir rel) in
+      Buffer.add_string buf (In_channel.input_all ic);
+      close_in ic;
+      Buffer.add_char buf '\000')
+    (List.sort String.compare (files ""));
+  "h1:" ^ Digest.to_hex (Digest.string (Buffer.contents buf))
+
+(* The greatest released (semver-tagged) version of a module, via
+   `git ls-remote --tags` — for `mml get <url>` with no explicit version. *)
+let latest_version (module_path : string) : Semver.t option =
+  let ic =
+    Unix.open_process_in
+      (Printf.sprintf "git ls-remote --tags -- %s 2>/dev/null"
+         (Filename.quote (git_url module_path)))
+  in
+  let best = ref None in
+  (try
+     while true do
+       let line = input_line ic in
+       match String.rindex_opt line '/' with
+       | Some i ->
+           let tag = String.sub line (i + 1) (String.length line - i - 1) in
+           let tag =
+             if Filename.check_suffix tag "^{}" then String.sub tag 0 (String.length tag - 3)
+             else tag
+           in
+           (match Semver.parse tag with
+           | Some v -> best := Some (match !best with Some b -> Semver.max b v | None -> v)
+           | None -> ())
+       | None -> ()
+     done
+   with End_of_file -> ());
+  ignore (Unix.close_process_in ic);
+  !best

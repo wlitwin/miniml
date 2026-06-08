@@ -25,6 +25,11 @@ let read_file path =
   close_in ic;
   s
 
+let write_file path s =
+  let oc = open_out_bin path in
+  output_string oc s;
+  close_out oc
+
 (* `foo.mml` -> module `Foo`; `string_utils.mml` -> `String_utils`. *)
 let module_name_of (path : string) : string =
   String.capitalize_ascii (Filename.remove_extension (Filename.basename path))
@@ -113,9 +118,35 @@ let load (dir : string) : t =
     if Sys.file_exists p then Manifest.parse (read_file p)
     else { Manifest.name = m; mml = None; requires = []; replaces = [] }
   in
+  let build_list = Deps.mvs mf load_manifest in
+  (* Integrity: hash each fetched (non-replaced) dependency and verify it against
+     mml.sum, recording it the first time (trust on first use); a mismatch is a
+     hard error. Local `replace`d directories are skipped (they are the user's
+     own working tree). *)
+  let sum_path = Filename.concat dir "mml.sum" in
+  let sums = ref (if Sys.file_exists sum_path then Sumfile.parse (read_file sum_path) else []) in
+  let changed = ref false in
+  List.iter
+    (fun (m, v) ->
+      if Manifest.replacement mf m = None then begin
+        let h = Fetch.tree_hash (locate dir mf m v) in
+        let vs = Semver.to_string v in
+        match Sumfile.lookup !sums m vs with
+        | Some recorded when recorded <> h ->
+            raise
+              (Build_error
+                 (Printf.sprintf
+                    "checksum mismatch for %s@%s: mml.sum has %s but the cache has %s"
+                    m vs recorded h))
+        | Some _ -> ()
+        | None ->
+            sums := { Sumfile.module_path = m; version = vs; hash = h } :: !sums;
+            changed := true
+      end)
+    build_list;
+  if !changed then (try write_file sum_path (Sumfile.to_string !sums) with _ -> ());
   let dep_units =
-    Deps.mvs mf load_manifest
-    |> List.concat_map (fun (m, v) -> dir_units (locate dir mf m v))
+    build_list |> List.concat_map (fun (m, v) -> dir_units (locate dir mf m v))
   in
   let own =
     Sys.readdir dir |> Array.to_list
