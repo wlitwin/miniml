@@ -6791,17 +6791,74 @@ and tag_int_value n = (n lsl 1) lor 1
 
 (* ---- Top-level entry point ---- *)
 
+(* The @-prefixed symbol names referenced anywhere in [text]. Used for DEMAND-DRIVEN
+   import declares: a unit declares only the cross-unit symbols it actually
+   references, so adding an unused export to a dependency doesn't change a
+   dependent's IR (keeping its cached object warm). A unit's own symbols carry its
+   own prefix and never appear in the import table, so a referenced symbol is an
+   import iff it is in the table — no need to subtract locally-defined names, and a
+   stray "@" inside a string constant is harmless (it won't be in the table). *)
+let collect_symbol_refs text =
+  let n = String.length text in
+  let set = Hashtbl.create 256 in
+  let is_sym c =
+    (c >= 'a' && c <= 'z')
+    || (c >= 'A' && c <= 'Z')
+    || (c >= '0' && c <= '9')
+    || c = '_' || c = '.' || c = '$' || c = '-'
+  in
+  let i = ref 0 in
+  while !i < n do
+    if text.[!i] = '@' then begin
+      let j = ref (!i + 1) in
+      while !j < n && is_sym text.[!j] do incr j done;
+      if !j > !i + 1 then
+        Hashtbl.replace set (String.sub text (!i + 1) (!j - !i - 1)) ();
+      i := !j
+    end
+    else incr i
+  done;
+  set
+
 (* Assemble final LLVM IR output from a compiled context.
-   [extra_declares]: raw lines (cross-unit import `declare`s / `external global`s)
-     emitted right after the runtime externs — how an importing unit references
-     symbols defined in another unit's object.
+   [imports]: a name -> `declare` table of cross-unit symbols the unit MAY reference;
+     only those actually referenced (per collect_symbol_refs) are emitted, so the
+     output is stable against unrelated changes to dependencies.
+   [aliases]: stable export aliases (`@mml_x_... = alias ..., ptr @internal`) giving
+     this unit's exported functions counter-independent names, so a structural edit
+     to the unit doesn't change the names its dependents reference.
    [emit_result_type]: emit the @mml_result_type global. The ENTRY unit owns it
      (the C runtime reads it to format the program's result); library units pass
      false so the symbol is defined exactly once across the link.
    [main_body]: the @mml_main body, or "" for a library unit that has no entry. *)
-let assemble_output ?(extra_declares = []) ?(emit_result_type = true) ctx main_body
-    =
-  let out = Buffer.create 8192 in
+let assemble_output ?(imports = Hashtbl.create 1) ?(aliases = [])
+    ?(emit_result_type = true) ctx main_body =
+  (* Build the unit body first, so it can be scanned for cross-unit references. *)
+  let body = Buffer.create 8192 in
+  List.iter
+    (fun decl -> Buffer.add_string body decl; Buffer.add_char body '\n')
+    (List.rev ctx.string_globals);
+  if ctx.string_globals <> [] then Buffer.add_char body '\n';
+  List.iter
+    (fun decl -> Buffer.add_string body decl; Buffer.add_char body '\n')
+    (List.rev ctx.float_globals);
+  if ctx.float_globals <> [] then Buffer.add_char body '\n';
+  List.iter
+    (fun decl -> Buffer.add_string body decl; Buffer.add_char body '\n')
+    (List.rev ctx.global_decls);
+  if emit_result_type then begin
+    let tag = result_type_tag ctx.result_type in
+    Printf.bprintf body "@mml_result_type = global i32 %d\n" tag
+  end;
+  Buffer.add_char body '\n';
+  if Buffer.length ctx.fn_buf > 0 then Buffer.add_buffer body ctx.fn_buf;
+  Buffer.add_string body main_body;
+  List.iter
+    (fun a -> Buffer.add_char body '\n'; Buffer.add_string body a; Buffer.add_char body '\n')
+    aliases;
+  let body_str = Buffer.contents body in
+
+  let out = Buffer.create (String.length body_str + 4096) in
   Printf.bprintf out "target triple = \"%s\"\n\n" (detect_target_triple ());
   let base_externs =
     [
@@ -6832,35 +6889,19 @@ let assemble_output ?(extra_declares = []) ?(emit_result_type = true) ctx main_b
         Printf.bprintf out "declare %s @%s(%s)%s\n" ret_ty name pt_str attrs
       end)
     all_externs;
-  List.iter (fun d -> Buffer.add_string out d; Buffer.add_char out '\n')
-    extra_declares;
+  (* Demand-driven import declares: the referenced subset of [imports]. *)
+  let refs = collect_symbol_refs body_str in
+  let needed =
+    Hashtbl.fold
+      (fun sym () acc ->
+        match Hashtbl.find_opt imports sym with Some d -> d :: acc | None -> acc)
+      refs []
+  in
+  List.iter
+    (fun d -> Buffer.add_string out d; Buffer.add_char out '\n')
+    (List.sort_uniq String.compare needed);
   Buffer.add_char out '\n';
-  List.iter
-    (fun decl ->
-      Buffer.add_string out decl;
-      Buffer.add_char out '\n')
-    (List.rev ctx.string_globals);
-  if ctx.string_globals <> [] then Buffer.add_char out '\n';
-  List.iter
-    (fun decl ->
-      Buffer.add_string out decl;
-      Buffer.add_char out '\n')
-    (List.rev ctx.float_globals);
-  if ctx.float_globals <> [] then Buffer.add_char out '\n';
-  List.iter
-    (fun decl ->
-      Buffer.add_string out decl;
-      Buffer.add_char out '\n')
-    (List.rev ctx.global_decls);
-  if emit_result_type then begin
-    let tag = result_type_tag ctx.result_type in
-    Printf.bprintf out "@mml_result_type = global i32 %d\n" tag
-  end;
-  Buffer.add_char out '\n';
-  if Buffer.length ctx.fn_buf > 0 then begin
-    Buffer.add_buffer out ctx.fn_buf
-  end;
-  Buffer.add_string out main_body;
+  Buffer.add_string out body_str;
   Buffer.contents out
 
 (* Emit a unit's top-level INITIALIZATION as a standalone `@<init_name>()` function
@@ -6987,61 +7028,100 @@ let global_decl_to_extern decl =
 
 type unit_exports = {
   ue_init : string;                    (* the unit's initializer function name *)
-  ue_funcs : (string * int) list;      (* (llvm_name, arity) of exported functions *)
+  ue_funcs : (string * int) list;      (* (STABLE alias name, arity) of exported fns *)
   ue_global_externs : string list;     (* `@g = external global i64` lines *)
-  ue_scope : (string * var_info) list; (* source name -> binding, to seed importers *)
+  ue_scope : (string * var_info) list; (* source name -> binding (stable fn names) *)
+  ue_aliases : string list;            (* `@stable = alias ..., ptr @internal` defs *)
 }
 
+(* A function's STABLE, counter-independent export name: derived only from the unit
+   prefix and the qualified source name, so a structural edit to the unit (which
+   shifts internal counter ids) does NOT change the names its dependents reference.
+   Cross-unit references go through this alias; intra-unit calls keep the internal
+   name. *)
+let export_alias_name unit_prefix source_name =
+  Printf.sprintf "mml_x_%s%s" unit_prefix (sanitize_name source_name)
+
 (* Snapshot a compiled unit's top-level bindings and the symbols an importer must
-   declare to reference them across object files. A top-level FuncLocal (a function
-   value with a pre-allocated closure in the defining frame) is exported as a plain
-   Func — the importer re-wraps it as a value locally, the stale alloca is dropped. *)
+   declare to reference them across object files. Each exported FUNCTION gets a
+   stable `alias` (export_alias_name) recorded in ue_aliases; ue_funcs/ue_scope
+   carry the stable name so importers seed and declare the alias, not the internal
+   counter-named definition. A top-level FuncLocal (a function value with a
+   pre-allocated closure in the defining frame) is exported as a plain Func — the
+   importer re-wraps it as a value locally, the stale alloca dropped. Globals are
+   already counter-free (mml_g_<prefix><qualified>), so they need no alias. *)
 let capture_exports ctx ~init_name =
   let scope = List.hd ctx.scopes in
-  let funcs = ref [] and entries = ref [] in
+  let funcs = ref [] and entries = ref [] and aliases = ref [] in
+  (* A function is DEFINED IN THIS UNIT iff its internal symbol carries this unit's
+     own prefix. A binding that is merely in scope via `open` (or otherwise
+     re-exported) already names another unit's symbol — aliasing TO it would create
+     an alias whose aliasee is defined in a different module (malformed IR), so it is
+     passed through unchanged (it is declared in importers like any other import). *)
+  let local_prefix = "mml_f_" ^ ctx.unit_prefix in
   Hashtbl.iter
     (fun name info ->
-      let info =
-        match info with FuncLocal (n, a, _) -> Func (n, a) | i -> i
-      in
-      entries := (name, info) :: !entries;
-      match info with Func (n, a) -> funcs := (n, a) :: !funcs | _ -> ())
+      match (match info with FuncLocal (n, a, _) -> Func (n, a) | i -> i) with
+      | Func (internal, a) when String.starts_with ~prefix:local_prefix internal
+        ->
+          let stable = export_alias_name ctx.unit_prefix name in
+          let ps = String.concat ", " (List.init a (fun _ -> "i64")) in
+          aliases :=
+            Printf.sprintf "@%s = alias i64 (%s), ptr @%s" stable ps internal
+            :: !aliases;
+          funcs := (stable, a) :: !funcs;
+          entries := (name, Func (stable, a)) :: !entries
+      | Func (internal, a) ->
+          (* re-exported import: keep its existing (already-stable) symbol *)
+          funcs := (internal, a) :: !funcs;
+          entries := (name, Func (internal, a)) :: !entries
+      | other -> entries := (name, other) :: !entries)
     scope;
   {
     ue_init = init_name;
     ue_funcs = !funcs;
     ue_global_externs = List.map global_decl_to_extern ctx.global_decls;
     ue_scope = !entries;
+    ue_aliases = !aliases;
   }
 
-(* The `declare`s an importing unit needs for [exp]'s exports: its initializer,
-   each exported function (uniform i64 signature, one i64 per parameter — matches
-   emit_named_function), and each defined global as an `external global`. The same
-   llvm symbol is often bound under several source names (a qualified name and an
-   `open`ed alias), so the lines are de-duplicated — textual LLVM IR rejects a
-   redeclaration of a symbol. *)
-let import_declares (exp : unit_exports) =
-  let func_decls =
-    List.sort_uniq String.compare
-      (List.map
-         (fun (n, a) ->
-           let ps = String.concat ", " (List.init a (fun _ -> "i64")) in
-           Printf.sprintf "declare i64 @%s(%s)" n ps)
-         exp.ue_funcs)
-  in
-  (Printf.sprintf "declare void @%s()" exp.ue_init)
-  :: (func_decls @ List.sort_uniq String.compare exp.ue_global_externs)
+(* The name a global-extern line declares: "@name = external global i64" -> "name". *)
+let global_extern_name line =
+  if String.length line > 1 && line.[0] = '@' then
+    match String.index_opt line ' ' with
+    | Some i -> Some (String.sub line 1 (i - 1))
+    | None -> None
+  else None
+
+(* Build the symbol -> `declare` table for a set of exporters: each exported
+   function's stable name, each global, and each initializer. assemble_output emits
+   only the entries a unit actually references (demand-driven), so an exporter
+   gaining an unused export doesn't perturb its dependents. *)
+let build_import_table (exps : unit_exports list) =
+  let t = Hashtbl.create 512 in
+  List.iter
+    (fun e ->
+      Hashtbl.replace t e.ue_init (Printf.sprintf "declare void @%s()" e.ue_init);
+      List.iter
+        (fun (n, a) ->
+          let ps = String.concat ", " (List.init a (fun _ -> "i64")) in
+          Hashtbl.replace t n (Printf.sprintf "declare i64 @%s(%s)" n ps))
+        e.ue_funcs;
+      List.iter
+        (fun gext ->
+          match global_extern_name gext with
+          | Some nm -> Hashtbl.replace t nm gext
+          | None -> ())
+        e.ue_global_externs)
+    exps;
+  t
 
 (* Seed [ctx]'s current top scope with an exporter's bindings so references in this
-   unit resolve to the exporter's symbols (declared for the linker via
-   import_declares). *)
+   unit resolve to the exporter's (stable) symbols, declared for the linker via the
+   import table. *)
 let seed_scope ctx (exp : unit_exports) =
   let top = List.hd ctx.scopes in
   List.iter (fun (name, info) -> Hashtbl.replace top name info) exp.ue_scope
-
-(* All import `declare`s for a set of exporters, de-duplicated across them. *)
-let declares_for (exps : unit_exports list) =
-  List.sort_uniq String.compare (List.concat_map import_declares exps)
 
 (* Compile the program as separately-linkable LLVM units — the stdlib, one unit per
    top-level project module (a `module Foo = ... end`, in dependency order), and the
@@ -7063,7 +7143,10 @@ let compile_units (type_env : Types.type_env)
   let stdlib_decls = List.concat_map (fun (_te, p) -> p) stdlib_programs in
   emit_unit_init ctx_std ~init_name:"mml_init_std" stdlib_decls;
   let exports_std = capture_exports ctx_std ~init_name:"mml_init_std" in
-  let stdlib_ll = assemble_output ~emit_result_type:false ctx_std "" in
+  let stdlib_ll =
+    assemble_output ~aliases:exports_std.ue_aliases ~emit_result_type:false
+      ctx_std ""
+  in
 
   (* The entry unit, built as we walk the user program: each top-level module spins
      off its own unit + an init call here; each loose decl is emitted inline. *)
@@ -7108,8 +7191,9 @@ let compile_units (type_env : Types.type_env)
           emit_unit_init ctx_m ~init_name inner;
           let exp = capture_exports ctx_m ~init_name in
           let m_ll =
-            assemble_output ~extra_declares:(declares_for (List.rev !visible))
-              ~emit_result_type:false ctx_m ""
+            assemble_output
+              ~imports:(build_import_table (List.rev !visible))
+              ~aliases:exp.ue_aliases ~emit_result_type:false ctx_m ""
           in
           module_units := (Printf.sprintf "mod_%s" mangled, m_ll) :: !module_units;
           (* Make the module visible to later units + the entry, and run its
@@ -7127,7 +7211,7 @@ let compile_units (type_env : Types.type_env)
   let main_body = Ir_emit.contents ctx.ir in
   let entry_ll =
     assemble_output
-      ~extra_declares:(declares_for (List.rev !visible))
+      ~imports:(build_import_table (List.rev !visible))
       ~emit_result_type:true ctx main_body
   in
   (("stdlib", stdlib_ll) :: List.rev !module_units) @ [ ("main", entry_ll) ]

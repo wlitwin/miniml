@@ -41,7 +41,7 @@ let () =
       Interpreter_native.Driver.emit_ir_to_stdout ~source_file:!source_file
     else
       Interpreter_native.Driver.compile_to_native ~source_file:!source_file
-        ~output:!output_file
+        ~output:!output_file ()
   with
   | Interpreter.Interp.Error msg ->
       Printf.eprintf "%s\n" msg;

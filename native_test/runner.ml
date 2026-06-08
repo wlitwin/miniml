@@ -48,7 +48,7 @@ let run_one ~tmp_src ~tmp_bin tc : result =
           close_out oc;
           try
             Interpreter_native.Driver.compile_to_native ~source_file:tmp_src
-              ~output:tmp_bin;
+              ~output:tmp_bin ();
             let exit_code, output = run_command tmp_bin in
             (* Strip trailing newline only (not all whitespace — format tests need padding) *)
             let actual =
@@ -114,7 +114,7 @@ let run_one ~tmp_src ~tmp_bin tc : result =
           close_out oc;
           try
             Interpreter_native.Driver.compile_to_native ~source_file:tmp_src
-              ~output:tmp_bin;
+              ~output:tmp_bin ();
             let exit_code, output = run_command tmp_bin in
             if exit_code <> 0 && contains_substring output substr then RPass
             else if exit_code = 0 then
