@@ -128,7 +128,8 @@ let cmd_build args =
          file on disk, so the combined source is written to a temp file. *)
       let project = I.Project.is_project f in
       let default_out =
-        if project then (I.Project.load f).I.Project.name else Filename.remove_extension f
+        if project then Filename.basename (I.Project.load f).I.Project.name
+        else Filename.remove_extension f
       in
       let with_source_file g =
         if project then begin

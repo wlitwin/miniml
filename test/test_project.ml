@@ -18,9 +18,8 @@ let () =
 
   (* manifest *)
   test "manifest reads the module name" (fun () ->
-      match P.parse_manifest "module myproj\nmml 0.1\n" with
-      | Some "myproj" -> ()
-      | other -> failwith (Printf.sprintf "got %s" (Option.value ~default:"None" other)));
+      let m = Interpreter.Manifest.parse "module myproj\nmml 0.1\n" in
+      if m.Interpreter.Manifest.name <> "myproj" then failwith m.Interpreter.Manifest.name);
 
   (* dependency inference: Name. and open Name, not a bare constructor *)
   test "deps come from qualified access and open" (fun () ->
@@ -76,5 +75,23 @@ let () =
       (* combined line 1 is `module A =`; A's source begins at line 2 *)
       check 2 "a.mml" 1;
       check 3 "a.mml" 2);
+
+  (* a dependency's modules are gathered into the build (via a local replace) *)
+  test "load resolves a replaced dependency's modules" (fun () ->
+      let write path s = let oc = open_out path in output_string oc s; close_out oc in
+      let root = Filename.temp_dir "mml_root_" "" in
+      let dep = Filename.temp_dir "mml_dep_" "" in
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.command (Printf.sprintf "rm -rf %s %s" root dep)))
+        (fun () ->
+          write (Filename.concat dep "mml.mod") "module example.com/lib\n";
+          write (Filename.concat dep "util.mml") "pub let f x = x\n";
+          write (Filename.concat root "mml.mod")
+            (Printf.sprintf
+               "module app\nrequire example.com/lib v1.0.0\nreplace example.com/lib => %s\n" dep);
+          write (Filename.concat root "main.mml") "let main = print (Util.f 1)\n";
+          let p = P.load root in
+          if not (List.exists (fun (u : P.unit_) -> u.P.name = "Util") p.P.libs) then
+            failwith "dependency module Util was not gathered into the build"));
 
   print_summary ()
