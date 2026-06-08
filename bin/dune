@@ -13,4 +13,4 @@
  (public_name mml)
  (name mml)
  (modules mml)
- (libraries interpreter))
+ (libraries interpreter interpreter_native))
