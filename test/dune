@@ -97,3 +97,8 @@
  (name test_deps)
  (libraries interpreter test_helpers)
  (modules test_deps))
+
+(test
+ (name test_fetch)
+ (libraries interpreter test_helpers)
+ (modules test_fetch))
