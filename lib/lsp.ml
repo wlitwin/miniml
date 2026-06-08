@@ -245,3 +245,73 @@ let handle (srv : t) (msg : json) : json list =
 
 (* Whether [msg] is the request/notification that ends the session. *)
 let is_exit (msg : json) : bool = str (field "method" msg) = "exit"
+
+(* --- stdio transport ---------------------------------------------------- *)
+
+(* Read one CRLF-terminated header line (without the CRLF); None at EOF. *)
+let read_header_line ic : string option =
+  let b = Buffer.create 64 in
+  let rec go () =
+    match input_char ic with
+    | '\r' -> (
+        match input_char ic with
+        | '\n' -> Some (Buffer.contents b)
+        | c -> Buffer.add_char b '\r'; Buffer.add_char b c; go ())
+    | '\n' -> Some (Buffer.contents b) (* tolerate a bare LF *)
+    | c -> Buffer.add_char b c; go ()
+    | exception End_of_file ->
+        if Buffer.length b = 0 then None else Some (Buffer.contents b)
+  in
+  go ()
+
+(* Read one Content-Length-framed message body, or None at EOF. *)
+let read_message ic : string option =
+  let content_length = ref (-1) in
+  let rec headers () =
+    match read_header_line ic with
+    | None -> None
+    | Some "" -> Some () (* blank line ends the header block *)
+    | Some line ->
+        (match String.index_opt line ':' with
+        | Some i ->
+            let key = String.lowercase_ascii (String.trim (String.sub line 0 i)) in
+            let v = String.trim (String.sub line (i + 1) (String.length line - i - 1)) in
+            if key = "content-length" then
+              content_length := Option.value ~default:(-1) (int_of_string_opt v)
+        | None -> ());
+        headers ()
+  in
+  match headers () with
+  | None -> None
+  | Some () ->
+      if !content_length < 0 then None
+      else begin
+        let buf = Bytes.create !content_length in
+        really_input ic buf 0 !content_length;
+        Some (Bytes.to_string buf)
+      end
+
+(* Run the language server over [ic]/[oc] until EOF or `exit`. Builds the server
+   (loads the standard library once), then loops: read a framed message,
+   dispatch it through [handle], write each reply framed. *)
+let serve (ic : in_channel) (oc : out_channel) : unit =
+  set_binary_mode_in ic true;
+  set_binary_mode_out oc true;
+  let srv = create () in
+  let send (j : json) =
+    let s = to_string j in
+    Printf.fprintf oc "Content-Length: %d\r\n\r\n%s" (String.length s) s;
+    flush oc
+  in
+  let rec loop () =
+    match read_message ic with
+    | None -> ()
+    | Some body ->
+        (match Deserialize.parse_json body with
+        | exception _ -> () (* skip an unparseable message *)
+        | msg ->
+            List.iter send (handle srv msg);
+            if is_exit msg then exit 0);
+        loop ()
+  in
+  loop ()

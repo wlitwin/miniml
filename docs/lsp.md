@@ -21,14 +21,15 @@ is built on the reference compiler's analysis library
 dune build
 ```
 
-The server executable is then at:
+The server is the `lsp` subcommand of the all-in-one `mml` binary
+(`_build/default/bin/mml.exe`, or `mml` once installed):
 
-```
-_build/default/bin/lsp_main.exe
+```sh
+mml lsp        # reads Content-Length-framed JSON-RPC on stdin, replies on stdout
 ```
 
-It reads `Content-Length`-framed JSON-RPC from stdin and writes framed responses
-to stdout — point your editor's generic LSP client at it for the `mml` language.
+(The standalone `_build/default/bin/lsp_main.exe` is an equivalent entry point.)
+Point your editor's generic LSP client at `mml lsp` for the `mml` language.
 
 ## Editor setup
 
@@ -41,7 +42,7 @@ vim.api.nvim_create_autocmd("FileType", {
   callback = function(args)
     vim.lsp.start({
       name = "miniml",
-      cmd = { "/ABSOLUTE/PATH/TO/_build/default/bin/lsp_main.exe" },
+      cmd = { "/ABSOLUTE/PATH/TO/_build/default/bin/mml.exe", "lsp" },
       root_dir = vim.fs.dirname(vim.fs.find({ "dune-project" }, { upward = true })[1]),
     })
   end,
@@ -55,7 +56,8 @@ Use any generic LSP-client extension (or a few lines with
 
 ```js
 const serverOptions = {
-  command: "/ABSOLUTE/PATH/TO/_build/default/bin/lsp_main.exe",
+  command: "/ABSOLUTE/PATH/TO/_build/default/bin/mml.exe",
+  args: ["lsp"],
   transport: TransportKind.stdio,
 };
 const clientOptions = { documentSelector: [{ scheme: "file", language: "mml" }] };
@@ -65,7 +67,7 @@ new LanguageClient("miniml", "MiniML", serverOptions, clientOptions).start();
 ### Anything else
 
 The server needs no arguments. Configure the client to launch
-`lsp_main.exe`, use stdio transport, and associate the `.mml` extension.
+`mml lsp`, use stdio transport, and associate the `.mml` extension.
 
 ## Command-line equivalents
 
@@ -73,8 +75,9 @@ The same analysis is available without an editor (the CLI shells over the same
 library):
 
 ```sh
-dune exec bin/main.exe -- --check  file.mml          # diagnostics, one per line; exit 1 on error
-dune exec bin/main.exe -- --hover  file.mml LINE COL  # inferred type at a 1-based position
+mml check file.mml                 # diagnostics, one per line; exit 1 on error
+mml fmt   file.mml                 # format to stdout (-w to rewrite in place)
+mml run   file.mml                 # typecheck, compile and run
 ```
 
 ## Known limitations
