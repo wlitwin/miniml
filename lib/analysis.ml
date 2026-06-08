@@ -100,43 +100,68 @@ let parse_recover (src : string) (tokens : Token.token list) :
   done;
   (List.rev !decls, List.rev !diags, List.rev !defs)
 
+(* The typechecker's accumulated warnings ("Warning at line N: msg") as Warning
+   diagnostics spanning that line. Anything that doesn't match the format is
+   reported whole at the start of the file rather than dropped. *)
+let warning_diagnostics (src : string) (ws : string list) : Diagnostic.t list =
+  let prefix = "Warning at line " in
+  let plen = String.length prefix in
+  List.map
+    (fun w ->
+      match
+        if String.length w > plen && String.sub w 0 plen = prefix then
+          let rest = String.sub w plen (String.length w - plen) in
+          match String.index_opt rest ':' with
+          | Some i -> (
+              match int_of_string_opt (String.trim (String.sub rest 0 i)) with
+              | Some line ->
+                  Some (line, String.trim (String.sub rest (i + 1) (String.length rest - i - 1)))
+              | None -> None)
+          | None -> None
+        else None
+      with
+      | Some (line, msg) ->
+          Diagnostic.make ~severity:Diagnostic.Warning ~code:"warning"
+            ~span:(Diagnostic.line_span src line) msg
+      | None ->
+          Diagnostic.make ~severity:Diagnostic.Warning ~code:"warning"
+            ~span:(Diagnostic.span_at src { line = 1; col = 1; offset = 0 }) w)
+    ws
+
 (* Typecheck [src] against [state]'s stdlib context and return its diagnostics.
    Lex errors stop early (one diagnostic). Otherwise parsing recovers at
-   declaration boundaries and reports EVERY syntax error, then the partial
-   program is typechecked and its first type error (if any) is added — so editing
-   in one broken declaration still surfaces problems in the rest. A clean source
-   yields []. Warnings are drained so repeated calls on the same [state] stay
-   independent.
-
-   Type checking is still first-error-only — multi-type-error recovery is a
-   later increment. *)
+   declaration boundaries and reports EVERY syntax error, then each declaration
+   is typechecked INDEPENDENTLY (threading the context on success) so EVERY type
+   error is reported, not just the first — editing one broken declaration still
+   surfaces problems in the rest. Typechecker warnings are surfaced too. A clean
+   source yields []. *)
 let diagnostics (state : state) (src : string) : Diagnostic.t list =
-  let drain () = ignore (Typechecker.take_warnings ()) in
   match Lexer.tokenize src with
   | exception Lexer.Lex_error (msg, loc) ->
+      ignore (Typechecker.take_warnings ());
       [ Diagnostic.make ~code:"lex" ~span:(Diagnostic.span_at src loc) msg ]
   | tokens ->
       let program, parse_diags, _ = parse_recover src tokens in
-      let type_diags =
-        match
-          let ctx', typed =
-            Typechecker.check_program_in_ctx state.Interp.ctx program
-          in
-          ignore (Typechecker.transform_constraints ctx' typed)
-        with
-        | () ->
-            drain ();
-            []
-        | exception Typechecker.Type_error (msg, loc) ->
-            drain ();
-            [ Diagnostic.make ~code:"type" ~span:(Diagnostic.span_at src loc) msg ]
-        | exception _ ->
-            (* Never let a typechecker failure on a PARTIAL program crash the
-               analysis — the parse diagnostics are still useful. *)
-            drain ();
-            []
+      let ctx = ref state.Interp.ctx and type_diags = ref [] in
+      let type_diag loc msg =
+        type_diags := Diagnostic.make ~code:"type" ~span:(Diagnostic.span_at src loc) msg :: !type_diags
       in
-      parse_diags @ type_diags
+      List.iter
+        (fun decl ->
+          match Typechecker.check_program_in_ctx !ctx [ decl ] with
+          | ctx', tds -> (
+              (* binding succeeded: thread the context so later declarations see
+                 it, then resolve this declaration's constraints *)
+              ctx := ctx';
+              match Typechecker.transform_constraints ctx' tds with
+              | _ -> ()
+              | exception Typechecker.Type_error (msg, loc) -> type_diag loc msg
+              | exception _ -> ())
+          | exception Typechecker.Type_error (msg, loc) -> type_diag loc msg
+          | exception _ -> ())
+        program;
+      let warns = warning_diagnostics src (Typechecker.take_warnings ()) in
+      parse_diags @ List.rev !type_diags @ warns
 
 (* --- Positions ---------------------------------------------------------- *)
 

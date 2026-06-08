@@ -79,4 +79,26 @@ let () =
   test "recovery still reports nothing for clean multi-decl source"
     (clean "let a = 1;;\nlet b = 2;;\nlet c = a + b");
 
+  (* --- richer diagnostics: every type error, and warnings --- *)
+  test "every type error is reported, not just the first" (fun () ->
+      let ts =
+        List.filter (fun (d : D.t) -> d.D.code = "type")
+          (A.diagnostics st "let a : int = \"s\"\nlet b : bool = 5")
+      in
+      if List.length ts < 2 then
+        failwith (Printf.sprintf "expected >=2 type errors, got %d" (List.length ts)));
+
+  test "later declarations still see earlier good bindings" (fun () ->
+      (* `a` is well-typed; `b` uses it; only the bad `c` errors *)
+      clean "let a = 1\nlet b = a + 1" ());
+
+  test "typechecker warnings surface as Warning diagnostics" (fun () ->
+      match
+        List.find_opt (fun (d : D.t) -> d.D.code = "warning")
+          (A.diagnostics st "let f n = match n with | 0 -> 1 | 0 -> 2 | _ -> 3")
+      with
+      | Some d when d.D.severity = D.Warning -> ()
+      | Some _ -> failwith "warning has wrong severity"
+      | None -> failwith "no warning diagnostic");
+
   print_summary ()

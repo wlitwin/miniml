@@ -71,6 +71,22 @@ let span_at (src : string) (loc : Token.loc) : span =
     let lo = pos_of_offset src loc.offset in
     { lo; hi = pos_of_offset src (token_end src loc.offset) }
 
+(* The span covering 1-based [line] in [src] (start of line to the newline) —
+   for diagnostics that carry only a line number, e.g. typechecker warnings. *)
+let line_span (src : string) (line : int) : span =
+  let n = String.length src in
+  let off = ref 0 and ln = ref 1 in
+  while !ln < line && !off < n do
+    (if src.[!off] = '\n' then incr ln);
+    incr off
+  done;
+  let lo = !off in
+  let hi = ref lo in
+  while !hi < n && src.[!hi] <> '\n' do
+    incr hi
+  done;
+  { lo = pos_of_offset src lo; hi = pos_of_offset src !hi }
+
 let make ?(severity = Error) ?(related = []) ~code ~span message =
   { code; severity; span; message; related }
 
