@@ -136,16 +136,14 @@ let read_file_str path =
   s
 
 (* The compiler/toolchain identity folded into every object cache key, so a clang
-   upgrade or a flag change invalidates cached objects. *)
+   upgrade invalidates cached objects. The optimization flags are keyed separately
+   (per build, since release adds -flto), so release and debug objects never mix. *)
 let toolchain_key =
   lazy
-    (let v =
-       let ic = Unix.open_process_in "clang --version 2>/dev/null" in
-       let s = try input_line ic with End_of_file -> "unknown" in
-       ignore (Unix.close_process_in ic);
-       s
-     in
-     v ^ "\x00-O2")
+    (let ic = Unix.open_process_in "clang --version 2>/dev/null" in
+     let s = try input_line ic with End_of_file -> "unknown" in
+     ignore (Unix.close_process_in ic);
+     s)
 
 let obj_cache_dir () =
   let d = Filename.concat (Fetch.cache_root ()) "obj" in
@@ -154,14 +152,19 @@ let obj_cache_dir () =
 
 (* Content-addressed object cache: return the path to a .o for [content],
    compiling it (via [compile objpath]) on a miss. The key folds in the toolchain
-   identity; [content] is whatever bytes determine the object (an .ll unit's text,
-   which already embeds the target triple, or a runtime source's contents). The
-   compile writes to a temp path that is atomically renamed into place, so
-   concurrent builds racing on the same key stay correct. This is the heart of
-   incremental builds: the stdlib unit's .ll is identical across builds, so its
-   object is compiled once and reused (likewise the C runtime + context asm). *)
-let ensure_object ~content ~compile : string =
-  let key = Digest.to_hex (Digest.string (Lazy.force toolchain_key ^ "\x00" ^ content)) in
+   identity and [key_extra] (the optimization flags); [content] is whatever bytes
+   determine the object (an .ll unit's text, which already embeds the target triple,
+   or a runtime source's contents). The compile writes to a temp path that is
+   atomically renamed into place, so concurrent builds racing on the same key stay
+   correct. This is the heart of incremental builds: the stdlib unit's .ll is
+   identical across builds, so its object is compiled once and reused (likewise the
+   C runtime + context asm). *)
+let ensure_object ~key_extra ~content ~compile : string =
+  let key =
+    Digest.to_hex
+      (Digest.string
+         (Lazy.force toolchain_key ^ "\x00" ^ key_extra ^ "\x00" ^ content))
+  in
   let obj = Filename.concat (obj_cache_dir ()) (key ^ ".o") in
   if not (Sys.file_exists obj) then begin
     let tmp = Printf.sprintf "%s.tmp.%d" obj (Unix.getpid ()) in
@@ -170,9 +173,10 @@ let ensure_object ~content ~compile : string =
   end;
   obj
 
-(* Compile one LLVM unit (name, ir) to a cached object. *)
-let unit_object ~name ~ir =
-  ensure_object ~content:ir ~compile:(fun objpath ->
+(* Compile one LLVM unit (name, ir) to a cached object with optimization flags
+   [opt] ("-O2", or "-O2 -flto" for a release build's cross-unit inlining). *)
+let unit_object ~opt ~name ~ir =
+  ensure_object ~key_extra:opt ~content:ir ~compile:(fun objpath ->
       let llf = Filename.temp_file ("mml_" ^ name ^ "_") ".ll" in
       Fun.protect
         ~finally:(fun () -> try Sys.remove llf with _ -> ())
@@ -181,39 +185,47 @@ let unit_object ~name ~ir =
           output_string oc ir;
           close_out oc;
           run_clang
-            (Printf.sprintf "clang -O2 -c %s -o %s" (Filename.quote llf)
+            (Printf.sprintf "clang %s -c %s -o %s" opt (Filename.quote llf)
                (Filename.quote objpath))))
 
-let compile_to_native ~source_file ~output =
+(* [release] enables -flto: each unit's object becomes LLVM bitcode and the link
+   step does cross-module optimization (inlining across units), recovering what
+   whole-program -O2 used to give. It is off by default because LTO re-optimizes
+   the whole program at every link, which would defeat fast incremental rebuilds;
+   `mml build --release` opts in. *)
+let compile_to_native ?(release = false) ~source_file ~output () =
   let source = read_file_str source_file in
   let units = compile_units source in
   let runtime_c = find_runtime_c () in
   let context_asm = find_context_asm () in
   let gc_cflags, gc_ldflags = gc_flags () in
+  let opt = if release then "-O2 -flto" else "-O2" in
 
   (* Each MiniML unit -> cached object. The stdlib unit's .ll is build-stable, so
      after the first build its object is a cache hit (the dominant compile cost). *)
-  let unit_objs =
-    List.map (fun (name, ir) -> unit_object ~name ~ir) units
-  in
+  let unit_objs = List.map (fun (name, ir) -> unit_object ~opt ~name ~ir) units in
   (* The C runtime and the context-switch asm rarely change: cache their objects
      too, keyed by their source contents (+ GC include flags for the runtime). *)
   let runtime_obj =
-    ensure_object ~content:(read_file_str runtime_c ^ "\x00" ^ gc_cflags)
+    ensure_object ~key_extra:opt
+      ~content:(read_file_str runtime_c ^ "\x00" ^ gc_cflags)
       ~compile:(fun o ->
         run_clang
-          (Printf.sprintf "clang -O2 %s -c %s -o %s" gc_cflags
+          (Printf.sprintf "clang %s %s -c %s -o %s" opt gc_cflags
              (Filename.quote runtime_c) (Filename.quote o)))
   in
   let context_obj =
-    ensure_object ~content:(read_file_str context_asm) ~compile:(fun o ->
+    (* hand-written assembly: not LLVM-optimizable, so no opt flags / no -flto *)
+    ensure_object ~key_extra:"asm" ~content:(read_file_str context_asm)
+      ~compile:(fun o ->
         run_clang
           (Printf.sprintf "clang -c %s -o %s" (Filename.quote context_asm)
              (Filename.quote o)))
   in
-  (* Link the (mostly cached) objects into the final executable. *)
+  (* Link the (mostly cached) objects into the final executable; -flto here drives
+     the cross-module optimization when release. *)
   run_clang
-    (Printf.sprintf "clang -O2 %s -o %s %s %s %s" gc_ldflags
+    (Printf.sprintf "clang %s %s -o %s %s %s %s" opt gc_ldflags
        (Filename.quote output) (Filename.quote runtime_obj)
        (Filename.quote context_obj)
        (String.concat " " (List.map Filename.quote unit_objs)))

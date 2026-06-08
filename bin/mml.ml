@@ -15,8 +15,9 @@ let usage =
    manifest; each foo.mml becomes module Foo, main.mml is the entry).\n\n\
    Commands:\n\
   \  run <target> [args...]    typecheck, compile and run\n\
-  \  build [-o OUT] [--emit native|ir] <target>\n\
-  \                            compile to a native executable (default) or LLVM IR\n\
+  \  build [-o OUT] [--emit native|ir] [--release] <target>\n\
+  \                            compile to a native executable (default) or LLVM IR;\n\
+  \                            --release enables cross-module optimization (-flto)\n\
   \  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n\
   \  check <files...>          print diagnostics (exit 1 if any error)\n\
   \  test [dir]                run `let test_* () = <bool>` in *_test.mml files\n\
@@ -111,9 +112,11 @@ let cmd_fmt args =
 
 let cmd_build args =
   let out = ref None and emit = ref "native" and file = ref None in
+  let release = ref false in
   let rec parse = function
     | "-o" :: o :: rest -> out := Some o; parse rest
     | "--emit" :: t :: rest -> emit := t; parse rest
+    | "--release" :: rest -> release := true; parse rest
     | f :: rest when !file = None -> file := Some f; parse rest
     | [] -> ()
     | x :: _ ->
@@ -148,7 +151,9 @@ let cmd_build args =
         match !emit with
         | "native" ->
             let output = Option.value ~default:default_out !out in
-            with_source_file (fun src_file -> N.Driver.compile_to_native ~source_file:src_file ~output)
+            with_source_file (fun src_file ->
+                N.Driver.compile_to_native ~release:!release ~source_file:src_file
+                  ~output ())
         | "ir" ->
             let ir = N.Driver.compile_ir (source_of f) in
             (match !out with Some o -> write_file o ir | None -> print_string ir)

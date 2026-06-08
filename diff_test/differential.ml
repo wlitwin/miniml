@@ -264,7 +264,7 @@ let run_native source : result =
   in
   match
     Interpreter_native.Driver.compile_to_native ~source_file:src_file
-      ~output:bin_file
+      ~output:bin_file ()
   with
   | () ->
       let code, out, err = run_command_capture (Filename.quote bin_file) in
