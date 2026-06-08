@@ -287,3 +287,56 @@ let definition (state : state) (src : string) ~line ~col : (int * int) option =
           | Some (l : Token.loc) when l.line > 0 -> Some (l.line, l.col)
           | _ -> None))
 
+(* --- Completion --------------------------------------------------------- *)
+
+(* LSP CompletionItemKind values used here. *)
+let kind_function = 3
+let kind_variable = 6
+let kind_keyword = 14
+
+let keywords =
+  [
+    "let"; "rec"; "mut"; "in"; "if"; "do"; "else"; "end"; "fn"; "match"; "with";
+    "type"; "newtype"; "module"; "effect"; "class"; "instance"; "extern"; "open";
+    "handle"; "perform"; "resume"; "for"; "return"; "break"; "continue"; "true";
+    "false"; "and"; "of"; "where"; "pub"; "opaque"; "when";
+  ]
+
+(* A plain (unqualified, non-operator) identifier we'd offer as a completion. *)
+let is_ident_like (s : string) : bool =
+  String.length s > 0
+  && (match s.[0] with 'a' .. 'z' | 'A' .. 'Z' | '_' -> true | _ -> false)
+  && (not (String.contains s '.'))
+  && String.for_all
+       (function 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> true | _ -> false)
+       s
+
+(* The completion candidates visible in [src]: every name in scope (the standard
+   library and builtins, from the typecheck context) plus the file's own
+   top-level declarations, plus the language keywords. Returned as
+   (label, CompletionItemKind) pairs, de-duplicated; the editor filters by the
+   typed prefix. Local (in-function) bindings are a later refinement. *)
+let completions (state : state) (src : string) : (string * int) list =
+  let seen = Hashtbl.create 512 in
+  let out = ref [] in
+  let add kind name =
+    if is_ident_like name && not (Hashtbl.mem seen name) then begin
+      Hashtbl.add seen name ();
+      out := (name, kind) :: !out
+    end
+  in
+  (* the file's own top-level names first (most relevant) *)
+  (match Lexer.tokenize src with
+  | exception _ -> ()
+  | tokens ->
+      let _, _, defs = parse_recover src tokens in
+      List.iter (fun (name, _) -> add kind_variable name) defs);
+  (* everything in scope: stdlib + builtins *)
+  List.iter
+    (fun (name, (sch : Types.scheme)) ->
+      let kind = match sch.Types.body with Types.TArrow _ -> kind_function | _ -> kind_variable in
+      add kind name)
+    state.Interp.ctx.Typechecker.vars;
+  List.iter (add kind_keyword) keywords;
+  List.rev !out
+

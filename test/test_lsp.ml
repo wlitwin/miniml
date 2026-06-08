@@ -82,6 +82,19 @@ let () =
       if J.json_int (field "line" start) <> 0 || J.json_int (field "character" start) <> 4
       then failwith "wrong definition position");
 
+  test "completion returns items" (fun () ->
+      ignore
+        (send
+           {|{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///e.mml","text":"let mine = 1"}}}|});
+      let r =
+        one
+          {|{"jsonrpc":"2.0","id":5,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///e.mml"},"position":{"line":0,"character":11}}}|}
+      in
+      let items = jlist (field "result" r) in
+      if List.length items < 1 then failwith "no completion items";
+      let labels = List.map (fun it -> jstr (field "label" it)) items in
+      if not (List.mem "mine" labels) then failwith "own decl not offered");
+
   test "shutdown responds, exit is silent" (fun () ->
       let r = one {|{"jsonrpc":"2.0","id":9,"method":"shutdown","params":null}|} in
       if field "result" r <> J.JNull then failwith "shutdown result not null";
