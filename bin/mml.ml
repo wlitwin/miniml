@@ -11,9 +11,11 @@ let version = "0.1.0-dev"
 let usage =
   "mml — the MiniML toolchain\n\n\
    Usage: mml <command> [args]\n\n\
+   A <target> is a single .mml file or a project directory (one with an mml.mod\n\
+   manifest; each foo.mml becomes module Foo, main.mml is the entry).\n\n\
    Commands:\n\
-  \  run <file> [args...]      typecheck, compile and run a program\n\
-  \  build [-o OUT] [--emit native|ir] <file>\n\
+  \  run <target> [args...]    typecheck, compile and run\n\
+  \  build [-o OUT] [--emit native|ir] <target>\n\
   \                            compile to a native executable (default) or LLVM IR\n\
   \  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n\
   \  check <files...>          print diagnostics (exit 1 if any error)\n\
@@ -32,13 +34,24 @@ let write_file path s =
   output_string oc s;
   close_out oc
 
-let cmd_run file args =
+(* The source to compile/run for [target]: a project directory's combined source
+   (libraries wrapped as modules, in dependency order, + the entry), or a single
+   file's contents. *)
+let source_of target =
+  if I.Project.is_project target then
+    I.Project.combined_source (I.Project.load target)
+  else read_file target
+
+let cmd_run target args =
   let st = I.Std.register_all (I.Interp.repl_state_init ()) in
-  st.I.Interp.argv := Array.of_list (file :: args);
-  try ignore (I.Interp.wrap_errors (fun () -> I.Interp.run_string_in_state st (read_file file)))
+  st.I.Interp.argv := Array.of_list (target :: args);
+  try ignore (I.Interp.wrap_errors (fun () -> I.Interp.run_string_in_state st (source_of target)))
   with
   | I.Interp.Error msg ->
       Printf.eprintf "%s\n" msg;
+      exit 1
+  | I.Project.Build_error msg ->
+      Printf.eprintf "mml run: %s\n" msg;
       exit 1
   | Sys_error msg ->
       Printf.eprintf "mml run: %s\n" msg;
@@ -78,22 +91,39 @@ let cmd_build args =
   parse args;
   match !file with
   | None ->
-      Printf.eprintf "mml build: expected a source file\n";
+      Printf.eprintf "mml build: expected a source file or project directory\n";
       exit 1
   | Some f -> (
+      (* For a project, the build runs on the combined source; native needs a
+         file on disk, so the combined source is written to a temp file. *)
+      let project = I.Project.is_project f in
+      let default_out =
+        if project then (I.Project.load f).I.Project.name else Filename.remove_extension f
+      in
+      let with_source_file g =
+        if project then begin
+          let tmp = Filename.temp_file "mml_build_" ".mml" in
+          Fun.protect
+            ~finally:(fun () -> try Sys.remove tmp with _ -> ())
+            (fun () ->
+              write_file tmp (I.Project.combined_source (I.Project.load f));
+              g tmp)
+        end
+        else g f
+      in
       try
         match !emit with
         | "native" ->
-            let output = Option.value ~default:(Filename.remove_extension f) !out in
-            N.Driver.compile_to_native ~source_file:f ~output
+            let output = Option.value ~default:default_out !out in
+            with_source_file (fun src_file -> N.Driver.compile_to_native ~source_file:src_file ~output)
         | "ir" ->
-            let ir = N.Driver.compile_ir (read_file f) in
+            let ir = N.Driver.compile_ir (source_of f) in
             (match !out with Some o -> write_file o ir | None -> print_string ir)
         | t ->
             Printf.eprintf "mml build: unknown --emit target %S (native|ir)\n" t;
             exit 1
       with
-      | N.Driver.Driver_error msg | I.Interp.Error msg ->
+      | N.Driver.Driver_error msg | I.Interp.Error msg | I.Project.Build_error msg ->
           Printf.eprintf "mml build: %s\n" msg;
           exit 1
       | Sys_error msg ->
