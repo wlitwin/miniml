@@ -63,4 +63,18 @@ let () =
       in
       if idx "module A =" > idx "module B =" then failwith "A should precede B");
 
+  (* line map: a combined-source line resolves back to (file, line) *)
+  test "line map attributes combined lines to source files" (fun () ->
+      let a = mk "A" "pub let x = 1\npub let y = 2" in
+      let proj = { P.name = "p"; entry = mk "Main" "let main = print A.x"; libs = [ a ] } in
+      let _, segs = P.combined_with_map proj in
+      let check l ef el =
+        let f, ln = P.map_line segs l in
+        if not (contains f ef && ln = el) then
+          failwith (Printf.sprintf "line %d -> %s:%d, want %s:%d" l f ln ef el)
+      in
+      (* combined line 1 is `module A =`; A's source begins at line 2 *)
+      check 2 "a.mml" 1;
+      check 3 "a.mml" 2);
+
   print_summary ()

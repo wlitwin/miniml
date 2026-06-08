@@ -111,19 +111,43 @@ let load (dir : string) : t =
   | [] -> raise (Build_error "no entry point (expected main.mml)")
   | _ -> raise (Build_error "more than one main.mml")
 
-(* The single source the compiler builds: each library wrapped as its module, in
-   dependency order, followed by the entry program. *)
-let combined_source (p : t) : string =
+(* The single source the compiler builds — each library wrapped as its module in
+   dependency order, then the entry — together with a LINE MAP: a list of
+   (combined-line, file) pairs marking where each unit's source begins, so an
+   error reported in combined-source coordinates can be attributed back to the
+   originating file and line. *)
+let combined_with_map (p : t) : string * (int * string) list =
   let buf = Buffer.create 4096 in
-  List.iter
-    (fun (u : unit_) ->
-      Buffer.add_string buf (Printf.sprintf "module %s =\n" u.name);
-      Buffer.add_string buf u.source;
-      Buffer.add_string buf "\nend;;\n")
-    (topo_order p.libs);
-  Buffer.add_string buf p.entry.source;
-  Buffer.add_char buf '\n';
-  Buffer.contents buf
+  let line = ref 1 in
+  let add s =
+    Buffer.add_string buf s;
+    String.iter (fun c -> if c = '\n' then incr line) s
+  in
+  let segs = ref [] in
+  let emit ~wrap (u : unit_) =
+    if wrap then add (Printf.sprintf "module %s =\n" u.name);
+    (* the unit's source begins here, mapping its line 1 to combined line [!line] *)
+    segs := (!line, u.path) :: !segs;
+    add u.source;
+    if not (String.length u.source > 0 && u.source.[String.length u.source - 1] = '\n')
+    then add "\n";
+    if wrap then add "end;;\n"
+  in
+  List.iter (emit ~wrap:true) (topo_order p.libs);
+  emit ~wrap:false p.entry;
+  (Buffer.contents buf, List.rev !segs)
+
+let combined_source (p : t) : string = fst (combined_with_map p)
+
+(* Map a 1-based line in the combined source back to (file, 1-based line). *)
+let map_line (segs : (int * string) list) (l : int) : string * int =
+  let rec go best = function
+    | (start, file) :: rest -> go (if start <= l then Some (start, file) else best) rest
+    | [] -> best
+  in
+  match go None segs with
+  | Some (start, file) -> (file, l - start + 1)
+  | None -> ( match segs with (_, f) :: _ -> (f, l) | [] -> ("?", l))
 
 (* Whether [path] is a project directory (has an mml.mod). *)
 let is_project (path : string) : bool =
