@@ -8,3 +8,9 @@
  (name lsp_main)
  (modules lsp_main)
  (libraries interpreter))
+
+(executable
+ (public_name mml)
+ (name mml)
+ (modules mml)
+ (libraries interpreter))
