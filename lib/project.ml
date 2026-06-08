@@ -38,19 +38,15 @@ let dir_units (dir : string) : unit_ list =
          let path = Filename.concat dir f in
          { name = module_name_of path; path; source = read_file path })
 
-(* Resolve [m] to a local directory: the root manifest's `replace` (relative to
-   the project root) for now. Remote fetch into a module cache is a later
-   increment, so an un-replaced dependency is an error. *)
-let locate (root : string) (mf : Manifest.t) (m : string) : string =
+(* Resolve module [m] at version [v] to a local directory: the root manifest's
+   `replace` (relative to the project root) if present, otherwise the module
+   cache — fetching it over git on a cache miss. *)
+let locate (root : string) (mf : Manifest.t) (m : string) (v : Semver.t) : string =
   match Manifest.replacement mf m with
   | Some p -> if Filename.is_relative p then Filename.concat root p else p
-  | None ->
-      raise
-        (Build_error
-           (Printf.sprintf
-              "dependency %s is not available: add `replace %s => <local path>` \
-               to mml.mod (remote fetch is not implemented yet)"
-              m m))
+  | None -> (
+      try Fetch.ensure m v
+      with Fetch.Fetch_error msg -> raise (Build_error msg))
 
 (* Which project modules does [u] reference — `Name.` (qualified access) or
    `open Name`? Inferred from the token stream so it tolerates a not-yet-valid
@@ -111,15 +107,15 @@ let load (dir : string) : t =
   if mf.Manifest.name = "" then
     raise (Build_error "mml.mod: missing a `module <name>` line");
   (* MVS: read each module@version's manifest from its resolved directory. *)
-  let load_manifest m _v =
-    let d = locate dir mf m in
+  let load_manifest m v =
+    let d = locate dir mf m v in
     let p = Filename.concat d "mml.mod" in
     if Sys.file_exists p then Manifest.parse (read_file p)
     else { Manifest.name = m; mml = None; requires = []; replaces = [] }
   in
   let dep_units =
     Deps.mvs mf load_manifest
-    |> List.concat_map (fun (m, _v) -> dir_units (locate dir mf m))
+    |> List.concat_map (fun (m, v) -> dir_units (locate dir mf m v))
   in
   let own =
     Sys.readdir dir |> Array.to_list
