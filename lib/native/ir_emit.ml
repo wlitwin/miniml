@@ -32,13 +32,17 @@ let emit_declare t ~ret_ty ~name ~param_tys =
   Printf.bprintf t.buf "declare %s @%s(%s)\n" ret_ty name
     (String.concat ", " param_tys)
 
-let emit_define_start t ~ret_ty ~name ~params =
+let emit_define_start_gen t ~linkage ~ret_ty ~name ~params =
   let param_str =
     String.concat ", "
       (List.map (fun (ty, reg) -> Printf.sprintf "%s %s" ty reg) params)
   in
-  Printf.bprintf t.buf "define %s @%s(%s) {\n" ret_ty name param_str;
+  let lk = if linkage = "" then "" else linkage ^ " " in
+  Printf.bprintf t.buf "define %s%s @%s(%s) {\n" lk ret_ty name param_str;
   reset_regs t
+
+let emit_define_start t ~ret_ty ~name ~params =
+  emit_define_start_gen t ~linkage:"" ~ret_ty ~name ~params
 
 let emit_define_end t = Buffer.add_string t.buf "}\n"
 

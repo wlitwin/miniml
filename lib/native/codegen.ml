@@ -66,6 +66,15 @@ type codegen_ctx = {
   mutable current_label : string;
   mutable label_counter : int;
   mutable fn_counter : int;
+  mutable unit_prefix : string;
+      (* A per-compilation-unit tag woven into every INTERNAL (counter-derived)
+         symbol name — anonymous lambdas, local/top-level function bodies, handler
+         arms, derived Show wrappers. Empty "" for a whole-program build (names are
+         then byte-identical to the historical scheme). Under separate compilation
+         (one .ll per module) it is set to a sanitized unit tag so two units'
+         independently-counted `mml_anon_0`, `mml_f_..._0`, etc. cannot collide when
+         their objects are linked together. Exported top-level names are made stable
+         separately (via aliases), not through this prefix. *)
   mutable str_counter : int;
   mutable float_counter : int;
   mutable string_globals : string list;
@@ -140,6 +149,7 @@ let create_ctx type_env =
     current_label = "entry";
     label_counter = 0;
     fn_counter = 0;
+    unit_prefix = "";
     str_counter = 0;
     float_counter = 0;
     string_globals = [];
@@ -1069,7 +1079,7 @@ and emit_let ctx name init body is_mutable =
         let fn_id = ctx.fn_counter in
         ctx.fn_counter <- ctx.fn_counter + 1;
         let llvm_name =
-          Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id
+          Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) fn_id
         in
         let free = free_vars_of_fun ~ctx:(Some ctx) params fn_body in
         if free = [] then begin
@@ -1278,7 +1288,7 @@ and emit_letrec ctx name fn_expr body =
   else begin
     let fn_id = ctx.fn_counter in
     ctx.fn_counter <- ctx.fn_counter + 1;
-    let llvm_name = Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id in
+    let llvm_name = Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) fn_id in
     let free = free_vars_of_fun ~ctx:(Some ctx) (name :: params) inner_body in
     if free = [] then begin
       push_scope ctx;
@@ -1354,7 +1364,7 @@ and emit_letrec_and ctx bindings body =
           let fn_id = ctx.fn_counter in
           ctx.fn_counter <- ctx.fn_counter + 1;
           let llvm_name =
-            Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id
+            Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) fn_id
           in
           bind_var ctx name (Func (llvm_name, List.length params))
       | `Value (name, fn_expr) ->
@@ -3854,7 +3864,13 @@ and emit_func_wrapper ctx wrapper_name real_name arity =
           ("ptr", "%env")
           :: List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i))
         in
-        Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+        (* linkonce_odr: this wrapper has a deterministic name derived from
+           [real_name] and an identical body wherever it is emitted, so under
+           separate compilation a unit that uses an imported function as a value
+           emits the same wrapper the defining unit may also emit — the linker
+           keeps one. (No effect in a whole-program build: a single definition.) *)
+        Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+          ~name:wrapper_name ~params;
         Ir_emit.emit_label fn_ir "entry";
         let call_args =
           List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i))
@@ -3867,7 +3883,8 @@ and emit_func_wrapper ctx wrapper_name real_name arity =
       else begin
         (* High arity: array-based convention (env, args_ptr) *)
         let params = [ ("ptr", "%env"); ("ptr", "%args") ] in
-        Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+        Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+          ~name:wrapper_name ~params;
         Ir_emit.emit_label fn_ir "entry";
         let call_args =
           List.init arity (fun i ->
@@ -3898,7 +3915,7 @@ and emit_lambda_as_closure ctx (expr : Typechecker.texpr) =
   let params, body = flatten_fun expr in
   let arity = List.length params in
   if arity = 0 then failwith "native codegen: zero-arity lambda";
-  let fn_name = Printf.sprintf "mml_anon_%d" ctx.fn_counter in
+  let fn_name = Printf.sprintf "mml_anon_%s%d" ctx.unit_prefix ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
   let free = free_vars_of_fun ~ctx:(Some ctx) params body in
   if free = [] then begin
@@ -4085,7 +4102,10 @@ and emit_closure_function ctx fn_name params body free_with_info =
 and emit_rt_unary_wrapper ctx wrapper_name rt_fn_name =
   with_fresh_ir ctx (fun fn_ir ->
       let params = [ ("ptr", "%env"); ("i64", "%a0") ] in
-      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      (* linkonce_odr: deterministically-named builtin wrapper with an identical
+         body in every unit that uses it; the linker keeps one (see emit_func_wrapper). *)
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name ~params;
       Ir_emit.emit_label fn_ir "entry";
       add_extern ctx rt_fn_name "i64" [ "i64" ];
       let result =
@@ -4100,7 +4120,10 @@ and emit_rt_unary_wrapper ctx wrapper_name rt_fn_name =
 and emit_rt_binary_wrapper ctx wrapper_name rt_fn_name =
   with_fresh_ir ctx (fun fn_ir ->
       let params = [ ("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1") ] in
-      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      (* linkonce_odr: deterministically-named builtin wrapper with an identical
+         body in every unit that uses it; the linker keeps one (see emit_func_wrapper). *)
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name ~params;
       Ir_emit.emit_label fn_ir "entry";
       add_extern ctx rt_fn_name "i64" [ "i64"; "i64" ];
       let result =
@@ -4117,7 +4140,10 @@ and emit_rt_ternary_wrapper ctx wrapper_name rt_fn_name =
       let params =
         [ ("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1"); ("i64", "%a2") ]
       in
-      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      (* linkonce_odr: deterministically-named builtin wrapper with an identical
+         body in every unit that uses it; the linker keeps one (see emit_func_wrapper). *)
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name ~params;
       Ir_emit.emit_label fn_ir "entry";
       add_extern ctx rt_fn_name "i64" [ "i64"; "i64"; "i64" ];
       let result =
@@ -4142,7 +4168,7 @@ and emit_show_closure ctx ty =
       in
       let fn_id = ctx.fn_counter in
       ctx.fn_counter <- ctx.fn_counter + 1;
-      let wrapper_name = Printf.sprintf "mml_op_show_list_%d" fn_id in
+      let wrapper_name = Printf.sprintf "mml_op_show_list_%s%d" ctx.unit_prefix fn_id in
       emit_show_compound_wrapper ctx wrapper_name "mml_show_list" 1;
       emit_make_closure ctx ~fn_name:wrapper_name ~arity:1
         ~captures:[ show_elem ]
@@ -4153,7 +4179,7 @@ and emit_show_closure ctx ty =
       in
       let fn_id = ctx.fn_counter in
       ctx.fn_counter <- ctx.fn_counter + 1;
-      let wrapper_name = Printf.sprintf "mml_op_show_array_%d" fn_id in
+      let wrapper_name = Printf.sprintf "mml_op_show_array_%s%d" ctx.unit_prefix fn_id in
       emit_show_compound_wrapper ctx wrapper_name "mml_show_array" 1;
       emit_make_closure ctx ~fn_name:wrapper_name ~arity:1
         ~captures:[ show_elem ]
@@ -4176,7 +4202,7 @@ and emit_show_closure ctx ty =
       in
       let fn_id = ctx.fn_counter in
       ctx.fn_counter <- ctx.fn_counter + 1;
-      let wrapper_name = Printf.sprintf "mml_op_show_tuple_%d" fn_id in
+      let wrapper_name = Printf.sprintf "mml_op_show_tuple_%s%d" ctx.unit_prefix fn_id in
       emit_show_compound_wrapper ctx wrapper_name "mml_show_tuple" 1;
       emit_make_closure ctx ~fn_name:wrapper_name ~arity:1
         ~captures:[ show_fns_list ]
@@ -4255,7 +4281,7 @@ and emit_show_closure ctx ty =
           in
           let fn_id = ctx.fn_counter in
           ctx.fn_counter <- ctx.fn_counter + 1;
-          let wrapper_name = Printf.sprintf "mml_op_show_variant_%d" fn_id in
+          let wrapper_name = Printf.sprintf "mml_op_show_variant_%s%d" ctx.unit_prefix fn_id in
           emit_show_compound_wrapper ctx wrapper_name "mml_show_variant" 1;
           emit_make_closure ctx ~fn_name:wrapper_name ~arity:1
             ~captures:[ ctors_list ])
@@ -4298,7 +4324,7 @@ and emit_show_closure ctx ty =
       (* Generate wrapper: mml_show_record(fields_list, value) *)
       let fn_id = ctx.fn_counter in
       ctx.fn_counter <- ctx.fn_counter + 1;
-      let wrapper_name = Printf.sprintf "mml_op_show_record_%d" fn_id in
+      let wrapper_name = Printf.sprintf "mml_op_show_record_%s%d" ctx.unit_prefix fn_id in
       emit_show_compound_wrapper ctx wrapper_name "mml_show_record" 1;
       emit_make_closure ctx ~fn_name:wrapper_name ~arity:1
         ~captures:[ fields_list ]
@@ -4368,7 +4394,7 @@ and emit_show_closure ctx ty =
       (* Generate wrapper: mml_show_polyvariant(names_list, show_payload, value) *)
       let fn_id = ctx.fn_counter in
       ctx.fn_counter <- ctx.fn_counter + 1;
-      let wrapper_name = Printf.sprintf "mml_op_show_pv_%d" fn_id in
+      let wrapper_name = Printf.sprintf "mml_op_show_pv_%s%d" ctx.unit_prefix fn_id in
       emit_show_compound_wrapper ctx wrapper_name "mml_show_polyvariant" 2;
       emit_make_closure ctx ~fn_name:wrapper_name ~arity:1
         ~captures:[ names_list; show_payload ]
@@ -4396,7 +4422,10 @@ and emit_show_closure ctx ty =
 and emit_show_compound_wrapper ctx wrapper_name rt_fn_name n_captures =
   with_fresh_ir ctx (fun fn_ir ->
       let params = [ ("ptr", "%env"); ("i64", "%a0") ] in
-      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      (* linkonce_odr: deterministically-named builtin wrapper with an identical
+         body in every unit that uses it; the linker keeps one (see emit_func_wrapper). *)
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name ~params;
       Ir_emit.emit_label fn_ir "entry";
       (* Load captures from closure env (slots 3, 4, ...) *)
       let cap_vals =
@@ -4525,7 +4554,10 @@ and emit_operator_wrapper ctx wrapper_name op_name is_float =
         ("ptr", "%env")
         :: List.init arity (fun i -> ("i64", Printf.sprintf "%%a%d" i))
       in
-      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name ~params;
+      (* linkonce_odr: deterministically-named builtin wrapper with an identical
+         body in every unit that uses it; the linker keeps one (see emit_func_wrapper). *)
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name ~params;
       Ir_emit.emit_label fn_ir "entry";
 
       let result =
@@ -4970,7 +5002,8 @@ and emit_builtin_as_value ctx name expr_ty =
 (** Generate a string concat wrapper function *)
 and emit_concat_wrapper ctx wrapper_name =
   with_fresh_ir ctx (fun fn_ir ->
-      Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_name
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name
         ~params:[ ("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1") ];
       Ir_emit.emit_label fn_ir "entry";
       add_extern ctx "mml_string_concat" "i64" [ "i64"; "i64" ];
@@ -5002,7 +5035,8 @@ and emit_print_closure ctx expr_ty =
   if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
     Hashtbl.replace ctx.generated_wrappers wrapper_key ();
     with_fresh_ir ctx (fun fn_ir ->
-        Ir_emit.emit_define_start fn_ir ~ret_ty:"i64" ~name:wrapper_key
+        Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+          ~name:wrapper_key
           ~params:[ ("ptr", "%env"); ("i64", "%a0") ];
         Ir_emit.emit_label fn_ir "entry";
         add_extern ctx print_fn "i64" [ "i64" ];
@@ -5595,7 +5629,7 @@ and emit_handler_env ctx free_with_info =
     from env at offsets 0, 1, 2, ... [arg_name] is the parameter name bound to
     the perform argument. Returns the LLVM function name. *)
 and emit_handler_arm_fn ctx arg_name body free_with_info =
-  let fn_name = Printf.sprintf "mml_handler_arm_%d" ctx.fn_counter in
+  let fn_name = Printf.sprintf "mml_handler_arm_%s%d" ctx.unit_prefix ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
   with_fresh_ir ctx (fun fn_ir ->
       let outer_scopes = ctx.scopes in
@@ -5655,7 +5689,7 @@ and emit_handler_arm_fn ctx arg_name body free_with_info =
     emit_handler_arm_fn but also binds [k_name] to the continuation passed as
     the third parameter. *)
 and emit_full_handler_arm_fn ctx arg_name k_name body free_with_info =
-  let fn_name = Printf.sprintf "mml_handler_arm_%d" ctx.fn_counter in
+  let fn_name = Printf.sprintf "mml_handler_arm_%s%d" ctx.unit_prefix ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
   with_fresh_ir ctx (fun fn_ir ->
       let outer_scopes = ctx.scopes in
@@ -5716,7 +5750,7 @@ and emit_full_handler_arm_fn ctx arg_name k_name body free_with_info =
     the body must run inside a C function with setjmp. Returns the LLVM function
     name. *)
 and emit_handler_body_thunk ctx body free_with_info =
-  let fn_name = Printf.sprintf "mml_handler_body_%d" ctx.fn_counter in
+  let fn_name = Printf.sprintf "mml_handler_body_%s%d" ctx.unit_prefix ctx.fn_counter in
   ctx.fn_counter <- ctx.fn_counter + 1;
   with_fresh_ir ctx (fun fn_ir ->
       let outer_scopes = ctx.scopes in
@@ -6087,7 +6121,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
             let fn_id = ctx.fn_counter in
             ctx.fn_counter <- ctx.fn_counter + 1;
             let llvm_name =
-              Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id
+              Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) fn_id
             in
             let free = free_vars_of_fun ~ctx:(Some ctx) params body in
             if free <> [] then
@@ -6135,7 +6169,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
         let fn_id = ctx.fn_counter in
         ctx.fn_counter <- ctx.fn_counter + 1;
         let llvm_name =
-          Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id
+          Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) fn_id
         in
         bind_var ctx name (Func (llvm_name, List.length params));
         let free = free_vars_of_fun ~ctx:(Some ctx) (name :: params) body in
@@ -6170,7 +6204,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
               let fn_id = ctx.fn_counter in
               ctx.fn_counter <- ctx.fn_counter + 1;
               let llvm_name =
-                Printf.sprintf "mml_f_%s_%d" (sanitize_name name) fn_id
+                Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) fn_id
               in
               bind_var ctx name (Func (llvm_name, List.length params))
           | `Value (name, expr) ->
@@ -6273,7 +6307,15 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
   | TDType _ | TDClass _ | TDEffect _ | TDExtern _ -> ()
 
 and ensure_global ctx name =
-  let gname = Printf.sprintf "mml_g_%s" (sanitize_name name) in
+  (* Globals (top-level values, mutable globals, typeclass-dictionary slots) carry
+     the unit prefix so two separately-compiled units cannot define the same
+     @mml_g_<name> (e.g. two units each with a top-level `x`, or the same dict
+     slot). With unit_prefix="" this is the historical name. References resolve
+     through the stored gname (the Global/MutGlobal binding), so importers that
+     seed their scope from an exporter's bindings load the right symbol. *)
+  let gname =
+    Printf.sprintf "mml_g_%s%s" ctx.unit_prefix (sanitize_name name)
+  in
   (* Check if global already declared *)
   let decl = Printf.sprintf "@%s = global i64 0" gname in
   if not (List.mem decl ctx.global_decls) then
@@ -6749,8 +6791,16 @@ and tag_int_value n = (n lsl 1) lor 1
 
 (* ---- Top-level entry point ---- *)
 
-(* Assemble final LLVM IR output from compiled context *)
-let assemble_output ctx main_body =
+(* Assemble final LLVM IR output from a compiled context.
+   [extra_declares]: raw lines (cross-unit import `declare`s / `external global`s)
+     emitted right after the runtime externs — how an importing unit references
+     symbols defined in another unit's object.
+   [emit_result_type]: emit the @mml_result_type global. The ENTRY unit owns it
+     (the C runtime reads it to format the program's result); library units pass
+     false so the symbol is defined exactly once across the link.
+   [main_body]: the @mml_main body, or "" for a library unit that has no entry. *)
+let assemble_output ?(extra_declares = []) ?(emit_result_type = true) ctx main_body
+    =
   let out = Buffer.create 8192 in
   Printf.bprintf out "target triple = \"%s\"\n\n" (detect_target_triple ());
   let base_externs =
@@ -6782,6 +6832,8 @@ let assemble_output ctx main_body =
         Printf.bprintf out "declare %s @%s(%s)%s\n" ret_ty name pt_str attrs
       end)
     all_externs;
+  List.iter (fun d -> Buffer.add_string out d; Buffer.add_char out '\n')
+    extra_declares;
   Buffer.add_char out '\n';
   List.iter
     (fun decl ->
@@ -6800,8 +6852,10 @@ let assemble_output ctx main_body =
       Buffer.add_string out decl;
       Buffer.add_char out '\n')
     (List.rev ctx.global_decls);
-  let tag = result_type_tag ctx.result_type in
-  Printf.bprintf out "@mml_result_type = global i32 %d\n" tag;
+  if emit_result_type then begin
+    let tag = result_type_tag ctx.result_type in
+    Printf.bprintf out "@mml_result_type = global i32 %d\n" tag
+  end;
   Buffer.add_char out '\n';
   if Buffer.length ctx.fn_buf > 0 then begin
     Buffer.add_buffer out ctx.fn_buf
@@ -6809,10 +6863,93 @@ let assemble_output ctx main_body =
   Buffer.add_string out main_body;
   Buffer.contents out
 
+(* Emit a unit's top-level INITIALIZATION as a standalone `@<init_name>()` function
+   appended to fn_buf, instead of inlining it into mml_main. The non-function
+   top-level statements — global value bindings, typeclass-dictionary
+   materialization, side-effecting top-level expressions — become this function's
+   body; functions defined by [decls] still emit as their own module-level defines
+   (emit_decl -> emit_named_function uses its own fresh IR). The unit's name
+   bindings land in ctx's shared top scope as a side effect of emit_decl, so the
+   entry (and, under separate compilation, later units) can resolve them. Each decl
+   compiles with rollback-on-failure, matching the historical stdlib behavior. This
+   is the init/entry split that lets the stdlib become its own compilation unit:
+   its initializer is a named function the entry's mml_main calls before any user
+   code, rather than code physically inlined into mml_main. *)
+let emit_unit_init ctx ~init_name decls =
+  let saved_ir = ctx.ir in
+  let saved_label = ctx.current_label in
+  let saved_result_ptr = ctx.result_ptr in
+  let fn_ir = Ir_emit.create () in
+  ctx.ir <- fn_ir;
+  Ir_emit.emit_define_start fn_ir ~ret_ty:"void" ~name:init_name ~params:[];
+  Ir_emit.emit_label fn_ir "entry";
+  ctx.current_label <- "entry";
+  (* The init function's own result_ptr: top-level decls store unit here as
+     bookkeeping, so it must be local to THIS function, not mml_main's alloca. *)
+  ctx.result_ptr <- Ir_emit.emit_alloca fn_ir ~ty:"i64";
+  Ir_emit.emit_store fn_ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr;
+  List.iter
+    (fun decl ->
+      let cur_ir = ctx.ir in
+      let ir_buf_len = Buffer.length cur_ir.Ir_emit.buf in
+      let ir_next_reg = cur_ir.Ir_emit.next_reg in
+      let fn_buf_len = Buffer.length ctx.fn_buf in
+      let saved_global_decls = ctx.global_decls in
+      let saved_string_globals = ctx.string_globals in
+      let saved_float_globals = ctx.float_globals in
+      let saved_extern_decls = ctx.extern_decls in
+      let saved_scope = Hashtbl.copy (List.hd ctx.scopes) in
+      let saved_generated_wrappers = Hashtbl.copy ctx.generated_wrappers in
+      let saved_ir2 = ctx.ir in
+      let saved_label2 = ctx.current_label in
+      let saved_scopes = ctx.scopes in
+      let saved_loop_stack = ctx.loop_stack in
+      try emit_decl ctx decl
+      with Failure msg ->
+        Printf.eprintf "[native] %s rollback: %s\n%!" init_name msg;
+        (* Restore ctx fields that may have been swapped by nested function emission *)
+        ctx.ir <- saved_ir2;
+        ctx.current_label <- saved_label2;
+        ctx.scopes <- saved_scopes;
+        ctx.loop_stack <- saved_loop_stack;
+        let contents = Buffer.contents cur_ir.Ir_emit.buf in
+        Buffer.clear cur_ir.Ir_emit.buf;
+        Buffer.add_string cur_ir.Ir_emit.buf (String.sub contents 0 ir_buf_len);
+        cur_ir.Ir_emit.next_reg <- ir_next_reg;
+        let fn_contents = Buffer.contents ctx.fn_buf in
+        Buffer.clear ctx.fn_buf;
+        Buffer.add_string ctx.fn_buf (String.sub fn_contents 0 fn_buf_len);
+        ctx.global_decls <- saved_global_decls;
+        ctx.string_globals <- saved_string_globals;
+        ctx.float_globals <- saved_float_globals;
+        ctx.extern_decls <- saved_extern_decls;
+        let top = List.hd ctx.scopes in
+        Hashtbl.reset top;
+        Hashtbl.iter (fun k v -> Hashtbl.replace top k v) saved_scope;
+        Hashtbl.reset ctx.generated_wrappers;
+        Hashtbl.iter
+          (fun k v -> Hashtbl.replace ctx.generated_wrappers k v)
+          saved_generated_wrappers)
+    decls;
+  Ir_emit.emit_ret_void ctx.ir;
+  Ir_emit.emit_define_end ctx.ir;
+  Buffer.add_string ctx.fn_buf (Ir_emit.contents ctx.ir);
+  Buffer.add_char ctx.fn_buf '\n';
+  ctx.ir <- saved_ir;
+  ctx.current_label <- saved_label;
+  ctx.result_ptr <- saved_result_ptr
+
 let compile_program_with_stdlib (type_env : Types.type_env)
     (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
     (user_program : Typechecker.tprogram) : string =
   let ctx = create_ctx type_env in
+
+  (* The stdlib's top-level initialization becomes a separate @mml_init_std()
+     rather than inlining into mml_main — the first step toward compiling the
+     stdlib as its own unit. Its name bindings are registered in ctx's shared
+     scope (a side effect of emit_decl) so the user program resolves them. *)
+  let stdlib_decls = List.concat_map (fun (_te, prog) -> prog) stdlib_programs in
+  emit_unit_init ctx ~init_name:"mml_init_std" stdlib_decls;
 
   Ir_emit.emit_define_start ctx.ir ~ret_ty:"i64" ~name:"mml_main" ~params:[];
   Ir_emit.emit_label ctx.ir "entry";
@@ -6821,59 +6958,8 @@ let compile_program_with_stdlib (type_env : Types.type_env)
   ctx.result_ptr <- Ir_emit.emit_alloca ctx.ir ~ty:"i64";
   Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr;
 
-  (* Compile stdlib declarations with rollback-on-failure *)
-  let main_ir = ctx.ir in
-  List.iter
-    (fun (_te, prog) ->
-      List.iter
-        (fun decl ->
-          let ir_buf_len = Buffer.length main_ir.Ir_emit.buf in
-          let ir_next_reg = main_ir.Ir_emit.next_reg in
-          let fn_buf_len = Buffer.length ctx.fn_buf in
-          let saved_global_decls = ctx.global_decls in
-          let saved_string_globals = ctx.string_globals in
-          let saved_float_globals = ctx.float_globals in
-          let saved_extern_decls = ctx.extern_decls in
-          let saved_scope = Hashtbl.copy (List.hd ctx.scopes) in
-          let saved_generated_wrappers = Hashtbl.copy ctx.generated_wrappers in
-          let saved_ir = ctx.ir in
-          let saved_label = ctx.current_label in
-          let saved_scopes = ctx.scopes in
-          let saved_loop_stack = ctx.loop_stack in
-          try emit_decl ctx decl
-          with Failure msg ->
-            Printf.eprintf "[native] stdlib rollback: %s\n%!" msg;
-            (* Restore ctx fields that may have been swapped by nested function emission *)
-            ctx.ir <- saved_ir;
-            ctx.current_label <- saved_label;
-            ctx.scopes <- saved_scopes;
-            ctx.loop_stack <- saved_loop_stack;
-            (* Rollback main IR buffer *)
-            let contents = Buffer.contents main_ir.Ir_emit.buf in
-            Buffer.clear main_ir.Ir_emit.buf;
-            Buffer.add_string main_ir.Ir_emit.buf
-              (String.sub contents 0 ir_buf_len);
-            main_ir.Ir_emit.next_reg <- ir_next_reg;
-            (* Rollback fn_buf *)
-            let fn_contents = Buffer.contents ctx.fn_buf in
-            Buffer.clear ctx.fn_buf;
-            Buffer.add_string ctx.fn_buf (String.sub fn_contents 0 fn_buf_len);
-            (* Rollback context lists *)
-            ctx.global_decls <- saved_global_decls;
-            ctx.string_globals <- saved_string_globals;
-            ctx.float_globals <- saved_float_globals;
-            ctx.extern_decls <- saved_extern_decls;
-            (* Rollback scope *)
-            let top = List.hd ctx.scopes in
-            Hashtbl.reset top;
-            Hashtbl.iter (fun k v -> Hashtbl.replace top k v) saved_scope;
-            (* Rollback generated wrappers *)
-            Hashtbl.reset ctx.generated_wrappers;
-            Hashtbl.iter
-              (fun k v -> Hashtbl.replace ctx.generated_wrappers k v)
-              saved_generated_wrappers)
-        prog)
-    stdlib_programs;
+  (* Run the stdlib initializer before any user code. *)
+  Ir_emit.emit_call_void ctx.ir ~name:"mml_init_std" ~args:[];
 
   (* Compile user program *)
   List.iter
@@ -6889,3 +6975,103 @@ let compile_program_with_stdlib (type_env : Types.type_env)
 
   let main_body = Ir_emit.contents ctx.ir in
   assemble_output ctx main_body
+
+(* --- Separate compilation: stdlib and entry as distinct LLVM units --------- *)
+
+(* "@name = global i64 0" -> "@name = external global i64" — how an importing unit
+   references a global another unit defines. *)
+let global_decl_to_extern decl =
+  match String.index_opt decl ' ' with
+  | Some i -> String.sub decl 0 i ^ " = external global i64"
+  | None -> decl
+
+type unit_exports = {
+  ue_init : string;                    (* the unit's initializer function name *)
+  ue_funcs : (string * int) list;      (* (llvm_name, arity) of exported functions *)
+  ue_global_externs : string list;     (* `@g = external global i64` lines *)
+  ue_scope : (string * var_info) list; (* source name -> binding, to seed importers *)
+}
+
+(* Snapshot a compiled unit's top-level bindings and the symbols an importer must
+   declare to reference them across object files. A top-level FuncLocal (a function
+   value with a pre-allocated closure in the defining frame) is exported as a plain
+   Func — the importer re-wraps it as a value locally, the stale alloca is dropped. *)
+let capture_exports ctx ~init_name =
+  let scope = List.hd ctx.scopes in
+  let funcs = ref [] and entries = ref [] in
+  Hashtbl.iter
+    (fun name info ->
+      let info =
+        match info with FuncLocal (n, a, _) -> Func (n, a) | i -> i
+      in
+      entries := (name, info) :: !entries;
+      match info with Func (n, a) -> funcs := (n, a) :: !funcs | _ -> ())
+    scope;
+  {
+    ue_init = init_name;
+    ue_funcs = !funcs;
+    ue_global_externs = List.map global_decl_to_extern ctx.global_decls;
+    ue_scope = !entries;
+  }
+
+(* The `declare`s an importing unit needs for [exp]'s exports: its initializer,
+   each exported function (uniform i64 signature, one i64 per parameter — matches
+   emit_named_function), and each defined global as an `external global`. The same
+   llvm symbol is often bound under several source names (a qualified name and an
+   `open`ed alias), so the lines are de-duplicated — textual LLVM IR rejects a
+   redeclaration of a symbol. *)
+let import_declares (exp : unit_exports) =
+  let func_decls =
+    List.sort_uniq String.compare
+      (List.map
+         (fun (n, a) ->
+           let ps = String.concat ", " (List.init a (fun _ -> "i64")) in
+           Printf.sprintf "declare i64 @%s(%s)" n ps)
+         exp.ue_funcs)
+  in
+  (Printf.sprintf "declare void @%s()" exp.ue_init)
+  :: (func_decls @ List.sort_uniq String.compare exp.ue_global_externs)
+
+(* Compile the program as TWO separately-linkable LLVM units — the stdlib and the
+   entry — returning [(unit_name, llvm_ir)] in link order. The stdlib unit is
+   self-contained (its @mml_init_std initializer + its functions + its globals,
+   referencing only the C runtime); the entry unit seeds its scope with the
+   stdlib's exported bindings, declares those symbols, calls @mml_init_std before
+   any user code, and owns @mml_main + @mml_result_type. Distinct unit prefixes
+   ("s_"/"u_") keep the two units' counter-derived internal symbols apart. This is
+   what lets the stdlib object be compiled once and cached. *)
+let compile_units (type_env : Types.type_env)
+    (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
+    (user_program : Typechecker.tprogram) : (string * string) list =
+  let ctx_std = create_ctx type_env in
+  ctx_std.unit_prefix <- "s_";
+  let stdlib_decls = List.concat_map (fun (_te, p) -> p) stdlib_programs in
+  emit_unit_init ctx_std ~init_name:"mml_init_std" stdlib_decls;
+  let exports = capture_exports ctx_std ~init_name:"mml_init_std" in
+  let stdlib_ll = assemble_output ~emit_result_type:false ctx_std "" in
+
+  let ctx = create_ctx type_env in
+  ctx.unit_prefix <- "u_";
+  let top = List.hd ctx.scopes in
+  List.iter (fun (name, info) -> Hashtbl.replace top name info) exports.ue_scope;
+
+  Ir_emit.emit_define_start ctx.ir ~ret_ty:"i64" ~name:"mml_main" ~params:[];
+  Ir_emit.emit_label ctx.ir "entry";
+  ctx.current_label <- "entry";
+  ctx.result_ptr <- Ir_emit.emit_alloca ctx.ir ~ty:"i64";
+  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr;
+  (* Run the stdlib initializer before any user code. *)
+  Ir_emit.emit_call_void ctx.ir ~name:"mml_init_std" ~args:[];
+  List.iter
+    (fun decl -> try emit_decl ctx decl with Failure msg -> failwith msg)
+    user_program;
+  let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
+  Ir_emit.emit_ret ctx.ir "i64" result;
+  Ir_emit.emit_define_end ctx.ir;
+  emit_format_result ctx ctx.result_type;
+  let main_body = Ir_emit.contents ctx.ir in
+  let user_ll =
+    assemble_output ~extra_declares:(import_declares exports)
+      ~emit_result_type:true ctx main_body
+  in
+  [ ("stdlib", stdlib_ll); ("main", user_ll) ]
