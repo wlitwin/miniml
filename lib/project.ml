@@ -29,17 +29,28 @@ let read_file path =
 let module_name_of (path : string) : string =
   String.capitalize_ascii (Filename.remove_extension (Filename.basename path))
 
-(* Minimal manifest: a `module <name>` line names the project. Other lines
-   (toolchain version, future `require`s) are ignored for now. *)
-let parse_manifest (text : string) : string option =
-  let name = ref None in
-  List.iter
-    (fun line ->
-      match String.split_on_char ' ' (String.trim line) |> List.filter (( <> ) "") with
-      | "module" :: n :: _ -> name := Some n
-      | _ -> ())
-    (String.split_on_char '\n' text);
-  !name
+(* The library modules of a directory (every `.mml` but `main.mml`). *)
+let dir_units (dir : string) : unit_ list =
+  Sys.readdir dir |> Array.to_list
+  |> List.filter (fun f -> Filename.check_suffix f ".mml" && f <> "main.mml")
+  |> List.sort String.compare
+  |> List.map (fun f ->
+         let path = Filename.concat dir f in
+         { name = module_name_of path; path; source = read_file path })
+
+(* Resolve [m] to a local directory: the root manifest's `replace` (relative to
+   the project root) for now. Remote fetch into a module cache is a later
+   increment, so an un-replaced dependency is an error. *)
+let locate (root : string) (mf : Manifest.t) (m : string) : string =
+  match Manifest.replacement mf m with
+  | Some p -> if Filename.is_relative p then Filename.concat root p else p
+  | None ->
+      raise
+        (Build_error
+           (Printf.sprintf
+              "dependency %s is not available: add `replace %s => <local path>` \
+               to mml.mod (remote fetch is not implemented yet)"
+              m m))
 
 (* Which project modules does [u] reference — `Name.` (qualified access) or
    `open Name`? Inferred from the token stream so it tolerates a not-yet-valid
@@ -86,18 +97,31 @@ let topo_order (libs : unit_ list) : unit_ list =
   List.iter (fun (u : unit_) -> visit u.name) libs;
   List.rev !order
 
-(* Load the project rooted at [dir]: read its manifest and `.mml` files, with
-   `main.mml` as the entry program and the rest as library modules. *)
+(* Load the project rooted at [dir]: parse its manifest, resolve its
+   dependencies by minimal version selection, and gather every module — the
+   project's own `.mml` files (with `main.mml` as the entry) plus each resolved
+   dependency's library modules — into one set. A dependency contributes its
+   modules to the build flat (referenced as `Foo.bar`), so a module-name
+   collision is an error. *)
 let load (dir : string) : t =
-  let manifest = Filename.concat dir "mml.mod" in
-  if not (Sys.file_exists manifest) then
+  let manifest_path = Filename.concat dir "mml.mod" in
+  if not (Sys.file_exists manifest_path) then
     raise (Build_error (Printf.sprintf "no mml.mod manifest in %s" dir));
-  let name =
-    match parse_manifest (read_file manifest) with
-    | Some n -> n
-    | None -> raise (Build_error "mml.mod: missing a `module <name>` line")
+  let mf = Manifest.parse (read_file manifest_path) in
+  if mf.Manifest.name = "" then
+    raise (Build_error "mml.mod: missing a `module <name>` line");
+  (* MVS: read each module@version's manifest from its resolved directory. *)
+  let load_manifest m _v =
+    let d = locate dir mf m in
+    let p = Filename.concat d "mml.mod" in
+    if Sys.file_exists p then Manifest.parse (read_file p)
+    else { Manifest.name = m; mml = None; requires = []; replaces = [] }
   in
-  let units =
+  let dep_units =
+    Deps.mvs mf load_manifest
+    |> List.concat_map (fun (m, _v) -> dir_units (locate dir mf m))
+  in
+  let own =
     Sys.readdir dir |> Array.to_list
     |> List.filter (fun f -> Filename.check_suffix f ".mml")
     |> List.sort String.compare
@@ -105,9 +129,20 @@ let load (dir : string) : t =
            let path = Filename.concat dir f in
            { name = module_name_of path; path; source = read_file path })
   in
-  let entry, libs = List.partition (fun u -> Filename.basename u.path = "main.mml") units in
+  let entry, own_libs = List.partition (fun u -> Filename.basename u.path = "main.mml") own in
+  let libs = dep_units @ own_libs in
+  (* reject two modules with the same name (a dependency clashing with the
+     project or another dependency) *)
+  let seen = Hashtbl.create 32 in
+  List.iter
+    (fun (u : unit_) ->
+      match Hashtbl.find_opt seen u.name with
+      | Some other ->
+          raise (Build_error (Printf.sprintf "module name %s defined by both %s and %s" u.name other u.path))
+      | None -> Hashtbl.replace seen u.name u.path)
+    libs;
   match entry with
-  | [ e ] -> { name; entry = e; libs }
+  | [ e ] -> { name = mf.Manifest.name; entry = e; libs }
   | [] -> raise (Build_error "no entry point (expected main.mml)")
   | _ -> raise (Build_error "more than one main.mml")
 
