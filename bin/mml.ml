@@ -42,13 +42,43 @@ let source_of target =
     I.Project.combined_source (I.Project.load target)
   else read_file target
 
+module D = I.Diagnostic
+
+(* Diagnostics for a target as (file, line, col, severity, code, message). For a
+   project, spans are mapped from the combined source back to the originating
+   file via the line map; for a single file they're verbatim. *)
+let target_diagnostics st target =
+  let conv map (d : D.t) =
+    let file, line = map d.D.span.D.lo.D.line in
+    (file, line, d.D.span.D.lo.D.col, d.D.severity, d.D.code, d.D.message)
+  in
+  if I.Project.is_project target then
+    let combined, segs = I.Project.combined_with_map (I.Project.load target) in
+    List.map (conv (I.Project.map_line segs)) (I.Analysis.diagnostics st combined)
+  else List.map (conv (fun l -> (target, l))) (I.Analysis.diagnostics st (read_file target))
+
+let diag_line (file, line, col, _sev, code, msg) =
+  Printf.sprintf "%s:%d:%d: [%s] %s" file line col code msg
+
+let has_errors ds = List.exists (fun (_, _, _, sev, _, _) -> sev = D.Error) ds
+
+(* Print a project's diagnostics (to stderr) when a run/build of it failed, so
+   the error points at the right file:line instead of the combined source. *)
+let report_project st target =
+  if I.Project.is_project target then
+    List.iter
+      (fun d -> Printf.eprintf "%s\n" (diag_line d))
+      (try target_diagnostics st target with _ -> [])
+
 let cmd_run target args =
   let st = I.Std.register_all (I.Interp.repl_state_init ()) in
   st.I.Interp.argv := Array.of_list (target :: args);
   try ignore (I.Interp.wrap_errors (fun () -> I.Interp.run_string_in_state st (source_of target)))
   with
   | I.Interp.Error msg ->
-      Printf.eprintf "%s\n" msg;
+      (* attribute project errors to their source files; pass through for a file *)
+      if I.Project.is_project target then report_project st target
+      else Printf.eprintf "%s\n" msg;
       exit 1
   | I.Project.Build_error msg ->
       Printf.eprintf "mml run: %s\n" msg;
@@ -123,6 +153,11 @@ let cmd_build args =
             Printf.eprintf "mml build: unknown --emit target %S (native|ir)\n" t;
             exit 1
       with
+      | (N.Driver.Driver_error msg | I.Interp.Error msg) when project ->
+          (* attribute the project's errors to their source files *)
+          report_project (I.Analysis.make_state ()) f;
+          ignore msg;
+          exit 1
       | N.Driver.Driver_error msg | I.Interp.Error msg | I.Project.Build_error msg ->
           Printf.eprintf "mml build: %s\n" msg;
           exit 1
@@ -130,17 +165,20 @@ let cmd_build args =
           Printf.eprintf "mml build: %s\n" msg;
           exit 1)
 
-let cmd_check files =
+let cmd_check targets =
   let st = I.Analysis.make_state () in
   let had_error = ref false in
   List.iter
-    (fun f ->
-      List.iter
-        (fun (d : I.Diagnostic.t) ->
-          if d.I.Diagnostic.severity = I.Diagnostic.Error then had_error := true;
-          Printf.printf "%s:%s\n" f (I.Diagnostic.to_string d))
-        (I.Analysis.diagnostics st (read_file f)))
-    files;
+    (fun t ->
+      let ds =
+        try target_diagnostics st t
+        with I.Project.Build_error m ->
+          Printf.eprintf "mml check: %s\n" m;
+          exit 1
+      in
+      if has_errors ds then had_error := true;
+      List.iter (fun d -> print_endline (diag_line d)) ds)
+    targets;
   if !had_error then exit 1
 
 let () =
