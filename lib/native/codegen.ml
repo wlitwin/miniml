@@ -7032,46 +7032,102 @@ let import_declares (exp : unit_exports) =
   (Printf.sprintf "declare void @%s()" exp.ue_init)
   :: (func_decls @ List.sort_uniq String.compare exp.ue_global_externs)
 
-(* Compile the program as TWO separately-linkable LLVM units — the stdlib and the
-   entry — returning [(unit_name, llvm_ir)] in link order. The stdlib unit is
-   self-contained (its @mml_init_std initializer + its functions + its globals,
-   referencing only the C runtime); the entry unit seeds its scope with the
-   stdlib's exported bindings, declares those symbols, calls @mml_init_std before
-   any user code, and owns @mml_main + @mml_result_type. Distinct unit prefixes
-   ("s_"/"u_") keep the two units' counter-derived internal symbols apart. This is
-   what lets the stdlib object be compiled once and cached. *)
+(* Seed [ctx]'s current top scope with an exporter's bindings so references in this
+   unit resolve to the exporter's symbols (declared for the linker via
+   import_declares). *)
+let seed_scope ctx (exp : unit_exports) =
+  let top = List.hd ctx.scopes in
+  List.iter (fun (name, info) -> Hashtbl.replace top name info) exp.ue_scope
+
+(* All import `declare`s for a set of exporters, de-duplicated across them. *)
+let declares_for (exps : unit_exports list) =
+  List.sort_uniq String.compare (List.concat_map import_declares exps)
+
+(* Compile the program as separately-linkable LLVM units — the stdlib, one unit per
+   top-level project module (a `module Foo = ... end`, in dependency order), and the
+   entry — returning [(unit_name, llvm_ir)] in link order. Each unit is
+   self-contained but for the C runtime and the symbols of the units before it: it
+   seeds its scope from their exported bindings and `declare`s those symbols. The
+   entry owns @mml_main + @mml_result_type and calls each unit's initializer
+   (@mml_init_std, then each module's, at the module's source position) before the
+   surrounding user code. Distinct unit prefixes keep counter-derived internal
+   symbols apart; a module's prefix is derived from its NAME (not its position), so
+   adding or reordering modules does not perturb an unchanged module's object.
+   Splitting per module is what lets a build recompile only the changed module. *)
 let compile_units (type_env : Types.type_env)
     (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
     (user_program : Typechecker.tprogram) : (string * string) list =
+  (* Unit 0: the stdlib. *)
   let ctx_std = create_ctx type_env in
   ctx_std.unit_prefix <- "s_";
   let stdlib_decls = List.concat_map (fun (_te, p) -> p) stdlib_programs in
   emit_unit_init ctx_std ~init_name:"mml_init_std" stdlib_decls;
-  let exports = capture_exports ctx_std ~init_name:"mml_init_std" in
+  let exports_std = capture_exports ctx_std ~init_name:"mml_init_std" in
   let stdlib_ll = assemble_output ~emit_result_type:false ctx_std "" in
 
+  (* The entry unit, built as we walk the user program: each top-level module spins
+     off its own unit + an init call here; each loose decl is emitted inline. *)
   let ctx = create_ctx type_env in
   ctx.unit_prefix <- "u_";
-  let top = List.hd ctx.scopes in
-  List.iter (fun (name, info) -> Hashtbl.replace top name info) exports.ue_scope;
-
+  seed_scope ctx exports_std;
   Ir_emit.emit_define_start ctx.ir ~ret_ty:"i64" ~name:"mml_main" ~params:[];
   Ir_emit.emit_label ctx.ir "entry";
   ctx.current_label <- "entry";
   ctx.result_ptr <- Ir_emit.emit_alloca ctx.ir ~ty:"i64";
   Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr;
-  (* Run the stdlib initializer before any user code. *)
   Ir_emit.emit_call_void ctx.ir ~name:"mml_init_std" ~args:[];
+
+  (* Exporters visible to the next unit (stdlib first, then each module as it is
+     compiled). Modules are emitted in source = dependency order. *)
+  let visible = ref [ exports_std ] in
+  let module_units = ref [] in
+  (* A module name can legally be redefined at top level (a later `module M` shadows
+     an earlier one). Both still compile to their own units, so disambiguate repeated
+     names with an occurrence suffix — otherwise both would claim the same prefix and
+     @mml_init symbol and the link would see duplicates. Unique names keep their bare,
+     position-independent prefix (good for caching); only a redefinition is suffixed. *)
+  let mod_seen = Hashtbl.create 8 in
   List.iter
-    (fun decl -> try emit_decl ctx decl with Failure msg -> failwith msg)
+    (fun decl ->
+      match decl with
+      | Typechecker.TDModule (name, inner, _) ->
+          let base = sanitize_name name in
+          let n =
+            match Hashtbl.find_opt mod_seen base with Some n -> n | None -> 0
+          in
+          Hashtbl.replace mod_seen base (n + 1);
+          let mangled = if n = 0 then base else Printf.sprintf "%s_%d" base n in
+          let init_name = Printf.sprintf "mml_init_m_%s" mangled in
+          (* Compile this module as its own unit, seeded with everything visible. *)
+          let ctx_m = create_ctx type_env in
+          ctx_m.unit_prefix <- Printf.sprintf "m_%s_" mangled;
+          List.iter (seed_scope ctx_m) (List.rev !visible);
+          (* the module's own bindings land in a fresh scope so capture_exports
+             records only them, not the seeded imports *)
+          push_scope ctx_m;
+          emit_unit_init ctx_m ~init_name inner;
+          let exp = capture_exports ctx_m ~init_name in
+          let m_ll =
+            assemble_output ~extra_declares:(declares_for (List.rev !visible))
+              ~emit_result_type:false ctx_m ""
+          in
+          module_units := (Printf.sprintf "mod_%s" mangled, m_ll) :: !module_units;
+          (* Make the module visible to later units + the entry, and run its
+             initializer at this point in mml_main. *)
+          visible := exp :: !visible;
+          seed_scope ctx exp;
+          Ir_emit.emit_call_void ctx.ir ~name:init_name ~args:[]
+      | d -> ( try emit_decl ctx d with Failure msg -> failwith msg ))
     user_program;
+
   let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
   Ir_emit.emit_ret ctx.ir "i64" result;
   Ir_emit.emit_define_end ctx.ir;
   emit_format_result ctx ctx.result_type;
   let main_body = Ir_emit.contents ctx.ir in
-  let user_ll =
-    assemble_output ~extra_declares:(import_declares exports)
+  let entry_ll =
+    assemble_output
+      ~extra_declares:(declares_for (List.rev !visible))
       ~emit_result_type:true ctx main_body
   in
-  [ ("stdlib", stdlib_ll); ("main", user_ll) ]
+  (("stdlib", stdlib_ll) :: List.rev !module_units) @ [ ("main", entry_ll) ]
