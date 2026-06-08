@@ -79,8 +79,27 @@ A test passes when it evaluates to `true`; `false`, a non-bool result, or a
 runtime error fail it. Each test runs in isolation (a crash in one doesn't
 affect the others). Test files are excluded from `mml build`/`run`.
 
+## Incremental builds
+
+`mml build` (native backend) compiles incrementally. Each compilation unit — the
+stdlib, each project module, and the entry — is compiled to its own object,
+content-addressed and cached under `$MML_CACHE/obj` (default `~/.mml/cache/obj`).
+A unit's object is reused whenever its input is unchanged, so:
+
+- the stdlib is compiled **once** and reused across every build;
+- editing one module recompiles only that module's object (and relinks);
+- a module that only *uses* an edited module is unaffected, as long as the edit
+  didn't change the edited module's exported signatures.
+
+The cache key folds in the toolchain identity (clang version + flags), so a
+compiler or runtime change re-keys automatically — there is nothing to clean.
+
 ## Status / not yet
 
 - Module-member / qualified-path granularity beyond whole-file modules.
-- Incremental (separate) compilation — builds are currently whole-program.
+- Fully interface-stable object reuse: a *structural* edit to a module (adding,
+  removing, or reordering its top-level functions) can currently force its
+  dependents to recompile; *implementation* edits do not.
+- Cross-process caching of the type-check phase (currently whole-program, though
+  it is the cheap phase); link-time cross-module inlining (`-flto`).
 - A `replace`-free private-host scheme and a hosted checksum database.
