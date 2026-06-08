@@ -32,4 +32,20 @@ let () =
       if List.exists (fun l -> not (A.is_ident_like l)) labels then
         failwith "a non-identifier completion slipped through");
 
+  test "includes local bindings (params, let-ins, patterns, loops)" (fun () ->
+      let ls =
+        List.map fst
+          (A.completions st
+             "let f myParam =\n  let myLocal = 1 in\n  match myParam with | Some myMatched -> myMatched | None -> 0")
+      in
+      let has n = List.mem n ls in
+      if not (has "myParam" && has "myLocal" && has "myMatched") then
+        failwith "a local binding was not offered");
+
+  test "local completions survive a type-broken declaration" (fun () ->
+      (* the decl doesn't typecheck (myParam is unbound-typed nonsense) but it
+         parses, so its locals are still offered *)
+      let ls = List.map fst (A.completions st "let g zzLocal = zzLocal + nope ()") in
+      if not (List.mem "zzLocal" ls) then failwith "local not offered in broken decl");
+
   print_summary ()
