@@ -336,11 +336,98 @@ let is_ident_like (s : string) : bool =
        (function 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> true | _ -> false)
        s
 
+(* The variables a pattern binds (PatVar / PatAs and their sub-patterns). *)
+let rec pat_binders (acc : string list ref) (p : Ast.pattern) : unit =
+  match p with
+  | Ast.PatVar n -> acc := n :: !acc
+  | Ast.PatAs (p, n) -> acc := n :: !acc; pat_binders acc p
+  | Ast.PatTuple ps | Ast.PatArray ps | Ast.PatSet ps -> List.iter (pat_binders acc) ps
+  | Ast.PatCons (a, b) | Ast.PatOr (a, b) -> pat_binders acc a; pat_binders acc b
+  | Ast.PatConstruct (_, Some p) | Ast.PatPolyVariant (_, Some p) | Ast.PatAnnot (p, _) ->
+      pat_binders acc p
+  | Ast.PatRecord fs -> List.iter (fun (_, p) -> pat_binders acc p) fs
+  | Ast.PatMap pairs -> List.iter (fun (k, v) -> pat_binders acc k; pat_binders acc v) pairs
+  | _ -> ()
+
+(* Every name bound anywhere in an expression — let/fn-param/match-pattern/loop/
+   handler binders, recursively. Over-inclusive for completion (not scope-
+   filtered), which is fine: the editor filters by the typed prefix. *)
+let rec expr_binders (acc : string list ref) (e : Ast.expr) : unit =
+  let r = expr_binders acc in
+  let push n = acc := n :: !acc in
+  match e with
+  | Ast.ELoc (_, e) -> r e
+  | Ast.ELet (n, a, b) | Ast.ELetMut (n, a, b) -> push n; r a; r b
+  | Ast.ELetRec (n, _, a, b) -> push n; r a; r b
+  | Ast.ELetRecAnd (bs, body) ->
+      List.iter (fun (n, _, e) -> push n; r e) bs;
+      r body
+  | Ast.EFun (p, b) -> push p.Ast.name; r b
+  | Ast.EMatch (s, arms, _) ->
+      r s;
+      List.iter
+        (fun (pat, g, body) ->
+          pat_binders acc pat;
+          (match g with Some e -> r e | None -> ());
+          r body)
+        arms
+  | Ast.EWhileLet (pat, e, body) -> pat_binders acc pat; r e; r body
+  | Ast.EFor { for_var; for_iter; for_body; for_index } ->
+      push for_var;
+      Option.iter push for_index;
+      r for_iter;
+      r for_body
+  | Ast.EForFold { loop_var; loop_iter; accum_var; accum_init; fold_body; fold_index } ->
+      push loop_var; push accum_var; Option.iter push fold_index;
+      r loop_iter; r accum_init; r fold_body
+  | Ast.EForNumeric { fn_var; fn_init; fn_cond; fn_step; fn_body } ->
+      push fn_var; r fn_init; r fn_cond; r fn_step; r fn_body
+  | Ast.EWhile { while_cond; while_body } -> r while_cond; r while_body
+  | Ast.EHandle (body, arms) ->
+      r body;
+      List.iter
+        (function
+          | Ast.HReturn (n, e) -> push n; r e
+          | Ast.HOp { arg; k; body; _ } -> push arg; push k; r body)
+        arms
+  | Ast.EApp (a, b) | Ast.EBinop (_, a, b) | Ast.ECons (a, b) | Ast.ESeq (a, b)
+  | Ast.EIndex (a, b) | Ast.EResume (a, b) ->
+      r a; r b
+  | Ast.EIf (a, b, c) -> r a; r b; r c
+  | Ast.EUnop (_, e) | Ast.EField (e, _) | Ast.EAnnot (e, _) | Ast.ECoerce (e, _)
+  | Ast.EReturn e | Ast.EPerform (_, e) | Ast.ELocalOpen (_, e) | Ast.EAssign (_, e)
+  | Ast.EConstruct (_, Some e) | Ast.EPolyVariant (_, Some e) | Ast.EBreak (Some e)
+  | Ast.EContinueLoop (Some e) ->
+      r e
+  | Ast.EFieldAssign (o, _, e) -> r o; r e
+  | Ast.ETuple es | Ast.EList es | Ast.EArray es | Ast.ESet es | Ast.ECollTyped (_, es) ->
+      List.iter r es
+  | Ast.ERecord fs -> List.iter (fun (_, e) -> r e) fs
+  | Ast.ERecordUpdate (base, fs) -> r base; List.iter (fun (_, e) -> r e) fs
+  | Ast.EMap pairs | Ast.EMapTyped (_, pairs) -> List.iter (fun (k, v) -> r k; r v) pairs
+  | _ -> ()
+
+let decl_binders (acc : string list ref) (d : Ast.decl) : unit =
+  match d with
+  | Ast.DLet { params; body; _ } -> List.iter (fun (p : Ast.param) -> acc := p.name :: !acc) params; expr_binders acc body
+  | Ast.DLetMut (_, e) | Ast.DExpr e -> expr_binders acc e
+  | Ast.DLetRec b | Ast.DLetRecAnd [ b ] ->
+      List.iter (fun (p : Ast.param) -> acc := p.name :: !acc) b.Ast.params;
+      expr_binders acc b.Ast.body
+  | Ast.DLetRecAnd bs ->
+      List.iter
+        (fun (b : Ast.letrec_binding) ->
+          List.iter (fun (p : Ast.param) -> acc := p.name :: !acc) b.params;
+          expr_binders acc b.body)
+        bs
+  | _ -> ()
+
 (* The completion candidates visible in [src]: every name in scope (the standard
    library and builtins, from the typecheck context) plus the file's own
-   top-level declarations, plus the language keywords. Returned as
-   (label, CompletionItemKind) pairs, de-duplicated; the editor filters by the
-   typed prefix. Local (in-function) bindings are a later refinement. *)
+   top-level declarations and local bindings (let / parameters / patterns /
+   loops / handlers), plus the language keywords. Returned as (label,
+   CompletionItemKind) pairs, de-duplicated; the editor filters by the typed
+   prefix. Local names are over-inclusive (whole file, not scope-filtered). *)
 let completions (state : state) (src : string) : (string * int) list =
   let seen = Hashtbl.create 512 in
   let out = ref [] in
@@ -350,12 +437,16 @@ let completions (state : state) (src : string) : (string * int) list =
       out := (name, kind) :: !out
     end
   in
-  (* the file's own top-level names first (most relevant) *)
+  (* the file's own names first (most relevant): top-level declarations, then
+     every local binding (parameters, let-ins, pattern/loop/handler vars) *)
   (match Lexer.tokenize src with
   | exception _ -> ()
   | tokens ->
-      let _, _, defs = parse_recover src tokens in
-      List.iter (fun (name, _) -> add kind_variable name) defs);
+      let program, _, defs = parse_recover src tokens in
+      List.iter (fun (name, _) -> add kind_variable name) defs;
+      let locals = ref [] in
+      List.iter (decl_binders locals) program;
+      List.iter (add kind_variable) !locals);
   (* everything in scope: stdlib + builtins *)
   List.iter
     (fun (name, (sch : Types.scheme)) ->
