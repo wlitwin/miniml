@@ -1,0 +1,7 @@
+(* Hashing. md5 returns the 32-char lowercase hex digest of a string, matching the
+   OCaml Digest module (used for mml.sum integrity). Signature shared by both
+   compilers; impls per backend: OCaml VM in lib/std.ml, native runtime
+   native_rt/runtime.c mml_digest_md5, the emit-js prelude. Pure (no effect). *)
+module Digest =
+  pub extern md5 : string -> string
+end
