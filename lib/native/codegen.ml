@@ -20,12 +20,13 @@ let false_value = "1" (* tagged 0 = same as unit *)
 (* ---- Target triple detection ---- *)
 
 let run_cmd cmd =
-  try
-    let ic = Unix.open_process_in cmd in
-    let result = String.trim (input_line ic) in
-    ignore (Unix.close_process_in ic);
-    result
-  with _ -> ""
+  (* Read the first line of [cmd]'s output, trimmed; "" if it produced none.
+     Uses [In_channel.input_line] (returns an option) rather than catching
+     [End_of_file], so there is no exception-as-control-flow to translate. *)
+  let ic = Unix.open_process_in cmd in
+  let line = In_channel.input_line ic in
+  ignore (Unix.close_process_in ic);
+  match line with Some s -> String.trim s | None -> ""
 
 let detect_target_triple () =
   let arch = match run_cmd "uname -m" with "" -> "x86_64" | s -> s in
@@ -1999,48 +2000,49 @@ and emit_or_cache_builtin_dict ctx dict_name =
                 in
                 let n = List.length sorted_methods in
                 if n = 0 then None
+                else if
+                  not
+                    (List.for_all
+                       (fun (method_name, _) ->
+                         operator_closure_supported method_name)
+                       sorted_methods)
+                then
+                  (* A class method has no built-in closure emitter (e.g. a
+                     user-defined typeclass method): this instance is not
+                     statically materializable as a constant dictionary, so the
+                     caller falls back to [unit_value]. Decided up front rather
+                     than by speculatively emitting and rolling back a failed
+                     attempt — [emit_operator_closure] is total on supported
+                     names, so no buffer/IR rollback is needed. *)
+                  None
                 else begin
-                  (* Save fn_buf position and ctx.ir so we can roll back on failure *)
-                  let fn_buf_len = Buffer.length ctx.fn_buf in
-                  let saved_ir = ctx.ir in
-                  try
-                    let method_closures =
-                      List.map
-                        (fun (method_name, method_ty) ->
-                          let concrete_ty =
-                            subst_tgens_in_ty inst.Types.inst_tys method_ty
-                          in
-                          emit_operator_closure ctx method_name concrete_ty)
-                        sorted_methods
-                    in
-                    let ptr =
-                      emit_alloc ctx (n * 8)
-                        (make_header ~size:n mml_hdr_record)
-                    in
-                    List.iteri
-                      (fun i closure_val ->
-                        let elem_ptr =
-                          Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i
+                  let method_closures =
+                    List.map
+                      (fun (method_name, method_ty) ->
+                        let concrete_ty =
+                          subst_tgens_in_ty inst.Types.inst_tys method_ty
                         in
-                        Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:closure_val
-                          ~ptr:elem_ptr)
-                      method_closures;
-                    let dict_val = Ir_emit.emit_ptrtoint ctx.ir ~value:ptr in
-                    (* Cache as a global so subsequent lookups find it *)
-                    let gname = ensure_global ctx dict_name in
-                    Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:dict_val
-                      ~ptr:(Printf.sprintf "@%s" gname);
-                    bind_var ctx dict_name (Global gname);
-                    Some dict_val
-                  with Failure _ ->
-                    (* Restore ctx.ir in case emit_operator_wrapper changed it *)
-                    ctx.ir <- saved_ir;
-                    (* Roll back any partial wrapper functions written to fn_buf *)
-                    let contents = Buffer.contents ctx.fn_buf in
-                    Buffer.clear ctx.fn_buf;
-                    Buffer.add_string ctx.fn_buf
-                      (String.sub contents 0 fn_buf_len);
-                    None
+                        emit_operator_closure ctx method_name concrete_ty)
+                      sorted_methods
+                  in
+                  let ptr =
+                    emit_alloc ctx (n * 8) (make_header ~size:n mml_hdr_record)
+                  in
+                  List.iteri
+                    (fun i closure_val ->
+                      let elem_ptr =
+                        Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i
+                      in
+                      Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:closure_val
+                        ~ptr:elem_ptr)
+                    method_closures;
+                  let dict_val = Ir_emit.emit_ptrtoint ctx.ir ~value:ptr in
+                  (* Cache as a global so subsequent lookups find it *)
+                  let gname = ensure_global ctx dict_name in
+                  Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:dict_val
+                    ~ptr:(Printf.sprintf "@%s" gname);
+                  bind_var ctx dict_name (Global gname);
+                  Some dict_val
                 end
             | None -> None)
         | _ -> None (* constrained instance or not found *)
@@ -4499,6 +4501,21 @@ and emit_at_closure ctx ty =
   emit_make_closure ctx ~fn_name:wrapper_key ~arity:2 ~captures:[]
 
 (** Generate an operator closure based on the operator name and result type *)
+(* Single source of truth, paired with [emit_operator_closure]'s dispatch
+   below: the method names for which we can emit a built-in dictionary-method
+   closure. [emit_or_cache_builtin_dict] checks this before materializing a
+   constant typeclass dictionary so it never speculatively emits a closure that
+   would panic. Any name not listed here has no built-in emitter
+   ([emit_operator_wrapper] would fail on it). Keep in sync with the cases in
+   [emit_operator_closure]. *)
+and operator_closure_supported op_name =
+  match op_name with
+  | "fold" | "at" | "show" -> true
+  | "+" | "-" | "*" | "/" | "mod" | "neg" | "not" | "<" | ">" | "<=" | ">="
+  | "=" | "<>" | "land" | "lor" | "lxor" | "lsl" | "lsr" | "lnot" ->
+      true
+  | _ -> false
+
 and emit_operator_closure ctx op_name expr_ty =
   let ty = Types.repr expr_ty in
   (* Handle 'show' operator specially — it's a 1-arity function *)
@@ -6251,51 +6268,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
       let v = emit_expr ctx expr in
       ctx.result_type <- infer_result_type expr;
       Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:ctx.result_ptr
-  | TDModule (_name, inner_decls, _) ->
-      (* Per-declaration rollback: if one inner decl fails, others still work *)
-      let main_ir = ctx.ir in
-      List.iter
-        (fun d ->
-          let ir_buf_len = Buffer.length main_ir.Ir_emit.buf in
-          let ir_next_reg = main_ir.Ir_emit.next_reg in
-          let fn_buf_len = Buffer.length ctx.fn_buf in
-          let saved_global_decls = ctx.global_decls in
-          let saved_string_globals = ctx.string_globals in
-          let saved_float_globals = ctx.float_globals in
-          let saved_extern_decls = ctx.extern_decls in
-          let saved_scope = Hashtbl.copy (List.hd ctx.scopes) in
-          let saved_generated_wrappers = Hashtbl.copy ctx.generated_wrappers in
-          let saved_ir = ctx.ir in
-          let saved_label = ctx.current_label in
-          let saved_scopes = ctx.scopes in
-          let saved_loop_stack = ctx.loop_stack in
-          try emit_decl ctx d
-          with Failure msg ->
-            Printf.eprintf "[native] module rollback: %s\n%!" msg;
-            ctx.ir <- saved_ir;
-            ctx.current_label <- saved_label;
-            ctx.scopes <- saved_scopes;
-            ctx.loop_stack <- saved_loop_stack;
-            let contents = Buffer.contents main_ir.Ir_emit.buf in
-            Buffer.clear main_ir.Ir_emit.buf;
-            Buffer.add_string main_ir.Ir_emit.buf
-              (String.sub contents 0 ir_buf_len);
-            main_ir.Ir_emit.next_reg <- ir_next_reg;
-            let fn_contents = Buffer.contents ctx.fn_buf in
-            Buffer.clear ctx.fn_buf;
-            Buffer.add_string ctx.fn_buf (String.sub fn_contents 0 fn_buf_len);
-            ctx.global_decls <- saved_global_decls;
-            ctx.string_globals <- saved_string_globals;
-            ctx.float_globals <- saved_float_globals;
-            ctx.extern_decls <- saved_extern_decls;
-            let top = List.hd ctx.scopes in
-            Hashtbl.reset top;
-            Hashtbl.iter (fun k v -> Hashtbl.replace top k v) saved_scope;
-            Hashtbl.reset ctx.generated_wrappers;
-            Hashtbl.iter
-              (fun k v -> Hashtbl.replace ctx.generated_wrappers k v)
-              saved_generated_wrappers)
-        inner_decls
+  | TDModule (_name, inner_decls, _) -> List.iter (emit_decl ctx) inner_decls
   | TDOpen alias_pairs ->
       List.iter
         (fun (short_name, qualified_name) ->
@@ -6928,49 +6901,7 @@ let emit_unit_init ctx ~init_name decls =
      bookkeeping, so it must be local to THIS function, not mml_main's alloca. *)
   ctx.result_ptr <- Ir_emit.emit_alloca fn_ir ~ty:"i64";
   Ir_emit.emit_store fn_ir ~ty:"i64" ~value:unit_value ~ptr:ctx.result_ptr;
-  List.iter
-    (fun decl ->
-      let cur_ir = ctx.ir in
-      let ir_buf_len = Buffer.length cur_ir.Ir_emit.buf in
-      let ir_next_reg = cur_ir.Ir_emit.next_reg in
-      let fn_buf_len = Buffer.length ctx.fn_buf in
-      let saved_global_decls = ctx.global_decls in
-      let saved_string_globals = ctx.string_globals in
-      let saved_float_globals = ctx.float_globals in
-      let saved_extern_decls = ctx.extern_decls in
-      let saved_scope = Hashtbl.copy (List.hd ctx.scopes) in
-      let saved_generated_wrappers = Hashtbl.copy ctx.generated_wrappers in
-      let saved_ir2 = ctx.ir in
-      let saved_label2 = ctx.current_label in
-      let saved_scopes = ctx.scopes in
-      let saved_loop_stack = ctx.loop_stack in
-      try emit_decl ctx decl
-      with Failure msg ->
-        Printf.eprintf "[native] %s rollback: %s\n%!" init_name msg;
-        (* Restore ctx fields that may have been swapped by nested function emission *)
-        ctx.ir <- saved_ir2;
-        ctx.current_label <- saved_label2;
-        ctx.scopes <- saved_scopes;
-        ctx.loop_stack <- saved_loop_stack;
-        let contents = Buffer.contents cur_ir.Ir_emit.buf in
-        Buffer.clear cur_ir.Ir_emit.buf;
-        Buffer.add_string cur_ir.Ir_emit.buf (String.sub contents 0 ir_buf_len);
-        cur_ir.Ir_emit.next_reg <- ir_next_reg;
-        let fn_contents = Buffer.contents ctx.fn_buf in
-        Buffer.clear ctx.fn_buf;
-        Buffer.add_string ctx.fn_buf (String.sub fn_contents 0 fn_buf_len);
-        ctx.global_decls <- saved_global_decls;
-        ctx.string_globals <- saved_string_globals;
-        ctx.float_globals <- saved_float_globals;
-        ctx.extern_decls <- saved_extern_decls;
-        let top = List.hd ctx.scopes in
-        Hashtbl.reset top;
-        Hashtbl.iter (fun k v -> Hashtbl.replace top k v) saved_scope;
-        Hashtbl.reset ctx.generated_wrappers;
-        Hashtbl.iter
-          (fun k v -> Hashtbl.replace ctx.generated_wrappers k v)
-          saved_generated_wrappers)
-    decls;
+  List.iter (emit_decl ctx) decls;
   Ir_emit.emit_ret_void ctx.ir;
   Ir_emit.emit_define_end ctx.ir;
   Buffer.add_string ctx.fn_buf (Ir_emit.contents ctx.ir);
@@ -7029,9 +6960,7 @@ let compile_program_with_stdlib (type_env : Types.type_env)
   Ir_emit.emit_call_void ctx.ir ~name:"mml_init_std" ~args:[];
 
   (* Compile user program *)
-  List.iter
-    (fun decl -> try emit_decl ctx decl with Failure msg -> failwith msg)
-    user_program;
+  List.iter (emit_decl ctx) user_program;
 
   (* Load and return result *)
   let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
@@ -7233,7 +7162,7 @@ let compile_units (type_env : Types.type_env)
           visible := exp :: !visible;
           seed_scope ctx exp;
           Ir_emit.emit_call_void ctx.ir ~name:init_name ~args:[]
-      | d -> ( try emit_decl ctx d with Failure msg -> failwith msg ))
+      | d -> emit_decl ctx d)
     user_program;
 
   let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
