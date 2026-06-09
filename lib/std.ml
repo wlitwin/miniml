@@ -493,6 +493,9 @@ let register_fs state =
   in
   Interp.eval_setup state Stdlib_sources.fs
 
+(* ---- Path module (pure MiniML over String/Byte; no native impls) ---- *)
+let register_path state = Interp.eval_setup state Stdlib_sources.path
+
 (* ---- Math module ---- *)
 
 let register_math state = Interp.eval_setup state Stdlib_sources.math
@@ -661,7 +664,7 @@ let register_all state =
     |> register_result |> register_byte |> register_rune |> register_map
     |> register_set |> register_enum |> register_seq |> register_option
     |> register_buffer |> register_fmt |> register_hashtbl |> register_ref
-    |> register_dynarray |> register_compat
+    |> register_dynarray |> register_compat |> register_path
   in
   let state = register_eval state in
   state.Interp.state_ref := Some state;
