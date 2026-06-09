@@ -1,0 +1,40 @@
+(* Path manipulation - pure MiniML over String, no runtime FFI needed (so it works
+   on every backend with no impl to register). POSIX-style, forward-slash
+   separators. *)
+module Path =
+  pub let sep : string = "/"
+
+  pub let is_absolute (p: string) : bool = String.starts_with "/" p
+
+  (* The final path component, e.g. dir/sub/x.txt -> x.txt. *)
+  pub let basename (p: string) : string =
+    match String.rindex_opt p (Byte.of_int 47) with
+    | None -> p
+    | Some i -> String.sub p (i + 1) (String.length p - i - 1)
+
+  (* Everything up to the final component; no slash -> ".", a leading-slash-only
+     match -> "/". *)
+  pub let dirname (p: string) : string =
+    match String.rindex_opt p (Byte.of_int 47) with
+    | None -> "."
+    | Some 0 -> "/"
+    | Some i -> String.sub p 0 i
+
+  (* The extension of the final component, including the dot (".txt"), or "" when
+     there is none (a leading-dot file like .bashrc has no extension). *)
+  pub let extension (p: string) : string =
+    let base = basename p in
+    match String.rindex_opt base (Byte.of_int 46) with
+    | None -> ""
+    | Some 0 -> ""
+    | Some i -> String.sub base i (String.length base - i)
+
+  (* Join two path segments with a single separator; an absolute b wins. *)
+  pub let join (a: string) (b: string) : string =
+    if a = "" do b
+    else if is_absolute b do b
+    else
+      let n = String.length a in
+      if String.sub a (n - 1) 1 = "/" do a ^ b
+      else a ^ "/" ^ b
+end
