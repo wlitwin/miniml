@@ -17,33 +17,9 @@ let unit_value = "1"
 let true_value = "3" (* tagged 1 *)
 let false_value = "1" (* tagged 0 = same as unit *)
 
-(* ---- Target triple detection ---- *)
-
-let run_cmd cmd =
-  (* Read the first line of [cmd]'s output, trimmed; "" if it produced none.
-     Uses [In_channel.input_line] (returns an option) rather than catching
-     [End_of_file], so there is no exception-as-control-flow to translate. *)
-  let ic = Unix.open_process_in cmd in
-  let line = In_channel.input_line ic in
-  ignore (Unix.close_process_in ic);
-  match line with Some s -> String.trim s | None -> ""
-
-let detect_target_triple () =
-  let arch = match run_cmd "uname -m" with "" -> "x86_64" | s -> s in
-  let os = match run_cmd "uname -s" with "" -> "Linux" | s -> s in
-  match (os, arch) with
-  | "Darwin", arch ->
-      let ver =
-        match run_cmd "sw_vers -productVersion" with "" -> "11.0" | s -> s
-      in
-      let major =
-        match String.split_on_char '.' ver with v :: _ -> v | [] -> "11"
-      in
-      Printf.sprintf "%s-apple-macosx%s.0.0"
-        (if arch = "arm64" then "arm64" else "x86_64")
-        major
-  | _, "aarch64" -> "aarch64-unknown-linux-gnu"
-  | _, _ -> "x86_64-unknown-linux-gnu"
+(* Target-triple detection lives in the host driver (lib/native/driver.ml),
+   not here: codegen is pure IR generation and takes the triple as an input
+   (ctx.target_triple), so it has no Unix / subprocess dependency. *)
 
 (* ---- Codegen context ---- *)
 
@@ -123,9 +99,12 @@ type codegen_ctx = {
       (* dict currently being compiled, for self-reference *)
   mutable result_ptr : string;
       (* alloca register for top-level expression result *)
+  mutable target_triple : string;
+      (* LLVM target triple. Provided by the host driver — codegen does not
+         shell out to detect it, so it carries no host-FFI dependency. *)
 }
 
-let create_ctx type_env =
+let create_ctx ?(target_triple = "") type_env =
   let tbl = Hashtbl.create 16 in
   (* Initialize variant_defs and constructors from type_env *)
   let variant_defs =
@@ -181,6 +160,7 @@ let create_ctx type_env =
     or_pattern_allocas = [];
     current_dict_name = None;
     result_ptr = "";
+    target_triple;
   }
 
 let push_scope ctx = ctx.scopes <- Hashtbl.create 8 :: ctx.scopes
@@ -6831,7 +6811,7 @@ let assemble_output ?(imports = Hashtbl.create 1) ?(aliases = [])
   let body_str = Buffer.contents body in
 
   let out = Buffer.create (String.length body_str + 4096) in
-  Printf.bprintf out "target triple = \"%s\"\n\n" (detect_target_triple ());
+  Printf.bprintf out "target triple = \"%s\"\n\n" ctx.target_triple;
   let base_externs =
     [
       ("mml_print_int", "i64", [ "i64" ]);
@@ -6935,10 +6915,11 @@ let collect_module_externs (programs : Typechecker.tprogram list) =
   List.iter scan programs;
   tbl
 
-let compile_program_with_stdlib (type_env : Types.type_env)
+let compile_program_with_stdlib ?(target_triple = "")
+    (type_env : Types.type_env)
     (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
     (user_program : Typechecker.tprogram) : string =
-  let ctx = create_ctx type_env in
+  let ctx = create_ctx ~target_triple type_env in
   ctx.module_externs <-
     collect_module_externs (user_program :: List.map snd stdlib_programs);
 
@@ -7089,14 +7070,14 @@ let seed_scope ctx (exp : unit_exports) =
    symbols apart; a module's prefix is derived from its NAME (not its position), so
    adding or reordering modules does not perturb an unchanged module's object.
    Splitting per module is what lets a build recompile only the changed module. *)
-let compile_units (type_env : Types.type_env)
+let compile_units ?(target_triple = "") (type_env : Types.type_env)
     (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
     (user_program : Typechecker.tprogram) : (string * string) list =
   (* Module-extern (syscall) table, shared by every unit's ctx so a syscall
      reference resolves regardless of which unit makes it. *)
   let externs = collect_module_externs (user_program :: List.map snd stdlib_programs) in
   (* Unit 0: the stdlib. *)
-  let ctx_std = create_ctx type_env in
+  let ctx_std = create_ctx ~target_triple type_env in
   ctx_std.module_externs <- externs;
   ctx_std.unit_prefix <- "s_";
   let stdlib_decls = List.concat_map (fun (_te, p) -> p) stdlib_programs in
@@ -7109,7 +7090,7 @@ let compile_units (type_env : Types.type_env)
 
   (* The entry unit, built as we walk the user program: each top-level module spins
      off its own unit + an init call here; each loose decl is emitted inline. *)
-  let ctx = create_ctx type_env in
+  let ctx = create_ctx ~target_triple type_env in
   ctx.module_externs <- externs;
   ctx.unit_prefix <- "u_";
   seed_scope ctx exports_std;
@@ -7142,7 +7123,7 @@ let compile_units (type_env : Types.type_env)
           let mangled = if n = 0 then base else Printf.sprintf "%s_%d" base n in
           let init_name = Printf.sprintf "mml_init_m_%s" mangled in
           (* Compile this module as its own unit, seeded with everything visible. *)
-          let ctx_m = create_ctx type_env in
+          let ctx_m = create_ctx ~target_triple type_env in
           ctx_m.module_externs <- externs;
           ctx_m.unit_prefix <- Printf.sprintf "m_%s_" mangled;
           List.iter (seed_scope ctx_m) (List.rev !visible);
