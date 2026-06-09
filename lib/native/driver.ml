@@ -10,6 +10,34 @@ exception Driver_error of string
 
 let error msg = raise (Driver_error msg)
 
+(* ---- Target triple detection (host glue) ----
+
+   Lives in the driver, the host-interaction layer, so that codegen stays a pure
+   IR generator that takes the triple as an input. *)
+
+let run_cmd cmd =
+  let ic = Unix.open_process_in cmd in
+  let line = In_channel.input_line ic in
+  ignore (Unix.close_process_in ic);
+  match line with Some s -> String.trim s | None -> ""
+
+let detect_target_triple () =
+  let arch = match run_cmd "uname -m" with "" -> "x86_64" | s -> s in
+  let os = match run_cmd "uname -s" with "" -> "Linux" | s -> s in
+  match (os, arch) with
+  | "Darwin", arch ->
+      let ver =
+        match run_cmd "sw_vers -productVersion" with "" -> "11.0" | s -> s
+      in
+      let major =
+        match String.split_on_char '.' ver with v :: _ -> v | [] -> "11"
+      in
+      Printf.sprintf "%s-apple-macosx%s.0.0"
+        (if arch = "arm64" then "arm64" else "x86_64")
+        major
+  | _, "aarch64" -> "aarch64-unknown-linux-gnu"
+  | _, _ -> "x86_64-unknown-linux-gnu"
+
 (* ---- Runtime path discovery ---- *)
 
 let find_runtime_file filename =
@@ -92,13 +120,16 @@ let lower_all source =
 (* Single combined LLVM unit (stdlib + user in one .ll). Used by --emit-ir. *)
 let compile_ir (source : string) : string =
   let type_env, stdlib_programs, typed_program = lower_all source in
-  Codegen.compile_program_with_stdlib type_env stdlib_programs typed_program
+  Codegen.compile_program_with_stdlib
+    ~target_triple:(detect_target_triple ()) type_env stdlib_programs
+    typed_program
 
 (* Separately-linkable LLVM units: [(unit_name, ir)] in link order (stdlib, then
    entry). The basis for incremental builds — each unit's object can be cached. *)
 let compile_units (source : string) : (string * string) list =
   let type_env, stdlib_programs, typed_program = lower_all source in
-  Codegen.compile_units type_env stdlib_programs typed_program
+  Codegen.compile_units ~target_triple:(detect_target_triple ()) type_env
+    stdlib_programs typed_program
 
 (* Discover Boehm GC flags for the platform, split into COMPILE flags (the include
    path, needed when compiling runtime.c which #includes <gc.h>) and LINK flags

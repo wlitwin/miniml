@@ -1605,13 +1605,20 @@ let rec emit_structure_item e (item : structure_item) =
       newline e;
       emit e "end";
       newline e
-  | Pstr_open od ->
-      emit e "open ";
-      (match od.popen_expr.pmod_desc with
+  | Pstr_open od -> (
+      match od.popen_expr.pmod_desc with
+      | Pmod_ident { txt = Longident.Lident ("Interpreter" | "Interpreter_native"); _ } ->
+          (* dune library-wrapper open (lib/ is `interpreter`, lib/native/ is
+             `interpreter_native`): in the flat self-host namespace every module
+             is top-level, so opening the wrapper is meaningless — drop it. *)
+          ()
       | Pmod_ident lid ->
-          emit e (Format.asprintf "%a" Pprintast.longident lid.txt)
-      | _ -> emit e "(* complex open *)");
-      newline e
+          emit e "open ";
+          emit e (Format.asprintf "%a" Pprintast.longident lid.txt);
+          newline e
+      | _ ->
+          emit e "open (* complex open *)";
+          newline e)
   | Pstr_eval (ex, _) ->
       emit_expr e ex;
       newline e
