@@ -1,0 +1,18 @@
+(* Filesystem access. Signatures are the single source of truth, shared by every
+   compiler: embedded for lib via Stdlib_sources, loaded from here by the self-host.
+   Implementations are registered by name in each backend - the OCaml VM in
+   lib/std.ml, the native runtime in native_rt/runtime.c as mml_fs_NAME, and the
+   emit-js prelude. A module-qualified extern lowers generically to the per-backend
+   symbol, so no codegen case is needed. *)
+module Fs =
+  (* Entries of a directory, names only, excluding dot and dotdot, unordered. *)
+  pub extern read_dir : string -> string list / IO
+  (* Does the path exist and is it a directory? *)
+  pub extern is_directory : string -> bool / IO
+  (* Create a directory. No error if it already exists; parents are NOT created. *)
+  pub extern make_dir : string -> unit / IO
+  (* Remove a file or an empty directory. *)
+  pub extern remove : string -> unit / IO
+  (* Rename or move a path. *)
+  pub extern rename : string -> string -> unit / IO
+end

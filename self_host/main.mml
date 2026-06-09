@@ -366,6 +366,7 @@ module Main =
     load "ref";
     load "dynarray";
     load "compat";
+    load "fs";
 
     -- Runtime module (native, registered last to match OCaml ordering)
     pub_vars := [];

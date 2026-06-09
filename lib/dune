@@ -31,7 +31,8 @@
   ../stdlib/seq.mml
   ../stdlib/iter.mml
   ../stdlib/show.mml
-  ../stdlib/compat.mml)
+  ../stdlib/compat.mml
+  ../stdlib/fs.mml)
  (action
   (with-stdout-to
    %{target}
@@ -63,4 +64,5 @@
     ../stdlib/seq.mml
     ../stdlib/iter.mml
     ../stdlib/show.mml
-    ../stdlib/compat.mml))))
+    ../stdlib/compat.mml
+    ../stdlib/fs.mml))))

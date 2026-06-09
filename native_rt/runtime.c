@@ -6,6 +6,9 @@
 #include <inttypes.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include <gc/gc.h>
 #include "runtime.h"
 
@@ -2931,6 +2934,63 @@ mml_value mml_io_read_line(mml_value unit_arg) {
 
 mml_value mml_io_file_exists(mml_value path) {
     return access(MML_STR_DATA(path), F_OK) == 0 ? MML_TRUE : MML_FALSE;
+}
+
+/* ---- Fs module ---- */
+
+mml_value mml_fs_read_dir(mml_value path) {
+    DIR *d = opendir(MML_STR_DATA(path));
+    if (!d) {
+        fprintf(stderr, "Fs.read_dir: cannot open %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    mml_value acc = MML_UNIT; /* nil */
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        mml_value *cell = (mml_value *)mml_alloc(16, MML_MAKE_HDR(MML_HDR_CONS, 0));
+        cell[0] = mml_string_from_buf(e->d_name, (int64_t)strlen(e->d_name));
+        cell[1] = acc;
+        acc = (mml_value)(intptr_t)cell;
+    }
+    closedir(d);
+    return acc;
+}
+
+mml_value mml_fs_is_directory(mml_value path) {
+    struct stat st;
+    if (stat(MML_STR_DATA(path), &st) != 0) return MML_FALSE;
+    return S_ISDIR(st.st_mode) ? MML_TRUE : MML_FALSE;
+}
+
+mml_value mml_fs_make_dir(mml_value path) {
+    if (mkdir(MML_STR_DATA(path), 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "Fs.make_dir: cannot create %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    return MML_UNIT;
+}
+
+mml_value mml_fs_remove(mml_value path) {
+    struct stat st;
+    int rc;
+    if (stat(MML_STR_DATA(path), &st) == 0 && S_ISDIR(st.st_mode))
+        rc = rmdir(MML_STR_DATA(path));
+    else
+        rc = unlink(MML_STR_DATA(path));
+    if (rc != 0) {
+        fprintf(stderr, "Fs.remove: cannot remove %s\n", MML_STR_DATA(path));
+        exit(1);
+    }
+    return MML_UNIT;
+}
+
+mml_value mml_fs_rename(mml_value src, mml_value dst) {
+    if (rename(MML_STR_DATA(src), MML_STR_DATA(dst)) != 0) {
+        fprintf(stderr, "Fs.rename: cannot rename %s\n", MML_STR_DATA(src));
+        exit(1);
+    }
+    return MML_UNIT;
 }
 
 /* Runtime.eval is interpreter-only: compiled native code has no compiler.

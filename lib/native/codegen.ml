@@ -66,6 +66,15 @@ type codegen_ctx = {
   mutable current_label : string;
   mutable label_counter : int;
   mutable fn_counter : int;
+  mutable module_externs : (string, int) Hashtbl.t;
+      (* Module-qualified externs (`extern Sys.time : ...`, `extern Fs.read_dir :
+         ...`) -> arity. A call to such a name lowers generically to the runtime
+         symbol `mml_<module>_<name>` (c_name_of_module_extern) with the standard
+         i64 value ABI — no per-syscall codegen case. Built once from the typed
+         program's TDExtern decls and shared across every compilation unit's ctx, so
+         the table is visible regardless of which unit references the syscall.
+         (Bare-name runtime builtins like string_of_int keep their own cases; this
+         is the EXTENSIBLE category — new system modules need no codegen edit.) *)
   mutable unit_prefix : string;
       (* A per-compilation-unit tag woven into every INTERNAL (counter-derived)
          symbol name — anonymous lambdas, local/top-level function bodies, handler
@@ -149,6 +158,7 @@ let create_ctx type_env =
     current_label = "entry";
     label_counter = 0;
     fn_counter = 0;
+    module_externs = Hashtbl.create 16;
     unit_prefix = "";
     str_counter = 0;
     float_counter = 0;
@@ -3300,25 +3310,9 @@ and emit_named_call ctx name f_expr args =
       add_extern ctx "mml_string_length" "i64" [ "i64" ];
       Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_string_length"
         ~args:[ ("i64", arg_val) ]
-  (* ---- Sys / IO / Runtime module externs (BUG-2). The MiniML-level
-     signatures are declared in lib/std.ml; the C implementations live in
-     native_rt/runtime.c. Every function takes exactly the MiniML arity (unit
-     arguments included), so the argument is always evaluated (for effect
-     ordering) and passed through. *)
-  | "Sys.time" | "Sys.exit" | "Sys.getenv" | "Sys.args" | "IO.read_file"
-  | "IO.read_line" | "IO.file_exists" | "Runtime.eval" | "Runtime.eval_file"
-    ->
-      let c_name = c_name_of_module_extern name in
-      let arg_val = emit_expr ctx (List.hd args) in
-      add_extern ctx c_name "i64" [ "i64" ];
-      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:c_name
-        ~args:[ ("i64", arg_val) ]
-  | "IO.write_file" | "IO.append_file" ->
-      let c_name = c_name_of_module_extern name in
-      let arg_vals = List.map (emit_expr ctx) args in
-      add_extern ctx c_name "i64" [ "i64"; "i64" ];
-      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:c_name
-        ~args:(List.map (fun v -> ("i64", v)) arg_vals)
+  (* Sys / IO / Runtime / any system module's externs are lowered GENERICALLY by
+     the guarded arm near the end of this match (`Hashtbl.mem ctx.module_externs`):
+     `M.f` -> a call to `mml_<m>_<f>`. New syscall modules need no case here. *)
   | "failwith" ->
       let arg_val = emit_expr ctx (List.hd args) in
       add_extern ctx "mml_panic_mml" "void" [ "i64" ];
@@ -3816,6 +3810,19 @@ and emit_named_call ctx name f_expr args =
       add_extern ctx "mml_array_sub" "i64" [ "i64"; "i64"; "i64" ];
       Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_array_sub"
         ~args:[ ("i64", arr); ("i64", start); ("i64", len) ]
+  | _ when Hashtbl.mem ctx.module_externs name ->
+      (* Generic runtime FFI: a module-qualified extern `M.f` (a syscall declared
+         `extern M.f : ...`) lowers to a call to `mml_<m>_<f>` with the standard
+         i64 value ABI — every arg evaluated (effect order) and passed through,
+         result an i64. This is the single extensible path for system modules:
+         adding a syscall needs only its extern signature + per-backend impl, no
+         codegen case. The membership guard keeps a typo'd name an "unbound
+         function" error rather than a silent bad link. *)
+      let c_name = c_name_of_module_extern name in
+      let arg_vals = List.map (emit_expr ctx) args in
+      add_extern ctx c_name "i64" (List.map (fun _ -> "i64") arg_vals);
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:c_name
+        ~args:(List.map (fun v -> ("i64", v)) arg_vals)
   | _ -> (
       (* Look up user-defined function *)
       match lookup_var ctx name with
@@ -4851,29 +4858,20 @@ and emit_operator_wrapper ctx wrapper_name op_name is_float =
 (** Try to emit a builtin name as a closure value *)
 and emit_builtin_as_value ctx name expr_ty =
   match name with
-  (* Sys/IO/Runtime module externs as first-class values (BUG-2): a generic
-     wrapper closure over the C runtime function, arity matching the MiniML
-     signature. *)
-  | "Sys.time" | "Sys.exit" | "Sys.getenv" | "Sys.args" | "IO.read_file"
-  | "IO.read_line" | "IO.file_exists" | "Runtime.eval" | "Runtime.eval_file"
-    ->
+  (* A module-qualified extern (syscall) as a first-class value: a generic wrapper
+     closure over the runtime function `mml_<m>_<f>`, arity from module_externs.
+     The bare-name builtins below are never module-qualified, so this guard never
+     shadows them. New syscall modules need no case here. *)
+  | _ when Hashtbl.mem ctx.module_externs name ->
+      let arity = Hashtbl.find ctx.module_externs name in
       let c_name = c_name_of_module_extern name in
       let wrapper_key = "mml_op_" ^ c_name in
       if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
         Hashtbl.replace ctx.generated_wrappers wrapper_key ();
-        emit_func_wrapper ctx wrapper_key c_name 1
+        emit_func_wrapper ctx wrapper_key c_name arity
       end;
-      add_extern ctx c_name "i64" [ "i64" ];
-      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
-  | "IO.write_file" | "IO.append_file" ->
-      let c_name = c_name_of_module_extern name in
-      let wrapper_key = "mml_op_" ^ c_name in
-      if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
-        Hashtbl.replace ctx.generated_wrappers wrapper_key ();
-        emit_func_wrapper ctx wrapper_key c_name 2
-      end;
-      add_extern ctx c_name "i64" [ "i64"; "i64" ];
-      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:2 ~captures:[])
+      add_extern ctx c_name "i64" (List.init arity (fun _ -> "i64"));
+      Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity ~captures:[])
   | "not" ->
       let wrapper_key = "mml_op_int_not" in
       if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
@@ -5142,14 +5140,15 @@ and free_vars_of_fun ?(ctx = None) params body =
   let bound = Hashtbl.create 16 in
   let is_known_global name =
     match ctx with
-    | Some c -> (
-        match lookup_var c name with
-        | Some (Func _)
-        | Some (FuncLocal _)
-        | Some (Global _)
-        | Some (MutGlobal _) ->
-            true
-        | _ -> false)
+    | Some c ->
+        (* A module-qualified syscall (`Fs.read_dir`, ...) is resolved globally to
+           a runtime symbol, not captured as a free variable — same as a top-level
+           function/global. This is what lets a new syscall be referenced inside a
+           function body without being added to is_builtin_name's static list. *)
+        Hashtbl.mem c.module_externs name
+        || (match lookup_var c name with
+           | Some (Func _ | FuncLocal _ | Global _ | MutGlobal _) -> true
+           | _ -> false)
     | None -> false
   in
   let rec scan_expr (e : Typechecker.texpr) =
@@ -6980,10 +6979,37 @@ let emit_unit_init ctx ~init_name decls =
   ctx.current_label <- saved_label;
   ctx.result_ptr <- saved_result_ptr
 
+(* Arity of a (possibly curried) function type: the length of its arrow chain. *)
+let rec arrow_arity ty =
+  match Types.repr ty with
+  | Types.TArrow (_, _, ret) -> 1 + arrow_arity ret
+  | _ -> 0
+
+(* Collect the module-qualified externs (name contains '.') declared anywhere in
+   [programs], mapping each to its arity. These are the generic runtime-FFI
+   syscalls; a call to one lowers to `mml_<module>_<name>(args...)`. Recurses into
+   modules (a `module Sys = ... extern time ...` yields TDExtern "Sys.time"). *)
+let collect_module_externs (programs : Typechecker.tprogram list) =
+  let tbl = Hashtbl.create 32 in
+  let rec scan decls =
+    List.iter
+      (fun d ->
+        match d with
+        | Typechecker.TDExtern (name, scheme) when String.contains name '.' ->
+            Hashtbl.replace tbl name (arrow_arity scheme.Types.body)
+        | Typechecker.TDModule (_, inner, _) -> scan inner
+        | _ -> ())
+      decls
+  in
+  List.iter scan programs;
+  tbl
+
 let compile_program_with_stdlib (type_env : Types.type_env)
     (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
     (user_program : Typechecker.tprogram) : string =
   let ctx = create_ctx type_env in
+  ctx.module_externs <-
+    collect_module_externs (user_program :: List.map snd stdlib_programs);
 
   (* The stdlib's top-level initialization becomes a separate @mml_init_std()
      rather than inlining into mml_main — the first step toward compiling the
@@ -7137,8 +7163,12 @@ let seed_scope ctx (exp : unit_exports) =
 let compile_units (type_env : Types.type_env)
     (stdlib_programs : (Types.type_env * Typechecker.tprogram) list)
     (user_program : Typechecker.tprogram) : (string * string) list =
+  (* Module-extern (syscall) table, shared by every unit's ctx so a syscall
+     reference resolves regardless of which unit makes it. *)
+  let externs = collect_module_externs (user_program :: List.map snd stdlib_programs) in
   (* Unit 0: the stdlib. *)
   let ctx_std = create_ctx type_env in
+  ctx_std.module_externs <- externs;
   ctx_std.unit_prefix <- "s_";
   let stdlib_decls = List.concat_map (fun (_te, p) -> p) stdlib_programs in
   emit_unit_init ctx_std ~init_name:"mml_init_std" stdlib_decls;
@@ -7151,6 +7181,7 @@ let compile_units (type_env : Types.type_env)
   (* The entry unit, built as we walk the user program: each top-level module spins
      off its own unit + an init call here; each loose decl is emitted inline. *)
   let ctx = create_ctx type_env in
+  ctx.module_externs <- externs;
   ctx.unit_prefix <- "u_";
   seed_scope ctx exports_std;
   Ir_emit.emit_define_start ctx.ir ~ret_ty:"i64" ~name:"mml_main" ~params:[];
@@ -7183,6 +7214,7 @@ let compile_units (type_env : Types.type_env)
           let init_name = Printf.sprintf "mml_init_m_%s" mangled in
           (* Compile this module as its own unit, seeded with everything visible. *)
           let ctx_m = create_ctx type_env in
+          ctx_m.module_externs <- externs;
           ctx_m.unit_prefix <- Printf.sprintf "m_%s_" mangled;
           List.iter (seed_scope ctx_m) (List.rev !visible);
           (* the module's own bindings land in a fresh scope so capture_exports

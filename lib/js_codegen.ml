@@ -4580,6 +4580,41 @@ function Sys$time(u) { return __sys_time(); }
 // Runtime module (stubs — eval not supported in compiled JS)
 function Runtime$eval(s) { throw new Error("Runtime.eval: not supported in compiled JS"); }
 function Runtime$eval_file(s) { throw new Error("Runtime.eval_file: not supported in compiled JS"); }
+// Fs module
+function Fs$read_dir(path) {
+  if (typeof require !== "undefined") {
+    const a = require("fs").readdirSync(path);
+    let r = null;
+    for (let i = a.length - 1; i >= 0; i--) r = {_hd: a[i], _tl: r};
+    return r;
+  }
+  throw new Error("Fs.read_dir: not available in this environment");
+}
+function Fs$is_directory(path) {
+  if (typeof require !== "undefined") {
+    try { return require("fs").statSync(path).isDirectory(); } catch (e) { return false; }
+  }
+  return false;
+}
+function Fs$make_dir(path) {
+  if (typeof require !== "undefined") {
+    try { require("fs").mkdirSync(path); } catch (e) { if (e.code !== "EEXIST") throw e; }
+    return undefined;
+  }
+  throw new Error("Fs.make_dir: not available in this environment");
+}
+function Fs$remove(path) {
+  if (typeof require !== "undefined") {
+    const fs = require("fs");
+    if (fs.statSync(path).isDirectory()) fs.rmdirSync(path); else fs.unlinkSync(path);
+    return undefined;
+  }
+  throw new Error("Fs.remove: not available in this environment");
+}
+function Fs$rename(src, dst) {
+  if (typeof require !== "undefined") { require("fs").renameSync(src, dst); return undefined; }
+  throw new Error("Fs.rename: not available in this environment");
+}
 // --- Typeclass primitive externs ---
 function __num_add_int(a, b) { return a + b; }
 function __num_sub_int(a, b) { return a - b; }
