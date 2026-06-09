@@ -388,6 +388,31 @@ let register_io state =
         ( "file_exists",
           1,
           fun args -> VBool (Sys.file_exists (Interp.as_string (arg 0 args))) );
+        (* Raw stdio (no trailing newline, explicit flush, byte-exact reads) — the
+           primitives JSON-RPC / LSP framing needs that read_line/print can't give. *)
+        ( "write",
+          1,
+          fun args -> output_string stdout (Interp.as_string (arg 0 args)); VUnit );
+        ( "write_err",
+          1,
+          fun args -> output_string stderr (Interp.as_string (arg 0 args)); VUnit );
+        ("flush", 1, fun _args -> flush stdout; flush stderr; VUnit);
+        ( "read_bytes",
+          1,
+          fun args ->
+            let n = Interp.as_int (arg 0 args) in
+            if n <= 0 then VString ""
+            else begin
+              let buf = Bytes.create n in
+              let rec loop off =
+                if off >= n then off
+                else
+                  let r = input stdin buf off (n - off) in
+                  if r = 0 then off else loop (off + r)
+              in
+              let got = loop 0 in
+              VString (Bytes.sub_string buf 0 got)
+            end );
       ]
   in
   Interp.eval_setup state
@@ -398,6 +423,10 @@ let register_io state =
       pub extern append_file : string -> string -> unit / IO
       pub extern read_line : unit -> string / IO
       pub extern file_exists : string -> bool / IO
+      pub extern write : string -> unit / IO
+      pub extern write_err : string -> unit / IO
+      pub extern flush : unit -> unit / IO
+      pub extern read_bytes : int -> string / IO
     end
   |}
 
@@ -534,6 +563,23 @@ let register_process state =
       ]
   in
   Interp.eval_setup state Stdlib_sources.process
+
+(* ---- Digest module ---- *)
+(* MD5 hex digest. OCaml VM uses the stdlib Digest (MD5); native runtime has an
+   embedded MD5 (mml_digest_md5); emit-js uses node crypto. Signature in
+   stdlib/digest.mml. *)
+let register_digest state =
+  let state =
+    Interp.register_fns state "Digest"
+      [
+        ( "md5",
+          1,
+          fun args ->
+            VString (Digest.to_hex (Digest.string (Interp.as_string (arg 0 args))))
+        );
+      ]
+  in
+  Interp.eval_setup state Stdlib_sources.digest
 
 (* ---- Math module ---- *)
 
@@ -704,7 +750,7 @@ let register_all state =
     |> register_set |> register_enum |> register_seq |> register_option
     |> register_buffer |> register_fmt |> register_hashtbl |> register_ref
     |> register_dynarray |> register_compat |> register_path
-    |> register_process
+    |> register_process |> register_digest
   in
   let state = register_eval state in
   state.Interp.state_ref := Some state;

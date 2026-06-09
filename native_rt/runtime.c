@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <math.h>
 #include <inttypes.h>
 #include <unistd.h>
@@ -2938,6 +2939,41 @@ mml_value mml_io_file_exists(mml_value path) {
     return access(MML_STR_DATA(path), F_OK) == 0 ? MML_TRUE : MML_FALSE;
 }
 
+/* Raw stdio: byte-exact write/read with explicit flush (for JSON-RPC framing). */
+mml_value mml_io_write(mml_value s) {
+    fwrite(MML_STR_DATA(s), 1, (size_t)MML_STR_LEN(s), stdout);
+    return MML_UNIT;
+}
+
+mml_value mml_io_write_err(mml_value s) {
+    fwrite(MML_STR_DATA(s), 1, (size_t)MML_STR_LEN(s), stderr);
+    return MML_UNIT;
+}
+
+mml_value mml_io_flush(mml_value unit_arg) {
+    (void)unit_arg;
+    fflush(stdout);
+    fflush(stderr);
+    return MML_UNIT;
+}
+
+/* Read up to n bytes from stdin, blocking until n are read or EOF; returns the
+ * bytes read (possibly fewer than n at end of input). */
+mml_value mml_io_read_bytes(mml_value n_val) {
+    int64_t n = MML_INT_VAL(n_val);
+    if (n <= 0) return mml_string_from_buf("", 0);
+    char *buf = (char *)malloc((size_t)n);
+    size_t got = 0;
+    while (got < (size_t)n) {
+        size_t r = fread(buf + got, 1, (size_t)n - got, stdin);
+        if (r == 0) break; /* EOF or error */
+        got += r;
+    }
+    mml_value v = mml_string_from_buf(buf, (int64_t)got);
+    free(buf);
+    return v;
+}
+
 /* ---- Fs module ---- */
 
 mml_value mml_fs_read_dir(mml_value path) {
@@ -3083,6 +3119,78 @@ mml_value mml_process_run(mml_value cmd, mml_value arglist) {
     t[1] = sout;
     t[2] = serr;
     return (mml_value)(intptr_t)t;
+}
+
+/* ---- Digest module ---- */
+
+/* MD5 (RFC 1321), to match the OCaml Digest module byte-for-byte. Little-endian
+ * (the native targets x86_64/arm64 are LE). Self-contained, no OpenSSL dependency. */
+static uint32_t md5_lrot(uint32_t x, int c) { return (x << c) | (x >> (32 - c)); }
+
+static void md5_compute(const unsigned char *msg0, size_t len0,
+                        unsigned char digest[16]) {
+    static const int r[64] = {
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+    static const uint32_t k[64] = {
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a,
+        0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+        0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340,
+        0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8,
+        0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+        0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
+        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92,
+        0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+        0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
+    uint32_t h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476;
+    size_t new_len = ((len0 + 8) / 64 + 1) * 64;
+    unsigned char *msg = (unsigned char *)calloc(new_len, 1);
+    memcpy(msg, msg0, len0);
+    msg[len0] = 0x80;
+    uint64_t bits = (uint64_t)len0 * 8;
+    for (int i = 0; i < 8; i++) msg[new_len - 8 + i] = (unsigned char)(bits >> (8 * i));
+    for (size_t off = 0; off < new_len; off += 64) {
+        uint32_t w[16];
+        for (int i = 0; i < 16; i++)
+            w[i] = (uint32_t)msg[off + i * 4] | ((uint32_t)msg[off + i * 4 + 1] << 8)
+                 | ((uint32_t)msg[off + i * 4 + 2] << 16)
+                 | ((uint32_t)msg[off + i * 4 + 3] << 24);
+        uint32_t a = h0, b = h1, c = h2, d = h3;
+        for (uint32_t i = 0; i < 64; i++) {
+            uint32_t f, g;
+            if (i < 16) { f = (b & c) | (~b & d); g = i; }
+            else if (i < 32) { f = (d & b) | (~d & c); g = (5 * i + 1) & 15; }
+            else if (i < 48) { f = b ^ c ^ d; g = (3 * i + 5) & 15; }
+            else { f = c ^ (b | ~d); g = (7 * i) & 15; }
+            uint32_t tmp = d;
+            d = c; c = b;
+            b = b + md5_lrot(a + f + k[i] + w[g], r[i]);
+            a = tmp;
+        }
+        h0 += a; h1 += b; h2 += c; h3 += d;
+    }
+    free(msg);
+    uint32_t hh[4] = {h0, h1, h2, h3};
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            digest[i * 4 + j] = (unsigned char)(hh[i] >> (8 * j));
+}
+
+mml_value mml_digest_md5(mml_value s) {
+    unsigned char digest[16];
+    md5_compute((const unsigned char *)MML_STR_DATA(s), (size_t)MML_STR_LEN(s),
+                digest);
+    static const char *hd = "0123456789abcdef";
+    char hex[32];
+    for (int i = 0; i < 16; i++) {
+        hex[i * 2] = hd[digest[i] >> 4];
+        hex[i * 2 + 1] = hd[digest[i] & 15];
+    }
+    return mml_string_from_buf(hex, 32);
 }
 
 /* Runtime.eval is interpreter-only: compiled native code has no compiler.

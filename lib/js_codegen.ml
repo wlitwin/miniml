@@ -4552,6 +4552,33 @@ function IO$file_exists(path) {
   if (typeof require !== "undefined") return require("fs").existsSync(path);
   return false;
 }
+// Raw stdio (byte-exact, for JSON-RPC framing). MiniML strings are byte strings,
+// so use latin1 to map each char to one byte.
+function IO$write(s) {
+  if (typeof process !== "undefined") process.stdout.write(Buffer.from(s, "latin1"));
+  return undefined;
+}
+function IO$write_err(s) {
+  if (typeof process !== "undefined") process.stderr.write(Buffer.from(s, "latin1"));
+  return undefined;
+}
+function IO$flush(u) { return undefined; }
+function IO$read_bytes(n) {
+  if (typeof require !== "undefined" && n > 0) {
+    const fs = require("fs");
+    const buf = Buffer.alloc(n);
+    const fd = fs.openSync("/dev/stdin", "rs");
+    let got = 0;
+    while (got < n) {
+      let r;
+      try { r = fs.readSync(fd, buf, got, n - got); } catch (e) { break; }
+      if (r === 0) break;
+      got += r;
+    }
+    return buf.toString("latin1", 0, got);
+  }
+  return "";
+}
 // Sys module
 function Sys$args(u) {
   if (globalThis._jsSysArgs) {
@@ -4625,6 +4652,12 @@ function Process$run(cmd, args) {
     return [r.status === null ? -1 : r.status, r.stdout || "", r.stderr || ""];
   }
   throw new Error("Process.run: not available in this environment");
+}
+// Digest module
+function Digest$md5(s) {
+  if (typeof require !== "undefined")
+    return require("crypto").createHash("md5").update(s, "latin1").digest("hex");
+  throw new Error("Digest.md5: not available in this environment");
 }
 // --- Typeclass primitive externs ---
 function __num_add_int(a, b) { return a + b; }

@@ -329,6 +329,10 @@ module Main =
     register_fn "IO" "append_file" (arr2_io TString TString TUnit) 2;
     register_fn "IO" "read_line" (arr_io TUnit TString) 1;
     register_fn "IO" "file_exists" (arr_io TString TBool) 1;
+    register_fn "IO" "write" (arr_io TString TUnit) 1;
+    register_fn "IO" "write_err" (arr_io TString TUnit) 1;
+    register_fn "IO" "flush" (arr_io TUnit TUnit) 1;
+    register_fn "IO" "read_bytes" (arr_io TInt TString) 1;
     let io_info = {
       mod_name = "IO"; mod_pub_vars = pub_vars;
       mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
@@ -369,6 +373,7 @@ module Main =
     load "fs";
     load "path";
     load "process";
+    load "digest";
 
     -- Runtime module (native, registered last to match OCaml ordering)
     pub_vars := [];
