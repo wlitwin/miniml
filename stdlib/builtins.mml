@@ -54,6 +54,7 @@ extern __math_sqrt : float -> float
 extern __math_floor : float -> int
 extern __math_ceil : float -> int
 extern __math_round : float -> int
+extern __float_bits_hex : float -> string
 
 (* Formatting *)
 extern __fmt_float : int -> float -> string

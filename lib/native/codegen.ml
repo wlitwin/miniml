@@ -208,12 +208,12 @@ let llvm_escape_string s =
   buf
 
 let llvm_encode_le_i64 n =
+  (* Little-endian 8-byte hex escape. [n] is a small non-negative value here
+     (a header tag or a length), so plain int shifts suffice — no Int64, which
+     keeps this translatable to MiniML. *)
   let buf = Buffer.create 24 in
-  let v = Int64.of_int n in
   for i = 0 to 7 do
-    let byte =
-      Int64.to_int (Int64.logand (Int64.shift_right_logical v (i * 8)) 0xFFL)
-    in
+    let byte = (n lsr (i * 8)) land 0xFF in
     Printf.bprintf buf "\\%02X" byte
   done;
   Buffer.contents buf
@@ -221,9 +221,10 @@ let llvm_encode_le_i64 n =
 (* ---- Float formatting for LLVM IR ---- *)
 
 let llvm_format_float f =
-  (* LLVM requires hex double format for exact representation *)
-  let bits = Int64.bits_of_float f in
-  Printf.sprintf "0x%LX" bits
+  (* LLVM requires hex double format for exact representation. The bit-pattern
+     hex comes from Float_bits (untranslated; the translator maps it to the
+     MiniML builtin Math.float_bits_hex), so this stays Int64-free. *)
+  "0x" ^ Float_bits.bits_hex f
 
 (* ---- Header word tags (must match runtime.h) ---- *)
 
@@ -243,7 +244,7 @@ let mml_hdr_array = 0x05
 let mml_hdr_pair = 0x09
 let mml_hdr_ref = 0x0A
 let mml_hdr_polyvar = 0x0B
-let make_header ?(size = 0) tag = string_of_int ((size lsl 16) lor tag)
+let make_header size tag = string_of_int ((size lsl 16) lor tag)
 
 (* ---- Heap allocation helper ---- *)
 
@@ -333,7 +334,7 @@ let record_fields_from_type ty =
 let emit_make_closure ctx ~fn_name ~arity ~captures =
   let n_captures = List.length captures in
   let total_slots = 3 + n_captures in
-  let ptr = emit_alloc ctx (total_slots * 8) (make_header mml_hdr_closure) in
+  let ptr = emit_alloc ctx (total_slots * 8) (make_header 0 mml_hdr_closure) in
   (* Store fn_ptr at offset 0 *)
   let fn_ptr_i64 =
     Ir_emit.emit_ptrtoint ctx.ir ~value:(Printf.sprintf "@%s" fn_name)
@@ -933,7 +934,7 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
   | TECons (hd_expr, tl_expr) ->
       let hd_val = emit_expr ctx hd_expr in
       let tl_val = emit_expr ctx tl_expr in
-      let ptr = emit_alloc ctx 16 (make_header mml_hdr_cons) in
+      let ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_cons) in
       let hd_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
       Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:hd_val ~ptr:hd_ptr;
       let tl_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:1 in
@@ -946,7 +947,7 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
         let vals = List.map (emit_expr ctx) elems in
         (* Allocate flat buffer: [length (i64)] [elem_0] ... [elem_{n-1}] *)
         let total_bytes = (n + 1) * 8 in
-        let ptr = emit_alloc ctx total_bytes (make_header mml_hdr_array) in
+        let ptr = emit_alloc ctx total_bytes (make_header 0 mml_hdr_array) in
         (* Store length (raw, not tagged) *)
         let len_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
         Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:(string_of_int n)
@@ -1140,7 +1141,7 @@ and emit_let_value ?(emit_body = emit_expr) ctx name init body is_mutable =
        all. A stack alloca would be duplicated by copy_continuation's fiber
        copy, giving each resume its own diverging copy of the variable
        (BUG-9: native re-ran loop iterations the spec says are finished). *)
-    let cell_ptr = emit_alloc ctx 8 (make_header mml_hdr_ref) in
+    let cell_ptr = emit_alloc ctx 8 (make_header 0 mml_hdr_ref) in
     Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:cell_ptr;
     (* Store the heap pointer in an alloca *)
     let cell_i64 = Ir_emit.emit_ptrtoint ctx.ir ~value:cell_ptr in
@@ -1171,7 +1172,7 @@ and emit_rec_placeholder ctx te =
   let rec go te =
     match te.Typechecker.expr with
     | Typechecker.TECons _ ->
-        let ptr = emit_alloc ctx 16 (make_header mml_hdr_cons) in
+        let ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_cons) in
         let hd_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
         Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:hd_ptr;
         let tl_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:1 in
@@ -1180,7 +1181,7 @@ and emit_rec_placeholder ctx te =
     | Typechecker.TETuple es ->
         let n = List.length es in
         let nbytes = n * 8 in
-        let ptr = emit_alloc ctx nbytes (make_header ~size:n mml_hdr_tuple) in
+        let ptr = emit_alloc ctx nbytes (make_header n mml_hdr_tuple) in
         for i = 0 to n - 1 do
           let p = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i in
           Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:p
@@ -1192,7 +1193,7 @@ and emit_rec_placeholder ctx te =
         in
         let n = List.length sorted in
         let nbytes = n * 8 in
-        let ptr = emit_alloc ctx nbytes (make_header ~size:n mml_hdr_record) in
+        let ptr = emit_alloc ctx nbytes (make_header n mml_hdr_record) in
         for i = 0 to n - 1 do
           let p = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i in
           Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:p
@@ -1218,7 +1219,7 @@ and emit_rec_placeholder ctx te =
                 if String.length name > 0 && name.[0] = '`' then mml_hdr_polyvar
                 else mml_hdr_variant
               in
-              let ptr = emit_alloc ctx 16 (make_header hdr_tag) in
+              let ptr = emit_alloc ctx 16 (make_header 0 hdr_tag) in
               let tag_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
               Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:(tag_int tag)
                 ~ptr:tag_ptr;
@@ -1235,7 +1236,7 @@ and emit_rec_placeholder ctx te =
     | Typechecker.TEArray es ->
         let n = List.length es in
         let total_bytes = (n + 1) * 8 in
-        let ptr = emit_alloc ctx total_bytes (make_header mml_hdr_array) in
+        let ptr = emit_alloc ctx total_bytes (make_header 0 mml_hdr_array) in
         let len_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
         Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:(string_of_int n)
           ~ptr:len_ptr;
@@ -1920,7 +1921,7 @@ and emit_while ctx cond body step =
 and emit_tuple ctx exprs =
   let vals = List.map (emit_expr ctx) exprs in
   let n = List.length vals in
-  let ptr = emit_alloc ctx (n * 8) (make_header ~size:n mml_hdr_tuple) in
+  let ptr = emit_alloc ctx (n * 8) (make_header n mml_hdr_tuple) in
   List.iteri
     (fun i v ->
       let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i in
@@ -1935,7 +1936,7 @@ and emit_record ctx fields =
   let vals = List.map (fun (_, e) -> emit_expr ctx e) sorted in
   let n = List.length vals in
   (* Size stored in header word at ptr[-1], no separate size slot needed *)
-  let ptr = emit_alloc ctx (n * 8) (make_header ~size:n mml_hdr_record) in
+  let ptr = emit_alloc ctx (n * 8) (make_header n mml_hdr_record) in
   List.iteri
     (fun i v ->
       let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:i in
@@ -2006,7 +2007,7 @@ and emit_or_cache_builtin_dict ctx dict_name =
                       sorted_methods
                   in
                   let ptr =
-                    emit_alloc ctx (n * 8) (make_header ~size:n mml_hdr_record)
+                    emit_alloc ctx (n * 8) (make_header n mml_hdr_record)
                   in
                   List.iteri
                     (fun i closure_val ->
@@ -2129,7 +2130,7 @@ and emit_record_update ctx base overrides =
   let fields = record_fields_from_type base.ty in
   let n = List.length fields in
   (* Size stored in header word at ptr[-1], no separate size slot needed *)
-  let new_ptr = emit_alloc ctx (n * 8) (make_header ~size:n mml_hdr_record) in
+  let new_ptr = emit_alloc ctx (n * 8) (make_header n mml_hdr_record) in
   (* Copy all fields from base *)
   for i = 0 to n - 1 do
     let src = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:base_ptr ~index:i in
@@ -2221,7 +2222,7 @@ and emit_construct ctx name arg =
           if String.length name > 0 && name.[0] = '`' then mml_hdr_polyvar
           else mml_hdr_variant
         in
-        let ptr = emit_alloc ctx 16 (make_header hdr_tag) in
+        let ptr = emit_alloc ctx 16 (make_header 0 hdr_tag) in
         let tag_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:0 in
         Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:tag_val ~ptr:tag_ptr;
         let payload_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:1 in
@@ -3328,7 +3329,7 @@ and emit_named_call ctx name f_expr args =
   (* Ref module builtins *)
   | "Ref.create" ->
       let init_val = emit_expr ctx (List.hd args) in
-      let ptr = emit_alloc ctx 8 (make_header mml_hdr_ref) in
+      let ptr = emit_alloc ctx 8 (make_header 0 mml_hdr_ref) in
       Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:init_val ~ptr;
       Ir_emit.emit_ptrtoint ctx.ir ~value:ptr
   | "Ref.get" ->
@@ -3641,6 +3642,11 @@ and emit_named_call ctx name f_expr args =
       let a = emit_expr ctx (List.hd args) in
       add_extern ctx "mml_math_round" "i64" [ "i64" ];
       Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_math_round"
+        ~args:[ ("i64", a) ]
+  | "__float_bits_hex" ->
+      let a = emit_expr ctx (List.hd args) in
+      add_extern ctx "mml_float_bits_hex" "i64" [ "i64" ];
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_float_bits_hex"
         ~args:[ ("i64", a) ]
   (* Byte builtins *)
   | "__byte_of_int" ->
@@ -4181,7 +4187,7 @@ and emit_show_closure ctx ty =
               emit_show_closure ctx
                 (Types.TArrow (Types.repr ety, Types.EffEmpty, Types.TString))
             in
-            let cell_ptr = emit_alloc ctx 16 (make_header mml_hdr_cons) in
+            let cell_ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_cons) in
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:show_fn
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:cell_ptr ~index:0);
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:acc
@@ -4243,7 +4249,7 @@ and emit_show_closure ctx ty =
                         (Types.TArrow (pty', Types.EffEmpty, Types.TString))
                 in
                 let triple_ptr =
-                  emit_alloc ctx 24 (make_header ~size:3 mml_hdr_tuple)
+                  emit_alloc ctx 24 (make_header 3 mml_hdr_tuple)
                 in
                 Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:tag_val
                   ~ptr:
@@ -4257,7 +4263,7 @@ and emit_show_closure ctx ty =
                 let triple_val =
                   Ir_emit.emit_ptrtoint ctx.ir ~value:triple_ptr
                 in
-                let cell_ptr = emit_alloc ctx 16 (make_header mml_hdr_cons) in
+                let cell_ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_cons) in
                 Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:triple_val
                   ~ptr:
                     (Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:cell_ptr ~index:0);
@@ -4295,14 +4301,14 @@ and emit_show_closure ctx ty =
                 (Types.TArrow (Types.repr fty, Types.EffEmpty, Types.TString))
             in
             (* Create a 2-tuple: [name_str, show_fn] *)
-            let pair_ptr = emit_alloc ctx 16 (make_header mml_hdr_pair) in
+            let pair_ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_pair) in
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:name_str
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:pair_ptr ~index:0);
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:show_fn
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:pair_ptr ~index:1);
             let pair_val = Ir_emit.emit_ptrtoint ctx.ir ~value:pair_ptr in
             (* Cons onto the list *)
-            let cell_ptr = emit_alloc ctx 16 (make_header mml_hdr_cons) in
+            let cell_ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_cons) in
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:pair_val
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:cell_ptr ~index:0);
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:acc
@@ -4342,14 +4348,14 @@ and emit_show_closure ctx ty =
             in
             let hash_val = tag_int tag in
             (* Create a 2-tuple: [hash, name_str] *)
-            let pair_ptr = emit_alloc ctx 16 (make_header mml_hdr_pair) in
+            let pair_ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_pair) in
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:hash_val
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:pair_ptr ~index:0);
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:name_str
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:pair_ptr ~index:1);
             let pair_val = Ir_emit.emit_ptrtoint ctx.ir ~value:pair_ptr in
             (* Cons onto the list *)
-            let cell_ptr = emit_alloc ctx 16 (make_header mml_hdr_cons) in
+            let cell_ptr = emit_alloc ctx 16 (make_header 0 mml_hdr_cons) in
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:pair_val
               ~ptr:(Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:cell_ptr ~index:0);
             Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:acc
@@ -5098,7 +5104,8 @@ and is_builtin_name = function
   | "Array.init" | "Array.map" | "Array.mapi" | "Array.iter" | "Array.fold"
   | "Rune.to_int" | "Rune.of_int" | "__rune_to_int" | "__rune_of_int"
   | "__rune_to_string" | "__math_pow" | "__math_sqrt" | "__math_floor"
-  | "__math_ceil" | "__math_round" | "__fmt_float" | "__fmt_hex"
+  | "__math_ceil" | "__math_round" | "__float_bits_hex" | "__fmt_float"
+  | "__fmt_hex"
   | "__fmt_hex_upper" | "__fmt_oct" | "__fmt_bin" | "__fmt_zero_pad"
   | "__fmt_pad_left" | "__fmt_pad_right" | "Stdlib.mod" | "failwith"
   | "Sys.time" | "Sys.exit" | "Sys.getenv" | "Sys.args" | "IO.read_file"
@@ -5611,7 +5618,7 @@ and emit_handler_env ctx free_with_info =
   | captures ->
       let n = List.length captures in
       let env_ptr =
-        emit_alloc ctx (n * 8) (make_header ~size:n mml_hdr_tuple)
+        emit_alloc ctx (n * 8) (make_header n mml_hdr_tuple)
       in
       List.iteri
         (fun i (name, info) ->

@@ -252,6 +252,15 @@ let builtins output_fn : builtin_def list =
         (fun args ->
           VInt (Float.to_int (Float.round (as_float (List.nth args 0)))));
     };
+    {
+      name = "__float_bits_hex";
+      arity = 1;
+      impl =
+        (fun args ->
+          VString
+            (Printf.sprintf "%LX"
+               (Int64.bits_of_float (as_float (List.nth args 0)))));
+    };
     (* Format specifier builtins *)
     {
       name = "__fmt_float";
