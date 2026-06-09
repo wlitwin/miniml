@@ -1,0 +1,12 @@
+(* Subprocess execution. Signatures shared by every compiler; implementations
+   registered by name per backend: the OCaml VM in lib/std.ml, the native runtime
+   in native_rt/runtime.c as mml_process_run, the emit-js prelude. A module-qualified
+   extern lowers generically to the per-backend symbol - no codegen case. *)
+module Process =
+  (* Run a command (looked up on PATH) with the given argument list, with no shell
+     involved. Returns the triple (exit_code, stdout, stderr); exit_code is 127 if
+     the command could not be executed, and -1 if it was killed by a signal. The
+     parent and child run concurrently and both output streams are drained, so a
+     command producing large output on either stream does not deadlock (native). *)
+  pub extern run : string -> string list -> (int * string * string) / IO
+end

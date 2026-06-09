@@ -4615,6 +4615,17 @@ function Fs$rename(src, dst) {
   if (typeof require !== "undefined") { require("fs").renameSync(src, dst); return undefined; }
   throw new Error("Fs.rename: not available in this environment");
 }
+// Process module (tuples are arrays: [exit_code, stdout, stderr])
+function Process$run(cmd, args) {
+  if (typeof require !== "undefined") {
+    const a = [];
+    for (let l = args; l !== null; l = l._tl) a.push(l._hd);
+    const r = require("child_process").spawnSync(cmd, a, {encoding: "utf8", maxBuffer: 1 << 28});
+    if (r.error) return [127, "", ""]; // exec failed (matches native/VM: code 127, no streams)
+    return [r.status === null ? -1 : r.status, r.stdout || "", r.stderr || ""];
+  }
+  throw new Error("Process.run: not available in this environment");
+}
 // --- Typeclass primitive externs ---
 function __num_add_int(a, b) { return a + b; }
 function __num_sub_int(a, b) { return a - b; }

@@ -496,6 +496,45 @@ let register_fs state =
 (* ---- Path module (pure MiniML over String/Byte; no native impls) ---- *)
 let register_path state = Interp.eval_setup state Stdlib_sources.path
 
+(* ---- Process module ---- *)
+(* Subprocess execution for the OCaml VM. Signature in stdlib/process.mml; C impl
+   native_rt/runtime.c mml_process_run; JS impl the emit-js prelude. Reads stdout
+   then stderr sequentially (the VM is the dev/reference path; the native impl uses
+   poll over both pipes, so it is deadlock-safe under large output). *)
+let register_process state =
+  let state =
+    Interp.register_fns state "Process"
+      [
+        ( "run",
+          2,
+          fun args ->
+            let cmd = Interp.as_string (arg 0 args) in
+            let arg_strs =
+              match arg 1 args with
+              | Bytecode.VList l -> List.map Interp.as_string l
+              | _ -> []
+            in
+            let argv = Array.of_list (cmd :: arg_strs) in
+            try
+              let ic, oc, ec =
+                Unix.open_process_args_full cmd argv (Unix.environment ())
+              in
+              let out = In_channel.input_all ic in
+              let err = In_channel.input_all ec in
+              let status = Unix.close_process_full (ic, oc, ec) in
+              let code =
+                match status with Unix.WEXITED c -> c | _ -> -1
+              in
+              VTuple [| VInt code; VString out; VString err |]
+            with Unix.Unix_error (e, _, _) ->
+              (* command not found / not executable: 127, matching the native exec
+                 failure path *)
+              ignore e;
+              VTuple [| VInt 127; VString ""; VString "" |] );
+      ]
+  in
+  Interp.eval_setup state Stdlib_sources.process
+
 (* ---- Math module ---- *)
 
 let register_math state = Interp.eval_setup state Stdlib_sources.math
@@ -665,6 +704,7 @@ let register_all state =
     |> register_set |> register_enum |> register_seq |> register_option
     |> register_buffer |> register_fmt |> register_hashtbl |> register_ref
     |> register_dynarray |> register_compat |> register_path
+    |> register_process
   in
   let state = register_eval state in
   state.Interp.state_ref := Some state;
