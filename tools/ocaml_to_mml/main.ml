@@ -884,6 +884,9 @@ and emit_sprintf e args =
                   Buffer.add_string buf (contents sub_e);
                   Buffer.add_char buf '}';
                   i := !i + 3
+              | '!' ->
+                  (* %! is a flush directive: no output, no argument. *)
+                  i := !i + 2
               | _ ->
                   (* Flags/width/precision: skip to conversion char, emit {expr:fmt} *)
                   if
@@ -1061,6 +1064,19 @@ and emit_apply e fn args =
       if needs_parens_subexpr arg then emit e ")"
   (* Printf.sprintf → string interpolation $"..." *)
   | Pexp_ident { txt = Longident.Ldot ({txt = Lident "Printf"; _}, {txt = "sprintf"; _}); _ }, _ ->
+      emit_sprintf e args
+  (* Printf.bprintf buf fmt args → Buffer.add_string buf $"..." (the buffer is the
+     first arg; the rest is a normal sprintf format + values). *)
+  | ( Pexp_ident { txt = Longident.Ldot ({txt = Lident "Printf"; _}, {txt = "bprintf"; _}); _ },
+      (_, buf_expr) :: rest ) ->
+      emit e "Buffer.add_string (";
+      emit_expr e buf_expr;
+      emit e ") ";
+      emit_sprintf e rest
+  (* Printf.eprintf fmt args → IO.write_err $"..." (stderr, no implicit newline —
+     the format string carries any \n). *)
+  | Pexp_ident { txt = Longident.Ldot ({txt = Lident "Printf"; _}, {txt = "eprintf"; _}); _ }, _ ->
+      emit e "IO.write_err ";
       emit_sprintf e args
   (* Format.asprintf → string interpolation $"..." *)
   | Pexp_ident { txt = Longident.Ldot ({txt = Lident "Format"; _}, {txt = "asprintf"; _}); _ }, _ ->
