@@ -33,7 +33,8 @@
   ../stdlib/show.mml
   ../stdlib/compat.mml
   ../stdlib/fs.mml
-  ../stdlib/path.mml)
+  ../stdlib/path.mml
+  ../stdlib/process.mml)
  (action
   (with-stdout-to
    %{target}
@@ -67,4 +68,5 @@
     ../stdlib/show.mml
     ../stdlib/compat.mml
     ../stdlib/fs.mml
-    ../stdlib/path.mml))))
+    ../stdlib/path.mml
+    ../stdlib/process.mml))))

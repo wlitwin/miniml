@@ -8,6 +8,8 @@
 #include <sys/mman.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <poll.h>
 #include <errno.h>
 #include <gc/gc.h>
 #include "runtime.h"
@@ -2991,6 +2993,96 @@ mml_value mml_fs_rename(mml_value src, mml_value dst) {
         exit(1);
     }
     return MML_UNIT;
+}
+
+/* ---- Process module ---- */
+
+/* Run a command with an argument list (no shell), capturing stdout and stderr
+ * concurrently via poll() so a large stream cannot deadlock the pipe. Returns the
+ * 3-tuple (exit_code, stdout, stderr); 127 if exec failed, -1 if signalled. */
+mml_value mml_process_run(mml_value cmd, mml_value arglist) {
+    const char *path = MML_STR_DATA(cmd);
+    int n = 0;
+    for (mml_value l = arglist; l != MML_UNIT; l = ((mml_value *)(intptr_t)l)[1])
+        n++;
+    char **argv = (char **)malloc(sizeof(char *) * (size_t)(n + 2));
+    argv[0] = (char *)path;
+    int ai = 1;
+    for (mml_value l = arglist; l != MML_UNIT; l = ((mml_value *)(intptr_t)l)[1])
+        argv[ai++] = (char *)MML_STR_DATA(((mml_value *)(intptr_t)l)[0]);
+    argv[ai] = NULL;
+
+    int op[2], ep[2];
+    if (pipe(op) != 0 || pipe(ep) != 0) {
+        fprintf(stderr, "Process.run: pipe failed\n");
+        exit(1);
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "Process.run: fork failed\n");
+        exit(1);
+    }
+    if (pid == 0) {
+        /* child: wire pipes to stdout/stderr, then exec */
+        dup2(op[1], STDOUT_FILENO);
+        dup2(ep[1], STDERR_FILENO);
+        close(op[0]); close(op[1]); close(ep[0]); close(ep[1]);
+        execvp(path, argv);
+        _exit(127); /* exec failed */
+    }
+    /* parent */
+    close(op[1]); close(ep[1]);
+    free(argv);
+
+    char *obuf = NULL, *ebuf = NULL;
+    size_t olen = 0, elen = 0, ocap = 0, ecap = 0;
+    struct pollfd pfds[2];
+    pfds[0].fd = op[0]; pfds[0].events = POLLIN; pfds[0].revents = 0;
+    pfds[1].fd = ep[0]; pfds[1].events = POLLIN; pfds[1].revents = 0;
+    int open_count = 2;
+    while (open_count > 0) {
+        if (poll(pfds, 2, -1) < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        for (int k = 0; k < 2; k++) {
+            if (pfds[k].fd < 0) continue;
+            if (pfds[k].revents & (POLLIN | POLLHUP | POLLERR)) {
+                char tmp[8192];
+                ssize_t r = read(pfds[k].fd, tmp, sizeof tmp);
+                if (r > 0) {
+                    char **buf = (k == 0) ? &obuf : &ebuf;
+                    size_t *len = (k == 0) ? &olen : &elen;
+                    size_t *cap = (k == 0) ? &ocap : &ecap;
+                    if (*len + (size_t)r > *cap) {
+                        *cap = (*len + (size_t)r) * 2 + 64;
+                        *buf = (char *)realloc(*buf, *cap);
+                    }
+                    memcpy(*buf + *len, tmp, (size_t)r);
+                    *len += (size_t)r;
+                } else {
+                    /* EOF or error: stop watching this fd */
+                    close(pfds[k].fd);
+                    pfds[k].fd = -1;
+                    open_count--;
+                }
+            }
+        }
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+    mml_value sout = mml_string_from_buf(obuf ? obuf : "", (int64_t)olen);
+    mml_value serr = mml_string_from_buf(ebuf ? ebuf : "", (int64_t)elen);
+    free(obuf);
+    free(ebuf);
+
+    mml_value *t = (mml_value *)mml_alloc(24, MML_MAKE_HDR(MML_HDR_TUPLE, 3));
+    t[0] = MML_TAG_INT(code);
+    t[1] = sout;
+    t[2] = serr;
+    return (mml_value)(intptr_t)t;
 }
 
 /* Runtime.eval is interpreter-only: compiled native code has no compiler.

@@ -368,6 +368,7 @@ module Main =
     load "compat";
     load "fs";
     load "path";
+    load "process";
 
     -- Runtime module (native, registered last to match OCaml ordering)
     pub_vars := [];
