@@ -434,6 +434,65 @@ let register_sys state =
     end
   |}
 
+(* ---- Fs module ---- *)
+(* Filesystem access. Implementations registered here for the OCaml VM; the
+   signatures live in stdlib/fs.mml (Stdlib_sources.fs), the single source shared
+   with the self-host compiler. C impls: native_rt/runtime.c mml_fs_* ; JS impls:
+   the emit-js prelude Fs$* . *)
+let register_fs state =
+  let state =
+    Interp.register_fns state "Fs"
+      [
+        ( "read_dir",
+          1,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            try
+              VList
+                (Array.to_list
+                   (Array.map (fun s -> VString s) (Sys.readdir path)))
+            with Sys_error msg -> raise (Vm.Runtime_error ("Fs.read_dir: " ^ msg))
+        );
+        ( "is_directory",
+          1,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            VBool ((try Sys.is_directory path with Sys_error _ -> false)) );
+        ( "make_dir",
+          1,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            (try Unix.mkdir path 0o755
+             with
+             | Unix.Unix_error (Unix.EEXIST, _, _) -> ()
+             | Unix.Unix_error (e, _, _) ->
+                 raise (Vm.Runtime_error ("Fs.make_dir: " ^ Unix.error_message e)));
+            VUnit );
+        ( "remove",
+          1,
+          fun args ->
+            let path = Interp.as_string (arg 0 args) in
+            (try
+               if (try Sys.is_directory path with Sys_error _ -> false) then
+                 Unix.rmdir path
+               else Sys.remove path
+             with
+             | Sys_error msg -> raise (Vm.Runtime_error ("Fs.remove: " ^ msg))
+             | Unix.Unix_error (e, _, _) ->
+                 raise (Vm.Runtime_error ("Fs.remove: " ^ Unix.error_message e)));
+            VUnit );
+        ( "rename",
+          2,
+          fun args ->
+            let src = Interp.as_string (arg 0 args) in
+            let dst = Interp.as_string (arg 1 args) in
+            (try Sys.rename src dst
+             with Sys_error msg -> raise (Vm.Runtime_error ("Fs.rename: " ^ msg)));
+            VUnit );
+      ]
+  in
+  Interp.eval_setup state Stdlib_sources.fs
+
 (* ---- Math module ---- *)
 
 let register_math state = Interp.eval_setup state Stdlib_sources.math
@@ -597,7 +656,8 @@ let register_compat state = Interp.eval_setup state Stdlib_sources.compat
 let register_all state =
   let state =
     state |> register_string |> register_list |> register_array
-    |> register_array_extra |> register_io |> register_sys |> register_math
+    |> register_array_extra |> register_io |> register_sys |> register_fs
+    |> register_math
     |> register_result |> register_byte |> register_rune |> register_map
     |> register_set |> register_enum |> register_seq |> register_option
     |> register_buffer |> register_fmt |> register_hashtbl |> register_ref
