@@ -243,6 +243,7 @@ mml_value mml_math_sqrt(mml_value a);
 mml_value mml_math_floor(mml_value a);
 mml_value mml_math_ceil(mml_value a);
 mml_value mml_math_round(mml_value a);
+mml_value mml_float_bits_hex(mml_value a);
 
 /* Byte builtins */
 mml_value mml_byte_of_int(mml_value v);

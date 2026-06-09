@@ -7,4 +7,9 @@ module Math =
   pub let floor (x : float) : int = __math_floor x
   pub let ceil (x : float) : int = __math_ceil x
   pub let round (x : float) : int = __math_round x
+
+  -- Uppercase hexadecimal of the float's 64-bit IEEE-754 bit pattern (no
+  -- leading zeros, no prefix), e.g. 400921FB54442D18 for pi. Used to emit
+  -- exact float constants; general-purpose for binary serialization.
+  pub let float_bits_hex (x : float) : string = __float_bits_hex x
 end

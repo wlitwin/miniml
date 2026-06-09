@@ -254,6 +254,17 @@ mml_value mml_math_round(mml_value a) {
     return MML_TAG_INT((int64_t)round(da));
 }
 
+/* Uppercase hex of a double's 64-bit IEEE-754 bit pattern (matches OCaml
+   Printf "%LX" of Int64.bits_of_float): no leading zeros, no prefix. */
+mml_value mml_float_bits_hex(mml_value a) {
+    double d = mml_unbox_float(a);
+    uint64_t bits;
+    memcpy(&bits, &d, sizeof(bits));
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%llX", (unsigned long long)bits);
+    return mml_string_from_buf(buf, n);
+}
+
 /* ---- Byte builtins ---- */
 
 mml_value mml_byte_of_int(mml_value v) {

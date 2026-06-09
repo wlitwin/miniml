@@ -89,6 +89,10 @@ let translate_qualified modname funcname =
   | "Hashtbl", "mem" -> ("Hashtbl", "has")
   (* Dynarray *)
   | "Dynarray", "add_last" -> ("Dynarray", "push")
+  (* Float_bits (untranslated OCaml shim) → MiniML builtin wrapper. Bridges the
+     native backend's exact-float-constant formatting, which uses Int64 in the
+     reference but a runtime builtin in MiniML. *)
+  | "Float_bits", "bits_hex" -> ("Math", "float_bits_hex")
   (* Char → Byte *)
   | "Char", "code" -> ("Byte", "to_int")
   | "Char", "chr" -> ("Byte", "of_int")

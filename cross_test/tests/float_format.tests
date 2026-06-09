@@ -144,3 +144,33 @@ Wrap 5.0
 List.iter print [1.5; 2.25];;
 ()
 --- expect: "1.5\n2.25"
+
+=== Math.float_bits_hex — IEEE-754 bit pattern as uppercase hex ===
+
+The 64-bit IEEE-754 representation of a double, uppercase, no leading zeros,
+no prefix (matches OCaml Printf "%LX" of Int64.bits_of_float). Used by the
+native backend to emit exact float constants; verified equal on every backend.
+
+--- test: float_bits_hex 1.0
+Math.float_bits_hex 1.0
+--- expect: 3FF0000000000000
+
+--- test: float_bits_hex 0.0
+Math.float_bits_hex 0.0
+--- expect: 0
+
+--- test: float_bits_hex negative
+Math.float_bits_hex (0.0 - 1.0)
+--- expect: BFF0000000000000
+
+--- test: float_bits_hex 2.0
+Math.float_bits_hex 2.0
+--- expect: 4000000000000000
+
+--- test: float_bits_hex 0.5
+Math.float_bits_hex 0.5
+--- expect: 3FE0000000000000
+
+--- test: float_bits_hex 3.14
+Math.float_bits_hex 3.14
+--- expect: 40091EB851EB851F

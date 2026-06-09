@@ -4398,6 +4398,7 @@ function array_copy(a) { return {_arr: a._arr.slice()}; }
 function array_sub(a, start, len) { return {_arr: a._arr.slice(start, start + len)}; }
 function __math_pow(a, b) { return Math.pow(a, b); }
 function __math_sqrt(x) { return Math.sqrt(x); }
+function __float_bits_hex(x) { const dv = new DataView(new ArrayBuffer(8)); dv.setFloat64(0, x); const hi = dv.getUint32(0) >>> 0, lo = dv.getUint32(4) >>> 0; const h = hi.toString(16).toUpperCase() + lo.toString(16).toUpperCase().padStart(8, "0"); return h.replace(/^0+(?=.)/, ""); }
 function __math_floor(x) { return Math.floor(x); }
 function __math_ceil(x) { return Math.ceil(x); }
 function __math_round(x) { return Math.round(x); }
