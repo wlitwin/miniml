@@ -190,11 +190,17 @@ let obj_cache_dir () =
    correct. This is the heart of incremental builds: the stdlib unit's .ll is
    identical across builds, so its object is compiled once and reused (likewise the
    C runtime + context asm). *)
+(* Length-prefix a string so concatenations of variable components are
+   unambiguous without a separator byte. (A NUL separator would be both
+   unrepresentable in MiniML's null-terminated strings when this driver
+   self-hosts, and ambiguous if a component itself contained a NUL.) *)
+let framed s = string_of_int (String.length s) ^ ":" ^ s
+
 let ensure_object ~key_extra ~content ~compile : string =
   let key =
     Digest.to_hex
       (Digest.string
-         (Lazy.force toolchain_key ^ "\x00" ^ key_extra ^ "\x00" ^ content))
+         (framed (Lazy.force toolchain_key) ^ framed key_extra ^ content))
   in
   let obj = Filename.concat (obj_cache_dir ()) (key ^ ".o") in
   if not (Sys.file_exists obj) then begin
@@ -239,7 +245,7 @@ let compile_to_native ?(release = false) ~source_file ~output () =
      too, keyed by their source contents (+ GC include flags for the runtime). *)
   let runtime_obj =
     ensure_object ~key_extra:opt
-      ~content:(read_file_str runtime_c ^ "\x00" ^ gc_cflags)
+      ~content:(framed (read_file_str runtime_c) ^ gc_cflags)
       ~compile:(fun o ->
         run_clang
           (Printf.sprintf "clang %s %s -c %s -o %s" opt gc_cflags
