@@ -1226,3 +1226,23 @@ let f x = match x with | 1 -> "one" | 1 -> "again" | _ -> "other"
 ;;
 f 1
 --- expect: one
+
+--- test: local named like a builtin method captured in a closure (native name shadowing)
+let f xs = let values = xs in List.map (fn i -> i + List.length values) values in
+f [10; 20; 30]
+--- expect: [13; 23; 33]
+
+--- test: multiple builtin-method-named locals captured in a closure
+let f u =
+  let keys = [1; 2] in
+  let get = 100 in
+  List.map (fn k -> k + get + List.length keys) keys in
+f ()
+--- expect: [103; 104]
+
+--- test: match-pattern-bound builtin-named var captured in a nested lambda
+type vbox = VBox of (int * int array);;
+let pp x = match x with VBox ((n, values)) ->
+  string_of_int n ^ ":" ^ String.concat ";" (List.init (Array.length values) (fn i -> string_of_int (Array.get values i)));;
+pp (VBox (5, Array.of_list [7; 8; 9]))
+--- expect: 5:7;8;9
