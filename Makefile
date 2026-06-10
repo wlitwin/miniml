@@ -146,7 +146,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt native-selfhost
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt native-selfhost native-selfhost-build
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -230,6 +230,13 @@ check-run-fmt:
 	$(CHECK_BIN)/compiler_test/format_runner.exe
 check-run-native-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
+# End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
+# its own native backend + clang to a real binary, which must run and print correctly.
+# Proves the unified self-host compiler emits working native executables (roadmap #16).
+check-run-native-selfhost-build:
+	@printf 'let rec fib n = if n < 2 do n else fib (n - 1) + fib (n - 2)\nlet () = print (string_of_int (fib 20))\n' > /tmp/mml_sh_native.mml
+	$(CHECK_BIN)/bin/main.exe --run-json js/compiler.json --emit-native /tmp/mml_sh_native.mml -o /tmp/mml_sh_native_bin
+	@out=$$(/tmp/mml_sh_native_bin); if [ "$$out" = "6765" ]; then echo "self-host native build passed (fib 20 = $$out)"; else echo "FAIL: expected 6765, got $$out"; exit 1; fi
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests
@@ -301,7 +308,8 @@ SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
                   self_host/match_tree.mml \
                   self_host/texpr_opt.mml self_host/pipeline.mml self_host/ir_serialize.mml \
                   self_host/optimize.mml self_host/compiler.mml \
-                  self_host/serialize.mml self_host/js_codegen.mml self_host/main.mml
+                  self_host/serialize.mml self_host/js_codegen.mml \
+                  self_host/ir_emit.mml self_host/codegen.mml self_host/main.mml
 
 # The frontend modules the native backend depends on, in dependency order, then
 # ir_emit and codegen. This is the minimal set codegen needs (it consumes a
