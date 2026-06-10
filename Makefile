@@ -146,7 +146,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt native-selfhost
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -228,6 +228,8 @@ check-run-cst:
 	$(CHECK_BIN)/compiler_test/cst_roundtrip_runner.exe
 check-run-fmt:
 	$(CHECK_BIN)/compiler_test/format_runner.exe
+check-run-native-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests
@@ -242,6 +244,10 @@ test-file: build  ## Run a specific .tests file on the OCaml VM and emit-js: mak
 # ── Translation (OCaml → MiniML) ──────────────────────────
 
 TRANSLATE_FILES = ast token bytecode types match_tree_types match_tree lexer typechecker ir_analysis texpr_opt pipeline ir_serialize optimize compiler parser serialize js_codegen
+# Native backend modules (lib/native/*.ml). Translated into self_host/ and kept
+# in sync, but NOT part of the playground bundle (SELF_HOST_FILES) — they are
+# verified by the `native-selfhost` gate stage instead.
+NATIVE_TRANSLATE_FILES = ir_emit codegen
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
@@ -253,7 +259,11 @@ translate-all: build  ## Translate all target files to self_host/
 		echo "Translating $$f.ml → self_host/$$f.mml"; \
 		$(TRANSLATOR) lib/$$f.ml > self_host/$$f.mml; \
 	done
-	@echo "Done. Translated $(words $(TRANSLATE_FILES)) files."
+	@for f in $(NATIVE_TRANSLATE_FILES); do \
+		echo "Translating native/$$f.ml → self_host/$$f.mml"; \
+		$(TRANSLATOR) lib/native/$$f.ml > self_host/$$f.mml; \
+	done
+	@echo "Done. Translated $(words $(TRANSLATE_FILES) $(NATIVE_TRANSLATE_FILES)) files."
 
 translate-preview: build  ## Preview translations to /tmp (without overwriting self_host/)
 	@for f in $(TRANSLATE_FILES); do \
@@ -292,6 +302,22 @@ SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
                   self_host/texpr_opt.mml self_host/pipeline.mml self_host/ir_serialize.mml \
                   self_host/optimize.mml self_host/compiler.mml \
                   self_host/serialize.mml self_host/js_codegen.mml self_host/main.mml
+
+# The frontend modules the native backend depends on, in dependency order, then
+# ir_emit and codegen. This is the minimal set codegen needs (it consumes a
+# typed program; it does not lower match trees, optimize, or emit JS), used to
+# typecheck the backend in-context — not to run it. Deliberately excludes
+# match_tree/texpr_opt/pipeline/optimize/compiler/serialize/js_codegen/ir_analysis
+# (unneeded, and one of them trips a separate ambiguous-typeclass-defaulting bug
+# when compiled without main.mml).
+NATIVE_SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
+                         self_host/types.mml self_host/match_tree_types.mml \
+                         self_host/lexer.mml self_host/parser.mml self_host/typechecker.mml \
+                         self_host/ir_emit.mml self_host/codegen.mml
+
+native-selfhost-typecheck: build translate-all  ## Typecheck the self-hosted native backend in-context
+	dune exec bin/main.exe -- --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null
+	@echo "native self-host backend: typecheck + compile passed"
 
 self-host-compile: build  ## Compile the self-hosted compiler to a JSON bundle
 	dune exec bin/main.exe -- --emit-json $(SELF_HOST_FILES)

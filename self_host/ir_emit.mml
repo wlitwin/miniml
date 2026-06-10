@@ -1,0 +1,199 @@
+module Ir_emit =
+
+  pub type t = {
+    buf: Buffer.t;
+    mut next_reg: int
+  }
+
+  pub let create () = {buf = Buffer.create 4096; next_reg = 0}
+
+  pub let fresh_reg t =
+    let n = t.next_reg in
+    t.next_reg := n + 1;
+    $"%{n}"
+
+  pub let reset_regs t = t.next_reg := 0
+
+  pub let contents t = Buffer.contents t.buf
+
+  pub let emit_raw t s =
+    Buffer.add_string t.buf s;
+    Buffer.add_byte t.buf #0a
+
+  pub let emit_blank t = Buffer.add_byte t.buf #0a
+
+  pub let emit_target_triple t triple = Buffer.add_string (t.buf) $"target triple = \"{triple}\"
+"
+
+  pub let emit_declare t ret_ty name param_tys = Buffer.add_string (t.buf) $"declare {ret_ty} @{name}({String.concat ", " param_tys})
+"
+
+  pub let emit_define_start_gen t linkage ret_ty name params =
+    let param_str = String.concat ", " (List.map (fn (ty, reg) -> $"{ty} {reg}") params) in
+    let lk =
+      if linkage = "" do
+        ""
+      else
+        linkage ^ " " in
+    Buffer.add_string (t.buf) $"define {lk}{ret_ty} @{name}({param_str}) \{
+";
+    reset_regs t
+
+  pub let emit_define_start t ret_ty name params = emit_define_start_gen t "" ret_ty name params
+
+  pub let emit_define_end t = Buffer.add_string t.buf "}\n"
+
+  pub let emit_label t name = Buffer.add_string (t.buf) $"{name}:
+"
+
+  pub let emit_ret t ty value = Buffer.add_string (t.buf) $"  ret {ty} {value}
+"
+
+  pub let emit_ret_void t = Buffer.add_string t.buf "  ret void\n"
+
+  pub let emit_call t ret_ty name args =
+    let reg = fresh_reg t in
+    let args_str = String.concat ", " (List.map (fn (ty, v) -> $"{ty} {v}") args) in
+    Buffer.add_string (t.buf) $"  {reg} = call {ret_ty} @{name}({args_str})
+";
+    reg
+
+  pub let emit_call_void t name args =
+    let args_str = String.concat ", " (List.map (fn (ty, v) -> $"{ty} {v}") args) in
+    Buffer.add_string (t.buf) $"  call void @{name}({args_str})
+"
+
+  pub let emit_binop t op ty lhs rhs =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = {op} {ty} {lhs}, {rhs}
+";
+    reg
+
+  pub let emit_alloca t ty =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = alloca {ty}
+";
+    reg
+
+  pub let emit_alloca_array t ty count =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = alloca {ty}, i32 {count}
+";
+    reg
+
+  pub let emit_store t ty value ptr = Buffer.add_string (t.buf) $"  store {ty} {value}, ptr {ptr}
+"
+
+  pub let emit_load t ty ptr =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = load {ty}, ptr {ptr}
+";
+    reg
+
+  pub let emit_br t label = Buffer.add_string (t.buf) $"  br label %{label}
+"
+
+  pub let emit_condbr t cond if_true if_false = Buffer.add_string (t.buf) $"  br i1 {cond}, label %{if_true}, label %{if_false}
+"
+
+  pub let emit_icmp t cmp ty lhs rhs =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = icmp {cmp} {ty} {lhs}, {rhs}
+";
+    reg
+
+  pub let emit_phi t ty incoming =
+    let reg = fresh_reg t in
+    let pairs = String.concat ", " (List.map (fn (v, label) -> $"[ {v}, %{label} ]") incoming) in
+    Buffer.add_string (t.buf) $"  {reg} = phi {ty} {pairs}
+";
+    reg
+
+  pub let emit_comment t msg = Buffer.add_string (t.buf) $"  ; {msg}
+"
+
+  pub let emit_global_constant t name ty value = Buffer.add_string (t.buf) $"@{name} = global {ty} {value}
+"
+
+  pub let emit_select t cond ty if_true if_false =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = select i1 {cond}, {ty} {if_true}, {ty} {if_false}
+";
+    reg
+
+  pub let emit_zext t src_ty value dst_ty =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = zext {src_ty} {value} to {dst_ty}
+";
+    reg
+
+  pub let emit_ptrtoint t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = ptrtoint ptr {value} to i64
+";
+    reg
+
+  pub let emit_unreachable t = Buffer.add_string t.buf "  unreachable\n"
+
+  pub let emit_fcmp t cmp lhs rhs =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = fcmp {cmp} double {lhs}, {rhs}
+";
+    reg
+
+  pub let emit_fneg t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = fneg double {value}
+";
+    reg
+
+  pub let emit_float_binop t op lhs rhs =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = {op} double {lhs}, {rhs}
+";
+    reg
+
+  pub let emit_sitofp t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = sitofp i64 {value} to double
+";
+    reg
+
+  pub let emit_fptosi t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = fptosi double {value} to i64
+";
+    reg
+
+  pub let emit_global_string_constant t name len value = Buffer.add_string (t.buf) $"@{name} = private unnamed_addr constant [{len} x i8] c\"{value}\"
+"
+
+  pub let emit_global_float_constant t name value = Buffer.add_string (t.buf) $"@{name} = private unnamed_addr constant double {value}
+"
+
+  pub let emit_inttoptr t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = inttoptr i64 {value} to ptr
+";
+    reg
+
+  pub let emit_gep t ty ptr index =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = getelementptr {ty}, ptr {ptr}, i32 {index}
+";
+    reg
+
+  pub let emit_gep_dynamic t ty ptr index =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = getelementptr {ty}, ptr {ptr}, i64 {index}
+";
+    reg
+
+  pub let emit_switch t value default cases =
+    Buffer.add_string (t.buf) $"  switch i64 {value}, label %{default} [
+";
+    List.iter (fn (v, label) -> Buffer.add_string (t.buf) $"    i64 {v}, label %{label}
+") cases;
+    Buffer.add_string t.buf "  ]\n"
+
+end
