@@ -1154,3 +1154,33 @@ List.map (fn e -> show e) []
 --- test: show on a never-pinned type, callback typed list result
 List.length (List.map (fn e -> show e) [])
 --- expect: 0
+
+=== Dict-passing into nested closures (bug: dict-passing-nested-closure) ===
+
+--- test: where-constrained fn used in nested closure capturing the constrained arg
+let myeq tbl (key: 'k) : int where Eq 'k = if key = key do 1 else 0
+;;
+let lookup name = let g t = myeq t name in g
+;;
+(lookup "x") "y"
+--- expect: 1
+
+--- test: nested closure captures constrained value, extra param is the table
+let lookup h name = let get1 hh = Hashtbl.get hh name in get1 h
+;;
+let h = Hashtbl.create 8 in let _ = Hashtbl.set h "k" 42 in lookup h "k"
+--- expect: Some 42
+
+--- test: Ord constraint captured into a nested closure
+let cmp_to pivot (x: 'a) : bool where Ord 'a = x < pivot
+;;
+let mk pivot = let g y = cmp_to pivot y in g
+;;
+(mk 10) 3
+--- expect: true
+
+--- test: doubly-nested closure capturing a constrained key
+let lookup h name = let outer u = let inner hh = Hashtbl.get hh name in inner h in outer 0
+;;
+let h = Hashtbl.create 8 in let _ = Hashtbl.set h "a" 7 in lookup h "a"
+--- expect: Some 7

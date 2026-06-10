@@ -1233,7 +1233,14 @@ module Typechecker =
               Some (Types.CAPhantom (outer_idx, outer_tv))
 
           end) cc.cc_args in
-        if (List.length outer_tgens) = (List.length cc.cc_args) do
+        let mentions_generalized = List.exists (fn (ca : Types.class_arg) ->
+          do
+            match ca with
+            | Types.CATGen _ -> true
+            | _ -> false
+
+          end) outer_tgens in
+        if mentions_generalized && ((List.length outer_tgens) = (List.length cc.cc_args)) do
           set_add found_multi (cc.cc_class, outer_tgens)
         end) local_sch.constraints in
       let rec walk locals te =
