@@ -312,9 +312,18 @@ let register_string state =
     end
   |}
   in
+  let state =
+    Interp.eval_setup state
+      "module String = pub let iter f s = let n = String.length s in let rec go \
+       i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end"
+  in
+  (* String.map: byte-wise transform, built on existing primitives so it
+     compiles to every backend with no per-backend implementation. Self-contained
+     (no List module — String is registered before List). *)
   Interp.eval_setup state
-    "module String = pub let iter f s = let n = String.length s in let rec go \
-     i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end"
+    "module String = pub let map f s = let n = String.length s in let rec go i \
+     = if i >= n do [] else (f (String.get s i)) :: (go (i + 1)) in \
+     String.of_bytes (go 0) end"
 
 (* ---- Byte module ---- *)
 

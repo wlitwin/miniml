@@ -961,6 +961,18 @@ match Red with
  String.length (String.of_byte (Byte.of_int 0))
 --- expect: 1
 
+--- test: String.map byte-wise transform
+String.map (fn c -> Byte.of_int (Byte.to_int c + 1)) "abc"
+--- expect: bcd
+
+--- test: String.map empty string stays empty
+String.length (String.map (fn c -> c) "")
+--- expect: 0
+
+--- test: String.map identity preserves length
+String.length (String.map (fn c -> c) "hello")
+--- expect: 5
+
 === Mutual Function Recursion Tests ===
 
 --- test: mutual recursion expression level

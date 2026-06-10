@@ -298,6 +298,8 @@ module Main =
     ctx := { ctx with type_env = { ctx.type_env with modules = ("String", string_info) :: ctx.type_env.modules } };
     -- String.iter (source-defined, adds 1 global)
     load_source "module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end";
+    -- String.map (source-defined, adds 1 global)
+    load_source "module String = pub let map f s = let n = String.length s in let rec go i = if i >= n do [] else (f (String.get s i)) :: (go (i + 1)) in String.of_bytes (go 0) end";
 
     -- List module (source)
     load "list";
