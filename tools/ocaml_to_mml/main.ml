@@ -200,6 +200,8 @@ let translate_qualified modname funcname =
   | "Buffer", "add_char" -> ("Buffer", "add_byte")
   (* String *)
   | "String", "unsafe_get" -> ("String", "get")
+  | "String", "lowercase_ascii" -> ("String", "lowercase")
+  | "String", "uppercase_ascii" -> ("String", "uppercase")
   (* List: find_opt → find (MiniML find returns option), find → list_find (raises) *)
   | "List", "find_opt" -> ("List", "find")
   | "List", "find" -> ("", "list_find")
