@@ -5155,6 +5155,21 @@ and free_vars_of_fun ?(ctx = None) params body =
            | _ -> false)
     | None -> false
   in
+  (* A value-local binding (let/param/match-pattern var) in an enclosing scope
+     SHADOWS any builtin/typeclass-method of the same spelling — e.g. a local
+     `values`/`keys`/`get`/`show` shadows the Map/Set method names that
+     is_builtin_name carries. Such a name must be captured as a free variable even
+     though is_builtin_name matches it; otherwise it is silently dropped from the
+     closure's captures and is unbound when the closure runs (the self-host compiler
+     binds `values` etc. by pattern and uses them inside nested lambdas). *)
+  let shadows_value_local name =
+    match ctx with
+    | Some c -> (
+        match lookup_var c name with
+        | Some (Local _ | MutLocal _ | MutRefCell _) -> true
+        | _ -> false)
+    | None -> false
+  in
   let rec scan_expr (e : Typechecker.texpr) =
     match e.expr with
     | TEVar name ->
@@ -5162,7 +5177,7 @@ and free_vars_of_fun ?(ctx = None) params body =
           (not (Hashtbl.mem param_set name))
           && (not (Hashtbl.mem bound name))
           && (not (is_known_global name))
-          && not (is_builtin_name name)
+          && ((not (is_builtin_name name)) || shadows_value_local name)
         then
           if not (List.mem name !free) then begin
             if is_dict_or_inst name then begin
@@ -5220,7 +5235,7 @@ and free_vars_of_fun ?(ctx = None) params body =
           (not (Hashtbl.mem param_set name))
           && (not (Hashtbl.mem bound name))
           && (not (is_known_global name))
-          && not (is_builtin_name name)
+          && ((not (is_builtin_name name)) || shadows_value_local name)
         then if not (List.mem name !free) then free := name :: !free;
         scan_expr e
     | TEFun (p, body, _) ->
@@ -5277,7 +5292,7 @@ and free_vars_of_fun ?(ctx = None) params body =
             (not (Hashtbl.mem param_set name))
             && (not (Hashtbl.mem bound name))
             && (not (is_known_global name))
-            && not (is_builtin_name name)
+            && ((not (is_builtin_name name)) || shadows_value_local name)
           then if not (List.mem name !free) then free := name :: !free
         in
         let scan_map_key mk =

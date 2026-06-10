@@ -3575,10 +3575,21 @@ else
       )
       | None -> false
      in
+    let shadows_value_local name =
+      match ctx with
+      | Some c -> 
+        do
+          match lookup_var c name with
+          | Some ((Local _ | MutLocal _) | MutRefCell _) -> true
+          | _ -> false
+
+        end
+      | None -> false
+     in
     let rec scan_expr (e : Typechecker.texpr) =
       match e.expr with
       | TEVar name -> 
-        if (not (Hashtbl.has param_set name)) && ((not (Hashtbl.has bound name)) && ((not (is_known_global name)) && (not (is_builtin_name name)))) do
+        if (not (Hashtbl.has param_set name)) && ((not (Hashtbl.has bound name)) && ((not (is_known_global name)) && ((not (is_builtin_name name)) || (shadows_value_local name)))) do
           if not (List.mem name (Ref.get free)) do
             if is_dict_or_inst name do
               do
@@ -3639,7 +3650,7 @@ else
           Hashtbl.remove bound n
         end
       | TEAssign ((name, e)) -> 
-        if (not (Hashtbl.has param_set name)) && ((not (Hashtbl.has bound name)) && ((not (is_known_global name)) && (not (is_builtin_name name)))) do
+        if (not (Hashtbl.has param_set name)) && ((not (Hashtbl.has bound name)) && ((not (is_known_global name)) && ((not (is_builtin_name name)) || (shadows_value_local name)))) do
           if not (List.mem name (Ref.get free)) do
             Ref.set free (name :: Ref.get free)
           end
@@ -3691,7 +3702,7 @@ else
       | TEMatchTree cm -> 
         scan_expr cm.scrutinee;
         let scan_var_name name =
-          if (not (Hashtbl.has param_set name)) && ((not (Hashtbl.has bound name)) && ((not (is_known_global name)) && (not (is_builtin_name name)))) do
+          if (not (Hashtbl.has param_set name)) && ((not (Hashtbl.has bound name)) && ((not (is_known_global name)) && ((not (is_builtin_name name)) || (shadows_value_local name)))) do
             if not (List.mem name (Ref.get free)) do
               Ref.set free (name :: Ref.get free)
             end
