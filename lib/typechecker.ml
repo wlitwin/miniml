@@ -1333,8 +1333,28 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
                     Some (Types.CAPhantom (outer_idx, outer_tv)))
               cc.cc_args
           in
-          if List.length outer_tgens = List.length cc.cc_args then
-            set_add found_multi (cc.cc_class, outer_tgens))
+          (* A constraint belongs to THIS binding only if it mentions at least one
+             type variable the binding generalizes (a CATGen). If every arg is a
+             CATy holding an unbound tvar (or otherwise non-generalized here), the
+             constraint is entirely about the enclosing environment — e.g. a
+             constrained operation in a nested closure applied to a CAPTURED value,
+             whose tvar is free in an outer scope. Attaching it here produced a
+             dangling constraint over a non-generalized tvar that no use site could
+             resolve a dict for (bug: dict-passing-nested-closure). The enclosing
+             binding that DOES generalize the tvar re-derives the constraint via its
+             own walk (where the tvar is in its id_map → CATGen). We keep the CATy
+             form (rather than dropping per-arg) so fundep-determined args — which
+             ride alongside a real CATGen anchor — still propagate. *)
+          let mentions_generalized =
+            List.exists
+              (fun (ca : Types.class_arg) ->
+                match ca with Types.CATGen _ -> true | _ -> false)
+              outer_tgens
+          in
+          if
+            mentions_generalized
+            && List.length outer_tgens = List.length cc.cc_args
+          then set_add found_multi (cc.cc_class, outer_tgens))
         local_sch.Types.constraints
     in
     let rec walk locals te =
