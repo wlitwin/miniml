@@ -497,3 +497,41 @@ end
 pub let f () = (* try/catch-all *) perform e ()
 --- end
 --- end
+
+=== Labeled / optional argument desugaring ===
+
+--- test: optional arg omitted gets its default
+let f ?(x = 0) y = y + x
+let g = f 5
+--- expect:
+pub let f x y = y + x
+
+pub let g = f 0 5
+--- end
+
+--- test: optional arg supplied by label
+let f ?(x = 0) y = y + x
+let g = f ~x:3 10
+--- expect:
+pub let f x y = y + x
+
+pub let g = f 3 10
+--- end
+
+--- test: labeled args reordered to declaration order
+let f ~a ~b = a - b
+let g = f ~b:1 ~a:9
+--- expect:
+pub let f a b = a - b
+
+pub let g = f 9 1
+--- end
+
+--- test: middle optional omitted, trailing positional kept
+let f ?(p = 1) ?(q = 2) z = z
+let g = f ~q:5 100
+--- expect:
+pub let f p q z = z
+
+pub let g = f 1 5 100
+--- end

@@ -15,6 +15,103 @@ type emitter = {
 let create_emitter () =
   { buf = Buffer.create 4096; indent = 0; at_line_start = true }
 
+(* ---- Labeled / optional argument desugaring ----
+
+   MiniML has only positional arguments. OCaml labeled (~x) and optional
+   (?(x = default)) parameters are emitted as plain positional parameters in
+   declaration order, so any call that omits an optional argument, or passes
+   labeled arguments out of order, would otherwise bind the wrong values. A
+   pre-pass records every top-level function's parameter signature; then each
+   call to such a function reconstructs the full positional argument list —
+   labeled args go to their declared position and omitted optionals get their
+   default expression. *)
+
+type param_spec = {
+  ps_label : arg_label; (* Nolabel | Labelled n | Optional n *)
+  ps_default : expression option; (* the `= D` of an optional parameter *)
+}
+
+let fn_sigs : (string, param_spec list) Hashtbl.t = Hashtbl.create 64
+
+let sig_needs_desugar specs = List.exists (fun s -> s.ps_label <> Nolabel) specs
+
+let rec collect_sigs_structure items = List.iter collect_sigs_item items
+
+and collect_sigs_item item =
+  match item.pstr_desc with
+  | Pstr_value (_, bindings) -> List.iter collect_sigs_binding bindings
+  | Pstr_module { pmb_expr = { pmod_desc = Pmod_structure items; _ }; _ } ->
+      collect_sigs_structure items
+  | _ -> ()
+
+and collect_sigs_binding vb =
+  match (vb.pvb_pat.ppat_desc, vb.pvb_expr.pexp_desc) with
+  | Ppat_var { txt = name; _ }, Pexp_function (params, _, _) ->
+      let specs =
+        List.filter_map
+          (fun (p : function_param) ->
+            match p.pparam_desc with
+            | Pparam_val (lbl, default, _) ->
+                Some { ps_label = lbl; ps_default = default }
+            | Pparam_newtype _ -> None)
+          params
+      in
+      (* Only record functions that actually need call-site rewriting. *)
+      if sig_needs_desugar specs then Hashtbl.replace fn_sigs name specs
+  | _ -> ()
+
+(* Reconstruct the positional argument list for a call to a function with
+   labeled/optional parameters. Returns None — fall back to as-written emission
+   — when the call can't be cleanly resolved (e.g. a partial application). *)
+exception Resolve_bail
+
+let resolve_app_args specs (args : (arg_label * expression) list) =
+  try
+    let labeled =
+      List.filter_map
+        (fun (l, ex) ->
+          match l with
+          | Labelled n | Optional n -> Some (n, ex)
+          | Nolabel -> None)
+        args
+    in
+    let positional =
+      ref
+        (List.filter_map
+           (fun (l, ex) -> match l with Nolabel -> Some ex | _ -> None)
+           args)
+    in
+    let used = Hashtbl.create 8 in
+    let resolved =
+      List.map
+        (fun spec ->
+          match spec.ps_label with
+          | Nolabel -> (
+              match !positional with
+              | x :: rest ->
+                  positional := rest;
+                  x
+              | [] -> raise Resolve_bail)
+          | Labelled n | Optional n -> (
+              match List.assoc_opt n labeled with
+              | Some ex ->
+                  Hashtbl.replace used n ();
+                  ex
+              | None -> (
+                  match spec.ps_default with
+                  | Some d -> d
+                  | None -> raise Resolve_bail)))
+        specs
+    in
+    (* Every positional arg and every labeled arg must have been consumed,
+       otherwise this is a partial/over application and we bail. *)
+    if !positional <> [] then raise Resolve_bail;
+    List.iter
+      (fun (n, _) -> if not (Hashtbl.mem used n) then raise Resolve_bail)
+      labeled;
+    Some resolved
+  with Resolve_bail -> None
+
 let emit_indent e =
   if e.at_line_start then begin
     for _ = 1 to e.indent do
@@ -1220,14 +1317,29 @@ and emit_apply e fn args =
       if needs_parens_fn then emit e "(";
       emit_expr e fn;
       if needs_parens_fn then emit e ")";
+      (* If this calls a local function with labeled/optional parameters,
+         reconstruct the positional argument list (placing labeled args and
+         injecting omitted optionals' defaults); otherwise emit args as written,
+         dropping labels. *)
+      let final_args =
+        match fn.pexp_desc with
+        | Pexp_ident { txt = Lident name; _ } -> (
+            match Hashtbl.find_opt fn_sigs name with
+            | Some specs -> (
+                match resolve_app_args specs args with
+                | Some resolved -> resolved
+                | None -> List.map snd args)
+            | None -> List.map snd args)
+        | _ -> List.map snd args
+      in
       List.iter
-        (fun (_lbl, arg) ->
+        (fun arg ->
           emit e " ";
           let needs_parens = needs_parens_subexpr arg in
           if needs_parens then emit e "(";
           emit_expr e arg;
           if needs_parens then emit e ")")
-        args
+        final_args
 
 (* Emit match cases *)
 and emit_cases e cases =
@@ -1664,6 +1776,11 @@ let translate_file filename =
   Lexing.set_filename lexbuf filename;
   let structure = Parse.implementation lexbuf in
   close_in ic;
+
+  (* Pre-pass: record labeled/optional parameter signatures so call sites can be
+     desugared to positional form. Cleared per file (each file is its own unit). *)
+  Hashtbl.reset fn_sigs;
+  collect_sigs_structure structure;
 
   let e = create_emitter () in
 
