@@ -301,7 +301,8 @@ SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
                   self_host/match_tree.mml \
                   self_host/texpr_opt.mml self_host/pipeline.mml self_host/ir_serialize.mml \
                   self_host/optimize.mml self_host/compiler.mml \
-                  self_host/serialize.mml self_host/js_codegen.mml self_host/main.mml
+                  self_host/serialize.mml self_host/js_codegen.mml \
+                  self_host/ir_emit.mml self_host/codegen.mml self_host/main.mml
 
 # The frontend modules the native backend depends on, in dependency order, then
 # ir_emit and codegen. This is the minimal set codegen needs (it consumes a

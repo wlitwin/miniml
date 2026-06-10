@@ -537,6 +537,78 @@ module Main =
     | unify_error msg _k -> failwith msg
     | codegen_error msg _k -> failwith ("IR serialize error: " ^ msg)
 
+  -- ---- Emit native LLVM IR (roadmap #16 Gap-1: self-host native backend) ----
+
+  -- Host glue: derive the LLVM target triple from `uname` (mirrors the OCaml
+  -- driver's detect_target_triple). Lives here in main.mml as a bootstrap-special
+  -- — the system-interaction layer — so Codegen stays a pure IR generator that
+  -- takes the triple as an input.
+  let detect_target_triple () =
+    let run_trim cmd cmd_args =
+      let (_, out, _) = Process.run cmd cmd_args in
+      String.trim out
+    in
+    let arch = match run_trim "uname" ["-m"] with "" -> "x86_64" | s -> s in
+    let os = match run_trim "uname" ["-s"] with "" -> "Linux" | s -> s in
+    if os = "Darwin" do
+      let ver = match run_trim "sw_vers" ["-productVersion"] with "" -> "11.0" | s -> s in
+      let major = match String.split "." ver with v :: _ -> v | [] -> "11" in
+      (if arch = "arm64" do "arm64" else "x86_64") ^ "-apple-macosx" ^ major ^ ".0.0"
+    else if arch = "aarch64" do "aarch64-unknown-linux-gnu"
+    else "x86_64-unknown-linux-gnu"
+
+  -- Compile a source file all the way to a single combined LLVM IR unit (stdlib +
+  -- user program in one .ll) and print it. Mirrors the OCaml driver's compile_ir /
+  -- `make emit-ir`. The clang orchestration that turns this into a binary is a
+  -- separate path (Increment B).
+  let run_emit_llvm args =
+    handle
+      -- Capture mode so the stdlib setups become stdlib_programs, matching the
+      -- regime Codegen expects (and the OCaml driver's lower_all).
+      js_capture_mode := true;
+      captured_typed_setups := [];
+
+      let (ctx, global_names, mutable_globals) =
+        if __cache_has "emit_js" do
+          let (c, gn, mg, cts) = __cache_get "emit_js" in
+          captured_typed_setups := cts;
+          (c, gn, mg)
+        else
+          let (ctx, global_names, mutable_globals) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+          let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+          __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+          (ctx, global_names, mutable_globals)
+      in
+
+      let filename = match args with
+        | _ :: file :: _ -> file
+        | _ -> failwith "Usage: compiler --emit-llvm <source-file>"
+      in
+      let source = IO.read_file filename in
+
+      let tokens = Lexer.tokenize source in
+      let program = Parser.parse_program tokens in
+      let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+      let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+      -- User program lowered with the (unlowered) stdlib programs for extern-purity
+      -- info; each stdlib program then lowered on its own. Same split as the driver.
+      let stdlib_raw = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
+      let typed_program2 = Pipeline.lower true stdlib_raw ctx2.type_env typed_program2 in
+      let stdlib_programs = List.map (fn p -> let (te, prog) = p in (te, Pipeline.lower true [] te prog)) captured_typed_setups in
+
+      let triple = detect_target_triple () in
+      let ll = Codegen.compile_program_with_stdlib triple ctx2.type_env stdlib_programs typed_program2 in
+      print ll
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("native codegen error: " ^ msg)
+
   -- ---- Batch emit-IR (one invocation, IR per file, for the IR-parity gate) ----
 
   let run_batch_emit_ir manifest_file =
@@ -593,9 +665,10 @@ module Main =
     in
     let emit_js = List.exists (fn a -> a = "--emit-js") args in
     let emit_ir = List.exists (fn a -> a = "--emit-ir") args in
+    let emit_llvm = List.exists (fn a -> a = "--emit-llvm") args in
     let no_optimize = List.exists (fn a -> a = "--no-optimize") args in
     if no_optimize do Ref.set Compiler.optimize_enabled false end;
-    let args = List.filter (fn a -> a <> "--no-optimize" && a <> "--emit-js" && a <> "--emit-ir") args in
+    let args = List.filter (fn a -> a <> "--no-optimize" && a <> "--emit-js" && a <> "--emit-ir" && a <> "--emit-llvm") args in
     match batch_ir_file with
     | Some f -> run_batch_emit_ir f
     | None ->
@@ -604,6 +677,8 @@ module Main =
     | None ->
       if emit_ir do
         run_emit_ir args
+      else if emit_llvm do
+        run_emit_llvm args
       else if emit_js do
         run_emit_js args
       else
