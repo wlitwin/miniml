@@ -146,7 +146,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt native-selfhost native-selfhost-build
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -237,6 +237,14 @@ check-run-native-selfhost-build:
 	@printf 'let rec fib n = if n < 2 do n else fib (n - 1) + fib (n - 2)\nlet () = print (string_of_int (fib 20))\n' > /tmp/mml_sh_native.mml
 	$(CHECK_BIN)/bin/main.exe --run-json js/compiler.json --emit-native /tmp/mml_sh_native.mml -o /tmp/mml_sh_native_bin
 	@out=$$(/tmp/mml_sh_native_bin); if [ "$$out" = "6765" ]; then echo "self-host native build passed (fib 20 = $$out)"; else echo "FAIL: expected 6765, got $$out"; exit 1; fi
+# The native backend must compile the ENTIRE self-host compiler (all SELF_HOST_FILES
+# concatenated in dependency order) to LLVM IR. Protects the codegen completeness work
+# that lets the self-host compiler be native-compiled into a standalone binary
+# (roadmap #16; mutual-recursive closure captures, builtin-name shadowing, cache
+# externs, …). Checks codegen-completeness (emit-ir), not yet runtime correctness.
+check-run-native-selfhost-emit-ir:
+	@cat $(SELF_HOST_FILES) > /tmp/mml_selfhost_concat.mml
+	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_selfhost_concat.mml > /dev/null && echo "native backend compiles the full self-host compiler to IR"
 
 # Run a specific cross-test file:
 #   make test-file FILE=cross_test/tests/fundep_callsite.tests

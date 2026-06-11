@@ -1336,7 +1336,6 @@ and emit_letrec ctx name fn_expr body =
 (* ---- Mutual recursive let bindings ---- *)
 
 and emit_letrec_and ctx bindings body =
-  push_scope ctx;
   let all_names = List.map fst bindings in
   (* Classify each binding as function or value *)
   let binding_info =
@@ -1346,6 +1345,125 @@ and emit_letrec_and ctx bindings body =
         if params <> [] then `Func (name, fn_expr) else `Value (name, fn_expr))
       bindings
   in
+  let all_funcs =
+    List.for_all (function `Func _ -> true | _ -> false) binding_info
+  in
+  (* Does any function capture an OUTER variable (free, not a group name)? Sibling
+     references alone don't need closures — they resolve to top-level Func symbols. *)
+  let captures_outer =
+    all_funcs
+    && List.exists
+         (fun (_, fn_expr) ->
+           let params, inner = flatten_fun fn_expr in
+           let raw = free_vars_of_fun ~ctx:(Some ctx) params inner in
+           List.exists (fun v -> not (List.mem v all_names)) raw)
+         bindings
+  in
+  if captures_outer then emit_letrec_and_closures ctx bindings body
+  else emit_letrec_and_named ctx bindings binding_info body
+
+(* All-function mutually-recursive group where some function captures an OUTER
+   variable: emit each as a heap closure. Every closure's env is laid out uniformly as
+   [outer free vars..., group closures...]; the group-closure slots are written with
+   placeholders at allocation and BACKPATCHED with the real sibling pointers once all
+   closures exist (breaking the mutual-reference cycle). Each function reads its
+   siblings (and itself) and the captured outer vars from its env. *)
+and emit_letrec_and_closures ctx bindings body =
+  push_scope ctx;
+  let fns =
+    List.map
+      (fun (name, fn_expr) ->
+        let params, inner = flatten_fun fn_expr in
+        (name, params, inner))
+      bindings
+  in
+  let group_names = List.map (fun (n, _, _) -> n) fns in
+  (* Combined outer free vars (union across functions, excluding group names). *)
+  let outer_free =
+    let seen = Hashtbl.create 8 in
+    let acc = ref [] in
+    List.iter
+      (fun (_, params, inner) ->
+        let raw = free_vars_of_fun ~ctx:(Some ctx) params inner in
+        List.iter
+          (fun v ->
+            if (not (List.mem v group_names)) && not (Hashtbl.mem seen v) then begin
+              Hashtbl.replace seen v ();
+              acc := v :: !acc
+            end)
+          raw)
+      fns;
+    List.rev !acc
+  in
+  (* Resolve each outer free var to a capture value + mode (mirrors emit_letrec). *)
+  let outer_infos =
+    List.map
+      (fun v ->
+        match lookup_var ctx v with
+        | Some (MutLocal ptr) ->
+            (Ir_emit.emit_ptrtoint ctx.ir ~value:ptr, `Mutable)
+        | Some (MutRefCell alloca_ptr) ->
+            (Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:alloca_ptr, `RefCell)
+        | _ -> (emit_var ctx v Types.TUnit, `Immutable))
+      outer_free
+  in
+  let outer_vals = List.map fst outer_infos in
+  let outer_modes = List.map snd outer_infos in
+  let n_outer = List.length outer_free in
+  (* Uniform env layout for every closure: outer free vars, then all group names. *)
+  let capture_names = outer_free @ group_names in
+  let capture_modes = outer_modes @ List.map (fun _ -> `Immutable) group_names in
+  let llvm_names =
+    List.map
+      (fun name ->
+        let id = ctx.fn_counter in
+        ctx.fn_counter <- ctx.fn_counter + 1;
+        Printf.sprintf "mml_f_%s%s_%d" ctx.unit_prefix (sanitize_name name) id)
+      group_names
+  in
+  (* Emit each closure function (loads outer vars + sibling closures from env). *)
+  List.iter2
+    (fun (_, params, inner) llvm_name ->
+      emit_named_function_with_captures ctx llvm_name params inner
+        "__letrec_group_self" capture_names capture_modes)
+    fns llvm_names;
+  (* Allocate each closure with placeholder (0) sibling slots. *)
+  let closure_vals =
+    List.map2
+      (fun (_, params, _) llvm_name ->
+        let placeholders = List.map (fun _ -> "0") group_names in
+        emit_make_closure ctx ~fn_name:llvm_name
+          ~arity:(List.length params)
+          ~captures:(outer_vals @ placeholders))
+      fns llvm_names
+  in
+  (* Bind each group name to its closure before backpatching / compiling the body. *)
+  List.iter2
+    (fun name cval ->
+      let alloca = Ir_emit.emit_alloca ctx.ir ~ty:"i64" in
+      Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:cval ~ptr:alloca;
+      bind_var ctx name (Local alloca))
+    group_names closure_vals;
+  (* Backpatch: write every sibling closure into each closure's group slots. The
+     j-th group name lives at slot (3 + n_outer + j) in every closure (uniform). *)
+  List.iter
+    (fun ci ->
+      let ci_ptr = Ir_emit.emit_inttoptr ctx.ir ~value:ci in
+      List.iteri
+        (fun j cj ->
+          let slot =
+            Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr:ci_ptr ~index:(3 + n_outer + j)
+          in
+          Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:cj ~ptr:slot)
+        closure_vals)
+    closure_vals;
+  let result = emit_expr ctx body in
+  pop_scope ctx;
+  result
+
+and emit_letrec_and_named ctx bindings binding_info body =
+  push_scope ctx;
+  let all_names = List.map fst bindings in
   (* Phase 1: Register all names. Functions get Func bindings, values get placeholders. *)
   let value_infos = ref [] in
   List.iter
@@ -6918,17 +7036,26 @@ let rec arrow_arity ty =
   | Types.TArrow (_, _, ret) -> 1 + arrow_arity ret
   | _ -> 0
 
-(* Collect the module-qualified externs (name contains '.') declared anywhere in
-   [programs], mapping each to its arity. These are the generic runtime-FFI
-   syscalls; a call to one lowers to `mml_<module>_<name>(args...)`. Recurses into
-   modules (a `module Sys = ... extern time ...` yields TDExtern "Sys.time"). *)
+(* Collect the externs declared anywhere in [programs] that lower through the generic
+   runtime FFI, mapping each to its arity. A call to one lowers to
+   `mml_<lowercased-name>(args...)` (c_name_of_module_extern). These are:
+   - module-qualified externs (name contains '.') — the syscall surface (Sys/IO/Fs/…);
+   - the bare compiler-cache externs `__cache_has/get/set` — playground-only setup
+     memoization, provided as native no-ops (has→false, set→unit) so a native
+     one-shot compiler simply recomputes setup. Registering them here also stops
+     free_vars_of_fun from treating them as captured variables.
+   Recurses into modules (a `module Sys = ... extern time ...` yields "Sys.time"). *)
+let is_ffi_bare_extern name =
+  List.mem name [ "__cache_has"; "__cache_get"; "__cache_set" ]
+
 let collect_module_externs (programs : Typechecker.tprogram list) =
   let tbl = Hashtbl.create 32 in
   let rec scan decls =
     List.iter
       (fun d ->
         match d with
-        | Typechecker.TDExtern (name, scheme) when String.contains name '.' ->
+        | Typechecker.TDExtern (name, scheme)
+          when String.contains name '.' || is_ffi_bare_extern name ->
             Hashtbl.replace tbl name (arrow_arity scheme.Types.body)
         | Typechecker.TDModule (_, inner, _) -> scan inner
         | _ -> ())

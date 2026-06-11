@@ -967,13 +967,68 @@ module Codegen =
       end
     end
   and emit_letrec_and ctx bindings body =
-    push_scope ctx;
     let all_names = List.map fst bindings in
     let binding_info = List.map (fn (name, fn_expr) -> let (params, _) = flatten_fun fn_expr in
     if params <> [] do
       `Func (name, fn_expr)
     else
       `Value (name, fn_expr)) bindings in
+    let all_funcs = List.forall (fn
+      | `Func _ -> true
+      | _ -> false
+    ) binding_info in
+    let captures_outer = all_funcs && (List.exists (fn (_, fn_expr) -> let (params, inner) = flatten_fun fn_expr in
+    let raw = free_vars_of_fun (Some ctx) params inner in
+    List.exists (fn v -> not (List.mem v all_names)) raw) bindings) in
+    if captures_outer do
+      emit_letrec_and_closures ctx bindings body
+    else
+      emit_letrec_and_named ctx bindings binding_info body
+  and emit_letrec_and_closures ctx bindings body =
+    push_scope ctx;
+    let fns = List.map (fn (name, fn_expr) -> let (params, inner) = flatten_fun fn_expr in
+    (name, params, inner)) bindings in
+    let group_names = List.map (fn (n, _, _) -> n) fns in
+    let outer_free =
+      let seen = Hashtbl.create 8 in
+      let acc = Ref.create [] in
+      List.iter (fn (_, params, inner) -> let raw = free_vars_of_fun (Some ctx) params inner in
+      List.iter (fn v -> if (not (List.mem v group_names)) && (not (Hashtbl.has seen v)) do
+        Hashtbl.set seen v ();
+        Ref.set acc (v :: Ref.get acc)
+      end) raw) fns;
+      List.rev (Ref.get acc) in
+    let outer_infos = List.map (fn v ->
+      do
+        match lookup_var ctx v with
+        | Some (MutLocal ptr) -> (Ir_emit.emit_ptrtoint ctx.ir ptr, `Mutable)
+        | Some (MutRefCell alloca_ptr) -> (Ir_emit.emit_load ctx.ir "i64" alloca_ptr, `RefCell)
+        | _ -> (emit_var ctx v Types.TUnit, `Immutable)
+
+      end) outer_free in
+    let outer_vals = List.map fst outer_infos in
+    let outer_modes = List.map snd outer_infos in
+    let n_outer = List.length outer_free in
+    let capture_names = List.concat outer_free group_names in
+    let capture_modes = List.concat outer_modes (List.map (fn _ -> `Immutable) group_names) in
+    let llvm_names = List.map (fn name -> let id = ctx.fn_counter in
+    ctx.fn_counter := ctx.fn_counter + 1;
+    $"mml_f_{ctx.unit_prefix}{sanitize_name name}_{id}") group_names in
+    List.iter2 (fn (_, params, inner) llvm_name -> emit_named_function_with_captures ctx llvm_name params inner "__letrec_group_self" capture_names capture_modes) fns llvm_names;
+    let closure_vals = List.map2 (fn (_, params, _) llvm_name -> let placeholders = List.map (fn _ -> "0") group_names in
+    emit_make_closure ctx llvm_name (List.length params) (List.concat outer_vals placeholders)) fns llvm_names in
+    List.iter2 (fn name cval -> let alloca = Ir_emit.emit_alloca ctx.ir "i64" in
+    Ir_emit.emit_store ctx.ir "i64" cval alloca;
+    bind_var ctx name (Local alloca)) group_names closure_vals;
+    List.iter (fn ci -> let ci_ptr = Ir_emit.emit_inttoptr ctx.ir ci in
+    List.iteri (fn j cj -> let slot = Ir_emit.emit_gep ctx.ir "i64" ci_ptr ((3 + n_outer) + j) in
+    Ir_emit.emit_store ctx.ir "i64" cj slot) closure_vals) closure_vals;
+    let result = emit_expr ctx body in
+    pop_scope ctx;
+    result
+  and emit_letrec_and_named ctx bindings binding_info body =
+    push_scope ctx;
+    let all_names = List.map fst bindings in
     let value_infos = Ref.create [] in
     List.iter (fn info ->
       do
@@ -4859,12 +4914,14 @@ else
     | _ -> 0
 
 
+  pub let is_ffi_bare_extern name = List.mem name ("__cache_has" :: "__cache_get" :: "__cache_set" :: [])
+
   pub let collect_module_externs (programs : Typechecker.tprogram list) =
     let tbl = Hashtbl.create 32 in
     let rec scan decls = List.iter (fn d ->
       do
         match d with
-        | Typechecker.TDExtern ((name, scheme)) when String.contains "." name -> Hashtbl.set tbl name (arrow_arity scheme.body)
+        | Typechecker.TDExtern ((name, scheme)) when (String.contains "." name) || (is_ffi_bare_extern name) -> Hashtbl.set tbl name (arrow_arity scheme.body)
         | Typechecker.TDModule ((_, inner, _)) -> scan inner
         | _ -> ()
 

@@ -2968,6 +2968,25 @@ mml_value mml_io_flush(mml_value unit_arg) {
     return MML_UNIT;
 }
 
+/* Compiler setup cache (__cache_has/get/set) — a browser-playground optimization to
+   skip re-running setup_modules/setup_classes between compilations. A native one-shot
+   compiler has nothing to reuse, so the cache is a no-op: `has` always misses (so
+   setup is recomputed each run), `set` discards, and `get` is unreachable. */
+mml_value mml___cache_has(mml_value key) {
+    (void)key;
+    return MML_FALSE;
+}
+mml_value mml___cache_get(mml_value key) {
+    (void)key;
+    fprintf(stderr, "mml___cache_get: native compiler has no setup cache\n");
+    abort();
+}
+mml_value mml___cache_set(mml_value key, mml_value val) {
+    (void)key;
+    (void)val;
+    return MML_UNIT;
+}
+
 /* Read up to n bytes from stdin, blocking until n are read or EOF; returns the
  * bytes read (possibly fewer than n at end of input). */
 mml_value mml_io_read_bytes(mml_value n_val) {

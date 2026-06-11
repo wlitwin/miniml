@@ -1246,3 +1246,22 @@ let pp x = match x with VBox ((n, values)) ->
   string_of_int n ^ ":" ^ String.concat ";" (List.init (Array.length values) (fn i -> string_of_int (Array.get values i)));;
 pp (VBox (5, Array.of_list [7; 8; 9]))
 --- expect: 5:7;8;9
+
+--- test: mutually-recursive local functions capturing an outer mutable (native closures)
+let classify n =
+  let counter = Ref.create 0 in
+  let rec is_even x = if x = 0 do true else (Ref.set counter (Ref.get counter + 1); is_odd (x - 1))
+  and is_odd x = if x = 0 do false else (Ref.set counter (Ref.get counter + 1); is_even (x - 1))
+  in
+  let r = is_even n in
+  (show r, Ref.get counter) in
+classify 10
+--- expect: (true, 10)
+
+--- test: mutually-recursive local closures capturing an outer immutable value
+let f base =
+  let rec ping n = if n = 0 do base else pong (n - 1)
+  and pong n = if n = 0 do base + 1 else ping (n - 1)
+  in ping 5 in
+f 100
+--- expect: 101
