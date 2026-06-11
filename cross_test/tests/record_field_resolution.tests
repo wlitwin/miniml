@@ -66,3 +66,32 @@ let f s = if not s.active do 0 else s.count
 ;;
 f { active = true; count = 42 }
 --- expect: 42
+
+# A row-polymorphic function that ASSIGNS a mutable field (`s.count := ...`) must
+# store at the caller-supplied evidence index, exactly like a field read. The
+# native backend resolved the write via the static sorted index of the visible
+# row — which holds only `count`, giving index 0 — so any field past index 0 in
+# the concrete record was never updated (the read used evidence and was correct,
+# so the mismatch was silent). `count` sorts to index 1 here. Regression for the
+# native self-host bootstrap: Compiler.allocate_local mutates s.num_locals /
+# s.locals / s.max_locals (indices >0) on a row-poly state, which underflowed
+# free_local ("no locals to free").
+--- test: row-polymorphic mutable field assignment at non-zero index
+type ra = { alpha: int; mut count: int; gamma: int }
+;;
+type rb = { alpha: int; mut count: int; delta: bool }
+;;
+let bump s = s.count := s.count + 1; s.count
+;;
+let force () = let b = { alpha = 0; count = 0; delta = true } in bump b
+;;
+let go () =
+  let a = { alpha = 1; count = 0; gamma = 2 } in
+  let _ = bump a in
+  let _ = bump a in
+  a.count
+;;
+let () =
+  let _ = force () in
+  print (string_of_int (go ()))
+--- expect: 2

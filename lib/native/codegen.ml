@@ -2212,48 +2212,49 @@ and dict_method_index ctx field_name =
            "native codegen: field %s not found in any class or record type"
            field_name)
 
-and emit_field ctx (record_expr : Typechecker.texpr) field_name _expr_ty =
-  let v = emit_expr ctx record_expr in
-  let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
-  (* Check if the record type has an open row (polymorphic) and we have evidence *)
-  let has_open_row row =
-    let rec check r =
-      match Types.rrow_repr r with
-      | Types.RRow (_, _, tail) -> check tail
-      | Types.RVar { contents = Types.RUnbound _ } -> true
-      | _ -> false
-    in
-    check row
+(* The evidence parameter __ev_<field>_r<N> for a field access, when the record
+   type is row-polymorphic (an open row). The field's physical offset is then only
+   known dynamically: the caller, which knows the concrete record, passes the
+   field's sorted index as evidence. The visible row holds only the fields this
+   function mentions, so its static sorted index would be wrong. Returns None for
+   a closed record (static index applies). *)
+and field_evidence_param ctx record_ty field_name =
+  let rec has_open_row r =
+    match Types.rrow_repr r with
+    | Types.RRow (_, _, tail) -> has_open_row tail
+    | Types.RVar { contents = Types.RUnbound _ } -> true
+    | _ -> false
   in
-  let ev_param =
-    match Types.repr record_expr.ty with
-    | Types.TRecord row when has_open_row row ->
-        (* Look for evidence parameter __ev_{field}_r{N} in scope *)
-        let rec try_rgen i =
-          if i > 10 then None
-          else
-            let name = Printf.sprintf "__ev_%s_r%d" field_name i in
-            match lookup_var ctx name with
-            | Some _ -> Some name
-            | None -> try_rgen (i + 1)
-        in
-        try_rgen 0
-    | _ -> None
-  in
-  match ev_param with
+  match Types.repr record_ty with
+  | Types.TRecord row when has_open_row row ->
+      let rec try_rgen i =
+        if i > 10 then None
+        else
+          let name = Printf.sprintf "__ev_%s_r%d" field_name i in
+          match lookup_var ctx name with
+          | Some _ -> Some name
+          | None -> try_rgen (i + 1)
+      in
+      try_rgen 0
+  | _ -> None
+
+(* Element pointer for [field_name] of the record at [ptr] (typed [record_ty]).
+   Uses the dynamic evidence index for an open (row-polymorphic) record, else the
+   static sorted field index (or a typeclass-dict method index when [record_ty] is
+   not a record). Shared by field reads AND field assignment so the offset is
+   resolved exactly one way — a write that diverged from the read silently
+   corrupted any field past index 0 on a polymorphic record. *)
+and field_elem_ptr ctx ptr record_ty field_name =
+  match field_evidence_param ctx record_ty field_name with
   | Some ev_name ->
-      (* Use dynamic field index from evidence parameter *)
       let tagged_idx = emit_var ctx ev_name Types.TInt in
       let idx =
         Ir_emit.emit_binop ctx.ir ~op:"ashr" ~ty:"i64" ~lhs:tagged_idx ~rhs:"1"
       in
-      let elem_ptr =
-        Ir_emit.emit_gep_dynamic ctx.ir ~ty:"i64" ~ptr ~index:idx
-      in
-      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:elem_ptr
+      Ir_emit.emit_gep_dynamic ctx.ir ~ty:"i64" ~ptr ~index:idx
   | None ->
       let idx =
-        match Types.repr record_expr.ty with
+        match Types.repr record_ty with
         | Types.TRecord row ->
             let fields = Types.record_row_to_fields row in
             let sorted =
@@ -2275,8 +2276,13 @@ and emit_field ctx (record_expr : Typechecker.texpr) field_name _expr_ty =
            method's position in the alphabetically-sorted method list. *)
             dict_method_index ctx field_name
       in
-      let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:idx in
-      Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:elem_ptr
+      Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:idx
+
+and emit_field ctx (record_expr : Typechecker.texpr) field_name _expr_ty =
+  let v = emit_expr ctx record_expr in
+  let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:v in
+  let elem_ptr = field_elem_ptr ctx ptr record_expr.ty field_name in
+  Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:elem_ptr
 
 and emit_record_update ctx base overrides =
   let base_val = emit_expr ctx base in
@@ -2345,8 +2351,10 @@ and emit_field_assign ctx record_expr field_name value_expr =
   let rec_val = emit_expr ctx record_expr in
   let v = emit_expr ctx value_expr in
   let ptr = Ir_emit.emit_inttoptr ctx.ir ~value:rec_val in
-  let idx = field_index_from_type record_expr.ty field_name in
-  let elem_ptr = Ir_emit.emit_gep ctx.ir ~ty:"i64" ~ptr ~index:idx in
+  (* Resolve the offset the SAME way as a field read: a row-polymorphic record
+     stores the field at the caller-supplied evidence index, not the static
+     sorted index (which is 0 for the lone visible field). *)
+  let elem_ptr = field_elem_ptr ctx ptr record_expr.ty field_name in
   Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:v ~ptr:elem_ptr;
   unit_value
 
