@@ -42,37 +42,67 @@ type row = {
 
 (* ---- Helpers ---- *)
 
-let tag_for_constructor type_env name =
-  match List.assoc_opt name type_env.Types.constructors with
-  | None -> failwith (Printf.sprintf "match_tree: unknown constructor: %s" name)
-  | Some info ->
-      let _, _, variant_def, _ =
-        List.find
-          (fun (n, _, _, _) -> String.equal n info.ctor_type_name)
-          type_env.Types.variants
-      in
-      let short_name =
-        match String.rindex_opt name '.' with
-        | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-        | None -> name
-      in
-      let rec find_tag i = function
-        | [] ->
-            failwith
-              (Printf.sprintf "match_tree: constructor %s not found in type"
-                 name)
-        | (cname, _) :: _ when cname = short_name -> i
-        | _ :: rest -> find_tag (i + 1) rest
-      in
-      find_tag 0 variant_def
+let short_unqual name =
+  match String.rindex_opt name '.' with
+  | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+  | None -> name
 
-let is_newtype_ctor type_env name =
-  match List.assoc_opt name type_env.Types.constructors with
+(* Resolve a (possibly bare) constructor name against the type [occ_ty] of the
+   value being matched. Two modules may define same-named constructors (e.g.
+   Token.MOD and Bytecode.MOD); a bare name is ambiguous and List.assoc_opt would
+   take whichever was registered first, silently mis-resolving the constructor
+   and its runtime tag. The occurrence's type is the authority. Falls back to the
+   plain name lookup when [occ_ty] is not a (matching) variant. *)
+let resolve_ctor_info type_env occ_ty name =
+  let by_type =
+    match Types.repr occ_ty with
+    | Types.TVariant (tname, _) ->
+        let short = short_unqual name in
+        List.find_map
+          (fun (n, info) ->
+            if
+              short_unqual n = short
+              && (String.equal info.Types.ctor_type_name tname
+                 || String.equal
+                      (short_unqual info.Types.ctor_type_name)
+                      (short_unqual tname))
+            then Some info
+            else None)
+          type_env.Types.constructors
+    | _ -> None
+  in
+  match by_type with
+  | Some _ as r -> r
+  | None -> List.assoc_opt name type_env.Types.constructors
+
+let tag_of_info type_env info name =
+  let _, _, variant_def, _ =
+    List.find
+      (fun (n, _, _, _) -> String.equal n info.Types.ctor_type_name)
+      type_env.Types.variants
+  in
+  let short_name = short_unqual name in
+  let rec find_tag i = function
+    | [] ->
+        failwith
+          (Printf.sprintf "match_tree: constructor %s not found in type" name)
+    | (cname, _) :: _ when cname = short_name -> i
+    | _ :: rest -> find_tag (i + 1) rest
+  in
+  find_tag 0 variant_def
+
+let tag_for_constructor_ty type_env occ_ty name =
+  match resolve_ctor_info type_env occ_ty name with
+  | None -> failwith (Printf.sprintf "match_tree: unknown constructor: %s" name)
+  | Some info -> tag_of_info type_env info name
+
+let is_newtype_ctor_ty type_env occ_ty name =
+  match resolve_ctor_info type_env occ_ty name with
   | Some info -> List.mem info.Types.ctor_type_name type_env.Types.newtypes
   | None -> false
 
-let all_constructors_for type_env name =
-  match List.assoc_opt name type_env.Types.constructors with
+let all_constructors_for_ty type_env occ_ty name =
+  match resolve_ctor_info type_env occ_ty name with
   | None -> None
   | Some info -> (
       let type_name = info.Types.ctor_type_name in
@@ -187,21 +217,22 @@ let rec normalize_pattern type_env occ occ_ty (pat : Ast.pattern) :
       let cells = List.map fst cells_binds in
       let binds = List.concat_map snd cells_binds in
       (PCArray cells, binds)
-  | Ast.PatConstruct (name, arg) when is_newtype_ctor type_env name -> (
+  | Ast.PatConstruct (name, arg) when is_newtype_ctor_ty type_env occ_ty name
+    -> (
       match arg with
       | None -> (PCWild, [])
       | Some p ->
           let underlying_ty =
-            match List.assoc_opt name type_env.Types.constructors with
+            match resolve_ctor_info type_env occ_ty name with
             | Some info -> (
                 match info.Types.ctor_arg_ty with Some t -> t | None -> occ_ty)
             | None -> occ_ty
           in
           normalize_pattern type_env occ underlying_ty p)
   | Ast.PatConstruct (name, arg) ->
-      let tag = tag_for_constructor type_env name in
+      let tag = tag_for_constructor_ty type_env occ_ty name in
       let payload_ty =
-        match List.assoc_opt name type_env.Types.constructors with
+        match resolve_ctor_info type_env occ_ty name with
         | Some info -> (
             match info.Types.ctor_arg_ty with
             | Some t -> t
@@ -512,7 +543,7 @@ let expand_col_info type_env col_infos col head =
         if arity = 0 then []
         else
           let payload_ty =
-            match List.assoc_opt name type_env.Types.constructors with
+            match resolve_ctor_info type_env parent.col_ty name with
             | Some info -> (
                 match info.Types.ctor_arg_ty with
                 | Some t -> t
@@ -627,7 +658,7 @@ let is_complete_signature type_env heads occ_ty =
       List.exists (fun h -> h = HCNil) heads
       && List.exists (fun h -> h = HCCons) heads
   | HCConstructor (name, _, _) :: _ -> (
-      match all_constructors_for type_env name with
+      match all_constructors_for_ty type_env occ_ty name with
       | None -> false
       | Some variant_def ->
           List.for_all

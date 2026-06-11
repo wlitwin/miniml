@@ -1287,3 +1287,45 @@ end
 ;;
 M.count_list ()
 --- expect: 4
+
+=== Cross-module constructor name collision ===
+
+# Two modules define a same-named constructor (MOD). A match inside the type's
+# own module uses the bare name (resolved at check time, when the colliding
+# module need not exist yet), but the match-tree lowering runs later over the
+# whole program where the name is ambiguous. Resolving the constructor by name
+# alone picks whichever module registered first — assigning the wrong runtime
+# tag (here colliding with ELSE's tag). The match occurrence's TYPE is the
+# authority; the tag must follow it. Regression for the self-host bootstrap's
+# Token.MOD vs Bytecode.opcode.MOD collision (mis-lexed `mod` as `else`).
+
+--- test: same-name constructor across modules resolves by scrutinee type
+module Tok =
+  pub type t = TZERO | ELSE | MOD
+  pub let describe = fn
+    | TZERO -> "zero"
+    | ELSE -> "else"
+    | MOD -> "mod"
+end
+;;
+module Other =
+  pub type op = OA | MOD | OB
+end
+;;
+String.concat "," [Tok.describe Tok.TZERO; Tok.describe Tok.ELSE; Tok.describe Tok.MOD]
+--- expect: zero,else,mod
+
+--- test: same-name constructor collision with payloads
+module A =
+  pub type t = AX | DUP of int
+  pub let get = fn
+    | AX -> 0
+    | DUP n -> n
+end
+;;
+module B =
+  pub type u = BY | BZ | DUP of string
+end
+;;
+A.get (A.DUP 7) + A.get A.AX
+--- expect: 7

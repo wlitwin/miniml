@@ -60,10 +60,15 @@ module Codegen =
       | None -> []
      in
     let tag =
+      let short_key =
+        match String.rindex_opt name #2e with
+        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+        | None -> name
+       in
       let rec find_tag i =
         fn
           | [] -> 0
-          | (cname, _) :: _ when cname = name -> i
+          | (cname, _) :: _ when cname = short_key -> i
           | _ :: rest -> find_tag (i + 1) rest
        in
       find_tag 0 vdef in
@@ -153,24 +158,26 @@ module Codegen =
     add_extern ctx "mml_alloc" "ptr" ("i64" :: "i64" :: []);
     Ir_emit.emit_call ctx.ir "ptr" "mml_alloc" (("i64", string_of_int nbytes) :: ("i64", header) :: [])
 
+  pub let short_ctor_name name =
+    match String.rindex_opt name #2e with
+    | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+    | None -> name
+
+
+  pub let lookup_ctor ctx name =
+    match List.assoc_opt name ctx.constructors with
+    | Some _ as r -> r
+    | None -> List.assoc_opt (short_ctor_name name) ctx.constructors
+
+
   pub let tag_for_constructor ctx name =
-    let short =
-      match String.rindex_opt name #2e with
-      | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-      | None -> name
-     in
-    match List.assoc_opt short ctx.constructors with
+    match lookup_ctor ctx name with
     | Some ((_, tag)) -> tag
     | None -> failwith ($"native codegen: unknown constructor {name} (not yet implemented)")
 
 
   pub let is_newtype_ctor ctx name =
-    let short =
-      match String.rindex_opt name #2e with
-      | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-      | None -> name
-     in
-    match List.assoc_opt short ctx.constructors with
+    match lookup_ctor ctx name with
     | Some ((type_name, _tag)) -> List.mem type_name ctx.type_env.newtypes
     | None -> false
 
@@ -1821,12 +1828,12 @@ module Codegen =
     | Match_tree_types.MKPin name -> emit_var ctx name Types.TUnit
 
   and ctor_has_payload ctx name =
-    let short =
-      match String.rindex_opt name #2e with
-      | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-      | None -> name
+    let info =
+      match List.assoc_opt name ctx.type_env.constructors with
+      | Some _ as r -> r
+      | None -> List.assoc_opt (short_ctor_name name) ctx.type_env.constructors
      in
-    match List.assoc_opt short ctx.type_env.constructors with
+    match info with
     | Some info -> info.ctor_arg_ty <> None
     | None -> true
 
@@ -2223,12 +2230,8 @@ module Codegen =
     | Ast.PatSet _ -> failwith "PatSet should be desugared before native codegen"
 
   and ctor_payload_ty ctx name =
-    let short =
-      match String.rindex_opt name #2e with
-      | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-      | None -> name
-     in
-    match List.assoc_opt short ctx.constructors with
+    let short = short_ctor_name name in
+    match lookup_ctor ctx name with
     | Some ((type_name, _tag)) -> 
       do
         match List.assoc_opt type_name ctx.variant_defs with
