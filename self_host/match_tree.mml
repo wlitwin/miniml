@@ -26,33 +26,53 @@ module Match_tree =
     bindings: binding list
   }
 
-  pub let tag_for_constructor type_env name =
-    match List.assoc_opt name type_env.constructors with
+  pub let short_unqual name =
+    match String.rindex_opt name #2e with
+    | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+    | None -> name
+
+
+  pub let resolve_ctor_info type_env occ_ty name =
+    let by_type =
+      match Types.repr occ_ty with
+      | Types.TVariant ((tname, _)) -> 
+        let short = short_unqual name in
+        List.find_map (fn (n, info) -> if ((short_unqual n) = short) && ((info.ctor_type_name = tname) || ((short_unqual info.ctor_type_name) = (short_unqual tname))) do
+          Some info
+        else
+          None) type_env.constructors
+      | _ -> None
+     in
+    match by_type with
+    | Some _ as r -> r
+    | None -> List.assoc_opt name type_env.constructors
+
+
+  pub let tag_of_info type_env info name =
+    let (_, _, variant_def, _) = list_find (fn (n, _, _, _) -> n = info.ctor_type_name) type_env.variants in
+    let short_name = short_unqual name in
+    let rec find_tag i =
+      fn
+        | [] -> failwith ($"match_tree: constructor {name} not found in type")
+        | (cname, _) :: _ when cname = short_name -> i
+        | _ :: rest -> find_tag (i + 1) rest
+     in
+    find_tag 0 variant_def
+
+  pub let tag_for_constructor_ty type_env occ_ty name =
+    match resolve_ctor_info type_env occ_ty name with
     | None -> failwith ($"match_tree: unknown constructor: {name}")
-    | Some info -> 
-      let (_, _, variant_def, _) = list_find (fn (n, _, _, _) -> n = info.ctor_type_name) type_env.variants in
-      let short_name =
-        match String.rindex_opt name #2e with
-        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-        | None -> name
-       in
-      let rec find_tag i =
-        fn
-          | [] -> failwith ($"match_tree: constructor {name} not found in type")
-          | (cname, _) :: _ when cname = short_name -> i
-          | _ :: rest -> find_tag (i + 1) rest
-       in
-      find_tag 0 variant_def
+    | Some info -> tag_of_info type_env info name
 
 
-  pub let is_newtype_ctor type_env name =
-    match List.assoc_opt name type_env.constructors with
+  pub let is_newtype_ctor_ty type_env occ_ty name =
+    match resolve_ctor_info type_env occ_ty name with
     | Some info -> List.mem info.ctor_type_name type_env.newtypes
     | None -> false
 
 
-  pub let all_constructors_for type_env name =
-    match List.assoc_opt name type_env.constructors with
+  pub let all_constructors_for_ty type_env occ_ty name =
+    match resolve_ctor_info type_env occ_ty name with
     | None -> None
     | Some info -> 
       do
@@ -149,13 +169,13 @@ module Match_tree =
       let cells = List.map fst cells_binds in
       let binds = List.concat_map snd cells_binds in
       (PCArray cells, binds)
-    | Ast.PatConstruct ((name, arg)) when is_newtype_ctor type_env name -> 
+    | Ast.PatConstruct ((name, arg)) when is_newtype_ctor_ty type_env occ_ty name -> 
       do
         match arg with
         | None -> (PCWild, [])
         | Some p -> 
           let underlying_ty =
-            match List.assoc_opt name type_env.constructors with
+            match resolve_ctor_info type_env occ_ty name with
             | Some info -> 
               do
                 match info.ctor_arg_ty with
@@ -169,9 +189,9 @@ module Match_tree =
 
       end
     | Ast.PatConstruct ((name, arg)) -> 
-      let tag = tag_for_constructor type_env name in
+      let tag = tag_for_constructor_ty type_env occ_ty name in
       let payload_ty =
-        match List.assoc_opt name type_env.constructors with
+        match resolve_ctor_info type_env occ_ty name with
         | Some info -> 
           do
             match info.ctor_arg_ty with
@@ -453,7 +473,7 @@ module Match_tree =
           []
         else do
           let payload_ty =
-            match List.assoc_opt name type_env.constructors with
+            match resolve_ctor_info type_env parent.col_ty name with
             | Some info -> 
               do
                 match info.ctor_arg_ty with
@@ -551,7 +571,7 @@ module Match_tree =
     | (HCNil | HCCons) :: _ -> (List.exists (fn h -> h = HCNil) heads) && (List.exists (fn h -> h = HCCons) heads)
     | HCConstructor ((name, _, _)) :: _ -> 
       do
-        match all_constructors_for type_env name with
+        match all_constructors_for_ty type_env occ_ty name with
         | None -> false
         | Some variant_def -> List.forall (fn (ctor_name, _) -> List.exists (fn h ->
           do

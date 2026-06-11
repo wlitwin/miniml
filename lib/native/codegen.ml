@@ -121,9 +121,18 @@ let create_ctx ?(target_triple = "") type_env =
           | None -> []
         in
         let tag =
+          (* A constructor is registered under both its qualified ("M.C") and
+             bare ("C") names; [vdef] lists the type's constructors by their
+             bare names, so match on the bare form of the key — otherwise a
+             qualified key never matches and falls through to 0. *)
+          let short_key =
+            match String.rindex_opt name '.' with
+            | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+            | None -> name
+          in
           let rec find_tag i = function
             | [] -> 0
-            | (cname, _) :: _ when cname = name -> i
+            | (cname, _) :: _ when cname = short_key -> i
             | _ :: rest -> find_tag (i + 1) rest
           in
           find_tag 0 vdef
@@ -255,13 +264,25 @@ let emit_alloc ctx nbytes header =
 
 (* ---- Constructor tag lookup ---- *)
 
+let short_ctor_name name =
+  match String.rindex_opt name '.' with
+  | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+  | None -> name
+
+(* Resolve a constructor to its (type_name, tag). Constructors are registered
+   under both their qualified ("M.C") and bare ("C") names, and two modules may
+   define same-bare-name constructors (e.g. Token.MOD and Bytecode.MOD). Resolve
+   by the FULL qualified name the typed AST carries; only fall back to the bare
+   name for genuinely-unqualified constructors. Stripping to the bare name first
+   (as this code formerly did) aliases distinct constructors and silently picks
+   whichever was registered first — a tag collision. Mirrors lib/compiler.ml. *)
+let lookup_ctor ctx name =
+  match List.assoc_opt name ctx.constructors with
+  | Some _ as r -> r
+  | None -> List.assoc_opt (short_ctor_name name) ctx.constructors
+
 let tag_for_constructor ctx name =
-  let short =
-    match String.rindex_opt name '.' with
-    | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-    | None -> name
-  in
-  match List.assoc_opt short ctx.constructors with
+  match lookup_ctor ctx name with
   | Some (_, tag) -> tag
   | None ->
       failwith
@@ -269,12 +290,7 @@ let tag_for_constructor ctx name =
            "native codegen: unknown constructor %s (not yet implemented)" name)
 
 let is_newtype_ctor ctx name =
-  let short =
-    match String.rindex_opt name '.' with
-    | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-    | None -> name
-  in
-  match List.assoc_opt short ctx.constructors with
+  match lookup_ctor ctx name with
   | Some (type_name, _tag) -> List.mem type_name ctx.type_env.Types.newtypes
   | None -> false
 
@@ -2571,12 +2587,16 @@ and emit_map_key_val ctx mk =
   | Match_tree_types.MKPin name -> emit_var ctx name Types.TUnit
 
 and ctor_has_payload ctx name =
-  let short =
-    match String.rindex_opt name '.' with
-    | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-    | None -> name
+  (* Resolve by full qualified name first (see [lookup_ctor]); fall back to the
+     bare name only when unqualified, so same-bare-name constructors in different
+     modules are not aliased. *)
+  let info =
+    match List.assoc_opt name ctx.type_env.Types.constructors with
+    | Some _ as r -> r
+    | None ->
+        List.assoc_opt (short_ctor_name name) ctx.type_env.Types.constructors
   in
-  match List.assoc_opt short ctx.type_env.Types.constructors with
+  match info with
   | Some info -> info.Types.ctor_arg_ty <> None
   | None -> true (* conservative: assume payload *)
 
@@ -3165,12 +3185,8 @@ and emit_pattern ctx val_reg pattern fail_label scrutinee_ty =
   | Ast.PatSet _ -> failwith "PatSet should be desugared before native codegen"
 
 and ctor_payload_ty ctx name =
-  let short =
-    match String.rindex_opt name '.' with
-    | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-    | None -> name
-  in
-  match List.assoc_opt short ctx.constructors with
+  let short = short_ctor_name name in
+  match lookup_ctor ctx name with
   | Some (type_name, _tag) -> (
       match List.assoc_opt type_name ctx.variant_defs with
       | Some vdef -> (
