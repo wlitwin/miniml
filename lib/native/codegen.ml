@@ -102,6 +102,12 @@ type codegen_ctx = {
   mutable target_triple : string;
       (* LLVM target triple. Provided by the host driver — codegen does not
          shell out to detect it, so it carries no host-FFI dependency. *)
+  mutable current_fn_void : bool;
+      (* true while emitting into a `void`-returning function (a unit
+         initializer, the mml_init_ functions). A control-flow `ret` (early
+         return from a top-level `try`/`return`/`for`) must then be `ret void`,
+         not `ret i64` — clang rejects an i64 value in a void function. Reset to
+         false for every nested function (with_fresh_ir), which are all i64. *)
 }
 
 let create_ctx ?(target_triple = "") type_env =
@@ -170,6 +176,7 @@ let create_ctx ?(target_triple = "") type_env =
     current_dict_name = None;
     result_ptr = "";
     target_triple;
+    current_fn_void = false;
   }
 
 let push_scope ctx = ctx.scopes <- Hashtbl.create 8 :: ctx.scopes
@@ -669,8 +676,12 @@ let with_fresh_ir ctx f =
      crossing boundary; see emit_for_loop_app.) *)
   let saved_in_handler_thunk = ctx.in_handler_thunk in
   let saved_handler_mark_ptr = ctx.handler_mark_ptr in
+  (* Nested functions all return i64 (only the unit-init is void), so a
+     control-flow ret inside one is `ret i64`. *)
+  let saved_fn_void = ctx.current_fn_void in
   ctx.in_handler_thunk <- false;
   ctx.handler_mark_ptr <- None;
+  ctx.current_fn_void <- false;
   let fn_ir = Ir_emit.create () in
   ctx.ir <- fn_ir;
   let result = f fn_ir in
@@ -682,7 +693,16 @@ let with_fresh_ir ctx f =
   ctx.loop_stack <- saved_loop_stack;
   ctx.in_handler_thunk <- saved_in_handler_thunk;
   ctx.handler_mark_ptr <- saved_handler_mark_ptr;
+  ctx.current_fn_void <- saved_fn_void;
   result
+
+(* Emit a control-flow `ret` (early return / break / continue / fold-escape) from
+   the function currently being emitted. The unit initializers are `void`; every
+   other function is i64. Returning an i64 value from a void function is invalid
+   LLVM, so discard the value and `ret void` there. *)
+let emit_ctl_ret ctx value =
+  if ctx.current_fn_void then Ir_emit.emit_ret_void ctx.ir
+  else Ir_emit.emit_ret ctx.ir "i64" value
 
 (* Does [e] install an inline (provide/return-only) handler in the CURRENT function's
    frame? Such a handler is pushed on the runtime stack and popped inline on normal
@@ -752,12 +772,12 @@ let emit_break_action ctx v =
       add_extern ctx "mml_set_break_escape" "void" [ "i64" ];
       Ir_emit.emit_call_void ctx.ir ~name:"mml_set_break_escape"
         ~args:[ ("i64", v) ];
-      Ir_emit.emit_ret ctx.ir "i64" v
+      emit_ctl_ret ctx v
   | [] when ctx.fold_break_depth > 0 ->
       emit_handler_mark_restore ctx;
       add_extern ctx "mml_fold_break" "void" [ "i64" ];
       Ir_emit.emit_call_void ctx.ir ~name:"mml_fold_break" ~args:[ ("i64", v) ];
-      Ir_emit.emit_ret ctx.ir "i64" v
+      emit_ctl_ret ctx v
   | [] -> failwith "native codegen: break outside loop"
 
 (* Emit the terminator for a `continue` targeting the nearest enclosing loop. The
@@ -769,11 +789,11 @@ let emit_continue_action ctx =
       emit_handler_mark_restore ctx;
       add_extern ctx "mml_set_continue_escape" "void" [];
       Ir_emit.emit_call_void ctx.ir ~name:"mml_set_continue_escape" ~args:[];
-      Ir_emit.emit_ret ctx.ir "i64" unit_value
+      emit_ctl_ret ctx unit_value
   | [] when ctx.fold_break_depth > 0 ->
       (* Return unit from the fold callback to continue iteration. *)
       emit_handler_mark_restore ctx;
-      Ir_emit.emit_ret ctx.ir "i64" unit_value
+      emit_ctl_ret ctx unit_value
   | [] -> failwith "native codegen: continue outside loop"
 
 (* ---- Expression codegen ---- *)
@@ -929,9 +949,9 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
         add_extern ctx "mml_set_early_return" "void" [ "i64" ];
         Ir_emit.emit_call_void ctx.ir ~name:"mml_set_early_return"
           ~args:[ ("i64", v) ];
-        Ir_emit.emit_ret ctx.ir "i64" v
+        emit_ctl_ret ctx v
       end
-      else Ir_emit.emit_ret ctx.ir "i64" v;
+      else emit_ctl_ret ctx v;
       let dead = fresh_label ctx "dead" in
       Ir_emit.emit_label ctx.ir dead;
       ctx.current_label <- dead;
@@ -1002,14 +1022,14 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
         Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_get_early_return"
           ~args:[]
       in
-      Ir_emit.emit_ret ctx.ir "i64" ret_val;
+      emit_ctl_ret ctx ret_val;
       Ir_emit.emit_label ctx.ir no_ret;
       ctx.current_label <- no_ret;
       result
   | TEFoldContinue value_expr ->
       (* TEFoldContinue acts like 'return' from the fold callback *)
       let v = emit_expr ctx value_expr in
-      Ir_emit.emit_ret ctx.ir "i64" v;
+      emit_ctl_ret ctx v;
       let dead = fresh_label ctx "dead" in
       Ir_emit.emit_label ctx.ir dead;
       ctx.current_label <- dead;
@@ -4217,7 +4237,7 @@ and emit_closure_function ctx fn_name params body free_with_info =
         Ir_emit.emit_condbr ctx.ir ~cond:b2 ~if_true:ret_lbl ~if_false:cont;
         Ir_emit.emit_label ctx.ir ret_lbl;
         ctx.current_label <- ret_lbl;
-        Ir_emit.emit_ret ctx.ir "i64" acc_ssa;
+        emit_ctl_ret ctx acc_ssa;
         Ir_emit.emit_label ctx.ir cont;
         ctx.current_label <- cont
       end;
@@ -6151,7 +6171,7 @@ and emit_handle ctx body_expr arms =
       emit_handler_mark_restore ctx;
       if ctx.fold_break_depth > 0 || ctx.in_handler_thunk then
         (* More crossing boundaries above: leave the flag set, propagate the value. *)
-        Ir_emit.emit_ret ctx.ir "i64" hv
+        emit_ctl_ret ctx hv
       else begin
         (* Owning function: clear the flag and return its value. *)
         add_extern ctx "mml_get_early_return" "i64" [];
@@ -6159,7 +6179,7 @@ and emit_handle ctx body_expr arms =
           Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_get_early_return"
             ~args:[]
         in
-        Ir_emit.emit_ret ctx.ir "i64" rv
+        emit_ctl_ret ctx rv
       end;
       Ir_emit.emit_label ctx.ir cont;
       ctx.current_label <- cont;
@@ -7028,8 +7048,11 @@ let emit_unit_init ctx ~init_name decls =
   let saved_ir = ctx.ir in
   let saved_label = ctx.current_label in
   let saved_result_ptr = ctx.result_ptr in
+  let saved_fn_void = ctx.current_fn_void in
   let fn_ir = Ir_emit.create () in
   ctx.ir <- fn_ir;
+  (* This function is `void`; a top-level early-return must `ret void`. *)
+  ctx.current_fn_void <- true;
   Ir_emit.emit_define_start fn_ir ~ret_ty:"void" ~name:init_name ~params:[];
   Ir_emit.emit_label fn_ir "entry";
   ctx.current_label <- "entry";
@@ -7044,7 +7067,8 @@ let emit_unit_init ctx ~init_name decls =
   Buffer.add_char ctx.fn_buf '\n';
   ctx.ir <- saved_ir;
   ctx.current_label <- saved_label;
-  ctx.result_ptr <- saved_result_ptr
+  ctx.result_ptr <- saved_result_ptr;
+  ctx.current_fn_void <- saved_fn_void
 
 (* Arity of a (possibly curried) function type: the length of its arrow chain. *)
 let rec arrow_arity ty =
