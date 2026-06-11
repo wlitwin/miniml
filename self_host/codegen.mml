@@ -48,7 +48,8 @@ module Codegen =
     mut or_pattern_allocas: (string * string) list;
     mut current_dict_name: string option;
     mut result_ptr: string;
-    mut target_triple: string
+    mut target_triple: string;
+    mut current_fn_void: bool
   }
 
   pub let create_ctx target_triple type_env =
@@ -73,7 +74,7 @@ module Codegen =
        in
       find_tag 0 vdef in
     (name, (info.ctor_type_name, tag))) type_env.constructors in
-    {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple}
+    {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple; current_fn_void = false}
 
   pub let push_scope ctx = ctx.scopes := Hashtbl.create 8 :: ctx.scopes
 
@@ -454,8 +455,10 @@ module Codegen =
     let saved_loop_stack = ctx.loop_stack in
     let saved_in_handler_thunk = ctx.in_handler_thunk in
     let saved_handler_mark_ptr = ctx.handler_mark_ptr in
+    let saved_fn_void = ctx.current_fn_void in
     ctx.in_handler_thunk := false;
     ctx.handler_mark_ptr := None;
+    ctx.current_fn_void := false;
     let fn_ir = Ir_emit.create () in
     ctx.ir := fn_ir;
     let result = f fn_ir in
@@ -467,7 +470,14 @@ module Codegen =
     ctx.loop_stack := saved_loop_stack;
     ctx.in_handler_thunk := saved_in_handler_thunk;
     ctx.handler_mark_ptr := saved_handler_mark_ptr;
+    ctx.current_fn_void := saved_fn_void;
     result
+
+  pub let emit_ctl_ret ctx value =
+    if ctx.current_fn_void do
+      Ir_emit.emit_ret_void ctx.ir
+    else
+      Ir_emit.emit_ret ctx.ir "i64" value
 
   pub let rec body_installs_inline_handler (e : Typechecker.texpr) =
     match e.expr with
@@ -510,12 +520,12 @@ module Codegen =
       emit_handler_mark_restore ctx;
       add_extern ctx "mml_set_break_escape" "void" ("i64" :: []);
       Ir_emit.emit_call_void ctx.ir "mml_set_break_escape" (("i64", v) :: []);
-      Ir_emit.emit_ret ctx.ir "i64" v
+      emit_ctl_ret ctx v
     | [] when ctx.fold_break_depth > 0 -> 
       emit_handler_mark_restore ctx;
       add_extern ctx "mml_fold_break" "void" ("i64" :: []);
       Ir_emit.emit_call_void ctx.ir "mml_fold_break" (("i64", v) :: []);
-      Ir_emit.emit_ret ctx.ir "i64" v
+      emit_ctl_ret ctx v
     | [] -> failwith "native codegen: break outside loop"
 
 
@@ -526,10 +536,10 @@ module Codegen =
       emit_handler_mark_restore ctx;
       add_extern ctx "mml_set_continue_escape" "void" [];
       Ir_emit.emit_call_void ctx.ir "mml_set_continue_escape" [];
-      Ir_emit.emit_ret ctx.ir "i64" unit_value
+      emit_ctl_ret ctx unit_value
     | [] when ctx.fold_break_depth > 0 -> 
       emit_handler_mark_restore ctx;
-      Ir_emit.emit_ret ctx.ir "i64" unit_value
+      emit_ctl_ret ctx unit_value
     | [] -> failwith "native codegen: continue outside loop"
 
 
@@ -642,9 +652,9 @@ module Codegen =
       if (ctx.fold_break_depth > 0) || ctx.in_handler_thunk do
         add_extern ctx "mml_set_early_return" "void" ("i64" :: []);
         Ir_emit.emit_call_void ctx.ir "mml_set_early_return" (("i64", v) :: []);
-        Ir_emit.emit_ret ctx.ir "i64" v
+        emit_ctl_ret ctx v
       else
-        Ir_emit.emit_ret ctx.ir "i64" v;
+        emit_ctl_ret ctx v;
       let dead = fresh_label ctx "dead" in
       Ir_emit.emit_label ctx.ir dead;
       ctx.current_label := dead;
@@ -695,13 +705,13 @@ module Codegen =
       ctx.current_label := early_ret;
       add_extern ctx "mml_get_early_return" "i64" [];
       let ret_val = Ir_emit.emit_call ctx.ir "i64" "mml_get_early_return" [] in
-      Ir_emit.emit_ret ctx.ir "i64" ret_val;
+      emit_ctl_ret ctx ret_val;
       Ir_emit.emit_label ctx.ir no_ret;
       ctx.current_label := no_ret;
       result
     | TEFoldContinue value_expr -> 
       let v = emit_expr ctx value_expr in
-      Ir_emit.emit_ret ctx.ir "i64" v;
+      emit_ctl_ret ctx v;
       let dead = fresh_label ctx "dead" in
       Ir_emit.emit_label ctx.ir dead;
       ctx.current_label := dead;
@@ -2999,7 +3009,7 @@ module Codegen =
       Ir_emit.emit_condbr ctx.ir b2 ret_lbl cont;
       Ir_emit.emit_label ctx.ir ret_lbl;
       ctx.current_label := ret_lbl;
-      Ir_emit.emit_ret ctx.ir "i64" acc_ssa;
+      emit_ctl_ret ctx acc_ssa;
       Ir_emit.emit_label ctx.ir cont;
       ctx.current_label := cont
     end;
@@ -4230,11 +4240,11 @@ else
         ctx.current_label := early;
         emit_handler_mark_restore ctx;
         if (ctx.fold_break_depth > 0) || ctx.in_handler_thunk do
-          Ir_emit.emit_ret ctx.ir "i64" hv
+          emit_ctl_ret ctx hv
         else do
           add_extern ctx "mml_get_early_return" "i64" [];
           let rv = Ir_emit.emit_call ctx.ir "i64" "mml_get_early_return" [] in
-          Ir_emit.emit_ret ctx.ir "i64" rv
+          emit_ctl_ret ctx rv
         end;
         Ir_emit.emit_label ctx.ir cont;
         ctx.current_label := cont;
@@ -4895,8 +4905,10 @@ else
     let saved_ir = ctx.ir in
     let saved_label = ctx.current_label in
     let saved_result_ptr = ctx.result_ptr in
+    let saved_fn_void = ctx.current_fn_void in
     let fn_ir = Ir_emit.create () in
     ctx.ir := fn_ir;
+    ctx.current_fn_void := true;
     Ir_emit.emit_define_start fn_ir "void" init_name [];
     Ir_emit.emit_label fn_ir "entry";
     ctx.current_label := "entry";
@@ -4909,7 +4921,8 @@ else
     Buffer.add_byte ctx.fn_buf #0a;
     ctx.ir := saved_ir;
     ctx.current_label := saved_label;
-    ctx.result_ptr := saved_result_ptr
+    ctx.result_ptr := saved_result_ptr;
+    ctx.current_fn_void := saved_fn_void
 
   pub let rec arrow_arity ty =
     match Types.repr ty with

@@ -3479,3 +3479,27 @@ handle (perform tick 3) with
 | return v -> v
 | tick n k -> resume k (f n)
 --- expect: 30
+
+# A try-only handler at a MODULE's top level lowers into that module's unit
+# initializer mml_init_m_<mod>, which the native backend types as `void`. The
+# handler's early-return path emitted `ret i64 <v>` there — invalid LLVM in a
+# void function (clang rejected it). Regression for the self-host bootstrap:
+# main.mml's `module Main` has exactly this shape. The early return must
+# `ret void` (discarding the value) inside a void unit-init.
+--- test: top-level handler in a module unit-init (native void-init early return)
+effect E =
+  fail : string -> unit
+end
+;;
+module Main =
+  pub let result =
+    handle
+      perform fail "boom";
+      7
+    with
+    | return x -> x
+    | fail msg _k -> 99
+end
+;;
+Main.result
+--- expect: 99
