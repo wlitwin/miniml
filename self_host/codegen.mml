@@ -1537,42 +1537,37 @@ module Codegen =
       find 0 sorted
     | None -> failwith ($"native codegen: field {field_name} not found in any class or record type")
 
-  and emit_field ctx (record_expr : Typechecker.texpr) field_name _expr_ty =
-    let v = emit_expr ctx record_expr in
-    let ptr = Ir_emit.emit_inttoptr ctx.ir v in
-    let has_open_row row =
-      let rec check r =
-        match Types.rrow_repr r with
-        | Types.RRow ((_, _, tail)) -> check tail
-        | Types.RVar {contents = Types.RUnbound _} -> true
-        | _ -> false
-       in
-      check row in
-    let ev_param =
-      match Types.repr record_expr.ty with
-      | Types.TRecord row when has_open_row row -> 
-        let rec try_rgen i =
-          if i > 10 do
-            None
-          else do
-            let name = $"__ev_{field_name}_r{i}" in
-            match lookup_var ctx name with
-            | Some _ -> Some name
-            | None -> try_rgen (i + 1)
-
-          end in
-        try_rgen 0
-      | _ -> None
+  and field_evidence_param ctx record_ty field_name =
+    let rec has_open_row r =
+      match Types.rrow_repr r with
+      | Types.RRow ((_, _, tail)) -> has_open_row tail
+      | Types.RVar {contents = Types.RUnbound _} -> true
+      | _ -> false
      in
-    match ev_param with
+    match Types.repr record_ty with
+    | Types.TRecord row when has_open_row row -> 
+      let rec try_rgen i =
+        if i > 10 do
+          None
+        else do
+          let name = $"__ev_{field_name}_r{i}" in
+          match lookup_var ctx name with
+          | Some _ -> Some name
+          | None -> try_rgen (i + 1)
+
+        end in
+      try_rgen 0
+    | _ -> None
+
+  and field_elem_ptr ctx ptr record_ty field_name =
+    match field_evidence_param ctx record_ty field_name with
     | Some ev_name -> 
       let tagged_idx = emit_var ctx ev_name Types.TInt in
       let idx = Ir_emit.emit_binop ctx.ir "ashr" "i64" tagged_idx "1" in
-      let elem_ptr = Ir_emit.emit_gep_dynamic ctx.ir "i64" ptr idx in
-      Ir_emit.emit_load ctx.ir "i64" elem_ptr
+      Ir_emit.emit_gep_dynamic ctx.ir "i64" ptr idx
     | None -> 
       let idx =
-        match Types.repr record_expr.ty with
+        match Types.repr record_ty with
         | Types.TRecord row -> 
           let fields = Types.record_row_to_fields row in
           let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
@@ -1585,9 +1580,13 @@ module Codegen =
           find 0 sorted
         | _ -> dict_method_index ctx field_name
        in
-      let elem_ptr = Ir_emit.emit_gep ctx.ir "i64" ptr idx in
-      Ir_emit.emit_load ctx.ir "i64" elem_ptr
+      Ir_emit.emit_gep ctx.ir "i64" ptr idx
 
+  and emit_field ctx (record_expr : Typechecker.texpr) field_name _expr_ty =
+    let v = emit_expr ctx record_expr in
+    let ptr = Ir_emit.emit_inttoptr ctx.ir v in
+    let elem_ptr = field_elem_ptr ctx ptr record_expr.ty field_name in
+    Ir_emit.emit_load ctx.ir "i64" elem_ptr
   and emit_record_update ctx base overrides =
     let base_val = emit_expr ctx base in
     let base_ptr = Ir_emit.emit_inttoptr ctx.ir base_val in
@@ -1629,8 +1628,7 @@ module Codegen =
     let rec_val = emit_expr ctx record_expr in
     let v = emit_expr ctx value_expr in
     let ptr = Ir_emit.emit_inttoptr ctx.ir rec_val in
-    let idx = field_index_from_type record_expr.ty field_name in
-    let elem_ptr = Ir_emit.emit_gep ctx.ir "i64" ptr idx in
+    let elem_ptr = field_elem_ptr ctx ptr record_expr.ty field_name in
     Ir_emit.emit_store ctx.ir "i64" v elem_ptr;
     unit_value
   and emit_construct ctx name arg =
