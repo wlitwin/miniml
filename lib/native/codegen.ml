@@ -6601,8 +6601,13 @@ and ensure_global ctx name =
   let gname =
     Printf.sprintf "mml_g_%s%s" ctx.unit_prefix (sanitize_name name)
   in
-  (* Check if global already declared *)
-  let decl = Printf.sprintf "@%s = global i64 0" gname in
+  (* Check if global already declared. The explicit "__DATA,__mmlgc" section groups
+     every MiniML global (top-level values + typeclass-dictionary slots, all holding
+     mml_values) contiguously, so the MPS moving collector can register exactly this
+     region as a root — registering the whole __DATA segment would also sweep MPS's
+     own static handles and hang. Still inside __DATA, so Boehm keeps scanning it for
+     free; a no-op for the default build. *)
+  let decl = Printf.sprintf "@%s = global i64 0, section \"__DATA,__mmlgc\"" gname in
   if not (List.mem decl ctx.global_decls) then
     ctx.global_decls <- decl :: ctx.global_decls;
   gname

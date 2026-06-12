@@ -29,6 +29,16 @@ See the `test-mml-gc` target in the top-level `Makefile`. (Allocation is not yet
 routed through MPS — the runtime still uses Boehm; MPS is wired in behind a flag in
 a later increment.)
 
+## Local patches
+
+- `code/mpsliban.c` — `mps_clock()`/`mps_clocks_per_sec()` changed from ANSI `clock()`
+  to `clock_gettime(CLOCK_MONOTONIC)`. On macOS `clock()` is a `getrusage()` syscall,
+  and MPS polls the clock on the allocation path for incremental-collection
+  scheduling, so the stock plinth made allocation syscall-bound (it dominated the
+  profile). `clock_gettime(CLOCK_MONOTONIC)` is a fast commpage read here. `mpsliban.c`
+  itself documents supplying a higher-resolution clock; this is that. Search
+  "LOCAL PATCH (MiniML)" in the file. No other vendored files are modified.
+
 ## License
 
 MPS is distributed under the Ravenbrook open-source license (BSD-2-Clause-style); see

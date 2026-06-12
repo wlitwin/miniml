@@ -125,20 +125,24 @@ int (mps_lib_memcmp)(const void *s1, const void *s2, size_t n)
  *   return ((mps_clock_t)s.ru_utime.tv_sec) * 1000000 + s.ru_utime.tv_usec;
  */
 
+/* LOCAL PATCH (MiniML): the upstream reference clock uses ANSI clock(), which on
+   macOS is implemented via getrusage() — a syscall MPS polls on the allocation path
+   for incremental-collection scheduling, dominating runtime. clock_gettime(
+   CLOCK_MONOTONIC) is a fast commpage read here, not a syscall. (mpsliban.c itself
+   recommends supplying a higher-resolution clock; see the comment above.) Reported
+   in third_party/mps/README.md. */
+#include <time.h>
 mps_clock_t mps_clock(void)
 {
-  /* The clock values need to fit in mps_clock_t.  If your platform
-     has a very wide clock type, trim or truncate it. */
-  assert(sizeof(mps_clock_t) >= sizeof(clock_t));
-
-  return (mps_clock_t)clock();
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (mps_clock_t)ts.tv_sec * 1000000 + (mps_clock_t)ts.tv_nsec / 1000;
 }
 
 
 mps_clock_t mps_clocks_per_sec(void)
 {
-  /* must correspond to whatever mps_clock() does */
-  return (mps_clock_t)CLOCKS_PER_SEC;
+  return (mps_clock_t)1000000;  /* mps_clock() is in microseconds */
 }
 
 

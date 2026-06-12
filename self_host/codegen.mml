@@ -4542,7 +4542,7 @@ else
 
   and ensure_global ctx name =
     let gname = $"mml_g_{ctx.unit_prefix}{sanitize_name name}" in
-    let decl = $"@{gname} = global i64 0" in
+    let decl = $"@{gname} = global i64 0, section \"__DATA,__mmlgc\"" in
     if not (List.mem decl ctx.global_decls) do
       ctx.global_decls := decl :: ctx.global_decls
     end;

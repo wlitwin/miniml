@@ -87212,7 +87212,7 @@ function Codegen$emit_decl(ctx, decl) {
 }
 function Codegen$ensure_global(ctx, name) {
   const gname_20912 = (("mml_g_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name)));
-  const decl_20914 = (("@" + __dict_Show_string.show(gname_20912)) + " = global i64 0");
+  const decl_20914 = (("@" + __dict_Show_string.show(gname_20912)) + " = global i64 0, section \"__DATA,__mmlgc\"");
   let _t20916;
   if ((!_call(List$mem, [__dict_Eq_string, decl_20914, ctx.global_decls]))) {
     _t20916 = (ctx.global_decls = ({_hd: decl_20914, _tl: ctx.global_decls}), undefined);
