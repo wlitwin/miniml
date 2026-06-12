@@ -35,10 +35,20 @@ void *mml_gc_alloc(int64_t nbytes, int64_t header);
    handler MPS root. */
 void *mml_gc_alloc_struct(int64_t nbytes);
 
+/* Allocate a fiber struct (runtime.h mml_fiber) in the AMC pool, tagged MML_HDR_FIBER.
+   Like a handler: nailed while live, never moves; scanned for its heap-value fields. */
+void *mml_gc_alloc_fiber(int64_t nbytes);
+
 /* Register / unregister an ambiguous root area [base, limit) (for fiber stacks and
    any C globals holding mml_values). */
 void *mml_gc_add_area_root(void *base, void *limit);   /* returns an opaque handle */
 void  mml_gc_remove_area_root(void *handle);
+
+/* Fiber-stack finalization (replaces the Boehm finalizer when fibers live in MPS):
+   register a fiber for finalization, then drain finalized fibers to reclaim their
+   guarded stacks. mml_gc_next_finalized returns a fiber CLIENT pointer, or NULL. */
+void mml_gc_finalize_fiber(void *client);
+void *mml_gc_next_finalized(void);
 
 /* Re-point the GC's notion of the active stack across a fiber context switch. See the
    definition: `from_main_sp` freezes the main stack's live frames while we run on a

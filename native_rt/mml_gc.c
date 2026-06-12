@@ -30,6 +30,12 @@ typedef mps_word_t word;
    Never collide with a real MiniML tag (0x00..0x0B). */
 #define MML_HDR_FWD 0x0C   /* forwarded: header size = original byte size; client[0] = new base */
 #define MML_HDR_PAD 0x0D   /* padding:   header size = byte size */
+#define MML_HDR_FIBER 0x0F   /* fiber struct (runtime.h mml_fiber); size = data bytes. In the
+                                AMC pool like handlers: nailed while live (active via the
+                                &mml_current_fiber root + its own stack's `f` local; suspended
+                                via cont refs + its stack), so it never moves. Scan only the
+                                heap-value fields (result, op_arg); ctx is a raw register
+                                snapshot whose pointers are on the area-rooted fiber stack. */
 #define MML_HDR_HANDLER 0x0E /* effect handler struct (runtime.h mml_handler); size = data bytes.
                                 Lives in the AMC pool: always ambiguously referenced while live
                                 (chain top via the &mml_current_handler root, each active handler
@@ -50,7 +56,8 @@ static size_t mml_obj_bytes(word *base) {
     case MML_HDR_CLOSURE:                       return HDR_SZ + SIZE(h) * 8;
     case MML_HDR_ARRAY:  return HDR_SZ + (1 + (size_t)c[0]) * 8;        /* c[0] = raw length */
     case MML_HDR_STRING: return ALIGN_UP(HDR_SZ + 8 + (size_t)(c[0] >> 1) + 1); /* c[0]=len<<1 */
-    case MML_HDR_HANDLER: return ALIGN_UP(HDR_SZ + (size_t)SIZE(h)); /* SIZE = data bytes */
+    case MML_HDR_HANDLER:
+    case MML_HDR_FIBER: return ALIGN_UP(HDR_SZ + (size_t)SIZE(h)); /* SIZE = data bytes */
     case MML_HDR_FWD: case MML_HDR_PAD: return (size_t)SIZE(h);
     default:
         fprintf(stderr, "mml_gc: bad object tag 0x%x at %p\n", TAG(h), (void *)base);
@@ -110,6 +117,15 @@ static mps_res_t mml_fmt_scan(mps_ss_t ss, mps_addr_t base, mps_addr_t limit) {
                     FIX_REF(ss, (word *)&hd->ops[i].env_ptr);
                 /* return_fn / ops[].fn_ptr are code pointers, ops[].name a static C
                    string, try_jmp a raw register snapshot — none are heap refs. */
+                break;
+            }
+            case MML_HDR_FIBER: {         /* mml_fiber struct; c == base+8 == the struct */
+                mml_fiber *fb = (mml_fiber *)c;
+                FIX_REF(ss, (word *)&fb->result);   /* body/resumed value, or a matched handler */
+                FIX_REF(ss, (word *)&fb->op_arg);   /* pending perform arg (or transient code ptr) */
+                /* ctx (raw register snapshot; its pointers are on the area-rooted fiber
+                   stack), op_name (C string), parent_ctx (a C-stack mml_context*), stack
+                   (mmap'd), state/stack_freed (ints), mps_stack_root (handle): no heap refs. */
                 break;
             }
             case MML_HDR_STRING: case MML_HDR_FLOAT: case MML_HDR_PAD:
@@ -173,6 +189,7 @@ void mml_gc_init(void *stack_cold) {
         res = mps_arena_create_k(&mml_arena, mps_arena_class_vm(), args);
     } MPS_ARGS_END(args);
     if (res != MPS_RES_OK) die("arena_create", res);
+    mps_message_type_enable(mml_arena, mps_message_type_finalization());
 
     if ((res = mps_thread_reg(&mml_thread, mml_arena)) != MPS_RES_OK) die("thread_reg", res);
     res = mps_root_create_thread_scanned(&mml_stack_root, mml_arena, mps_rank_ambig(), 0,
@@ -260,6 +277,12 @@ void *mml_gc_alloc_struct(int64_t nbytes) {
     return mml_gc_alloc(nbytes, MML_MAKE_HDR(MML_HDR_HANDLER, nbytes));
 }
 
+void *mml_gc_alloc_fiber(int64_t nbytes) {
+    /* Fiber struct in the AMC pool (tag MML_HDR_FIBER), nailed while live like a
+       handler. See the format note at MML_HDR_FIBER. */
+    return mml_gc_alloc(nbytes, MML_MAKE_HDR(MML_HDR_FIBER, nbytes));
+}
+
 void *mml_gc_add_area_root(void *base, void *limit) {
     mps_root_t root;
     mps_res_t res = mps_root_create_area(&root, mml_arena, mps_rank_ambig(), 0,
@@ -301,6 +324,28 @@ void mml_gc_switch_stack(void *from_main_sp, void *to_cold) {
     } else {                                /* entering a fiber: track its stack */
         mml_gc_repoint_thread(to_cold);
     }
+}
+
+/* Register a fiber (AMC object) for finalization: when it becomes unreachable MPS
+   posts a finalization message; mml_gc_next_finalized() returns it so the runtime can
+   reclaim the fiber's guarded stack (the analogue of Boehm's fiber_stack_finalizer).
+   We register the object BASE (header) — unambiguous, no interior-pointer guesswork. */
+void mml_gc_finalize_fiber(void *client) {
+    mps_addr_t ref = (mps_addr_t)BASE(client);
+    mps_finalize(mml_arena, &ref);
+}
+
+/* Drain one finalization message; returns the finalized fiber's CLIENT pointer, or
+   NULL when none are pending. */
+void *mml_gc_next_finalized(void) {
+    mps_message_t msg;
+    if (mps_message_get(&msg, mml_arena, mps_message_type_finalization())) {
+        mps_addr_t ref;
+        mps_message_finalization_ref(&ref, mml_arena, msg);
+        mps_message_discard(mml_arena, msg);
+        return (void *)CLIENT(ref);     /* ref is the object base; client = base + 8 */
+    }
+    return NULL;
 }
 
 void mml_gc_collect(void) {
