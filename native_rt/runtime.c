@@ -23,27 +23,10 @@
 #include "mml_gc.h"
 static int mml_use_mps = 0;
 
-/* Register a Boehm-allocated internal struct's memory [p, p+size) as an MPS
-   ambiguous root, so the MiniML values it holds (handler return_env / try_result /
-   op envs; fiber result / op_arg; continuation return_env) PIN their MPS objects —
-   these structs live in Boehm's heap, which the moving collector never scans. A
-   Boehm finalizer removes the root when the struct becomes unreachable, tying the
-   two lifetimes together. No-op unless MML_GC=mps. */
-static void mml_mps_unroot_finalizer(void *obj, void *root) {
-    (void)obj;
-    if (root) mml_gc_remove_area_root(root);
-}
-static void mml_mps_root_struct(void *p, size_t size) {
-    if (!mml_use_mps) return;
-    void *root = mml_gc_add_area_root(p, (char *)p + size);
-    /* _no_order: handlers chain to their parents, so these structs form reference
-       CYCLES. The default finalizer is topologically ordered and SKIPS cycles, so
-       the unroot finalizer would never run — the MPS roots would leak and accumulate
-       into thousands, making every root op and collection O(roots) (an O(n^2) blowup
-       on effect-using programs like the compiler). Our finalizer is order-independent
-       (it just removes one root), so no-order is correct and runs regardless. */
-    GC_register_finalizer_no_order(p, mml_mps_unroot_finalizer, root, NULL, NULL);
-}
+/* (Handlers, fibers, and continuations now live in the MPS heap and are scanned
+   natively — the old per-struct "register Boehm memory as an MPS area root + finalizer"
+   helper is gone. The single remaining per-fiber MPS root is over the mmap'd fiber
+   stack, which is not an MPS object; see fiber_register_stack_roots.) */
 #endif
 
 /* Sorts/folds up to this many elements keep their scratch on the C stack (scanned
@@ -2954,11 +2937,13 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
             mml_current_handler = matched_h->parent;
             mml_current_fiber = saved_fiber;
 
-            mml_continuation *k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
-            if (!k) { fprintf(stderr, "OOM: continuation\n"); exit(1); }
+            mml_continuation *k;
 #ifdef MML_HAVE_MPS
-            mml_mps_root_struct(k, sizeof(mml_continuation));  /* pin its return_env */
+            if (mml_use_mps) k = (mml_continuation *)mml_gc_alloc_cont((int64_t)sizeof(mml_continuation));
+            else
 #endif
+                k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
+            if (!k) { fprintf(stderr, "OOM: continuation\n"); exit(1); }
             k->fiber = fiber;
             k->handler = saved_handler;
             k->resume_base = matched_h->parent;
@@ -3157,11 +3142,13 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     }
 
     /* Create new continuation */
-    mml_continuation *new_k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
-    if (!new_k) { fprintf(stderr, "OOM: continuation copy\n"); exit(1); }
+    mml_continuation *new_k;
 #ifdef MML_HAVE_MPS
-    mml_mps_root_struct(new_k, sizeof(mml_continuation));
+    if (mml_use_mps) new_k = (mml_continuation *)mml_gc_alloc_cont((int64_t)sizeof(mml_continuation));
+    else
 #endif
+        new_k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
+    if (!new_k) { fprintf(stderr, "OOM: continuation copy\n"); exit(1); }
     new_k->fiber = new_fiber;
     new_k->handler = orig->handler;
     new_k->resume_base = orig->resume_base;

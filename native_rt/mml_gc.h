@@ -39,6 +39,10 @@ void *mml_gc_alloc_struct(int64_t nbytes);
    Like a handler: nailed while live, never moves; scanned for its heap-value fields. */
 void *mml_gc_alloc_fiber(int64_t nbytes);
 
+/* Allocate a continuation struct (runtime.h mml_continuation) in the AMC pool, tagged
+   MML_HDR_CONT; scanned for fiber/handler/resume_base/return_env (no per-cont root). */
+void *mml_gc_alloc_cont(int64_t nbytes);
+
 /* Register / unregister an ambiguous root area [base, limit) (for fiber stacks and
    any C globals holding mml_values). */
 void *mml_gc_add_area_root(void *base, void *limit);   /* returns an opaque handle */
