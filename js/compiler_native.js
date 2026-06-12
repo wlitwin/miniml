@@ -88833,6 +88833,7 @@ function Main$list_iteri(f, xs) {
   return Main$list_iteri_aux(f, 0, xs);
 }
 let Main$native_global_entries = null;
+let Main$module_extern_decls = null;
 function Main$register_native_ext(__dict_Show_0, idx, name, arity) {
   return (Main$native_global_entries = ({_hd: _call(Serialize$serialize_native_ext, [__dict_Show_0, idx, name, arity]), _tl: Main$native_global_entries}), undefined);
 }
@@ -88860,6 +88861,7 @@ function Main$register_module_fn(__dict_Show_0, ctx, global_names, mod_name, fn_
     _t21432 = Types$mono(ty);
   }
   const scheme_21433 = _t21432;
+  (Main$module_extern_decls = ({_hd: ({_tag: 8, _name: "TDExtern", _val: [qualified_21426, scheme_21433]}), _tl: Main$module_extern_decls}), undefined);
   const vars_21435 = ({_hd: [qualified_21426, scheme_21433], _tl: ctx.vars});
   const __rec_upd_21437 = ctx;
   const _t21438 = ({constraint_tvars: __rec_upd_21437.constraint_tvars, current_eff: __rec_upd_21437.current_eff, current_module: __rec_upd_21437.current_module, inside_handler: __rec_upd_21437.inside_handler, loc: __rec_upd_21437.loc, loop_info: __rec_upd_21437.loop_info, mutable_vars: __rec_upd_21437.mutable_vars, return_type: __rec_upd_21437.return_type, return_used: __rec_upd_21437.return_used, type_env: __rec_upd_21437.type_env, vars: vars_21435});
@@ -90033,8 +90035,12 @@ function Main$build_llvm(filename) {
         return _t21854;
       }
       const stdlib_programs_21856 = List$map(_t21852, Main$captured_typed_setups);
-      const triple_21858 = Main$detect_target_triple(undefined);
-      const _t21859 = Codegen$compile_program_with_stdlib(triple_21858, ctx2.type_env, stdlib_programs_21856, typed_program2_21850);
+      const extern_unit_21858 = [ctx2.type_env, Pipeline$lower(true, null, ctx2.type_env, Main$module_extern_decls)];
+      const stdlib_programs_21860 = List$concat(stdlib_programs_21856, ({_hd: extern_unit_21858, _tl: null}));
+      const triple_21862 = Main$detect_target_triple(undefined);
+      const _t21863 = Codegen$compile_program_with_stdlib(triple_21862, ctx2.type_env, stdlib_programs_21860, typed_program2_21850);
+      const _t21861 = _t21863;
+      const _t21859 = _t21861;
       const _t21857 = _t21859;
       const _t21851 = _t21857;
       const _t21849 = _t21851;
@@ -90051,88 +90057,88 @@ function Main$build_llvm(filename) {
   return _t21831;
 }
 function Main$find_runtime_file(name) {
-  const p_21860 = ("native_rt/" + name);
-  let _t21862;
-  if (IO$file_exists(p_21860)) {
-    _t21862 = p_21860;
+  const p_21864 = ("native_rt/" + name);
+  let _t21866;
+  if (IO$file_exists(p_21864)) {
+    _t21866 = p_21864;
   } else {
-    _t21862 = failwith((("cannot find " + p_21860) + " (run --emit-native from the project root)"));
+    _t21866 = failwith((("cannot find " + p_21864) + " (run --emit-native from the project root)"));
   }
-  const _t21861 = _t21862;
-  return _t21861;
+  const _t21865 = _t21866;
+  return _t21865;
 }
 function Main$detect_context_asm(_) {
-  let _t21864;
-  const _t21863 = _call(Process$run, ["uname", ({_hd: "-m", _tl: null})]);
-  _t21865: {
-    const arch_raw = _t21863[1];
-    const arch_21866 = String$trim(arch_raw);
-    let _t21868;
-    if (((arch_21866 === "arm64") || (arch_21866 === "aarch64"))) {
-      _t21868 = Main$find_runtime_file("context_arm64.S");
+  let _t21868;
+  const _t21867 = _call(Process$run, ["uname", ({_hd: "-m", _tl: null})]);
+  _t21869: {
+    const arch_raw = _t21867[1];
+    const arch_21870 = String$trim(arch_raw);
+    let _t21872;
+    if (((arch_21870 === "arm64") || (arch_21870 === "aarch64"))) {
+      _t21872 = Main$find_runtime_file("context_arm64.S");
     } else {
-      _t21868 = Main$find_runtime_file("context_x86_64.S");
+      _t21872 = Main$find_runtime_file("context_x86_64.S");
     }
-    const _t21867 = _t21868;
-    _t21864 = _t21867;
-    break _t21865;
+    const _t21871 = _t21872;
+    _t21868 = _t21871;
+    break _t21869;
   }
-  return _t21864;
+  return _t21868;
 }
 function Main$gc_flags(_) {
-  let _t21869;
+  let _t21873;
   if (IO$file_exists("/opt/homebrew/include/gc/gc.h")) {
-    _t21869 = [({_hd: "-I/opt/homebrew/include", _tl: null}), ({_hd: "-L/opt/homebrew/lib", _tl: ({_hd: "-lgc", _tl: null})})];
+    _t21873 = [({_hd: "-I/opt/homebrew/include", _tl: null}), ({_hd: "-L/opt/homebrew/lib", _tl: ({_hd: "-lgc", _tl: null})})];
   } else {
-    let _t21870;
+    let _t21874;
     if (IO$file_exists("/usr/local/include/gc/gc.h")) {
-      _t21870 = [({_hd: "-I/usr/local/include", _tl: null}), ({_hd: "-L/usr/local/lib", _tl: ({_hd: "-lgc", _tl: null})})];
+      _t21874 = [({_hd: "-I/usr/local/include", _tl: null}), ({_hd: "-L/usr/local/lib", _tl: ({_hd: "-lgc", _tl: null})})];
     } else {
-      function _t21871(s) {
-        function _t21872(x) {
+      function _t21875(s) {
+        function _t21876(x) {
           return (x !== "");
         }
-        return List$filter(_t21872, _call(String$split, [" ", String$trim(s)]));
+        return List$filter(_t21876, _call(String$split, [" ", String$trim(s)]));
       }
-      const words_21873 = _t21871;
-      let _t21876;
-      const _t21875 = _call(Process$run, ["pkg-config", ({_hd: "--cflags", _tl: ({_hd: "bdw-gc", _tl: null})})]);
-      _t21877: {
-        const cf = _t21875[1];
-        let _t21879;
-        const _t21878 = _call(Process$run, ["pkg-config", ({_hd: "--libs", _tl: ({_hd: "bdw-gc", _tl: null})})]);
-        _t21880: {
-          const lf = _t21878[1];
-          let _t21882;
-          const _t21881 = words_21873(lf);
-          _t21883: {
-            if (_t21881 === null) {
-              _t21882 = ({_hd: "-lgc", _tl: null});
-              break _t21883;
+      const words_21877 = _t21875;
+      let _t21880;
+      const _t21879 = _call(Process$run, ["pkg-config", ({_hd: "--cflags", _tl: ({_hd: "bdw-gc", _tl: null})})]);
+      _t21881: {
+        const cf = _t21879[1];
+        let _t21883;
+        const _t21882 = _call(Process$run, ["pkg-config", ({_hd: "--libs", _tl: ({_hd: "bdw-gc", _tl: null})})]);
+        _t21884: {
+          const lf = _t21882[1];
+          let _t21886;
+          const _t21885 = words_21877(lf);
+          _t21887: {
+            if (_t21885 === null) {
+              _t21886 = ({_hd: "-lgc", _tl: null});
+              break _t21887;
             }
-            const l = _t21881;
-            _t21882 = l;
-            break _t21883;
+            const l = _t21885;
+            _t21886 = l;
+            break _t21887;
           }
-          const ldflags_21884 = _t21882;
-          const _t21885 = [words_21873(cf), ldflags_21884];
-          _t21879 = _t21885;
-          break _t21880;
+          const ldflags_21888 = _t21886;
+          const _t21889 = [words_21877(cf), ldflags_21888];
+          _t21883 = _t21889;
+          break _t21884;
         }
-        _t21876 = _t21879;
-        break _t21877;
+        _t21880 = _t21883;
+        break _t21881;
       }
-      const _t21874 = _t21876;
-      _t21870 = _t21874;
+      const _t21878 = _t21880;
+      _t21874 = _t21878;
     }
-    _t21869 = _t21870;
+    _t21873 = _t21874;
   }
-  return _t21869;
+  return _t21873;
 }
 function Main$run_emit_llvm(args) {
-  const _t21886 = (function() {
-    const _t21887 = _h;
-    _h = Object.assign({}, _t21887, {
+  const _t21890 = (function() {
+    const _t21891 = _h;
+    _h = Object.assign({}, _t21891, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -90141,59 +90147,59 @@ function Main$run_emit_llvm(args) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      let _t21889;
-      const _t21888 = args;
-      _t21890: {
-        if (_t21888 !== null) {
-          if (_t21888._tl !== null) {
-            const file = _t21888._tl._hd;
-            _t21889 = file;
-            break _t21890;
+      let _t21893;
+      const _t21892 = args;
+      _t21894: {
+        if (_t21892 !== null) {
+          if (_t21892._tl !== null) {
+            const file = _t21892._tl._hd;
+            _t21893 = file;
+            break _t21894;
           }
-          _t21889 = failwith("Usage: compiler --emit-llvm <source-file>");
-          break _t21890;
+          _t21893 = failwith("Usage: compiler --emit-llvm <source-file>");
+          break _t21894;
         }
-        _t21889 = failwith("Usage: compiler --emit-llvm <source-file>");
-        break _t21890;
+        _t21893 = failwith("Usage: compiler --emit-llvm <source-file>");
+        break _t21894;
       }
-      const filename_21891 = _t21889;
-      const _t21892 = print(Main$build_llvm(filename_21891));
-      const x_21893 = _t21892;
-      return x_21893;
+      const filename_21895 = _t21893;
+      const _t21896 = print(Main$build_llvm(filename_21895));
+      const x_21897 = _t21896;
+      return x_21897;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t21895;
-        const _t21894 = arg;
-        _t21896: {
-          const msg = _t21894[0];
-          const _loc = _t21894[1];
-          _t21895 = failwith(msg);
-          break _t21896;
+        let _t21899;
+        const _t21898 = arg;
+        _t21900: {
+          const msg = _t21898[0];
+          const _loc = _t21898[1];
+          _t21899 = failwith(msg);
+          break _t21900;
         }
-        return _t21895;
+        return _t21899;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t21898;
-        const _t21897 = arg;
-        _t21899: {
-          const msg = _t21897[0];
-          const _loc = _t21897[1];
-          _t21898 = failwith(msg);
-          break _t21899;
+        let _t21902;
+        const _t21901 = arg;
+        _t21903: {
+          const msg = _t21901[0];
+          const _loc = _t21901[1];
+          _t21902 = failwith(msg);
+          break _t21903;
         }
-        return _t21898;
+        return _t21902;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t21901;
-        const _t21900 = arg;
-        _t21902: {
-          const msg = _t21900[0];
-          const _loc = _t21900[1];
-          _t21901 = failwith(msg);
-          break _t21902;
+        let _t21905;
+        const _t21904 = arg;
+        _t21906: {
+          const msg = _t21904[0];
+          const _loc = _t21904[1];
+          _t21905 = failwith(msg);
+          break _t21906;
         }
-        return _t21901;
+        return _t21905;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -90204,14 +90210,14 @@ function Main$run_emit_llvm(args) {
         const msg = _exc._v;
         return failwith(("native codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t21887; }
+    } finally { _h = _t21891; }
   })();
-  return _t21886;
+  return _t21890;
 }
 function Main$run_emit_native(filename, out_path) {
-  const _t21903 = (function() {
-    const _t21904 = _h;
-    _h = Object.assign({}, _t21904, {
+  const _t21907 = (function() {
+    const _t21908 = _h;
+    _h = Object.assign({}, _t21908, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -90220,76 +90226,76 @@ function Main$run_emit_native(filename, out_path) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      const ll_21905 = Main$build_llvm(filename);
-      const ll_path_21907 = (out_path + ".ll");
-      _call(IO$write_file, [ll_path_21907, ll_21905]);
-      const runtime_c_21909 = Main$find_runtime_file("runtime.c");
-      const context_asm_21911 = Main$detect_context_asm(undefined);
-      let _t21914;
-      const _t21913 = Main$gc_flags(undefined);
-      _t21915: {
-        const gc_cflags = _t21913[0];
-        const gc_ldflags = _t21913[1];
-        const clang_args_21916 = List$concat(({_hd: "-O2", _tl: null}), List$concat(gc_cflags, List$concat(({_hd: ll_path_21907, _tl: ({_hd: runtime_c_21909, _tl: ({_hd: context_asm_21911, _tl: null})})}), List$concat(gc_ldflags, ({_hd: "-o", _tl: ({_hd: out_path, _tl: null})})))));
-        let _t21919;
-        const _t21918 = _call(Process$run, ["clang", clang_args_21916]);
-        _t21920: {
-          const code = _t21918[0];
-          const _out = _t21918[1];
-          const cerr = _t21918[2];
-          let _t21921;
+      const ll_21909 = Main$build_llvm(filename);
+      const ll_path_21911 = (out_path + ".ll");
+      _call(IO$write_file, [ll_path_21911, ll_21909]);
+      const runtime_c_21913 = Main$find_runtime_file("runtime.c");
+      const context_asm_21915 = Main$detect_context_asm(undefined);
+      let _t21918;
+      const _t21917 = Main$gc_flags(undefined);
+      _t21919: {
+        const gc_cflags = _t21917[0];
+        const gc_ldflags = _t21917[1];
+        const clang_args_21920 = List$concat(({_hd: "-O2", _tl: null}), List$concat(gc_cflags, List$concat(({_hd: ll_path_21911, _tl: ({_hd: runtime_c_21913, _tl: ({_hd: context_asm_21915, _tl: null})})}), List$concat(gc_ldflags, ({_hd: "-o", _tl: ({_hd: out_path, _tl: null})})))));
+        let _t21923;
+        const _t21922 = _call(Process$run, ["clang", clang_args_21920]);
+        _t21924: {
+          const code = _t21922[0];
+          const _out = _t21922[1];
+          const cerr = _t21922[2];
+          let _t21925;
           if ((code !== 0)) {
-            _t21921 = failwith(((("clang failed (exit " + string_of_int(code)) + "): ") + cerr));
+            _t21925 = failwith(((("clang failed (exit " + string_of_int(code)) + "): ") + cerr));
           } else {
-            _t21921 = print(((("compiled " + filename) + " -> ") + out_path));
+            _t21925 = print(((("compiled " + filename) + " -> ") + out_path));
           }
-          _t21919 = _t21921;
-          break _t21920;
+          _t21923 = _t21925;
+          break _t21924;
         }
-        const _t21917 = _t21919;
-        _t21914 = _t21917;
-        break _t21915;
+        const _t21921 = _t21923;
+        _t21918 = _t21921;
+        break _t21919;
       }
+      const _t21916 = _t21918;
+      const _t21914 = _t21916;
       const _t21912 = _t21914;
       const _t21910 = _t21912;
-      const _t21908 = _t21910;
-      const _t21906 = _t21908;
-      const x_21922 = _t21906;
-      return x_21922;
+      const x_21926 = _t21910;
+      return x_21926;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t21924;
-        const _t21923 = arg;
-        _t21925: {
-          const msg = _t21923[0];
-          const _loc = _t21923[1];
-          _t21924 = failwith(msg);
-          break _t21925;
+        let _t21928;
+        const _t21927 = arg;
+        _t21929: {
+          const msg = _t21927[0];
+          const _loc = _t21927[1];
+          _t21928 = failwith(msg);
+          break _t21929;
         }
-        return _t21924;
+        return _t21928;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t21927;
-        const _t21926 = arg;
-        _t21928: {
-          const msg = _t21926[0];
-          const _loc = _t21926[1];
-          _t21927 = failwith(msg);
-          break _t21928;
+        let _t21931;
+        const _t21930 = arg;
+        _t21932: {
+          const msg = _t21930[0];
+          const _loc = _t21930[1];
+          _t21931 = failwith(msg);
+          break _t21932;
         }
-        return _t21927;
+        return _t21931;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t21930;
-        const _t21929 = arg;
-        _t21931: {
-          const msg = _t21929[0];
-          const _loc = _t21929[1];
-          _t21930 = failwith(msg);
-          break _t21931;
+        let _t21934;
+        const _t21933 = arg;
+        _t21935: {
+          const msg = _t21933[0];
+          const _loc = _t21933[1];
+          _t21934 = failwith(msg);
+          break _t21935;
         }
-        return _t21930;
+        return _t21934;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -90300,14 +90306,14 @@ function Main$run_emit_native(filename, out_path) {
         const msg = _exc._v;
         return failwith(("native codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t21904; }
+    } finally { _h = _t21908; }
   })();
-  return _t21903;
+  return _t21907;
 }
 function Main$run_batch_emit_ir(manifest_file) {
-  const _t21932 = (function() {
-    const _t21933 = _h;
-    _h = Object.assign({}, _t21933, {
+  const _t21936 = (function() {
+    const _t21937 = _h;
+    _h = Object.assign({}, _t21937, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -90318,42 +90324,42 @@ function Main$run_batch_emit_ir(manifest_file) {
     try {
       (Main$js_capture_mode = true, undefined);
       (Main$captured_typed_setups = null, undefined);
-      let _t21935;
-      const _t21934 = Main$setup_builtins(undefined);
-      _t21936: {
-        const ctx = _t21934[0];
-        const global_names = _t21934[1];
-        const mutable_globals = _t21934[2];
-        let _t21938;
-        const _t21937 = Main$setup_classes(ctx, global_names, mutable_globals);
-        _t21939: {
-          const ctx = _t21937[0];
-          const _class_protos = _t21937[1];
-          let _t21941;
-          const _t21940 = Main$setup_modules(ctx, global_names, mutable_globals);
-          _t21942: {
-            const ctx = _t21940[0];
-            const _module_protos = _t21940[1];
-            function _t21943(p) {
-              let _t21945;
-              const _t21944 = p;
-              _t21946: {
-                const prog = _t21944[1];
-                _t21945 = prog;
-                break _t21946;
+      let _t21939;
+      const _t21938 = Main$setup_builtins(undefined);
+      _t21940: {
+        const ctx = _t21938[0];
+        const global_names = _t21938[1];
+        const mutable_globals = _t21938[2];
+        let _t21942;
+        const _t21941 = Main$setup_classes(ctx, global_names, mutable_globals);
+        _t21943: {
+          const ctx = _t21941[0];
+          const _class_protos = _t21941[1];
+          let _t21945;
+          const _t21944 = Main$setup_modules(ctx, global_names, mutable_globals);
+          _t21946: {
+            const ctx = _t21944[0];
+            const _module_protos = _t21944[1];
+            function _t21947(p) {
+              let _t21949;
+              const _t21948 = p;
+              _t21950: {
+                const prog = _t21948[1];
+                _t21949 = prog;
+                break _t21950;
               }
-              return _t21945;
+              return _t21949;
             }
-            const stdlib_programs_21947 = List$map(_t21943, Main$captured_typed_setups);
-            const manifest_21949 = IO$read_file(manifest_file);
-            function _t21951(s) {
+            const stdlib_programs_21951 = List$map(_t21947, Main$captured_typed_setups);
+            const manifest_21953 = IO$read_file(manifest_file);
+            function _t21955(s) {
               return (s !== "");
             }
-            const files_21952 = List$filter(_t21951, _call(String$split, ["\n", manifest_21949]));
-            function _t21954(filename) {
-              const _t21955 = (function() {
-                const _t21956 = _h;
-                _h = Object.assign({}, _t21956, {
+            const files_21956 = List$filter(_t21955, _call(String$split, ["\n", manifest_21953]));
+            function _t21958(filename) {
+              const _t21959 = (function() {
+                const _t21960 = _h;
+                _h = Object.assign({}, _t21960, {
                   "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                   "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                   "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -90361,64 +90367,64 @@ function Main$run_batch_emit_ir(manifest_file) {
                   "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                 });
                 try {
-                  const source_21957 = IO$read_file(filename);
-                  const tokens_21959 = Lexer$tokenize(source_21957);
-                  const program_21961 = Parser$parse_program(tokens_21959);
-                  let _t21964;
-                  const _t21963 = Typechecker$check_program_in_ctx(ctx, program_21961);
-                  _t21965: {
-                    const ctx2 = _t21963[0];
-                    const typed_program = _t21963[1];
-                    const typed_program2_21966 = Typechecker$transform_constraints(ctx2, typed_program);
-                    const typed_program2_21968 = Pipeline$lower(true, stdlib_programs_21947, ctx2.type_env, typed_program2_21966);
-                    print(Ir_serialize$serialize_program(typed_program2_21968));
-                    const _t21969 = print("===BATCH-SEP===");
-                    const _t21967 = _t21969;
-                    _t21964 = _t21967;
-                    break _t21965;
+                  const source_21961 = IO$read_file(filename);
+                  const tokens_21963 = Lexer$tokenize(source_21961);
+                  const program_21965 = Parser$parse_program(tokens_21963);
+                  let _t21968;
+                  const _t21967 = Typechecker$check_program_in_ctx(ctx, program_21965);
+                  _t21969: {
+                    const ctx2 = _t21967[0];
+                    const typed_program = _t21967[1];
+                    const typed_program2_21970 = Typechecker$transform_constraints(ctx2, typed_program);
+                    const typed_program2_21972 = Pipeline$lower(true, stdlib_programs_21951, ctx2.type_env, typed_program2_21970);
+                    print(Ir_serialize$serialize_program(typed_program2_21972));
+                    const _t21973 = print("===BATCH-SEP===");
+                    const _t21971 = _t21973;
+                    _t21968 = _t21971;
+                    break _t21969;
                   }
+                  const _t21966 = _t21968;
+                  const _t21964 = _t21966;
                   const _t21962 = _t21964;
-                  const _t21960 = _t21962;
-                  const _t21958 = _t21960;
-                  const x_21970 = _t21958;
-                  return x_21970;
+                  const x_21974 = _t21962;
+                  return x_21974;
                 } catch (_exc) {
                   if (_exc && _exc._e === "lex_error") {
                     const arg = _exc._v;
-                    let _t21972;
-                    const _t21971 = arg;
-                    _t21973: {
-                      const msg = _t21971[0];
-                      const _loc = _t21971[1];
+                    let _t21976;
+                    const _t21975 = arg;
+                    _t21977: {
+                      const msg = _t21975[0];
+                      const _loc = _t21975[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t21972 = print("===BATCH-SEP===");
-                      break _t21973;
+                      _t21976 = print("===BATCH-SEP===");
+                      break _t21977;
                     }
-                    return _t21972;
+                    return _t21976;
                   } else if (_exc && _exc._e === "parse_error") {
                     const arg = _exc._v;
-                    let _t21975;
-                    const _t21974 = arg;
-                    _t21976: {
-                      const msg = _t21974[0];
-                      const _loc = _t21974[1];
+                    let _t21979;
+                    const _t21978 = arg;
+                    _t21980: {
+                      const msg = _t21978[0];
+                      const _loc = _t21978[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t21975 = print("===BATCH-SEP===");
-                      break _t21976;
+                      _t21979 = print("===BATCH-SEP===");
+                      break _t21980;
                     }
-                    return _t21975;
+                    return _t21979;
                   } else if (_exc && _exc._e === "type_error") {
                     const arg = _exc._v;
-                    let _t21978;
-                    const _t21977 = arg;
-                    _t21979: {
-                      const msg = _t21977[0];
-                      const _loc = _t21977[1];
+                    let _t21982;
+                    const _t21981 = arg;
+                    _t21983: {
+                      const msg = _t21981[0];
+                      const _loc = _t21981[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t21978 = print("===BATCH-SEP===");
-                      break _t21979;
+                      _t21982 = print("===BATCH-SEP===");
+                      break _t21983;
                     }
-                    return _t21978;
+                    return _t21982;
                   } else if (_exc && _exc._e === "compile_error") {
                     const msg = _exc._v;
                     print(("COMPILE-ERROR:" + msg));
@@ -90428,58 +90434,58 @@ function Main$run_batch_emit_ir(manifest_file) {
                     print(("COMPILE-ERROR:" + msg));
                     return print("===BATCH-SEP===");
                   } else { throw _exc; }
-                } finally { _h = _t21956; }
+                } finally { _h = _t21960; }
               })();
-              return _t21955;
+              return _t21959;
             }
-            const _t21953 = Main$list_iter(_t21954, files_21952);
-            const _t21950 = _t21953;
-            const _t21948 = _t21950;
-            _t21941 = _t21948;
-            break _t21942;
+            const _t21957 = Main$list_iter(_t21958, files_21956);
+            const _t21954 = _t21957;
+            const _t21952 = _t21954;
+            _t21945 = _t21952;
+            break _t21946;
           }
-          _t21938 = _t21941;
-          break _t21939;
+          _t21942 = _t21945;
+          break _t21943;
         }
-        _t21935 = _t21938;
-        break _t21936;
+        _t21939 = _t21942;
+        break _t21940;
       }
-      const x_21980 = _t21935;
-      return x_21980;
+      const x_21984 = _t21939;
+      return x_21984;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t21982;
-        const _t21981 = arg;
-        _t21983: {
-          const msg = _t21981[0];
-          const _loc = _t21981[1];
-          _t21982 = failwith(msg);
-          break _t21983;
+        let _t21986;
+        const _t21985 = arg;
+        _t21987: {
+          const msg = _t21985[0];
+          const _loc = _t21985[1];
+          _t21986 = failwith(msg);
+          break _t21987;
         }
-        return _t21982;
+        return _t21986;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t21985;
-        const _t21984 = arg;
-        _t21986: {
-          const msg = _t21984[0];
-          const _loc = _t21984[1];
-          _t21985 = failwith(msg);
-          break _t21986;
+        let _t21989;
+        const _t21988 = arg;
+        _t21990: {
+          const msg = _t21988[0];
+          const _loc = _t21988[1];
+          _t21989 = failwith(msg);
+          break _t21990;
         }
-        return _t21985;
+        return _t21989;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t21988;
-        const _t21987 = arg;
-        _t21989: {
-          const msg = _t21987[0];
-          const _loc = _t21987[1];
-          _t21988 = failwith(msg);
-          break _t21989;
+        let _t21992;
+        const _t21991 = arg;
+        _t21993: {
+          const msg = _t21991[0];
+          const _loc = _t21991[1];
+          _t21992 = failwith(msg);
+          break _t21993;
         }
-        return _t21988;
+        return _t21992;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -90490,175 +90496,175 @@ function Main$run_batch_emit_ir(manifest_file) {
         const msg = _exc._v;
         return failwith(("IR serialize error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t21933; }
+    } finally { _h = _t21937; }
   })();
-  return _t21932;
+  return _t21936;
 }
-const args_21990 = Sys$args(undefined);
-let _t21993;
-const _t21992 = args_21990;
-_t21994: {
-  if (_t21992 !== null) {
-    if (_t21992._tl !== null) {
-      if (_t21992._tl._hd === "--batch") {
-        if (_t21992._tl._tl !== null) {
-          const f = _t21992._tl._tl._hd;
-          _t21993 = ({_tag: 1, _name: "Some", _val: f});
-          break _t21994;
+const args_21994 = Sys$args(undefined);
+let _t21997;
+const _t21996 = args_21994;
+_t21998: {
+  if (_t21996 !== null) {
+    if (_t21996._tl !== null) {
+      if (_t21996._tl._hd === "--batch") {
+        if (_t21996._tl._tl !== null) {
+          const f = _t21996._tl._tl._hd;
+          _t21997 = ({_tag: 1, _name: "Some", _val: f});
+          break _t21998;
         }
-        _t21993 = ({_tag: 0, _name: "None"});
-        break _t21994;
+        _t21997 = ({_tag: 0, _name: "None"});
+        break _t21998;
       }
-      _t21993 = ({_tag: 0, _name: "None"});
-      break _t21994;
+      _t21997 = ({_tag: 0, _name: "None"});
+      break _t21998;
     }
-    _t21993 = ({_tag: 0, _name: "None"});
-    break _t21994;
+    _t21997 = ({_tag: 0, _name: "None"});
+    break _t21998;
   }
-  _t21993 = ({_tag: 0, _name: "None"});
-  break _t21994;
+  _t21997 = ({_tag: 0, _name: "None"});
+  break _t21998;
 }
-const batch_file_21995 = _t21993;
-let _t21998;
-const _t21997 = args_21990;
-_t21999: {
-  if (_t21997 !== null) {
-    if (_t21997._tl !== null) {
-      if (_t21997._tl._hd === "--batch-emit-ir") {
-        if (_t21997._tl._tl !== null) {
-          const f = _t21997._tl._tl._hd;
-          _t21998 = ({_tag: 1, _name: "Some", _val: f});
-          break _t21999;
+const batch_file_21999 = _t21997;
+let _t22002;
+const _t22001 = args_21994;
+_t22003: {
+  if (_t22001 !== null) {
+    if (_t22001._tl !== null) {
+      if (_t22001._tl._hd === "--batch-emit-ir") {
+        if (_t22001._tl._tl !== null) {
+          const f = _t22001._tl._tl._hd;
+          _t22002 = ({_tag: 1, _name: "Some", _val: f});
+          break _t22003;
         }
-        _t21998 = ({_tag: 0, _name: "None"});
-        break _t21999;
+        _t22002 = ({_tag: 0, _name: "None"});
+        break _t22003;
       }
-      _t21998 = ({_tag: 0, _name: "None"});
-      break _t21999;
+      _t22002 = ({_tag: 0, _name: "None"});
+      break _t22003;
     }
-    _t21998 = ({_tag: 0, _name: "None"});
-    break _t21999;
+    _t22002 = ({_tag: 0, _name: "None"});
+    break _t22003;
   }
-  _t21998 = ({_tag: 0, _name: "None"});
-  break _t21999;
+  _t22002 = ({_tag: 0, _name: "None"});
+  break _t22003;
 }
-const batch_ir_file_22000 = _t21998;
-function _t22002(a) {
+const batch_ir_file_22004 = _t22002;
+function _t22006(a) {
   return (a === "--emit-js");
 }
-const emit_js_22003 = List$exists(_t22002, args_21990);
-function _t22005(a) {
+const emit_js_22007 = List$exists(_t22006, args_21994);
+function _t22009(a) {
   return (a === "--emit-ir");
 }
-const emit_ir_22006 = List$exists(_t22005, args_21990);
-function _t22008(a) {
+const emit_ir_22010 = List$exists(_t22009, args_21994);
+function _t22012(a) {
   return (a === "--emit-llvm");
 }
-const emit_llvm_22009 = List$exists(_t22008, args_21990);
-function _t22011(a) {
+const emit_llvm_22013 = List$exists(_t22012, args_21994);
+function _t22015(a) {
   return (a === "--emit-native");
 }
-const emit_native_22012 = List$exists(_t22011, args_21990);
-function _t22014(a) {
+const emit_native_22016 = List$exists(_t22015, args_21994);
+function _t22018(a) {
   return (a === "--no-optimize");
 }
-const no_optimize_22015 = List$exists(_t22014, args_21990);
-let _t22017;
-if (no_optimize_22015) {
-  _t22017 = Ref$set(Compiler$optimize_enabled, false);
+const no_optimize_22019 = List$exists(_t22018, args_21994);
+let _t22021;
+if (no_optimize_22019) {
+  _t22021 = Ref$set(Compiler$optimize_enabled, false);
 } else {
-  _t22017 = undefined;
+  _t22021 = undefined;
 }
-_t22017;
-function _t22018(a) {
+_t22021;
+function _t22022(a) {
   return (((((a !== "--no-optimize") && (a !== "--emit-js")) && (a !== "--emit-ir")) && (a !== "--emit-llvm")) && (a !== "--emit-native"));
 }
-const args_22019 = List$filter(_t22018, args_21990);
-let _t22022;
-const _t22021 = batch_ir_file_22000;
-_t22023: {
-  if (_t22021._tag === 0) {
-    let _t22025;
-    const _t22024 = batch_file_21995;
-    _t22026: {
-      if (_t22024._tag === 0) {
-        let _t22027;
-        if (emit_ir_22006) {
-          _t22027 = Main$run_emit_ir(args_22019);
+const args_22023 = List$filter(_t22022, args_21994);
+let _t22026;
+const _t22025 = batch_ir_file_22004;
+_t22027: {
+  if (_t22025._tag === 0) {
+    let _t22029;
+    const _t22028 = batch_file_21999;
+    _t22030: {
+      if (_t22028._tag === 0) {
+        let _t22031;
+        if (emit_ir_22010) {
+          _t22031 = Main$run_emit_ir(args_22023);
         } else {
-          let _t22028;
-          if (emit_llvm_22009) {
-            _t22028 = Main$run_emit_llvm(args_22019);
+          let _t22032;
+          if (emit_llvm_22013) {
+            _t22032 = Main$run_emit_llvm(args_22023);
           } else {
-            let _t22029;
-            if (emit_native_22012) {
+            let _t22033;
+            if (emit_native_22016) {
               function find_out(xs) {
                 while (true) {
-                  let _t22031;
-                  const _t22030 = xs;
-                  _t22032: {
-                    if (_t22030 === null) {
-                      _t22031 = "a.out";
-                      break _t22032;
+                  let _t22035;
+                  const _t22034 = xs;
+                  _t22036: {
+                    if (_t22034 === null) {
+                      _t22035 = "a.out";
+                      break _t22036;
                     }
-                    if (_t22030 !== null) {
-                      if (_t22030._hd === "-o") {
-                        if (_t22030._tl !== null) {
-                          const o = _t22030._tl._hd;
-                          _t22031 = o;
-                          break _t22032;
+                    if (_t22034 !== null) {
+                      if (_t22034._hd === "-o") {
+                        if (_t22034._tl !== null) {
+                          const o = _t22034._tl._hd;
+                          _t22035 = o;
+                          break _t22036;
                         }
-                        const rest = _t22030._tl;
-                        const _t22033 = rest;
-                        xs = _t22033;
+                        const rest = _t22034._tl;
+                        const _t22037 = rest;
+                        xs = _t22037;
                         continue;
-                        _t22031 = undefined;
-                        break _t22032;
+                        _t22035 = undefined;
+                        break _t22036;
                       }
-                      const rest = _t22030._tl;
-                      const _t22034 = rest;
-                      xs = _t22034;
+                      const rest = _t22034._tl;
+                      const _t22038 = rest;
+                      xs = _t22038;
                       continue;
-                      _t22031 = undefined;
-                      break _t22032;
+                      _t22035 = undefined;
+                      break _t22036;
                     }
                     _match_fail("line 0");
                   }
-                  return _t22031;
+                  return _t22035;
                 }
               }
-              const out_path_22036 = find_out(args_22019);
-              function _t22038(a) {
-                return ((a !== "-o") && (a !== out_path_22036));
+              const out_path_22040 = find_out(args_22023);
+              function _t22042(a) {
+                return ((a !== "-o") && (a !== out_path_22040));
               }
-              let _t22040;
-              const _t22039 = List$filter(_t22038, args_22019);
-              _t22041: {
-                if (_t22039 !== null) {
-                  if (_t22039._tl !== null) {
-                    const f = _t22039._tl._hd;
-                    _t22040 = f;
-                    break _t22041;
-                  }
-                  _t22040 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
-                  break _t22041;
-                }
-                _t22040 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
-                break _t22041;
-              }
-              const filename_22042 = _t22040;
-              const _t22043 = Main$run_emit_native(filename_22042, out_path_22036);
-              const _t22037 = _t22043;
-              const _t22035 = _t22037;
-              _t22029 = _t22035;
-            } else {
               let _t22044;
-              if (emit_js_22003) {
-                _t22044 = Main$run_emit_js(args_22019);
+              const _t22043 = List$filter(_t22042, args_22023);
+              _t22045: {
+                if (_t22043 !== null) {
+                  if (_t22043._tl !== null) {
+                    const f = _t22043._tl._hd;
+                    _t22044 = f;
+                    break _t22045;
+                  }
+                  _t22044 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
+                  break _t22045;
+                }
+                _t22044 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
+                break _t22045;
+              }
+              const filename_22046 = _t22044;
+              const _t22047 = Main$run_emit_native(filename_22046, out_path_22040);
+              const _t22041 = _t22047;
+              const _t22039 = _t22041;
+              _t22033 = _t22039;
+            } else {
+              let _t22048;
+              if (emit_js_22007) {
+                _t22048 = Main$run_emit_js(args_22023);
               } else {
-                const _t22045 = (function() {
-                  const _t22046 = _h;
-                  _h = Object.assign({}, _t22046, {
+                const _t22049 = (function() {
+                  const _t22050 = _h;
+                  _h = Object.assign({}, _t22050, {
                     "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                     "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                     "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -90666,162 +90672,162 @@ _t22023: {
                     "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                   });
                   try {
-                    let _t22048;
-                    const _t22047 = args_22019;
-                    _t22049: {
-                      if (_t22047 !== null) {
-                        if (_t22047._tl !== null) {
-                          if (_t22047._tl._hd === "--emit-json") {
-                            if (_t22047._tl._tl !== null) {
-                              const file = _t22047._tl._tl._hd;
-                              _t22048 = file;
-                              break _t22049;
+                    let _t22052;
+                    const _t22051 = args_22023;
+                    _t22053: {
+                      if (_t22051 !== null) {
+                        if (_t22051._tl !== null) {
+                          if (_t22051._tl._hd === "--emit-json") {
+                            if (_t22051._tl._tl !== null) {
+                              const file = _t22051._tl._tl._hd;
+                              _t22052 = file;
+                              break _t22053;
                             }
-                            const file = _t22047._tl._hd;
-                            _t22048 = file;
-                            break _t22049;
+                            const file = _t22051._tl._hd;
+                            _t22052 = file;
+                            break _t22053;
                           }
-                          const file = _t22047._tl._hd;
-                          _t22048 = file;
-                          break _t22049;
+                          const file = _t22051._tl._hd;
+                          _t22052 = file;
+                          break _t22053;
                         }
-                        _t22048 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-                        break _t22049;
+                        _t22052 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+                        break _t22053;
                       }
-                      _t22048 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-                      break _t22049;
+                      _t22052 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+                      break _t22053;
                     }
-                    const filename_22050 = _t22048;
-                    const source_22052 = IO$read_file(filename_22050);
-                    let _t22054;
+                    const filename_22054 = _t22052;
+                    const source_22056 = IO$read_file(filename_22054);
+                    let _t22058;
                     if (__cache_has("emit_json")) {
-                      _t22054 = __cache_get("emit_json");
+                      _t22058 = __cache_get("emit_json");
                     } else {
-                      let _t22056;
-                      const _t22055 = Main$setup_builtins(undefined);
-                      _t22057: {
-                        const ctx = _t22055[0];
-                        const global_names = _t22055[1];
-                        const mutable_globals = _t22055[2];
-                        let _t22059;
-                        const _t22058 = Main$setup_classes(ctx, global_names, mutable_globals);
-                        _t22060: {
-                          const ctx = _t22058[0];
-                          const class_protos = _t22058[1];
-                          let _t22062;
-                          const _t22061 = Main$setup_modules(ctx, global_names, mutable_globals);
-                          _t22063: {
-                            const ctx = _t22061[0];
-                            const module_protos = _t22061[1];
-                            const setup_protos_22064 = List$concat(class_protos, module_protos);
-                            const base_gn_len_22066 = Dynarray$length(global_names);
-                            const base_native_22068 = Main$native_global_entries;
-                            const base_mutable_22070 = Hashtbl$to_list(mutable_globals);
-                            _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_22064, base_gn_len_22066, base_native_22068, base_mutable_22070]]);
-                            const _t22071 = [ctx, global_names, mutable_globals, setup_protos_22064, base_gn_len_22066, base_native_22068, base_mutable_22070];
+                      let _t22060;
+                      const _t22059 = Main$setup_builtins(undefined);
+                      _t22061: {
+                        const ctx = _t22059[0];
+                        const global_names = _t22059[1];
+                        const mutable_globals = _t22059[2];
+                        let _t22063;
+                        const _t22062 = Main$setup_classes(ctx, global_names, mutable_globals);
+                        _t22064: {
+                          const ctx = _t22062[0];
+                          const class_protos = _t22062[1];
+                          let _t22066;
+                          const _t22065 = Main$setup_modules(ctx, global_names, mutable_globals);
+                          _t22067: {
+                            const ctx = _t22065[0];
+                            const module_protos = _t22065[1];
+                            const setup_protos_22068 = List$concat(class_protos, module_protos);
+                            const base_gn_len_22070 = Dynarray$length(global_names);
+                            const base_native_22072 = Main$native_global_entries;
+                            const base_mutable_22074 = Hashtbl$to_list(mutable_globals);
+                            _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_22068, base_gn_len_22070, base_native_22072, base_mutable_22074]]);
+                            const _t22075 = [ctx, global_names, mutable_globals, setup_protos_22068, base_gn_len_22070, base_native_22072, base_mutable_22074];
+                            const _t22073 = _t22075;
+                            const _t22071 = _t22073;
                             const _t22069 = _t22071;
-                            const _t22067 = _t22069;
-                            const _t22065 = _t22067;
-                            _t22062 = _t22065;
-                            break _t22063;
+                            _t22066 = _t22069;
+                            break _t22067;
                           }
-                          _t22059 = _t22062;
-                          break _t22060;
+                          _t22063 = _t22066;
+                          break _t22064;
                         }
-                        _t22056 = _t22059;
-                        break _t22057;
+                        _t22060 = _t22063;
+                        break _t22061;
                       }
-                      _t22054 = _t22056;
+                      _t22058 = _t22060;
                     }
-                    let _t22073;
-                    const _t22072 = _t22054;
-                    _t22074: {
-                      const ctx = _t22072[0];
-                      const global_names = _t22072[1];
-                      const mutable_globals = _t22072[2];
-                      const setup_protos = _t22072[3];
-                      const base_gn_len = _t22072[4];
-                      const base_native = _t22072[5];
-                      const base_mutable = _t22072[6];
+                    let _t22077;
+                    const _t22076 = _t22058;
+                    _t22078: {
+                      const ctx = _t22076[0];
+                      const global_names = _t22076[1];
+                      const mutable_globals = _t22076[2];
+                      const setup_protos = _t22076[3];
+                      const base_gn_len = _t22076[4];
+                      const base_native = _t22076[5];
+                      const base_mutable = _t22076[6];
                       (global_names.count = base_gn_len, undefined);
                       (Main$native_global_entries = base_native, undefined);
                       Hashtbl$clear(mutable_globals);
-                      function _t22075(__p569) {
-                        let _t22077;
-                        const _t22076 = __p569;
-                        _t22078: {
-                          const k = _t22076[0];
-                          const v = _t22076[1];
-                          _t22077 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
-                          break _t22078;
+                      function _t22079(__p569) {
+                        let _t22081;
+                        const _t22080 = __p569;
+                        _t22082: {
+                          const k = _t22080[0];
+                          const v = _t22080[1];
+                          _t22081 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
+                          break _t22082;
                         }
-                        return _t22077;
+                        return _t22081;
                       }
-                      Main$list_iter(_t22075, base_mutable);
-                      const tokens_22079 = Lexer$tokenize(source_22052);
-                      const program_22081 = Parser$parse_program(tokens_22079);
-                      let _t22084;
-                      const _t22083 = Typechecker$check_program_in_ctx(ctx, program_22081);
-                      _t22085: {
-                        const ctx2 = _t22083[0];
-                        const typed_program = _t22083[1];
-                        const typed_program2_22086 = Typechecker$transform_constraints(ctx2, typed_program);
-                        const typed_program2_22088 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22086);
-                        const compiled_22090 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22088);
-                        Main$register_externs_from_program(typed_program2_22088, global_names);
-                        const ng_json_22092 = _t21423_Main$build_native_globals_json(undefined);
-                        const json_22094 = Serialize$serialize_bundle(global_names, ng_json_22092, setup_protos, compiled_22090.main);
-                        const _t22095 = print(json_22094);
+                      Main$list_iter(_t22079, base_mutable);
+                      const tokens_22083 = Lexer$tokenize(source_22056);
+                      const program_22085 = Parser$parse_program(tokens_22083);
+                      let _t22088;
+                      const _t22087 = Typechecker$check_program_in_ctx(ctx, program_22085);
+                      _t22089: {
+                        const ctx2 = _t22087[0];
+                        const typed_program = _t22087[1];
+                        const typed_program2_22090 = Typechecker$transform_constraints(ctx2, typed_program);
+                        const typed_program2_22092 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22090);
+                        const compiled_22094 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22092);
+                        Main$register_externs_from_program(typed_program2_22092, global_names);
+                        const ng_json_22096 = _t21423_Main$build_native_globals_json(undefined);
+                        const json_22098 = Serialize$serialize_bundle(global_names, ng_json_22096, setup_protos, compiled_22094.main);
+                        const _t22099 = print(json_22098);
+                        const _t22097 = _t22099;
+                        const _t22095 = _t22097;
                         const _t22093 = _t22095;
                         const _t22091 = _t22093;
-                        const _t22089 = _t22091;
-                        const _t22087 = _t22089;
-                        _t22084 = _t22087;
-                        break _t22085;
+                        _t22088 = _t22091;
+                        break _t22089;
                       }
-                      const _t22082 = _t22084;
-                      const _t22080 = _t22082;
-                      _t22073 = _t22080;
-                      break _t22074;
+                      const _t22086 = _t22088;
+                      const _t22084 = _t22086;
+                      _t22077 = _t22084;
+                      break _t22078;
                     }
-                    const _t22053 = _t22073;
-                    const _t22051 = _t22053;
-                    const x_22096 = _t22051;
-                    return x_22096;
+                    const _t22057 = _t22077;
+                    const _t22055 = _t22057;
+                    const x_22100 = _t22055;
+                    return x_22100;
                   } catch (_exc) {
                     if (_exc && _exc._e === "lex_error") {
                       const arg = _exc._v;
-                      let _t22098;
-                      const _t22097 = arg;
-                      _t22099: {
-                        const msg = _t22097[0];
-                        const _loc = _t22097[1];
-                        _t22098 = failwith(msg);
-                        break _t22099;
+                      let _t22102;
+                      const _t22101 = arg;
+                      _t22103: {
+                        const msg = _t22101[0];
+                        const _loc = _t22101[1];
+                        _t22102 = failwith(msg);
+                        break _t22103;
                       }
-                      return _t22098;
+                      return _t22102;
                     } else if (_exc && _exc._e === "parse_error") {
                       const arg = _exc._v;
-                      let _t22101;
-                      const _t22100 = arg;
-                      _t22102: {
-                        const msg = _t22100[0];
-                        const _loc = _t22100[1];
-                        _t22101 = failwith(msg);
-                        break _t22102;
+                      let _t22105;
+                      const _t22104 = arg;
+                      _t22106: {
+                        const msg = _t22104[0];
+                        const _loc = _t22104[1];
+                        _t22105 = failwith(msg);
+                        break _t22106;
                       }
-                      return _t22101;
+                      return _t22105;
                     } else if (_exc && _exc._e === "type_error") {
                       const arg = _exc._v;
-                      let _t22104;
-                      const _t22103 = arg;
-                      _t22105: {
-                        const msg = _t22103[0];
-                        const _loc = _t22103[1];
-                        _t22104 = failwith(msg);
-                        break _t22105;
+                      let _t22108;
+                      const _t22107 = arg;
+                      _t22109: {
+                        const msg = _t22107[0];
+                        const _loc = _t22107[1];
+                        _t22108 = failwith(msg);
+                        break _t22109;
                       }
-                      return _t22104;
+                      return _t22108;
                     } else if (_exc && _exc._e === "compile_error") {
                       const msg = _exc._v;
                       return failwith(msg);
@@ -90829,46 +90835,46 @@ _t22023: {
                       const msg = _exc._v;
                       return failwith(msg);
                     } else { throw _exc; }
-                  } finally { _h = _t22046; }
+                  } finally { _h = _t22050; }
                 })();
-                _t22044 = _t22045;
+                _t22048 = _t22049;
               }
-              _t22029 = _t22044;
+              _t22033 = _t22048;
             }
-            _t22028 = _t22029;
+            _t22032 = _t22033;
           }
-          _t22027 = _t22028;
+          _t22031 = _t22032;
         }
-        _t22025 = _t22027;
-        break _t22026;
+        _t22029 = _t22031;
+        break _t22030;
       }
-      if (_t22024._tag === 1) {
-        const f = _t22024._val;
-        _t22025 = Main$run_batch(f);
-        break _t22026;
+      if (_t22028._tag === 1) {
+        const f = _t22028._val;
+        _t22029 = Main$run_batch(f);
+        break _t22030;
       }
       _match_fail("line 0");
     }
-    _t22022 = _t22025;
-    break _t22023;
+    _t22026 = _t22029;
+    break _t22027;
   }
-  if (_t22021._tag === 1) {
-    const f = _t22021._val;
-    _t22022 = Main$run_batch_emit_ir(f);
-    break _t22023;
+  if (_t22025._tag === 1) {
+    const f = _t22025._val;
+    _t22026 = Main$run_batch_emit_ir(f);
+    break _t22027;
   }
   _match_fail("line 0");
 }
-const _t22020 = _t22022;
-const _t22016 = _t22020;
-const _t22013 = _t22016;
-const _t22010 = _t22013;
-const _t22007 = _t22010;
-const _t22004 = _t22007;
-const _t22001 = _t22004;
-const _t21996 = _t22001;
-const _t21991 = _t21996;
-const Main$__destruct = _t21991;
+const _t22024 = _t22026;
+const _t22020 = _t22024;
+const _t22017 = _t22020;
+const _t22014 = _t22017;
+const _t22011 = _t22014;
+const _t22008 = _t22011;
+const _t22005 = _t22008;
+const _t22000 = _t22005;
+const _t21995 = _t22000;
+const Main$__destruct = _t21995;
 { const _r = _last_ty === "float" ? __display_float(_last_val) : _last_ty === "byte" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === "()")) println(_r); }
 var _mml_exports = {"_result": _last_val, "_call": _call, "_pp": _pp};
 if (typeof globalThis !== "undefined") globalThis._mmlExports = _mml_exports;
