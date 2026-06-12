@@ -33,27 +33,52 @@ static int mml_use_mps = 0;
    by the thread root, no per-call MPS root); larger ones use a rooted heap array. */
 #define MML_SORT_STACK_MAX 256
 
-/* A transient C-heap (GC_malloc) array of `n` mml_values — used as scratch by
-   runtime helpers (sort, list<->array). Such arrays are NOT on the C stack, so MPS's
-   ambiguous stack scan doesn't cover them; if a collection fires while they hold live
-   MiniML pointers (e.g. when the helper allocates a result cons mid-traversal), those
-   pointers would be left dangling. Register the array as an MPS ambiguous root for its
-   lifetime so its contents pin. No-op under Boehm. Pair with mml_scratch_free. */
-static mml_value *mml_scratch_alloc(int64_t n, void **root_out) {
-    mml_value *a = (mml_value *)GC_malloc((size_t)n * sizeof(mml_value));
+/* Transient char-buffer scratch (string/rune builders): under MML_GC=mps allocate from
+   the C heap (malloc/realloc) and free explicitly, so NOTHING goes through Boehm — under
+   MPS the runtime never allocates in Boehm, so Boehm GC never runs. Under Boehm these
+   use the GC (auto-collected; free is a no-op). Buffers hold no MiniML pointers, so they
+   need no root. mml_buf_free MUST be called on every path once the buffer is consumed. */
+static void *mml_buf_alloc(size_t n) {
 #ifdef MML_HAVE_MPS
-    *root_out = mml_use_mps ? mml_gc_add_area_root(a, a + n) : NULL;
-#else
-    *root_out = NULL;
+    if (mml_use_mps) return malloc(n);
 #endif
+    return GC_malloc_atomic(n);
+}
+static void *mml_buf_realloc(void *p, size_t n) {
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) return realloc(p, n);
+#endif
+    return mml_buf_realloc(p, n);
+}
+static void mml_buf_free(void *p) {
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) { free(p); return; }
+#endif
+    (void)p;   /* Boehm: collected automatically */
+}
+
+/* A transient array of `n` mml_values — scratch for sort / list<->array helpers. It is
+   NOT on the C stack, so MPS's ambiguous stack scan doesn't cover it; while it holds
+   live MiniML pointers (the helper allocates a result mid-traversal) those would dangle.
+   Register it as an MPS ambiguous root for its lifetime so its contents pin. Under MPS
+   the backing store is malloc'd (freed in mml_scratch_free); under Boehm it is GC'd. */
+static mml_value *mml_scratch_alloc(int64_t n, void **root_out) {
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) {
+        mml_value *a = (mml_value *)malloc((size_t)n * sizeof(mml_value));
+        *root_out = mml_gc_add_area_root(a, a + n);
+        return a;
+    }
+#endif
+    mml_value *a = (mml_value *)GC_malloc((size_t)n * sizeof(mml_value));
+    *root_out = NULL;
     return a;
 }
-static void mml_scratch_free(void *root) {
+static void mml_scratch_free(void *root, void *ptr) {
 #ifdef MML_HAVE_MPS
-    if (root) mml_gc_remove_area_root(root);
-#else
-    (void)root;
+    if (mml_use_mps) { if (root) mml_gc_remove_area_root(root); free(ptr); return; }
 #endif
+    (void)root; (void)ptr;
 }
 
 /* Forward declaration of the generated entry point */
@@ -983,7 +1008,7 @@ mml_value mml_show_polyvariant(mml_value names_list, mml_value show_payload_fn, 
    Fields are accessed by index (0, 1, 2...) matching the sorted order in the list */
 mml_value mml_show_record(mml_value fields_list, mml_value record) {
     int64_t cap = 64;
-    char *buf = (char *)GC_malloc_atomic(cap);
+    char *buf = (char *)mml_buf_alloc(cap);
     if (!buf) mml_panic("out of memory in show_record");
     int64_t len = 0;
     buf[len++] = '{'; buf[len++] = ' ';
@@ -1000,7 +1025,7 @@ mml_value mml_show_record(mml_value fields_list, mml_value record) {
         mml_value show_fn = pair[1];     /* closure */
 
         if (!first) {
-            if (len + 2 >= cap) { cap *= 2; buf = GC_realloc(buf, cap); }
+            if (len + 2 >= cap) { cap *= 2; buf = mml_buf_realloc(buf, cap); }
             buf[len++] = ';'; buf[len++] = ' ';
         }
         first = 0;
@@ -1008,7 +1033,7 @@ mml_value mml_show_record(mml_value fields_list, mml_value record) {
         /* Append "field_name = " */
         int64_t fn_len = MML_STR_LEN(field_name);
         const char *fn_data = (const char *)MML_STR_DATA(field_name);
-        while (len + fn_len + 3 >= cap) { cap *= 2; buf = GC_realloc(buf, cap); }
+        while (len + fn_len + 3 >= cap) { cap *= 2; buf = mml_buf_realloc(buf, cap); }
         memcpy(buf + len, fn_data, fn_len);
         len += fn_len;
         buf[len++] = ' '; buf[len++] = '='; buf[len++] = ' ';
@@ -1018,24 +1043,25 @@ mml_value mml_show_record(mml_value fields_list, mml_value record) {
         mml_value shown = mml_apply1(show_fn, field_val);
         int64_t sv_len = MML_STR_LEN(shown);
         const char *sv_data = (const char *)MML_STR_DATA(shown);
-        while (len + sv_len + 3 >= cap) { cap *= 2; buf = GC_realloc(buf, cap); }
+        while (len + sv_len + 3 >= cap) { cap *= 2; buf = mml_buf_realloc(buf, cap); }
         memcpy(buf + len, sv_data, sv_len);
         len += sv_len;
 
         idx++;
         cur = cell[1];
     }
-    if (len + 2 >= cap) { cap *= 2; buf = GC_realloc(buf, cap); }
+    if (len + 2 >= cap) { cap *= 2; buf = mml_buf_realloc(buf, cap); }
     buf[len++] = ' '; buf[len++] = '}';
 
     mml_value result = mml_string_from_buf(buf, len);
+    mml_buf_free(buf);
     return result;
 }
 
 /* show_fns_list is a list of show closures, one per element */
 mml_value mml_show_tuple(mml_value show_fns_list, mml_value tuple) {
     int64_t cap = 64;
-    char *buf = (char *)GC_malloc_atomic(cap);
+    char *buf = (char *)mml_buf_alloc(cap);
     if (!buf) mml_panic("out of memory in show_tuple");
     int64_t len = 0;
     buf[len++] = '(';
@@ -1049,7 +1075,7 @@ mml_value mml_show_tuple(mml_value show_fns_list, mml_value tuple) {
         mml_value show_fn = cell[0];
 
         if (!first) {
-            if (len + 2 >= cap) { cap *= 2; buf = GC_realloc(buf, cap); }
+            if (len + 2 >= cap) { cap *= 2; buf = mml_buf_realloc(buf, cap); }
             buf[len++] = ','; buf[len++] = ' ';
         }
         first = 0;
@@ -1058,16 +1084,18 @@ mml_value mml_show_tuple(mml_value show_fns_list, mml_value tuple) {
         mml_value shown = mml_apply1(show_fn, elem_val);
         int64_t sv_len = MML_STR_LEN(shown);
         const char *sv_data = (const char *)MML_STR_DATA(shown);
-        while (len + sv_len + 2 >= cap) { cap *= 2; buf = GC_realloc(buf, cap); }
+        while (len + sv_len + 2 >= cap) { cap *= 2; buf = mml_buf_realloc(buf, cap); }
         memcpy(buf + len, sv_data, sv_len);
         len += sv_len;
 
         idx++;
         cur = cell[1];
     }
-    if (len + 1 >= cap) { cap = len + 2; buf = GC_realloc(buf, cap); }
+    if (len + 1 >= cap) { cap = len + 2; buf = mml_buf_realloc(buf, cap); }
     buf[len++] = ')';
-    return mml_string_from_buf(buf, len);
+    mml_value r = mml_string_from_buf(buf, len);
+    mml_buf_free(buf);
+    return r;
 }
 
 /* ctors_list is a list of (tag_int, name_str, show_fn_or_unit) triples.
@@ -1111,7 +1139,7 @@ mml_value mml_show_variant(mml_value ctors_list, mml_value value) {
             int64_t name_len = MML_STR_LEN(name_str);
             const char *name_data = (const char *)MML_STR_DATA(name_str);
             int64_t total = name_len + 1 + (needs_parens ? 2 : 0) + ps_len;
-            char *buf = (char *)GC_malloc_atomic(total + 1);
+            char *buf = (char *)mml_buf_alloc(total + 1);
             if (!buf) mml_panic("out of memory in show_variant");
             int64_t pos = 0;
             memcpy(buf + pos, name_data, name_len); pos += name_len;
@@ -1119,7 +1147,9 @@ mml_value mml_show_variant(mml_value ctors_list, mml_value value) {
             if (needs_parens) buf[pos++] = '(';
             memcpy(buf + pos, ps_data, ps_len); pos += ps_len;
             if (needs_parens) buf[pos++] = ')';
-            return mml_string_from_buf(buf, pos);
+            mml_value r = mml_string_from_buf(buf, pos);
+            mml_buf_free(buf);
+            return r;
         }
         cur = cell[1];
     }
@@ -1131,7 +1161,7 @@ mml_value mml_show_variant(mml_value ctors_list, mml_value value) {
 
 mml_value mml_show_list(mml_value show_elem_fn, mml_value list) {
     int64_t cap = 64;
-    char *buf = (char *)GC_malloc_atomic(cap);
+    char *buf = (char *)mml_buf_alloc(cap);
     if (!buf) mml_panic("out of memory in show_list");
     int64_t len = 0;
     buf[len++] = '[';
@@ -1146,7 +1176,7 @@ mml_value mml_show_list(mml_value show_elem_fn, mml_value list) {
         int64_t need = len + (first ? 0 : 2) + es_len + 2;
         if (need >= cap) {
             while (need >= cap) cap *= 2;
-            buf = (char *)GC_realloc(buf, cap);
+            buf = (char *)mml_buf_realloc(buf, cap);
             if (!buf) mml_panic("out of memory in show_list");
         }
         if (!first) { buf[len++] = ';'; buf[len++] = ' '; }
@@ -1156,18 +1186,18 @@ mml_value mml_show_list(mml_value show_elem_fn, mml_value list) {
     }
     if (len + 2 >= cap) {
         cap = len + 4;
-        buf = (char *)GC_realloc(buf, cap);
+        buf = (char *)mml_buf_realloc(buf, cap);
     }
     buf[len++] = ']';
     buf[len] = '\0';
     mml_value result = mml_string_from_buf(buf, len);
-
+    mml_buf_free(buf);
     return result;
 }
 
 mml_value mml_show_array(mml_value show_elem_fn, mml_value array) {
     int64_t cap = 64;
-    char *buf = (char *)GC_malloc_atomic(cap);
+    char *buf = (char *)mml_buf_alloc(cap);
     if (!buf) mml_panic("out of memory in show_array");
     int64_t len = 0;
     buf[len++] = '#'; buf[len++] = '[';
@@ -1181,7 +1211,7 @@ mml_value mml_show_array(mml_value show_elem_fn, mml_value array) {
         int64_t need = len + (i > 0 ? 2 : 0) + es_len + 2;
         if (need >= cap) {
             while (need >= cap) cap *= 2;
-            buf = (char *)GC_realloc(buf, cap);
+            buf = (char *)mml_buf_realloc(buf, cap);
             if (!buf) mml_panic("out of memory in show_array");
         }
         if (i > 0) { buf[len++] = ';'; buf[len++] = ' '; }
@@ -1189,12 +1219,12 @@ mml_value mml_show_array(mml_value show_elem_fn, mml_value array) {
     }
     if (len + 2 >= cap) {
         cap = len + 4;
-        buf = (char *)GC_realloc(buf, cap);
+        buf = (char *)mml_buf_realloc(buf, cap);
     }
     buf[len++] = ']';
     buf[len] = '\0';
     mml_value result = mml_string_from_buf(buf, len);
-
+    mml_buf_free(buf);
     return result;
 }
 
@@ -1485,8 +1515,11 @@ mml_value mml_list_sort(mml_value fn, mml_value lst) {
         cell[1] = result;
         result = (mml_value)(intptr_t)cell;
     }
-    if (arr_root) mml_scratch_free(arr_root);
-    if (tmp_root) mml_scratch_free(tmp_root);
+    /* arr/tmp were swapped during the merge passes; they are the two malloc'd buffers
+       (large case). Each call removes one root and frees one buffer — pairing is
+       irrelevant, both roots and both buffers get cleaned. */
+    if (arr_root) mml_scratch_free(arr_root, arr);
+    if (tmp_root) mml_scratch_free(tmp_root, tmp);
     return result;
 }
 
@@ -1532,7 +1565,7 @@ mml_value mml_list_fold_right(mml_value fn, mml_value lst, mml_value acc) {
     for (int64_t i = len - 1; i >= 0; i--) {
         result = mml_apply2(fn, arr[i], result);
     }
-    if (arr_root) mml_scratch_free(arr_root);
+    if (arr_root) mml_scratch_free(arr_root, arr);
     return result;
 }
 
@@ -2066,7 +2099,7 @@ mml_value mml_string_to_runes(mml_value s) {
     const char *data = MML_STR_DATA(s);
     /* First pass: count runes and decode into temp array */
     int64_t cap = len; /* at most len runes */
-    int64_t *runes = (int64_t *)GC_malloc_atomic(cap * sizeof(int64_t));
+    int64_t *runes = (int64_t *)mml_buf_alloc(cap * sizeof(int64_t));
     if (!runes) mml_panic("out of memory in string_to_runes");
     int64_t count = 0;
     int64_t pos = 0;
@@ -2081,6 +2114,7 @@ mml_value mml_string_to_runes(mml_value s) {
         cell[1] = acc;
         acc = (mml_value)(intptr_t)cell;
     }
+    mml_buf_free(runes);
     return acc;
 }
 
