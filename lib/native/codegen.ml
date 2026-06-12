@@ -5332,6 +5332,25 @@ and free_vars_of_fun ?(ctx = None) params body =
         | _ -> false)
     | None -> false
   in
+  (* A field access on a row-polymorphic record resolves its offset through an
+     evidence parameter __ev_<field>_r<N> supplied by the enclosing scope. That
+     evidence is used IMPLICITLY (not as a TEVar), so a nested closure that reads
+     or writes such a field must still capture it — otherwise the closure has no
+     evidence and falls back to its own visible-row static index (wrong, since its
+     visible row holds only the fields it mentions). Mirror of the dict capture. *)
+  let capture_field_evidence record_ty field_name =
+    match ctx with
+    | Some c -> (
+        match field_evidence_param c record_ty field_name with
+        | Some ev_name ->
+            if
+              (not (Hashtbl.mem param_set ev_name))
+              && (not (Hashtbl.mem bound ev_name))
+              && not (List.mem ev_name !free)
+            then free := ev_name :: !free
+        | None -> ())
+    | None -> ()
+  in
   let rec scan_expr (e : Typechecker.texpr) =
     match e.expr with
     | TEVar name ->
@@ -5415,6 +5434,8 @@ and free_vars_of_fun ?(ctx = None) params body =
     | TETuple es -> List.iter scan_expr es
     | TERecord fields -> List.iter (fun (_, e) -> scan_expr e) fields
     | TERecordUpdate (base, overrides) ->
+        List.iter (fun (fname, _) -> capture_field_evidence base.ty fname)
+          overrides;
         scan_expr base;
         List.iter (fun (_, e) -> scan_expr e) overrides
     | TERecordUpdateIdx (base, pairs) ->
@@ -5424,8 +5445,11 @@ and free_vars_of_fun ?(ctx = None) params body =
             scan_expr i;
             scan_expr v)
           pairs
-    | TEField (e, _) -> scan_expr e
-    | TEFieldAssign (e1, _, e2) ->
+    | TEField (e, fname) ->
+        capture_field_evidence e.ty fname;
+        scan_expr e
+    | TEFieldAssign (e1, fname, e2) ->
+        capture_field_evidence e1.ty fname;
         scan_expr e1;
         scan_expr e2
     | TEConstruct (_, arg) -> Option.iter scan_expr arg
