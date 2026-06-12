@@ -20,6 +20,22 @@
    When off, every path below is the unchanged Boehm code. */
 #include "mml_gc.h"
 static int mml_use_mps = 0;
+
+/* Register a Boehm-allocated internal struct's memory [p, p+size) as an MPS
+   ambiguous root, so the MiniML values it holds (handler return_env / try_result /
+   op envs; fiber result / op_arg; continuation return_env) PIN their MPS objects —
+   these structs live in Boehm's heap, which the moving collector never scans. A
+   Boehm finalizer removes the root when the struct becomes unreachable, tying the
+   two lifetimes together. No-op unless MML_GC=mps. */
+static void mml_mps_unroot_finalizer(void *obj, void *root) {
+    (void)obj;
+    if (root) mml_gc_remove_area_root(root);
+}
+static void mml_mps_root_struct(void *p, size_t size) {
+    if (!mml_use_mps) return;
+    void *root = mml_gc_add_area_root(p, (char *)p + size);
+    GC_register_finalizer(p, mml_mps_unroot_finalizer, root, NULL, NULL);
+}
 #endif
 
 /* Forward declaration of the generated entry point */
@@ -2453,7 +2469,15 @@ mml_handler* mml_current_handler = NULL;
 
 mml_handler* mml_alloc_handler(int64_t num_ops) {
     size_t size = sizeof(mml_handler) + (size_t)num_ops * sizeof(mml_op_entry);
-    mml_handler* h = (mml_handler*)mml_alloc((int64_t)size, 0);
+    /* Always a Boehm allocation, even under MML_GC=mps: a handler is an internal
+       struct, not a MiniML value, and has no MML object header for the MPS format
+       to read. Instead register its memory as an MPS root (below) so the values it
+       holds pin. */
+    mml_handler* h = (mml_handler*)GC_malloc(size);
+    if (!h) mml_panic("out of memory in alloc_handler");
+#ifdef MML_HAVE_MPS
+    mml_mps_root_struct(h, size);
+#endif
     h->parent = NULL;
     h->num_ops = (int)num_ops;
     h->return_fn = 0;
@@ -2678,6 +2702,13 @@ static void pool_put_stack(void *usable_ptr) {
  * guard page is excluded (it is PROT_NONE; scanning it would SIGSEGV). */
 static void fiber_register_stack_roots(mml_fiber *f) {
     GC_add_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
+#ifdef MML_HAVE_MPS
+    /* Also scan the suspended/running fiber stack for MPS roots — heap objects
+       referenced only from a fiber's locals must pin under the moving collector. */
+    f->mps_stack_root = mml_use_mps
+        ? mml_gc_add_area_root(f->stack, (char *)f->stack + MML_FIBER_STACK_SIZE)
+        : NULL;
+#endif
 }
 
 /* Idempotently release a fiber's guarded stack. Safe to call more than once
@@ -2686,6 +2717,9 @@ static void fiber_register_stack_roots(mml_fiber *f) {
 static void fiber_free_stack(mml_fiber *f) {
     if (f && !f->stack_freed && f->stack) {
         GC_remove_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
+#ifdef MML_HAVE_MPS
+        if (f->mps_stack_root) { mml_gc_remove_area_root(f->mps_stack_root); f->mps_stack_root = NULL; }
+#endif
         /* Return the stack to the pool for reuse instead of unmapping. Removing the
          * GC roots first ensures the idle pooled stack is never scanned (no false
          * roots from stale frames). */
@@ -2805,6 +2839,9 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
 
             mml_continuation *k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
             if (!k) { fprintf(stderr, "OOM: continuation\n"); exit(1); }
+#ifdef MML_HAVE_MPS
+            mml_mps_root_struct(k, sizeof(mml_continuation));  /* pin its return_env */
+#endif
             k->fiber = fiber;
             k->handler = saved_handler;
             k->resume_base = matched_h->parent;
@@ -2985,6 +3022,9 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     /* Create new continuation */
     mml_continuation *new_k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
     if (!new_k) { fprintf(stderr, "OOM: continuation copy\n"); exit(1); }
+#ifdef MML_HAVE_MPS
+    mml_mps_root_struct(new_k, sizeof(mml_continuation));
+#endif
     new_k->fiber = new_fiber;
     new_k->handler = orig->handler;
     new_k->resume_base = orig->resume_base;
