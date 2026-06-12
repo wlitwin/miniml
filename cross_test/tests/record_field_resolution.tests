@@ -95,3 +95,32 @@ let () =
   let _ = force () in
   print (string_of_int (go ()))
 --- expect: 2
+
+# A nested closure that reads a field of a ROW-POLYMORPHIC record must capture
+# the enclosing scope's evidence param __ev_<field>_r<N> — the offset is known
+# only via that evidence (the concrete record's sorted index). Native's
+# free_vars_of_fun captured only explicit TEVars, so the implicitly-used evidence
+# was dropped and the closure fell back to its own visible-row static index
+# ({loc,tenv} -> 0,1) instead of the concrete indices (4,9), reading wrong fields.
+# This was the native self-host bootstrap's resolve_inst_tys SEGV.
+--- test: row-poly field read inside a nested closure (evidence capture)
+type ca = { f0:int; f1:int; f2:int; f3:int; loc:int; f5:int; f6:int; f7:int; f8:int; tenv:int; vars:int }
+;;
+type cb = { f0:int; f1:int; f2:int; f3:int; loc:int; f5:int; f6:int; f7:int; f8:int; tenv:int; other:bool }
+;;
+let outer ctx =
+  let inner annot = ctx.tenv + ctx.loc + annot in
+  List.map inner [10; 20]
+;;
+let force2 () =
+  let b = { f0=0;f1=1;f2=2;f3=3;loc=99;f5=5;f6=6;f7=7;f8=8;tenv=100;other=true } in
+  outer b
+;;
+let _ = force2 ()
+;;
+let a = { f0=0;f1=1;f2=2;f3=3;loc=99;f5=5;f6=6;f7=7;f8=8;tenv=100;vars=10 }
+;;
+match outer a with
+| x :: y :: _ -> x + y
+| _ -> 0
+--- expect: 428
