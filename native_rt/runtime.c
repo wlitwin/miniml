@@ -14,47 +14,30 @@
 #include <errno.h>
 #include <mach-o/getsect.h>
 #include <mach-o/dyld.h>
-#include <gc/gc.h>
 #include "runtime.h"
-#ifdef MML_HAVE_MPS
-/* Experimental MPS moving-GC backend (see native_rt/mml_gc.c). Compiled in only
-   under -DMML_HAVE_MPS (an MML_LINK_MPS build); selected at runtime by MML_GC=mps.
-   When off, every path below is the unchanged Boehm code. */
-#include "mml_gc.h"
-static int mml_use_mps = 0;
+#include "mml_gc.h"      /* MPS moving/generational GC — the sole collector */
 
-/* (Handlers, fibers, and continuations now live in the MPS heap and are scanned
-   natively — the old per-struct "register Boehm memory as an MPS area root + finalizer"
-   helper is gone. The single remaining per-fiber MPS root is over the mmap'd fiber
-   stack, which is not an MPS object; see fiber_register_stack_roots.) */
-#endif
+/* MPS is the only garbage collector. Handlers, fibers, continuations, and all values /
+   strings live in the MPS heap (scanned natively); transient char/scratch buffers use
+   the C heap directly. mml_use_mps is retained (always 1) to keep the GC-path
+   conditionals readable until they are de-scaffolded. */
+static const int mml_use_mps = 1;
 
 /* Sorts/folds up to this many elements keep their scratch on the C stack (scanned
    by the thread root, no per-call MPS root); larger ones use a rooted heap array. */
 #define MML_SORT_STACK_MAX 256
 
-/* Transient char-buffer scratch (string/rune builders): under MML_GC=mps allocate from
-   the C heap (malloc/realloc) and free explicitly, so NOTHING goes through Boehm — under
-   MPS the runtime never allocates in Boehm, so Boehm GC never runs. Under Boehm these
-   use the GC (auto-collected; free is a no-op). Buffers hold no MiniML pointers, so they
-   need no root. mml_buf_free MUST be called on every path once the buffer is consumed. */
+/* Transient char-buffer scratch (string/rune builders): C heap, freed explicitly once
+   the buffer is copied into a managed string. mml_buf_free MUST be called on every path
+   once the buffer is consumed. Buffers hold no MiniML pointers, so they need no root. */
 static void *mml_buf_alloc(size_t n) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) return malloc(n);
-#endif
-    return GC_malloc_atomic(n);
+    return malloc(n);
 }
 static void *mml_buf_realloc(void *p, size_t n) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) return realloc(p, n);
-#endif
-    return mml_buf_realloc(p, n);
+    return realloc(p, n);
 }
 static void mml_buf_free(void *p) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) { free(p); return; }
-#endif
-    (void)p;   /* Boehm: collected automatically */
+    free(p);
 }
 
 /* A transient array of `n` mml_values — scratch for sort / list<->array helpers. It is
@@ -63,22 +46,13 @@ static void mml_buf_free(void *p) {
    Register it as an MPS ambiguous root for its lifetime so its contents pin. Under MPS
    the backing store is malloc'd (freed in mml_scratch_free); under Boehm it is GC'd. */
 static mml_value *mml_scratch_alloc(int64_t n, void **root_out) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) {
-        mml_value *a = (mml_value *)malloc((size_t)n * sizeof(mml_value));
-        *root_out = mml_gc_add_area_root(a, a + n);
-        return a;
-    }
-#endif
-    mml_value *a = (mml_value *)GC_malloc((size_t)n * sizeof(mml_value));
-    *root_out = NULL;
+    mml_value *a = (mml_value *)malloc((size_t)n * sizeof(mml_value));
+    *root_out = mml_gc_add_area_root(a, a + n);
     return a;
 }
 static void mml_scratch_free(void *root, void *ptr) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) { if (root) mml_gc_remove_area_root(root); free(ptr); return; }
-#endif
-    (void)root; (void)ptr;
+    if (root) mml_gc_remove_area_root(root);
+    free(ptr);
 }
 
 /* Forward declaration of the generated entry point */
@@ -270,18 +244,9 @@ mml_value mml_string_of_int(mml_value v) {
 /* ---- Float operations ---- */
 
 mml_value mml_box_float(double d) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) {
-        int64_t *c = (int64_t *)mml_gc_alloc(8, MML_MAKE_HDR(MML_HDR_FLOAT, 0));
-        *(double *)c = d;
-        return (mml_value)(intptr_t)c;
-    }
-#endif
-    int64_t *p = (int64_t *)GC_malloc(16);  /* 8 header + 8 double */
-    if (!p) mml_panic("out of memory in box_float");
-    p[0] = MML_MAKE_HDR(MML_HDR_FLOAT, 0);
-    *(double *)(p + 1) = d;
-    return (mml_value)(intptr_t)(p + 1);
+    int64_t *c = (int64_t *)mml_gc_alloc(8, MML_MAKE_HDR(MML_HDR_FLOAT, 0));
+    *(double *)c = d;
+    return (mml_value)(intptr_t)c;
 }
 
 double mml_unbox_float(mml_value v) {
@@ -761,23 +726,13 @@ void mml_panic_mml(mml_value s) {
 /* ---- String allocation helpers ---- */
 
 mml_value mml_string_alloc(int64_t len) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) {
-        /* data = [len word][len bytes][NUL]; mml_gc_alloc writes the header + zeroes
-           and returns the client (= the len word). Written before any later alloc, so
-           the format's size read (from the len word) is always valid. */
-        int64_t *c = (int64_t *)mml_gc_alloc(8 + len + 1, MML_MAKE_HDR(MML_HDR_STRING, 0));
-        c[0] = len << 1;
-        ((char *)(c + 1))[len] = '\0';
-        return (mml_value)(intptr_t)c;
-    }
-#endif
-    int64_t *p = (int64_t *)GC_malloc_atomic(8 + 8 + len + 1);  /* +8 for header */
-    if (!p) mml_panic("out of memory in string_alloc");
-    p[0] = MML_MAKE_HDR(MML_HDR_STRING, 0);
-    p[1] = len << 1;  /* stored shifted so bit 0 is always clear (distinguishes from tagged ints) */
-    ((char *)(p + 2))[len] = '\0';
-    return (mml_value)(intptr_t)(p + 1);  /* return past header */
+    /* data = [len word][len bytes][NUL]; mml_gc_alloc writes the header + zeroes and
+       returns the client (= the len word). Written before any later alloc, so the
+       format's size read (from the len word) is always valid. */
+    int64_t *c = (int64_t *)mml_gc_alloc(8 + len + 1, MML_MAKE_HDR(MML_HDR_STRING, 0));
+    c[0] = len << 1;  /* stored shifted so bit 0 is always clear (distinguishes tagged ints) */
+    ((char *)(c + 1))[len] = '\0';
+    return (mml_value)(intptr_t)c;
 }
 
 mml_value mml_string_from_cstr(const char *s) {
@@ -796,13 +751,7 @@ mml_value mml_string_from_buf(const char *buf, int64_t len) {
 /* ---- Heap allocation ---- */
 
 void *mml_alloc(int64_t nbytes, int64_t header) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) return mml_gc_alloc(nbytes, header);
-#endif
-    int64_t *p = (int64_t *)GC_malloc((size_t)(nbytes + 8));
-    if (!p) mml_panic("out of memory");
-    p[0] = header;
-    return (void *)(p + 1);
+    return mml_gc_alloc(nbytes, header);
 }
 
 /* ---- Format functions (no newline) ---- */
@@ -2489,45 +2438,17 @@ void mml_sys_store_args(int argc, char **argv);
 
 int main(int argc, char **argv) {
     mml_sys_store_args(argc, argv);
-#ifdef MML_HAVE_MPS
-    /* SINGLE-GC mode (MML_GC=mps): every allocation — values, strings, the handler /
-       fiber / continuation structs, and transient scratch — goes through MPS. Boehm is
-       NEVER initialized or touched, so there is exactly one collector. Detected before
-       any Boehm call so GC_INIT is skipped. */
-    if (getenv("MML_GC") && strcmp(getenv("MML_GC"), "mps") == 0) {
-        /* &argc sits at the top of main's frame: everything mml_main allocates and
-           references lives in deeper (lower) frames, so [sp, &argc] covers the live
-           stack. mml_gc_init also roots the __DATA,__mmlgc globals for MPS. */
-        mml_gc_init((void *)&argc);
-        mml_use_mps = 1;
-        /* mml_current_handler / mml_current_fiber are runtime.c globals in plain __DATA
-           (not the codegen's __mmlgc section) that hold MPS objects (the active handler
-           chain top and the active fiber), so MPS does not otherwise scan them: root
-           each as a permanent ambiguous root. */
-        mml_gc_add_area_root(&mml_current_handler,
-                             (char *)&mml_current_handler + sizeof(mml_current_handler));
-        mml_gc_add_area_root(&mml_current_fiber,
-                             (char *)&mml_current_fiber + sizeof(mml_current_fiber));
-    } else
-#endif
-    {
-        GC_INIT();
-        /* MiniML globals (@mml_g_*) live in the "__DATA,__mmlgc" section; Boehm's macOS
-           data-segment scanner only knows a fixed set of section names and does NOT scan
-           custom sections, so register __mmlgc as a Boehm root explicitly. */
-        {
-            const struct mach_header_64 *mh =
-                (const struct mach_header_64 *)_dyld_get_image_header(0);
-            unsigned long sz = 0;
-            uint8_t *p = getsectiondata(mh, "__DATA", "__mmlgc", &sz);
-            if (p && sz) GC_add_roots(p, p + sz);
-        }
-        /* Go-like heap-growth policy: keep free space ≈ the live set (heap roughly
-           doubles between collections) instead of Boehm's eager divisor=3 — a large
-           throughput win for the allocation-heavy compiler. Skipped when the user set
-           GC_FREE_SPACE_DIVISOR. */
-        if (!getenv("GC_FREE_SPACE_DIVISOR")) GC_set_free_space_divisor(1);
-    }
+    /* MPS is the only garbage collector: every allocation goes through it. &argc sits at
+       the top of main's frame, so [sp, &argc] covers the live stack; mml_gc_init also
+       roots the __DATA,__mmlgc globals for MPS. */
+    mml_gc_init((void *)&argc);
+    /* mml_current_handler / mml_current_fiber are runtime.c globals in plain __DATA that
+       hold MPS objects (the active handler chain top and the active fiber), so MPS does
+       not otherwise scan them: root each as a permanent ambiguous root. */
+    mml_gc_add_area_root(&mml_current_handler,
+                         (char *)&mml_current_handler + sizeof(mml_current_handler));
+    mml_gc_add_area_root(&mml_current_fiber,
+                         (char *)&mml_current_fiber + sizeof(mml_current_fiber));
     mml_value result = mml_main();
     /*
      * Match bytecode VM output behavior:
@@ -2553,21 +2474,9 @@ mml_handler* mml_current_handler = NULL;
 
 mml_handler* mml_alloc_handler(int64_t num_ops) {
     size_t size = sizeof(mml_handler) + (size_t)num_ops * sizeof(mml_op_entry);
-    mml_handler* h;
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) {
-        /* Allocate in the MPS non-moving AMS struct pool, which scans the handler's
-           MiniML-value fields (parent/return_env/try_result/ops[].env_ptr) precisely.
-           This keeps those values alive WITHOUT a per-handler MPS root — the previous
-           scheme paid an mps_root_create_area + finalizer per handler, the dominant
-           remaining MPS cost on effect-heavy programs (e.g. the compiler itself). The
-           &mml_current_handler root + parent-chain scan keep the active chain alive. */
-        h = (mml_handler*)mml_gc_alloc_struct((int64_t)size);
-    } else
-#endif
-    {
-        h = (mml_handler*)GC_malloc(size);
-    }
+    /* Allocate in the MPS AMC pool (nailed while live), scanned for its MiniML-value
+       fields (parent/return_env/try_result/ops[].env_ptr); no per-handler root. */
+    mml_handler* h = (mml_handler*)mml_gc_alloc_struct((int64_t)size);
     if (!h) mml_panic("out of memory in alloc_handler");
     h->parent = NULL;
     h->num_ops = (int)num_ops;
@@ -2792,15 +2701,9 @@ static void pool_put_stack(void *usable_ptr) {
  * heap objects referenced only from a fiber stack are wrongly collected. The
  * guard page is excluded (it is PROT_NONE; scanning it would SIGSEGV). */
 static void fiber_register_stack_roots(mml_fiber *f) {
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) {
-        /* Scan the suspended/running fiber stack as an MPS root — heap objects
-           referenced only from a fiber's locals must pin/retain under MPS. */
-        f->mps_stack_root = mml_gc_add_area_root(f->stack, (char *)f->stack + MML_FIBER_STACK_SIZE);
-        return;
-    }
-#endif
-    GC_add_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
+    /* Scan the suspended/running fiber stack as an MPS root — heap objects referenced
+       only from a fiber's locals must pin/retain under MPS. */
+    f->mps_stack_root = mml_gc_add_area_root(f->stack, (char *)f->stack + MML_FIBER_STACK_SIZE);
 }
 
 /* Idempotently release a fiber's guarded stack. Safe to call more than once
@@ -2808,12 +2711,7 @@ static void fiber_register_stack_roots(mml_fiber *f) {
  * root registration before unmapping so the collector never scans freed pages. */
 static void fiber_free_stack(mml_fiber *f) {
     if (f && !f->stack_freed && f->stack) {
-#ifdef MML_HAVE_MPS
-        if (mml_use_mps) {
-            if (f->mps_stack_root) { mml_gc_remove_area_root(f->mps_stack_root); f->mps_stack_root = NULL; }
-        } else
-#endif
-        GC_remove_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
+        if (f->mps_stack_root) { mml_gc_remove_area_root(f->mps_stack_root); f->mps_stack_root = NULL; }
         /* Return the stack to the pool for reuse instead of unmapping. Removing the
          * GC roots first ensures the idle pooled stack is never scanned (no false
          * roots from stale frames). */
@@ -2822,21 +2720,9 @@ static void fiber_free_stack(mml_fiber *f) {
     }
 }
 
-/* GC finalizer: reclaim the mmap'd stack of a fiber that became unreachable
- * without being resumed to completion — e.g. a continuation that was captured
- * (escaped its handler) and then never invoked. Fibers resumed to completion
- * free their stack eagerly; fiber_free_stack is idempotent so this is safe.
- * NOTE: we must NOT free the stack eagerly when a full-handler arm returns
- * without resuming, because the continuation may have escaped and still be
- * resumable later; tying the stack's lifetime to GC reachability is correct. */
-static void fiber_stack_finalizer(void *obj, void *cd) {
-    (void)cd;
-    fiber_free_stack((mml_fiber *)obj);
-}
 
 mml_fiber *mml_current_fiber = NULL;
 
-#ifdef MML_HAVE_MPS
 /* Bracket a fiber context switch for the moving GC: tell MPS which stack we are about
    to run on, so its thread-scanned root tracks the live stack instead of spanning the
    gap between the main stack and a separate fiber stack. `cur`/`next` are the fibers
@@ -2845,14 +2731,10 @@ mml_fiber *mml_current_fiber = NULL;
    (the after-call handles the yield/complete return). Yield/complete swaps need no call
    — the matching after-bracket of whoever entered the fiber covers them. */
 static void gc_stack_to(mml_fiber *cur, mml_fiber *next) {
-    if (!mml_use_mps) return;
     void *from_main_sp = (cur == NULL) ? __builtin_frame_address(0) : NULL;
     void *to_cold = next ? (void *)((char *)next->stack + MML_FIBER_STACK_SIZE) : NULL;
     mml_gc_switch_stack(from_main_sp, to_cold);
 }
-#else
-#define gc_stack_to(cur, next) ((void)0)
-#endif
 
 /* Fiber entry point trampoline — called via mml_make_context */
 static void fiber_entry_trampoline(void *arg) {
@@ -2873,7 +2755,6 @@ static void fiber_entry_trampoline(void *arg) {
     mml_swap_context(&self->ctx, self->parent_ctx);
 }
 
-#ifdef MML_HAVE_MPS
 /* Reclaim the guarded stacks of fibers MPS has finalized (escaped continuations that
    became unreachable without resume-to-completion). fiber_free_stack is idempotent, so
    it is harmless for fibers whose stack was already freed eagerly. */
@@ -2882,17 +2763,10 @@ static void mml_drain_finalized_fibers(void) {
     while ((f = mml_gc_next_finalized()) != NULL)
         fiber_free_stack((mml_fiber *)f);
 }
-#endif
 
 static mml_fiber *create_fiber(int64_t body_fn_i64, int64_t body_env_i64) {
-    mml_fiber *f;
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) {
-        mml_drain_finalized_fibers();
-        f = (mml_fiber *)mml_gc_alloc_fiber((int64_t)sizeof(mml_fiber));
-    } else
-#endif
-        f = (mml_fiber *)GC_malloc(sizeof(mml_fiber));
+    mml_drain_finalized_fibers();
+    mml_fiber *f = (mml_fiber *)mml_gc_alloc_fiber((int64_t)sizeof(mml_fiber));
     if (!f) { fprintf(stderr, "OOM: fiber\n"); exit(1); }
     f->stack = pool_get_stack();
     if (!f->stack) { fprintf(stderr, "OOM: fiber stack\n"); exit(1); }
@@ -2969,12 +2843,7 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
             mml_current_handler = matched_h->parent;
             mml_current_fiber = saved_fiber;
 
-            mml_continuation *k;
-#ifdef MML_HAVE_MPS
-            if (mml_use_mps) k = (mml_continuation *)mml_gc_alloc_cont((int64_t)sizeof(mml_continuation));
-            else
-#endif
-                k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
+            mml_continuation *k = (mml_continuation *)mml_gc_alloc_cont((int64_t)sizeof(mml_continuation));
             if (!k) { fprintf(stderr, "OOM: continuation\n"); exit(1); }
             k->fiber = fiber;
             k->handler = saved_handler;
@@ -2995,14 +2864,10 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
              * A later resume-to-completion still frees it eagerly via fiber_free_stack
              * (idempotent), and the finalizer then no-ops. */
             if (!fiber->stack_freed) {
-#ifdef MML_HAVE_MPS
-                /* Under MPS the fiber is an MPS object; use MPS finalization (drained in
-                   create_fiber) instead of a Boehm finalizer to reclaim the guarded
-                   stack of an escaped, never-resumed-to-completion continuation. */
-                if (mml_use_mps) mml_gc_finalize_fiber(fiber);
-                else
-#endif
-                GC_register_finalizer(fiber, fiber_stack_finalizer, NULL, NULL, NULL);
+                /* The fiber is an MPS object; register MPS finalization (drained in
+                   create_fiber) to reclaim the guarded stack of an escaped, never-
+                   resumed-to-completion continuation. */
+                mml_gc_finalize_fiber(fiber);
             }
             return arm_result;
         }
@@ -3106,12 +2971,7 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     mml_fiber *orig_fiber = orig->fiber;
 
     /* Deep copy the fiber struct */
-    mml_fiber *new_fiber;
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) new_fiber = (mml_fiber *)mml_gc_alloc_fiber((int64_t)sizeof(mml_fiber));
-    else
-#endif
-        new_fiber = (mml_fiber *)GC_malloc(sizeof(mml_fiber));
+    mml_fiber *new_fiber = (mml_fiber *)mml_gc_alloc_fiber((int64_t)sizeof(mml_fiber));
     if (!new_fiber) { fprintf(stderr, "OOM: fiber copy\n"); exit(1); }
     memcpy(new_fiber, orig_fiber, sizeof(mml_fiber));
 
@@ -3121,11 +2981,7 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     memcpy(new_fiber->stack, orig_fiber->stack, MML_FIBER_STACK_SIZE);
     new_fiber->stack_freed = 0;
     fiber_register_stack_roots(new_fiber);
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) mml_gc_finalize_fiber(new_fiber);
-    else
-#endif
-    GC_register_finalizer(new_fiber, fiber_stack_finalizer, NULL, NULL, NULL);
+    mml_gc_finalize_fiber(new_fiber);
 
     /* Compute stack relocation offset */
     ptrdiff_t stack_offset = (char*)new_fiber->stack - (char*)orig_fiber->stack;
@@ -3174,12 +3030,7 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     }
 
     /* Create new continuation */
-    mml_continuation *new_k;
-#ifdef MML_HAVE_MPS
-    if (mml_use_mps) new_k = (mml_continuation *)mml_gc_alloc_cont((int64_t)sizeof(mml_continuation));
-    else
-#endif
-        new_k = (mml_continuation *)GC_malloc(sizeof(mml_continuation));
+    mml_continuation *new_k = (mml_continuation *)mml_gc_alloc_cont((int64_t)sizeof(mml_continuation));
     if (!new_k) { fprintf(stderr, "OOM: continuation copy\n"); exit(1); }
     new_k->fiber = new_fiber;
     new_k->handler = orig->handler;

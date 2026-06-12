@@ -624,18 +624,10 @@ module Main =
     if (arch = "arm64") || (arch = "aarch64") do find_runtime_file "context_arm64.S"
     else find_runtime_file "context_x86_64.S"
 
-  -- Boehm GC flags, split into compile (include path) and link (library) arg lists.
-  let gc_flags () =
-    if IO.file_exists "/opt/homebrew/include/gc/gc.h" do
-      (["-I/opt/homebrew/include"], ["-L/opt/homebrew/lib"; "-lgc"])
-    else if IO.file_exists "/usr/local/include/gc/gc.h" do
-      (["-I/usr/local/include"], ["-L/usr/local/lib"; "-lgc"])
-    else
-      let words s = List.filter (fn x -> x <> "") (String.split " " (String.trim s)) in
-      let (_, cf, _) = Process.run "pkg-config" ["--cflags"; "bdw-gc"] in
-      let (_, lf, _) = Process.run "pkg-config" ["--libs"; "bdw-gc"] in
-      let ldflags = match words lf with [] -> ["-lgc"] | l -> l in
-      (words cf, ldflags)
+  -- Locate the vendored MPS source (the sole garbage collector). Boehm is gone.
+  let find_mps_dir () =
+    if IO.file_exists "third_party/mps/code/mps.c" do "third_party/mps/code"
+    else failwith "cannot find third_party/mps/code (native GC needs the project root)"
 
   -- Print the combined LLVM IR for a source file (mirrors `make emit-ir`).
   let run_emit_llvm args =
@@ -655,23 +647,24 @@ module Main =
     | codegen_error msg _k -> failwith ("native codegen error: " ^ msg)
 
   -- Compile a source file to a native executable: build the .ll, then drive clang
-  -- with the C runtime, the arch context-switch asm, and Boehm GC. This is the
-  -- hand-written native driver (roadmap #16 Gap-1) — the self-hosted compiler
-  -- producing real binaries.
+  -- with the C runtime, the arch context-switch asm, and the MPS garbage collector
+  -- (mml_gc.c + the mps.c amalgamation). This is the hand-written native driver
+  -- (roadmap #16 Gap-1) — the self-hosted compiler producing real binaries.
   let run_emit_native filename out_path =
     handle
       let ll = build_llvm filename in
       let ll_path = out_path ^ ".ll" in
       IO.write_file ll_path ll;
       let runtime_c = find_runtime_file "runtime.c" in
+      let mml_gc_c = find_runtime_file "mml_gc.c" in
       let context_asm = detect_context_asm () in
-      let (gc_cflags, gc_ldflags) = gc_flags () in
-      -- clang compiles+links the .ll, runtime.c and context asm in one invocation.
+      let mps_dir = find_mps_dir () in
+      -- One clang invocation compiles+links the .ll, runtime.c, context asm, mml_gc.c
+      -- and the MPS amalgamation. MPS is the only GC; no bdw-gc.
       let clang_args =
-        List.concat ["-O2"]
-          (List.concat gc_cflags
-            (List.concat [ll_path; runtime_c; context_asm]
-              (List.concat gc_ldflags ["-o"; out_path]))) in
+        List.concat ["-O2"; "-I" ^ mps_dir]
+          (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
+            ["-o"; out_path]) in
       let (code, _out, cerr) = Process.run "clang" clang_args in
       if code <> 0 do
         failwith ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr)

@@ -2,7 +2,6 @@
 #define MML_RUNTIME_H
 
 #include <stdint.h>
-#include <gc/gc.h>
 
 /* ---- Value representation ----
  *
