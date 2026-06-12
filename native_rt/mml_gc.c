@@ -30,6 +30,13 @@ typedef mps_word_t word;
    Never collide with a real MiniML tag (0x00..0x0B). */
 #define MML_HDR_FWD 0x0C   /* forwarded: header size = original byte size; client[0] = new base */
 #define MML_HDR_PAD 0x0D   /* padding:   header size = byte size */
+#define MML_HDR_HANDLER 0x0E /* effect handler struct (runtime.h mml_handler); size = data bytes.
+                                Lives in the AMC pool: always ambiguously referenced while live
+                                (chain top via the &mml_current_handler root, each active handler
+                                via a stack local, captured ones via cont/fiber roots), so AMC
+                                NAILS it and never moves it; dead ones are collected. This avoids
+                                a separate AMS pool, whose SUPPORT_AMBIGUOUS greys segments at
+                                RankAMBIG — which MPS's trace asserts never happens. */
 
 /* --- object size in BYTES (header + data), from the object base --- */
 static size_t mml_obj_bytes(word *base) {
@@ -43,6 +50,7 @@ static size_t mml_obj_bytes(word *base) {
     case MML_HDR_CLOSURE:                       return HDR_SZ + SIZE(h) * 8;
     case MML_HDR_ARRAY:  return HDR_SZ + (1 + (size_t)c[0]) * 8;        /* c[0] = raw length */
     case MML_HDR_STRING: return ALIGN_UP(HDR_SZ + 8 + (size_t)(c[0] >> 1) + 1); /* c[0]=len<<1 */
+    case MML_HDR_HANDLER: return ALIGN_UP(HDR_SZ + (size_t)SIZE(h)); /* SIZE = data bytes */
     case MML_HDR_FWD: case MML_HDR_PAD: return (size_t)SIZE(h);
     default:
         fprintf(stderr, "mml_gc: bad object tag 0x%x at %p\n", TAG(h), (void *)base);
@@ -92,6 +100,18 @@ static mps_res_t mml_fmt_scan(mps_ss_t ss, mps_addr_t base, mps_addr_t limit) {
             case MML_HDR_ARRAY: {                                /* c[0] = raw length */
                 word n = (word)c[0]; for (word i = 0; i < n; i++) FIX_REF(ss, &c[1 + i]); break;
             }
+            case MML_HDR_HANDLER: {       /* mml_handler struct; c == base+8 == the struct */
+                mml_handler *hd = (mml_handler *)c;
+                FIX_REF(ss, (word *)&hd->parent);      /* -> another handler (AMC) */
+                FIX_REF(ss, (word *)&hd->return_env);  /* -> env / value (AMC) or 0 / tagged int */
+                FIX_REF(ss, (word *)&hd->try_result);
+                int nops = hd->num_ops;
+                for (int i = 0; i < nops; i++)
+                    FIX_REF(ss, (word *)&hd->ops[i].env_ptr);
+                /* return_fn / ops[].fn_ptr are code pointers, ops[].name a static C
+                   string, try_jmp a raw register snapshot — none are heap refs. */
+                break;
+            }
             case MML_HDR_STRING: case MML_HDR_FLOAT: case MML_HDR_PAD:
                 break;                                           /* atomic / no references */
             default:
@@ -127,7 +147,9 @@ static mps_pool_t  mml_pool;
 static mps_ap_t    mml_ap;
 static mps_fmt_t   mml_fmt;
 static mps_thr_t   mml_thread;
-static mps_root_t  mml_stack_root;
+static mps_root_t  mml_stack_root;        /* thread-scanned root for the ACTIVE stack */
+static void       *mml_stack_cold_main;   /* cold (high) end of the main OS stack */
+static void       *mml_stack_main_freeze; /* area root freezing main while off it, or NULL */
 
 /* Stress mode (MML_GC_STRESS=N): force a full collection every N allocations, so
    the moving/forwarding path is exercised even by tiny programs that would never
@@ -145,6 +167,7 @@ void mml_gc_init(void *stack_cold) {
     /* MPS requires the cold stack marker word-aligned. Round UP (away from the hot
        end) so the scanned range never shrinks below a real root. */
     stack_cold = (void *)(((uintptr_t)stack_cold + 7) & ~(uintptr_t)7);
+    mml_stack_cold_main = stack_cold;
     MPS_ARGS_BEGIN(args) {
         MPS_ARGS_ADD(args, MPS_KEY_ARENA_SIZE, (size_t)256 * 1024 * 1024);
         res = mps_arena_create_k(&mml_arena, mps_arena_class_vm(), args);
@@ -228,6 +251,15 @@ void *mml_gc_alloc(int64_t nbytes, int64_t header) {
     return CLIENT(p);
 }
 
+void *mml_gc_alloc_struct(int64_t nbytes) {
+    /* Allocate a handler in the AMC pool tagged MML_HDR_HANDLER (client = base + 8).
+       AMC NAILS any ambiguously-referenced object, and a handler is always ambiguously
+       referenced while live, so it never moves while a raw mml_handler* exists; dead
+       ones are collected. The header stores the size, so skip/scan are correct from the
+       instant of commit regardless of when the caller fills num_ops. */
+    return mml_gc_alloc(nbytes, MML_MAKE_HDR(MML_HDR_HANDLER, nbytes));
+}
+
 void *mml_gc_add_area_root(void *base, void *limit) {
     mps_root_t root;
     mps_res_t res = mps_root_create_area(&root, mml_arena, mps_rank_ambig(), 0,
@@ -238,6 +270,37 @@ void *mml_gc_add_area_root(void *base, void *limit) {
 
 void mml_gc_remove_area_root(void *handle) {
     mps_root_destroy((mps_root_t)handle);
+}
+
+/* Re-create the thread-scanned root with a new cold (high) end — the base of the stack
+   now executing. The thread root scans [stackWarm, cold], where stackWarm is the SP at
+   MPS entry; with a fixed cold this spans garbage once the mutator runs on a separate
+   fiber stack, so we re-point it on every context switch (see mml_gc_switch_stack). */
+static void mml_gc_repoint_thread(void *cold) {
+    mps_root_destroy(mml_stack_root);
+    mps_res_t res = mps_root_create_thread_scanned(&mml_stack_root, mml_arena,
+        mps_rank_ambig(), 0, mml_thread, mps_scan_area, NULL, cold);
+    if (res != MPS_RES_OK) die("repoint thread root", res);
+}
+
+/* Tell the GC which stack execution is moving onto, around a fiber context switch.
+   `from_main_sp`: if we are LEAVING the main OS stack, its current SP (its live frames
+   [sp, main_cold] are frozen as an area root while we are away — fibers are already
+   permanently area-rooted, so only main needs this). `to_cold`: the cold/high end of the
+   stack we are ENTERING, or NULL for the main stack. Called on the stack being left, just
+   before mps-unaware mml_swap_context, and again after (with roles swapped) on return. */
+void mml_gc_switch_stack(void *from_main_sp, void *to_cold) {
+    if (from_main_sp)                       /* leaving main: freeze its live frames */
+        mml_stack_main_freeze = mml_gc_add_area_root(from_main_sp, mml_stack_cold_main);
+    if (!to_cold) {                         /* entering main: unfreeze it, track it */
+        if (mml_stack_main_freeze) {
+            mml_gc_remove_area_root(mml_stack_main_freeze);
+            mml_stack_main_freeze = NULL;
+        }
+        mml_gc_repoint_thread(mml_stack_cold_main);
+    } else {                                /* entering a fiber: track its stack */
+        mml_gc_repoint_thread(to_cold);
+    }
 }
 
 void mml_gc_collect(void) {

@@ -2503,6 +2503,12 @@ int main(int argc, char **argv) {
                the live stack. */
             mml_gc_init((void *)&argc);
             mml_use_mps = 1;
+            /* mml_current_handler is a runtime.c global in plain __DATA (not the
+               codegen's __mmlgc section), so MPS does not otherwise scan it. Register
+               it as a permanent ambiguous root: it holds the top of the active handler
+               chain (AMS pool), and the parent-chain scan keeps the rest alive. */
+            mml_gc_add_area_root(&mml_current_handler,
+                                 (char *)&mml_current_handler + sizeof(mml_current_handler));
         }
     }
 #endif
@@ -2531,15 +2537,22 @@ mml_handler* mml_current_handler = NULL;
 
 mml_handler* mml_alloc_handler(int64_t num_ops) {
     size_t size = sizeof(mml_handler) + (size_t)num_ops * sizeof(mml_op_entry);
-    /* Always a Boehm allocation, even under MML_GC=mps: a handler is an internal
-       struct, not a MiniML value, and has no MML object header for the MPS format
-       to read. Instead register its memory as an MPS root (below) so the values it
-       holds pin. */
-    mml_handler* h = (mml_handler*)GC_malloc(size);
-    if (!h) mml_panic("out of memory in alloc_handler");
+    mml_handler* h;
 #ifdef MML_HAVE_MPS
-    mml_mps_root_struct(h, size);
+    if (mml_use_mps) {
+        /* Allocate in the MPS non-moving AMS struct pool, which scans the handler's
+           MiniML-value fields (parent/return_env/try_result/ops[].env_ptr) precisely.
+           This keeps those values alive WITHOUT a per-handler MPS root — the previous
+           scheme paid an mps_root_create_area + finalizer per handler, the dominant
+           remaining MPS cost on effect-heavy programs (e.g. the compiler itself). The
+           &mml_current_handler root + parent-chain scan keep the active chain alive. */
+        h = (mml_handler*)mml_gc_alloc_struct((int64_t)size);
+    } else
 #endif
+    {
+        h = (mml_handler*)GC_malloc(size);
+    }
+    if (!h) mml_panic("out of memory in alloc_handler");
     h->parent = NULL;
     h->num_ops = (int)num_ops;
     h->return_fn = 0;
@@ -2804,6 +2817,24 @@ static void fiber_stack_finalizer(void *obj, void *cd) {
 
 mml_fiber *mml_current_fiber = NULL;
 
+#ifdef MML_HAVE_MPS
+/* Bracket a fiber context switch for the moving GC: tell MPS which stack we are about
+   to run on, so its thread-scanned root tracks the live stack instead of spanning the
+   gap between the main stack and a separate fiber stack. `cur`/`next` are the fibers
+   being left/entered (NULL = the main OS stack). Must run while still on `cur`. Wrap
+   every swap INTO a fiber: gc_stack_to(cur,next) before, gc_stack_to(next,cur) after
+   (the after-call handles the yield/complete return). Yield/complete swaps need no call
+   — the matching after-bracket of whoever entered the fiber covers them. */
+static void gc_stack_to(mml_fiber *cur, mml_fiber *next) {
+    if (!mml_use_mps) return;
+    void *from_main_sp = (cur == NULL) ? __builtin_frame_address(0) : NULL;
+    void *to_cold = next ? (void *)((char *)next->stack + MML_FIBER_STACK_SIZE) : NULL;
+    mml_gc_switch_stack(from_main_sp, to_cold);
+}
+#else
+#define gc_stack_to(cur, next) ((void)0)
+#endif
+
 /* Fiber entry point trampoline — called via mml_make_context */
 static void fiber_entry_trampoline(void *arg) {
     mml_fiber *f = (mml_fiber *)arg;
@@ -2882,7 +2913,9 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
             fiber->result = result;
             fiber->state = MML_FIBER_RUNNING;
             mml_current_fiber = fiber;
+            gc_stack_to(saved_fiber, fiber);
             mml_swap_context(caller_ctx, &fiber->ctx);
+            gc_stack_to(fiber, saved_fiber);
             break;
         }
         case MML_HANDLER_TRY: {
@@ -2959,7 +2992,9 @@ int64_t mml_run_full_handler(int64_t handler_i64,
     mml_current_fiber = fiber;
 
     /* Start the fiber */
+    gc_stack_to(saved_fiber, fiber);
     mml_swap_context(&caller_ctx, &fiber->ctx);
+    gc_stack_to(fiber, saved_fiber);
 
     return fiber_dispatch_loop(fiber, &caller_ctx, saved_fiber,
                                return_fn_i64, return_env_i64);
@@ -3003,7 +3038,9 @@ int64_t mml_resume_continuation(int64_t k_i64, int64_t val) {
     mml_current_fiber = fiber;
 
     /* Resume the fiber */
+    gc_stack_to(saved_fiber, fiber);
     mml_swap_context(&caller_ctx, &fiber->ctx);
+    gc_stack_to(fiber, saved_fiber);
 
     return fiber_dispatch_loop(fiber, &caller_ctx, saved_fiber,
                                k->return_fn, k->return_env);
