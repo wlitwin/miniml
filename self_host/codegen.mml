@@ -221,7 +221,7 @@ module Codegen =
   pub let emit_make_closure ctx fn_name arity captures =
     let n_captures = List.length captures in
     let total_slots = 3 + n_captures in
-    let ptr = emit_alloc ctx (total_slots * 8) (make_header 0 mml_hdr_closure) in
+    let ptr = emit_alloc ctx (total_slots * 8) (make_header total_slots mml_hdr_closure) in
     let fn_ptr_i64 = Ir_emit.emit_ptrtoint ctx.ir ($"@{fn_name}") in
     let slot0 = Ir_emit.emit_gep ctx.ir "i64" ptr 0 in
     Ir_emit.emit_store ctx.ir "i64" fn_ptr_i64 slot0;
