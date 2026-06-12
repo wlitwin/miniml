@@ -28,10 +28,22 @@ void mml_gc_init(void *stack_cold);
    initialisation sees 0 = skip in not-yet-filled reference slots). */
 void *mml_gc_alloc(int64_t nbytes, int64_t header);
 
+/* Allocate an effect-handler struct (runtime.h mml_handler) in the AMC pool, tagged
+   MML_HDR_HANDLER (`nbytes` data bytes after the 8-byte header; returns the CLIENT
+   pointer base+8). AMC nails it while ambiguously referenced (always, while live), so
+   it never moves while a raw mml_handler* exists; dead ones are collected — no per-
+   handler MPS root. */
+void *mml_gc_alloc_struct(int64_t nbytes);
+
 /* Register / unregister an ambiguous root area [base, limit) (for fiber stacks and
    any C globals holding mml_values). */
 void *mml_gc_add_area_root(void *base, void *limit);   /* returns an opaque handle */
 void  mml_gc_remove_area_root(void *handle);
+
+/* Re-point the GC's notion of the active stack across a fiber context switch. See the
+   definition: `from_main_sp` freezes the main stack's live frames while we run on a
+   fiber; `to_cold` (NULL = main) is the stack we are switching onto. */
+void mml_gc_switch_stack(void *from_main_sp, void *to_cold);
 
 /* Force a full collection (for testing / deterministic stress). */
 void mml_gc_collect(void);
