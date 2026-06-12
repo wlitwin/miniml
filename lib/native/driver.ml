@@ -262,7 +262,7 @@ let compile_to_native ?(release = false) ~source_file ~output () =
       let mml_gc_c = find_runtime_file "mml_gc.c" in
       let mps_inc = "-I" ^ mdir in
       let mps_obj =
-        ensure_object ~key_extra:"mps-O2" ~content:(read_file_str mps_c)
+        ensure_object ~key_extra:"mps-O2-clockpatch" ~content:(read_file_str mps_c)
           ~compile:(fun o ->
             run_clang
               (Printf.sprintf "clang -O2 -c %s -o %s" (Filename.quote mps_c)

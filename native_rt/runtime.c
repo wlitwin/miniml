@@ -12,6 +12,8 @@
 #include <sys/wait.h>
 #include <poll.h>
 #include <errno.h>
+#include <mach-o/getsect.h>
+#include <mach-o/dyld.h>
 #include <gc/gc.h>
 #include "runtime.h"
 #ifdef MML_HAVE_MPS
@@ -34,9 +36,42 @@ static void mml_mps_unroot_finalizer(void *obj, void *root) {
 static void mml_mps_root_struct(void *p, size_t size) {
     if (!mml_use_mps) return;
     void *root = mml_gc_add_area_root(p, (char *)p + size);
-    GC_register_finalizer(p, mml_mps_unroot_finalizer, root, NULL, NULL);
+    /* _no_order: handlers chain to their parents, so these structs form reference
+       CYCLES. The default finalizer is topologically ordered and SKIPS cycles, so
+       the unroot finalizer would never run — the MPS roots would leak and accumulate
+       into thousands, making every root op and collection O(roots) (an O(n^2) blowup
+       on effect-using programs like the compiler). Our finalizer is order-independent
+       (it just removes one root), so no-order is correct and runs regardless. */
+    GC_register_finalizer_no_order(p, mml_mps_unroot_finalizer, root, NULL, NULL);
 }
 #endif
+
+/* Sorts/folds up to this many elements keep their scratch on the C stack (scanned
+   by the thread root, no per-call MPS root); larger ones use a rooted heap array. */
+#define MML_SORT_STACK_MAX 256
+
+/* A transient C-heap (GC_malloc) array of `n` mml_values — used as scratch by
+   runtime helpers (sort, list<->array). Such arrays are NOT on the C stack, so MPS's
+   ambiguous stack scan doesn't cover them; if a collection fires while they hold live
+   MiniML pointers (e.g. when the helper allocates a result cons mid-traversal), those
+   pointers would be left dangling. Register the array as an MPS ambiguous root for its
+   lifetime so its contents pin. No-op under Boehm. Pair with mml_scratch_free. */
+static mml_value *mml_scratch_alloc(int64_t n, void **root_out) {
+    mml_value *a = (mml_value *)GC_malloc((size_t)n * sizeof(mml_value));
+#ifdef MML_HAVE_MPS
+    *root_out = mml_use_mps ? mml_gc_add_area_root(a, a + n) : NULL;
+#else
+    *root_out = NULL;
+#endif
+    return a;
+}
+static void mml_scratch_free(void *root) {
+#ifdef MML_HAVE_MPS
+    if (root) mml_gc_remove_area_root(root);
+#else
+    (void)root;
+#endif
+}
 
 /* Forward declaration of the generated entry point */
 extern mml_value mml_main(void);
@@ -1411,17 +1446,26 @@ mml_value mml_list_sort(mml_value fn, mml_value lst) {
     }
     if (len <= 1) return lst;
 
-    /* Copy to array */
-    mml_value *arr = (mml_value *)GC_malloc(len * sizeof(mml_value));
+    /* Scratch for arr+tmp. Small sorts (the overwhelming majority — the compiler
+       sorts short field/method lists constantly) go on the C STACK, which MPS's
+       thread-stack root already scans: no per-sort root, avoiding the protectable-
+       root mprotect + Mach-message churn that otherwise dominates. Large sorts fall
+       back to a heap array rooted for the duration. */
+    void *arr_root = NULL, *tmp_root = NULL;
+    mml_value sbuf[2 * MML_SORT_STACK_MAX];
+    mml_value *arr, *tmp;
+    if (len <= MML_SORT_STACK_MAX) {
+        arr = sbuf; tmp = sbuf + len;
+    } else {
+        arr = mml_scratch_alloc(len, &arr_root);
+        tmp = mml_scratch_alloc(len, &tmp_root);
+    }
     cur = lst;
     for (int64_t i = 0; i < len; i++) {
         mml_value *cell = (mml_value *)(intptr_t)cur;
         arr[i] = cell[0];
         cur = cell[1];
     }
-
-    /* Bottom-up iterative merge sort — O(n log n), stable */
-    mml_value *tmp = (mml_value *)GC_malloc(len * sizeof(mml_value));
     if (!tmp) mml_panic("out of memory in list_sort");
 
     for (int64_t width = 1; width < len; width *= 2) {
@@ -1458,6 +1502,8 @@ mml_value mml_list_sort(mml_value fn, mml_value lst) {
         cell[1] = result;
         result = (mml_value)(intptr_t)cell;
     }
+    if (arr_root) mml_scratch_free(arr_root);
+    if (tmp_root) mml_scratch_free(tmp_root);
     return result;
 }
 
@@ -1489,7 +1535,10 @@ mml_value mml_list_fold_right(mml_value fn, mml_value lst, mml_value acc) {
         cur = cell[1];
     }
     if (len == 0) return acc;
-    mml_value *arr = (mml_value *)GC_malloc(len * sizeof(mml_value));
+    void *arr_root = NULL;
+    mml_value sbuf[MML_SORT_STACK_MAX];
+    mml_value *arr = (len <= MML_SORT_STACK_MAX) ? sbuf
+                                                 : mml_scratch_alloc(len, &arr_root);
     cur = lst;
     for (int64_t i = 0; i < len; i++) {
         mml_value *cell = (mml_value *)(intptr_t)cur;
@@ -1500,6 +1549,7 @@ mml_value mml_list_fold_right(mml_value fn, mml_value lst, mml_value acc) {
     for (int64_t i = len - 1; i >= 0; i--) {
         result = mml_apply2(fn, arr[i], result);
     }
+    if (arr_root) mml_scratch_free(arr_root);
     return result;
 }
 
@@ -2423,6 +2473,18 @@ void mml_sys_store_args(int argc, char **argv);
 int main(int argc, char **argv) {
     mml_sys_store_args(argc, argv);
     GC_INIT();
+    /* MiniML globals (@mml_g_*) are emitted into the "__DATA,__mmlgc" section so the
+       MPS collector can root exactly them. Boehm's macOS data-segment scanner only
+       knows a fixed set of section names and does NOT scan custom sections, so we
+       must register __mmlgc as a Boehm root explicitly — otherwise live globals are
+       collected. (Under MML_GC=mps, mml_gc_init additionally roots it for MPS.) */
+    {
+        const struct mach_header_64 *mh =
+            (const struct mach_header_64 *)_dyld_get_image_header(0);
+        unsigned long sz = 0;
+        uint8_t *p = getsectiondata(mh, "__DATA", "__mmlgc", &sz);
+        if (p && sz) GC_add_roots(p, p + sz);
+    }
     /* Default to a Go-like heap-growth policy: keep free space ≈ the live set so
        the heap roughly doubles between collections, instead of Boehm's default
        divisor=3 (collect once free space falls to 1/3 of live — very eager). This

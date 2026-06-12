@@ -14,6 +14,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <mach-o/getsect.h>
+#include <mach-o/dyld.h>
 
 typedef mps_word_t word;
 
@@ -165,13 +167,42 @@ void mml_gc_init(void *stack_cold) {
     } MPS_ARGS_END(args);
     if (res != MPS_RES_OK) die("fmt_create", res);
 
+    /* A large nursery is the key macOS tuning: AMC's generational write barrier uses
+       memory protection (Mach exceptions here), so every first write to a promoted
+       old-generation object faults — expensive. A big gen-0 means most objects live
+       and die in the nursery without ever being promoted/protected, slashing the
+       barrier-fault and collection overhead. (capacity in KB; mortality = fraction
+       expected to die.) */
+    static mps_gen_param_s gens[] = {
+        { 128u * 1024, 0.99 },   /* gen-0 nursery: 128 MB, ~all dies young */
+        { 256u * 1024, 0.80 },   /* gen-1 */
+    };
+    mps_chain_t chain;
+    if ((res = mps_chain_create(&chain, mml_arena, 2, gens)) != MPS_RES_OK) die("chain", res);
+
     MPS_ARGS_BEGIN(args) {
         MPS_ARGS_ADD(args, MPS_KEY_FORMAT, mml_fmt);
+        MPS_ARGS_ADD(args, MPS_KEY_CHAIN, chain);
         res = mps_pool_create_k(&mml_pool, mml_arena, mps_class_amc(), args);
     } MPS_ARGS_END(args);
     if (res != MPS_RES_OK) die("pool_create", res);
 
     if ((res = mps_ap_create_k(&mml_ap, mml_pool, mps_args_none)) != MPS_RES_OK) die("ap_create", res);
+
+    /* Register MiniML's static globals as ambiguous roots. Top-level bindings and
+       typeclass-dictionary slots are LLVM globals (@mml_g_*) holding mml_values; the
+       codegen places them all in the "__DATA,__mmlgc" section so we can register
+       exactly that region. Boehm scans static data automatically, but MPS does not —
+       without this a global whose target is moved is left dangling. We must NOT
+       register the whole __DATA segment: it also holds MPS's own static handles
+       (mml_arena, mml_pool, …), and scanning those tangles the collector (it hangs). */
+    {
+        const struct mach_header_64 *mh =
+            (const struct mach_header_64 *)_dyld_get_image_header(0);
+        unsigned long sz = 0;
+        uint8_t *p = getsectiondata(mh, "__DATA", "__mmlgc", &sz);
+        if (p && sz) mml_gc_add_area_root(p, p + sz);
+    }
 
     {
         const char *s = getenv("MML_GC_STRESS");
