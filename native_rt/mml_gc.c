@@ -30,6 +30,9 @@ typedef mps_word_t word;
    Never collide with a real MiniML tag (0x00..0x0B). */
 #define MML_HDR_FWD 0x0C   /* forwarded: header size = original byte size; client[0] = new base */
 #define MML_HDR_PAD 0x0D   /* padding:   header size = byte size */
+#define MML_HDR_CONT  0x10   /* continuation struct (runtime.h mml_continuation); size = data
+                                bytes. AMC pool, nailed while referenced (a first-class MiniML
+                                value); its scan retains the captured fiber + handler chain. */
 #define MML_HDR_FIBER 0x0F   /* fiber struct (runtime.h mml_fiber); size = data bytes. In the
                                 AMC pool like handlers: nailed while live (active via the
                                 &mml_current_fiber root + its own stack's `f` local; suspended
@@ -57,7 +60,8 @@ static size_t mml_obj_bytes(word *base) {
     case MML_HDR_ARRAY:  return HDR_SZ + (1 + (size_t)c[0]) * 8;        /* c[0] = raw length */
     case MML_HDR_STRING: return ALIGN_UP(HDR_SZ + 8 + (size_t)(c[0] >> 1) + 1); /* c[0]=len<<1 */
     case MML_HDR_HANDLER:
-    case MML_HDR_FIBER: return ALIGN_UP(HDR_SZ + (size_t)SIZE(h)); /* SIZE = data bytes */
+    case MML_HDR_FIBER:
+    case MML_HDR_CONT: return ALIGN_UP(HDR_SZ + (size_t)SIZE(h)); /* SIZE = data bytes */
     case MML_HDR_FWD: case MML_HDR_PAD: return (size_t)SIZE(h);
     default:
         fprintf(stderr, "mml_gc: bad object tag 0x%x at %p\n", TAG(h), (void *)base);
@@ -126,6 +130,15 @@ static mps_res_t mml_fmt_scan(mps_ss_t ss, mps_addr_t base, mps_addr_t limit) {
                 /* ctx (raw register snapshot; its pointers are on the area-rooted fiber
                    stack), op_name (C string), parent_ctx (a C-stack mml_context*), stack
                    (mmap'd), state/stack_freed (ints), mps_stack_root (handle): no heap refs. */
+                break;
+            }
+            case MML_HDR_CONT: {          /* mml_continuation struct; c == base+8 == the struct */
+                mml_continuation *k = (mml_continuation *)c;
+                FIX_REF(ss, (word *)&k->fiber);       /* captured fiber (AMC) */
+                FIX_REF(ss, (word *)&k->handler);     /* captured handler chain top (AMC) */
+                FIX_REF(ss, (word *)&k->resume_base); /* boundary handler (AMC) or NULL */
+                FIX_REF(ss, (word *)&k->return_env);  /* return-arm env (value) or 0 */
+                /* return_fn is a code pointer, used is an int — no heap refs. */
                 break;
             }
             case MML_HDR_STRING: case MML_HDR_FLOAT: case MML_HDR_PAD:
@@ -281,6 +294,12 @@ void *mml_gc_alloc_fiber(int64_t nbytes) {
     /* Fiber struct in the AMC pool (tag MML_HDR_FIBER), nailed while live like a
        handler. See the format note at MML_HDR_FIBER. */
     return mml_gc_alloc(nbytes, MML_MAKE_HDR(MML_HDR_FIBER, nbytes));
+}
+
+void *mml_gc_alloc_cont(int64_t nbytes) {
+    /* Continuation struct in the AMC pool (tag MML_HDR_CONT); its scan retains the
+       captured fiber + handler chain, so no per-cont area root is needed. */
+    return mml_gc_alloc(nbytes, MML_MAKE_HDR(MML_HDR_CONT, nbytes));
 }
 
 void *mml_gc_add_area_root(void *base, void *limit) {
