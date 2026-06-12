@@ -1192,17 +1192,33 @@ module Codegen =
       let rem = Ir_emit.emit_binop ctx.ir "srem" "i64" ua ub in
       let shifted = Ir_emit.emit_binop ctx.ir "shl" "i64" rem "1" in
       Ir_emit.emit_binop ctx.ir "or" "i64" shifted "1"
-    | Ast.Lt -> 
-      let cmp = Ir_emit.emit_icmp ctx.ir "slt" "i64" a b in
-      Ir_emit.emit_select ctx.ir cmp "i64" true_value false_value
-    | Ast.Gt -> 
-      let cmp = Ir_emit.emit_icmp ctx.ir "sgt" "i64" a b in
-      Ir_emit.emit_select ctx.ir cmp "i64" true_value false_value
-    | Ast.Le -> 
-      let cmp = Ir_emit.emit_icmp ctx.ir "sle" "i64" a b in
-      Ir_emit.emit_select ctx.ir cmp "i64" true_value false_value
-    | Ast.Ge -> 
-      let cmp = Ir_emit.emit_icmp ctx.ir "sge" "i64" a b in
+    | (((Ast.Lt | Ast.Gt) | Ast.Le) | Ast.Ge) -> 
+      let icmp_op =
+        match op with
+        | Ast.Lt -> "slt"
+        | Ast.Gt -> "sgt"
+        | Ast.Le -> "sle"
+        | _ -> "sge"
+       in
+      let fcmp_op =
+        match op with
+        | Ast.Lt -> "olt"
+        | Ast.Gt -> "ogt"
+        | Ast.Le -> "ole"
+        | _ -> "oge"
+       in
+      let cmp =
+        match Types.repr e1.ty with
+        | ((((Types.TInt | Types.TBool) | Types.TUnit) | Types.TByte) | Types.TRune) -> Ir_emit.emit_icmp ctx.ir icmp_op "i64" a b
+        | Types.TFloat -> 
+          let da = emit_unbox_float ctx a in
+          let db = emit_unbox_float ctx b in
+          Ir_emit.emit_fcmp ctx.ir fcmp_op da db
+        | _ -> 
+          add_extern ctx "mml_structural_compare" "i64" ("i64" :: "i64" :: []);
+          let r = Ir_emit.emit_call ctx.ir "i64" "mml_structural_compare" (("i64", a) :: ("i64", b) :: []) in
+          Ir_emit.emit_icmp ctx.ir icmp_op "i64" r (tag_int 0)
+       in
       Ir_emit.emit_select ctx.ir cmp "i64" true_value false_value
     | Ast.Eq -> 
       do
@@ -3302,13 +3318,37 @@ module Codegen =
         | "lnot" -> "lnot"
         | s -> sanitize_name s
        in
-      let wrapper_key = $"mml_op_{if is_float do
+      let is_structural_cmp =
+        match op_name with
+        | ((((("<" | ">") | "<=") | ">=") | "=") | "<>") -> 
+          do
+            match ty with
+            | Types.TArrow ((arg_ty, _, _)) -> 
+              do
+                match Types.repr arg_ty with
+                | (((((Types.TInt | Types.TBool) | Types.TByte) | Types.TRune) | Types.TUnit) | Types.TFloat) -> false
+                | _ -> true
+
+              end
+            | _ -> false
+
+          end
+        | _ -> false
+       in
+      let wrapper_key =
+        if is_structural_cmp do
+          $"mml_op_struct_{op_suffix}"
+        else
+          $"mml_op_{if is_float do
   "float"
 else
   "int"}_{op_suffix}" in
       if not (Hashtbl.has ctx.generated_wrappers wrapper_key) do
         Hashtbl.set ctx.generated_wrappers wrapper_key ();
-        emit_operator_wrapper ctx wrapper_key op_name is_float
+        if is_structural_cmp do
+          emit_structural_cmp_wrapper ctx wrapper_key op_name
+        else
+          emit_operator_wrapper ctx wrapper_key op_name is_float
       end;
       let arity =
         match op_name with
@@ -3317,6 +3357,52 @@ else
        in
       emit_make_closure ctx wrapper_key arity []
     end
+  and emit_structural_op_value ctx op_name =
+    let op_suffix =
+      match op_name with
+      | "<" -> "lt"
+      | ">" -> "gt"
+      | "<=" -> "lte"
+      | ">=" -> "gte"
+      | "=" -> "eq"
+      | "<>" -> "neq"
+      | _ -> failwith ("emit_structural_op_value: " ^ op_name)
+     in
+    let wrapper_key = $"mml_op_struct_{op_suffix}" in
+    if not (Hashtbl.has ctx.generated_wrappers wrapper_key) do
+      Hashtbl.set ctx.generated_wrappers wrapper_key ();
+      emit_structural_cmp_wrapper ctx wrapper_key op_name
+    end;
+    emit_make_closure ctx wrapper_key 2 []
+  and emit_structural_cmp_wrapper ctx wrapper_name op_name = with_fresh_ir ctx (fn fn_ir -> let params = ("ptr", "%env") :: ("i64", "%a0") :: ("i64", "%a1") :: [] in
+  Ir_emit.emit_define_start_gen fn_ir "linkonce_odr" "i64" wrapper_name params;
+  Ir_emit.emit_label fn_ir "entry";
+  let result =
+    match op_name with
+    | ("=" | "<>") -> 
+      add_extern ctx "mml_structural_eq" "i64" ("i64" :: "i64" :: []);
+      let eq = Ir_emit.emit_call fn_ir "i64" "mml_structural_eq" (("i64", "%a0") :: ("i64", "%a1") :: []) in
+      if op_name = "=" do
+        eq
+      else do
+        let cmp = Ir_emit.emit_icmp fn_ir "eq" "i64" eq true_value in
+        Ir_emit.emit_select fn_ir cmp "i64" false_value true_value
+      end
+    | _ -> 
+      let icmp_op =
+        match op_name with
+        | "<" -> "slt"
+        | ">" -> "sgt"
+        | "<=" -> "sle"
+        | _ -> "sge"
+       in
+      add_extern ctx "mml_structural_compare" "i64" ("i64" :: "i64" :: []);
+      let r = Ir_emit.emit_call fn_ir "i64" "mml_structural_compare" (("i64", "%a0") :: ("i64", "%a1") :: []) in
+      let cmp = Ir_emit.emit_icmp fn_ir icmp_op "i64" r (tag_int 0) in
+      Ir_emit.emit_select fn_ir cmp "i64" true_value false_value
+   in
+  Ir_emit.emit_ret fn_ir "i64" result;
+  Ir_emit.emit_define_end fn_ir)
   and emit_operator_wrapper ctx wrapper_name op_name is_float = with_fresh_ir ctx (fn fn_ir -> let arity =
     match op_name with
     | (("not" | "neg") | "lnot") -> 1
@@ -3568,12 +3654,12 @@ else
       end;
       add_extern ctx "mml_poly_hash" "i64" ("i64" :: []);
       Some (emit_make_closure ctx wrapper_key 1 [])
-    | "__structural_eq" -> Some (emit_operator_closure ctx "=" expr_ty)
-    | "__structural_neq" -> Some (emit_operator_closure ctx "<>" expr_ty)
-    | "__structural_lt" -> Some (emit_operator_closure ctx "<" expr_ty)
-    | "__structural_gt" -> Some (emit_operator_closure ctx ">" expr_ty)
-    | "__structural_le" -> Some (emit_operator_closure ctx "<=" expr_ty)
-    | "__structural_ge" -> Some (emit_operator_closure ctx ">=" expr_ty)
+    | "__structural_eq" -> Some (emit_structural_op_value ctx "=")
+    | "__structural_neq" -> Some (emit_structural_op_value ctx "<>")
+    | "__structural_lt" -> Some (emit_structural_op_value ctx "<")
+    | "__structural_gt" -> Some (emit_structural_op_value ctx ">")
+    | "__structural_le" -> Some (emit_structural_op_value ctx "<=")
+    | "__structural_ge" -> Some (emit_structural_op_value ctx ">=")
     | _ -> None
 
   and emit_concat_wrapper ctx wrapper_name = with_fresh_ir ctx (fn fn_ir -> Ir_emit.emit_define_start_gen fn_ir "linkonce_odr" "i64" wrapper_name (("ptr", "%env") :: ("i64", "%a0") :: ("i64", "%a1") :: []);

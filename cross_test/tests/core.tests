@@ -1265,3 +1265,20 @@ let f base =
   in ping 5 in
 f 100
 --- expect: 101
+
+# Polymorphic compare / ordering operators on a BOXED value (variant, tuple,
+# record, list) must compare structurally. Native lowered <,>,<=,>= (and the
+# structural Eq/Ord instance methods __structural_lt etc.) to a raw integer icmp
+# on the operand words — a POINTER comparison for any boxed value, so equal
+# values compared unequal (`compare (C 3) (C 3) <> 0`), breaking sort_uniq dedup.
+# Asserts the dedup COUNT (order-independent, so native's tag-based variant order
+# vs the oracle's name order is irrelevant). This was the native self-host
+# bootstrap's match_tree "no test for irrefutable/wild" panic (distinct_heads'
+# sort_uniq failed to dedup identical tuple heads).
+--- test: structural compare dedups boxed values (sort_uniq compare)
+type col = Red | Green of int | Blue of int
+;;
+let xs = [Green 3; Green 3; Blue 1; Red; Green 3; Blue 1]
+;;
+List.length (List.sort_uniq compare xs)
+--- expect: 3

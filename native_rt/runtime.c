@@ -2079,6 +2079,83 @@ restart:
     }
 }
 
+/* Polymorphic structural comparison, returning a tagged -1 / 0 / 1. Backs the
+   ordering operators (<, >, <=, >=) and `compare` on non-scalar types — which
+   the native codegen previously lowered to a raw integer icmp on the operand
+   words, i.e. a POINTER comparison for any boxed value (variants, tuples,
+   records, lists), giving nonsense (equal values compared unequal). This is a
+   consistent total order with equality returning 0; for variants the order is
+   by runtime tag then payload (native does not carry constructor names, so it
+   cannot reproduce the oracle's name order for UNEQUAL variants — equality and
+   determinism, which is what `compare`/`sort_uniq` rely on, are exact). */
+mml_value mml_structural_compare(mml_value a, mml_value b) {
+restart:
+    if (a == b) return MML_TAG_INT(0);
+    int ia = MML_IS_INT(a), ib = MML_IS_INT(b);
+    if (ia && ib) {
+        int64_t va = MML_INT_VAL(a), vb = MML_INT_VAL(b);
+        return MML_TAG_INT(va < vb ? -1 : (va > vb ? 1 : 0));
+    }
+    /* One immediate, one boxed: e.g. [] vs (_::_), a nullary vs a payload
+       constructor, [||] vs a non-empty array. Immediates sort first — this puts
+       nil before cons and empty before non-empty, matching the spec. */
+    if (ia) return MML_TAG_INT(-1);
+    if (ib) return MML_TAG_INT(1);
+
+    int tag_a = MML_HDR_TAG(a), tag_b = MML_HDR_TAG(b);
+    if (tag_a != tag_b) return MML_TAG_INT(tag_a < tag_b ? -1 : 1);
+
+    mml_value *pa = (mml_value *)(intptr_t)a;
+    mml_value *pb = (mml_value *)(intptr_t)b;
+
+    switch (tag_a) {
+    case MML_HDR_STRING:
+        return mml_string_compare(a, b);
+    case MML_HDR_FLOAT: {
+        double da = *(double *)pa, db = *(double *)pb;
+        return MML_TAG_INT(da < db ? -1 : (da > db ? 1 : 0));
+    }
+    case MML_HDR_CONS: {
+        mml_value c = mml_structural_compare(pa[0], pb[0]);
+        if (c != MML_TAG_INT(0)) return c;
+        a = pa[1]; b = pb[1]; goto restart;
+    }
+    case MML_HDR_TUPLE:
+    case MML_HDR_RECORD: {
+        int64_t na = MML_HDR_SIZE(a), nb = MML_HDR_SIZE(b);
+        int64_t n = na < nb ? na : nb;
+        for (int64_t i = 0; i < n; i++) {
+            mml_value c = mml_structural_compare(pa[i], pb[i]);
+            if (c != MML_TAG_INT(0)) return c;
+        }
+        return MML_TAG_INT(na < nb ? -1 : (na > nb ? 1 : 0));
+    }
+    case MML_HDR_VARIANT:
+    case MML_HDR_POLYVAR: {
+        int64_t ta = MML_INT_VAL(pa[0]), tb = MML_INT_VAL(pb[0]);
+        if (ta != tb) return MML_TAG_INT(ta < tb ? -1 : 1);
+        a = pa[1]; b = pb[1]; goto restart;
+    }
+    case MML_HDR_PAIR: {
+        mml_value c = mml_structural_compare(pa[0], pb[0]);
+        if (c != MML_TAG_INT(0)) return c;
+        a = pa[1]; b = pb[1]; goto restart;
+    }
+    case MML_HDR_ARRAY: {
+        int64_t na = MML_ARR_LEN(a), nb = MML_ARR_LEN(b);
+        mml_value *da = MML_ARR_DATA(a), *db = MML_ARR_DATA(b);
+        int64_t n = na < nb ? na : nb;
+        for (int64_t i = 0; i < n; i++) {
+            mml_value c = mml_structural_compare(da[i], db[i]);
+            if (c != MML_TAG_INT(0)) return c;
+        }
+        return MML_TAG_INT(na < nb ? -1 : (na > nb ? 1 : 0));
+    }
+    default:
+        return MML_TAG_INT(0); /* closures, refs: not ordered */
+    }
+}
+
 /* ---- Structural hash ---- */
 
 static int64_t hash_mix(int64_t h, int64_t x) {
