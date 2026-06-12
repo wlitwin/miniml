@@ -37,6 +37,18 @@ module Main =
 
   let mut native_global_entries = ([] : string list)
 
+  -- Native-extern declarations for the LLVM backend. register_module_fn registers
+  -- module builtins (String.compare, Array.get, Sys.time, …) straight into the type
+  -- env, so unlike the OCaml reference compiler — whose parsed `module String {extern
+  -- …}` prelude lands these as TDExtern decls in setup_typed — they never reach the
+  -- native codegen's collect_module_externs (which scans program TDExterns to know
+  -- which names map to `mml_<m>_<f>` runtime calls). Without that table the codegen
+  -- can lower an APPLIED `String.compare a b` (explicit emit_named_call arm) but not a
+  -- first-class `List.sort String.compare`, which falls through emit_var to an
+  -- "unbound variable" panic. We mirror the OCaml architecture by recording each
+  -- registered module extern as a TDExtern here and feeding them to the native path.
+  let mut module_extern_decls = ([] : Typechecker.tprogram)
+
   let register_native_ext idx name arity =
     native_global_entries := serialize_native_ext idx name arity :: native_global_entries
 
@@ -60,6 +72,7 @@ module Main =
     let max_gen = Typechecker.max_tgen_in_ty ty in
     let scheme = if max_gen >= 0 do { quant = max_gen + 1; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty }
                  else mono ty in
+    module_extern_decls := Typechecker.TDExtern (qualified, scheme) :: module_extern_decls;
     let vars = (qualified, scheme) :: ctx.vars in
     ((fn_name, scheme), { ctx with vars = vars })
 
@@ -588,6 +601,13 @@ module Main =
     let stdlib_raw = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
     let typed_program2 = Pipeline.lower true stdlib_raw ctx2.type_env typed_program2 in
     let stdlib_programs = List.map (fn p -> let (te, prog) = p in (te, Pipeline.lower true [] te prog)) captured_typed_setups in
+    -- Expose the module builtins' externs (String.compare, Array.get, …) to the
+    -- native codegen's collect_module_externs as one synthetic stdlib unit of
+    -- TDExterns, matching the OCaml driver's setup_typed. TDExterns lower to nothing
+    -- and emit_decl ignores them, so this only populates the name→arity table that
+    -- lets first-class uses of these builtins resolve.
+    let extern_unit = (ctx2.type_env, Pipeline.lower true [] ctx2.type_env module_extern_decls) in
+    let stdlib_programs = List.concat stdlib_programs [extern_unit] in
     let triple = detect_target_triple () in
     Codegen.compile_program_with_stdlib triple ctx2.type_env stdlib_programs typed_program2
 

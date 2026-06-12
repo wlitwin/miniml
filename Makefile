@@ -233,10 +233,15 @@ check-run-native-selfhost:
 # End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
 # its own native backend + clang to a real binary, which must run and print correctly.
 # Proves the unified self-host compiler emits working native executables (roadmap #16).
+# The program also passes `String.compare` as a FIRST-CLASS VALUE (to List.sort): module
+# builtins are registered into the type env via register_fn, not as parsed extern decls,
+# so they only reach the native codegen's collect_module_externs through main.mml's
+# synthetic-TDExtern bridge — without it, `List.sort String.compare` panics with "unbound
+# variable String.compare" (it was the last gap before the native self-host fixpoint).
 check-run-native-selfhost-build:
-	@printf 'let rec fib n = if n < 2 do n else fib (n - 1) + fib (n - 2)\nlet () = print (string_of_int (fib 20))\n' > /tmp/mml_sh_native.mml
+	@printf 'let rec fib n = if n < 2 do n else fib (n - 1) + fib (n - 2)\nlet sorted = List.sort String.compare ["b"; "a"; "c"]\nlet () = print (String.concat "" sorted ^ string_of_int (fib 20))\n' > /tmp/mml_sh_native.mml
 	$(CHECK_BIN)/bin/main.exe --run-json js/compiler.json --emit-native /tmp/mml_sh_native.mml -o /tmp/mml_sh_native_bin
-	@out=$$(/tmp/mml_sh_native_bin); if [ "$$out" = "6765" ]; then echo "self-host native build passed (fib 20 = $$out)"; else echo "FAIL: expected 6765, got $$out"; exit 1; fi
+	@out=$$(/tmp/mml_sh_native_bin); if [ "$$out" = "abc6765" ]; then echo "self-host native build passed (sort+fib = $$out)"; else echo "FAIL: expected abc6765, got $$out"; exit 1; fi
 # The native backend must compile the ENTIRE self-host compiler (all SELF_HOST_FILES
 # concatenated in dependency order) to LLVM IR. Protects the codegen completeness work
 # that lets the self-host compiler be native-compiled into a standalone binary
