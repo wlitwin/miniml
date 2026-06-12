@@ -5205,138 +5205,140 @@ function Option$flat_map(f, opt) {
   }
   return _t939;
 }
+const Buffer$seal_threshold = 1024;
 function Buffer$create(_n) {
-  return ({chunks: null, len: 0});
+  return ({len: 0, pending: null, pending_n: 0, sealed: null});
 }
 function Buffer$length(buf) {
   return buf.len;
 }
 function Buffer$clear(buf) {
-  (buf.chunks = null, undefined);
+  (buf.sealed = null, undefined);
+  (buf.pending = null, undefined);
+  (buf.pending_n = 0, undefined);
   return (buf.len = 0, undefined);
 }
 function Buffer$grow(_buf, _needed) {
   return undefined;
 }
-function Buffer$add_byte(buf, b) {
-  (buf.chunks = ({_hd: String$of_byte(b), _tl: buf.chunks}), undefined);
-  return (buf.len = (buf.len + 1), undefined);
-}
-function Buffer$add_string(buf, s) {
-  const n_941 = String$length(s);
-  let _t943;
-  if ((n_941 > 0)) {
-    (buf.chunks = ({_hd: s, _tl: buf.chunks}), undefined);
-    _t943 = (buf.len = (buf.len + n_941), undefined);
-  } else {
-    _t943 = undefined;
+function Buffer$seal(buf) {
+  let _t942;
+  const _t941 = buf.pending;
+  _t943: {
+    if (_t941 === null) {
+      _t942 = undefined;
+      break _t943;
+    }
+    if (_t941 !== null) {
+      if (_t941._tl === null) {
+        const s = _t941._hd;
+        (buf.sealed = ({_hd: s, _tl: buf.sealed}), undefined);
+        (buf.pending = null, undefined);
+        _t942 = (buf.pending_n = 0, undefined);
+        break _t943;
+      }
+      const s_944 = _call(String$concat, ["", List$rev(buf.pending)]);
+      (buf.sealed = ({_hd: s_944, _tl: buf.sealed}), undefined);
+      (buf.pending = null, undefined);
+      const _t945 = (buf.pending_n = 0, undefined);
+      _t942 = _t945;
+      break _t943;
+    }
+    _match_fail("line 0");
   }
-  const _t942 = _t943;
   return _t942;
 }
-function Buffer$flush(buf) {
-  let _t945;
-  const _t944 = buf.chunks;
-  _t946: {
-    if (_t944 === null) {
-      _t945 = undefined;
-      break _t946;
+function Buffer$add_string(buf, s) {
+  const n_946 = String$length(s);
+  let _t948;
+  if ((n_946 > 0)) {
+    (buf.pending = ({_hd: s, _tl: buf.pending}), undefined);
+    (buf.pending_n = (buf.pending_n + 1), undefined);
+    (buf.len = (buf.len + n_946), undefined);
+    let _t949;
+    if ((buf.pending_n >= Buffer$seal_threshold)) {
+      _t949 = Buffer$seal(buf);
+    } else {
+      _t949 = undefined;
     }
-    if (_t944 !== null) {
-      if (_t944._tl === null) {
-        _t945 = undefined;
-        break _t946;
-      }
-      const s_947 = _call(String$concat, ["", List$rev(buf.chunks)]);
-      const _t948 = (buf.chunks = ({_hd: s_947, _tl: null}), undefined);
-      _t945 = _t948;
-      break _t946;
-    }
-    _match_fail("line 0");
-  }
-  return _t945;
-}
-function Buffer$sub(buf, pos, len) {
-  Buffer$flush(buf);
-  let _t950;
-  const _t949 = buf.chunks;
-  _t951: {
-    if (_t949 === null) {
-      _t950 = "";
-      break _t951;
-    }
-    if (_t949 !== null) {
-      const s = _t949._hd;
-      _t950 = _call(String$sub, [s, pos, len]);
-      break _t951;
-    }
-    _match_fail("line 0");
-  }
-  return _t950;
-}
-function Buffer$truncate(buf, n) {
-  let _t952;
-  if ((n === 0)) {
-    (buf.chunks = null, undefined);
-    _t952 = (buf.len = 0, undefined);
+    _t948 = _t949;
   } else {
-    Buffer$flush(buf);
-    let _t954;
-    const _t953 = buf.chunks;
-    _t955: {
-      if (_t953 === null) {
-        _t954 = undefined;
-        break _t955;
-      }
-      if (_t953 !== null) {
-        const s = _t953._hd;
-        (buf.chunks = ({_hd: _call(String$sub, [s, 0, n]), _tl: null}), undefined);
-        _t954 = (buf.len = n, undefined);
-        break _t955;
-      }
-      _match_fail("line 0");
-    }
-    _t952 = _t954;
+    _t948 = undefined;
   }
-  return _t952;
+  const _t947 = _t948;
+  return _t947;
+}
+function Buffer$add_byte(buf, b) {
+  return Buffer$add_string(buf, String$of_byte(b));
+}
+function Buffer$materialize(buf) {
+  Buffer$seal(buf);
+  let _t951;
+  const _t950 = buf.sealed;
+  _t952: {
+    if (_t950 === null) {
+      _t951 = "";
+      break _t952;
+    }
+    if (_t950 !== null) {
+      if (_t950._tl === null) {
+        const s = _t950._hd;
+        _t951 = s;
+        break _t952;
+      }
+      const s_953 = _call(String$concat, ["", List$rev(buf.sealed)]);
+      (buf.sealed = ({_hd: s_953, _tl: null}), undefined);
+      const _t954 = s_953;
+      _t951 = _t954;
+      break _t952;
+    }
+    _match_fail("line 0");
+  }
+  return _t951;
 }
 function Buffer$contents(buf) {
+  return Buffer$materialize(buf);
+}
+function Buffer$sub(buf, pos, len) {
+  const s_955 = Buffer$materialize(buf);
+  const _t956 = _call(String$sub, [s_955, pos, len]);
+  return _t956;
+}
+function Buffer$truncate(buf, n) {
   let _t957;
-  const _t956 = buf.chunks;
-  _t958: {
-    if (_t956 === null) {
-      _t957 = "";
-      break _t958;
-    }
-    if (_t956 !== null) {
-      if (_t956._tl === null) {
-        const s = _t956._hd;
-        _t957 = s;
-        break _t958;
-      }
-      const s_959 = _call(String$concat, ["", List$rev(buf.chunks)]);
-      (buf.chunks = ({_hd: s_959, _tl: null}), undefined);
-      const _t960 = s_959;
-      _t957 = _t960;
-      break _t958;
-    }
-    _match_fail("line 0");
+  if ((n === 0)) {
+    _t957 = Buffer$clear(buf);
+  } else {
+    const s_958 = Buffer$materialize(buf);
+    (buf.sealed = ({_hd: _call(String$sub, [s_958, 0, n]), _tl: null}), undefined);
+    (buf.pending = null, undefined);
+    (buf.pending_n = 0, undefined);
+    const _t959 = (buf.len = n, undefined);
+    _t957 = _t959;
   }
   return _t957;
 }
 function Buffer$add_buffer(dst, src) {
-  const s_961 = Buffer$contents(src);
-  const n_963 = String$length(s_961);
-  let _t965;
-  if ((n_963 > 0)) {
-    (dst.chunks = ({_hd: s_961, _tl: dst.chunks}), undefined);
-    _t965 = (dst.len = (dst.len + n_963), undefined);
+  const s_960 = Buffer$contents(src);
+  const n_962 = String$length(s_960);
+  let _t964;
+  if ((n_962 > 0)) {
+    (dst.pending = ({_hd: s_960, _tl: dst.pending}), undefined);
+    (dst.pending_n = (dst.pending_n + 1), undefined);
+    (dst.len = (dst.len + n_962), undefined);
+    let _t965;
+    if ((dst.pending_n >= Buffer$seal_threshold)) {
+      _t965 = Buffer$seal(dst);
+    } else {
+      _t965 = undefined;
+    }
+    _t964 = _t965;
   } else {
-    _t965 = undefined;
+    _t964 = undefined;
   }
-  const _t964 = _t965;
-  const _t962 = _t964;
-  return _t962;
+  const _t963 = _t964;
+  const _t961 = _t963;
+  return _t961;
 }
 function Fmt$pad_left(n, c, s) {
   const len_966 = String$length(s);

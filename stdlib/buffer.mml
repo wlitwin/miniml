@@ -1,71 +1,95 @@
 module Buffer =
-  pub type t = { mut chunks: string list; mut len: int }
+  -- Two-level accumulator. `pending` holds recently-added chunks (most-recent
+  -- first); once it grows past `seal_threshold` it is concatenated into one flat
+  -- string pushed onto `sealed` (also most-recent first). This bounds the number
+  -- of LIVE cons cells to O(threshold + total/threshold) instead of one live cons
+  -- per add_string call. The previous single-list design left one live chunk per
+  -- append — hundreds of thousands of them while emitting a large IR/JS module —
+  -- and the conservative GC had to walk that entire spine on every mark, which
+  -- dominated mark time. Flat sealed strings are GC leaves (atomic), so they cost
+  -- nothing to scan. Each character is copied at most twice (into a sealed string,
+  -- then into the final contents), so total work stays O(n).
+  pub type t = { mut sealed: string list; mut pending: string list;
+                 mut pending_n: int; mut len: int }
+
+  let seal_threshold = 1024
 
   pub let create (_n: int) : t =
-    { chunks = []; len = 0 }
+    { sealed = []; pending = []; pending_n = 0; len = 0 }
 
   pub let length (buf: t) : int = buf.len
 
   pub let clear (buf: t) : unit =
-    buf.chunks := [];
+    buf.sealed := [];
+    buf.pending := [];
+    buf.pending_n := 0;
     buf.len := 0
 
   -- no-op: string chunks don't need pre-allocation
   pub let grow (_buf: t) (_needed: int) : unit = ()
 
-  pub let add_byte (buf: t) (b: byte) : unit =
-    buf.chunks := String.of_byte b :: buf.chunks;
-    buf.len := buf.len + 1
+  -- Collapse the pending chunks into a single sealed chunk (no-op when 0/1 pending).
+  let seal (buf: t) : unit =
+    match buf.pending with
+    | [] -> ()
+    | s :: [] ->
+      buf.sealed := s :: buf.sealed;
+      buf.pending := [];
+      buf.pending_n := 0
+    | _ ->
+      let s = String.concat "" (List.rev buf.pending) in
+      buf.sealed := s :: buf.sealed;
+      buf.pending := [];
+      buf.pending_n := 0
 
   pub let add_string (buf: t) (s: string) : unit =
     let n = String.length s in
     if n > 0 do
-      buf.chunks := s :: buf.chunks;
-      buf.len := buf.len + n
+      buf.pending := s :: buf.pending;
+      buf.pending_n := buf.pending_n + 1;
+      buf.len := buf.len + n;
+      if buf.pending_n >= seal_threshold do Buffer.seal buf end
     end
 
-  -- Flatten chunks into a single string stored as one chunk
-  let flush (buf: t) : unit =
-    match buf.chunks with
-    | [] -> ()
-    | _ :: [] -> ()
-    | _ ->
-      let s = String.concat "" (List.rev buf.chunks) in
-      buf.chunks := [s]
+  pub let add_byte (buf: t) (b: byte) : unit =
+    Buffer.add_string buf (String.of_byte b)
 
-  pub let sub (buf: t) (pos: int) (len: int) : string =
-    Buffer.flush buf;
-    match buf.chunks with
-    | s :: _ -> String.sub s pos len
-    | [] -> ""
-
-  pub let truncate (buf: t) (n: int) : unit =
-    if n = 0 do
-      buf.chunks := [];
-      buf.len := 0
-    else do
-      Buffer.flush buf;
-      match buf.chunks with
-      | s :: _ ->
-        buf.chunks := [String.sub s 0 n];
-        buf.len := n
-      | [] -> ()
-    end
-
-  pub let contents (buf: t) : string =
-    match buf.chunks with
+  -- Flatten all chunks into a single string, stored back as the lone sealed chunk
+  -- so a subsequent contents()/sub() is cheap.
+  let materialize (buf: t) : string =
+    Buffer.seal buf;
+    match buf.sealed with
     | [] -> ""
     | s :: [] -> s
     | _ ->
-      let s = String.concat "" (List.rev buf.chunks) in
-      buf.chunks := [s];
+      let s = String.concat "" (List.rev buf.sealed) in
+      buf.sealed := [s];
       s
+
+  pub let contents (buf: t) : string = Buffer.materialize buf
+
+  pub let sub (buf: t) (pos: int) (len: int) : string =
+    let s = Buffer.materialize buf in
+    String.sub s pos len
+
+  pub let truncate (buf: t) (n: int) : unit =
+    if n = 0 do
+      Buffer.clear buf
+    else do
+      let s = Buffer.materialize buf in
+      buf.sealed := [String.sub s 0 n];
+      buf.pending := [];
+      buf.pending_n := 0;
+      buf.len := n
+    end
 
   pub let add_buffer (dst: t) (src: t) : unit =
     let s = Buffer.contents src in
     let n = String.length s in
     if n > 0 do
-      dst.chunks := s :: dst.chunks;
-      dst.len := dst.len + n
+      dst.pending := s :: dst.pending;
+      dst.pending_n := dst.pending_n + 1;
+      dst.len := dst.len + n;
+      if dst.pending_n >= seal_threshold do Buffer.seal dst end
     end
 end
