@@ -2509,6 +2509,10 @@ int main(int argc, char **argv) {
                chain (AMS pool), and the parent-chain scan keeps the rest alive. */
             mml_gc_add_area_root(&mml_current_handler,
                                  (char *)&mml_current_handler + sizeof(mml_current_handler));
+            /* Likewise mml_current_fiber: the active fiber (an MPS object) is reachable
+               via this global; the root nails it (and its result/op_arg refs survive). */
+            mml_gc_add_area_root(&mml_current_fiber,
+                                 (char *)&mml_current_fiber + sizeof(mml_current_fiber));
         }
     }
 #endif
@@ -2854,8 +2858,26 @@ static void fiber_entry_trampoline(void *arg) {
     mml_swap_context(&self->ctx, self->parent_ctx);
 }
 
+#ifdef MML_HAVE_MPS
+/* Reclaim the guarded stacks of fibers MPS has finalized (escaped continuations that
+   became unreachable without resume-to-completion). fiber_free_stack is idempotent, so
+   it is harmless for fibers whose stack was already freed eagerly. */
+static void mml_drain_finalized_fibers(void) {
+    void *f;
+    while ((f = mml_gc_next_finalized()) != NULL)
+        fiber_free_stack((mml_fiber *)f);
+}
+#endif
+
 static mml_fiber *create_fiber(int64_t body_fn_i64, int64_t body_env_i64) {
-    mml_fiber *f = (mml_fiber *)GC_malloc(sizeof(mml_fiber));
+    mml_fiber *f;
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) {
+        mml_drain_finalized_fibers();
+        f = (mml_fiber *)mml_gc_alloc_fiber((int64_t)sizeof(mml_fiber));
+    } else
+#endif
+        f = (mml_fiber *)GC_malloc(sizeof(mml_fiber));
     if (!f) { fprintf(stderr, "OOM: fiber\n"); exit(1); }
     f->stack = pool_get_stack();
     if (!f->stack) { fprintf(stderr, "OOM: fiber stack\n"); exit(1); }
@@ -2956,6 +2978,13 @@ static int64_t fiber_dispatch_loop(mml_fiber *fiber, mml_context *caller_ctx,
              * A later resume-to-completion still frees it eagerly via fiber_free_stack
              * (idempotent), and the finalizer then no-ops. */
             if (!fiber->stack_freed) {
+#ifdef MML_HAVE_MPS
+                /* Under MPS the fiber is an MPS object; use MPS finalization (drained in
+                   create_fiber) instead of a Boehm finalizer to reclaim the guarded
+                   stack of an escaped, never-resumed-to-completion continuation. */
+                if (mml_use_mps) mml_gc_finalize_fiber(fiber);
+                else
+#endif
                 GC_register_finalizer(fiber, fiber_stack_finalizer, NULL, NULL, NULL);
             }
             return arm_result;
@@ -3060,7 +3089,12 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     mml_fiber *orig_fiber = orig->fiber;
 
     /* Deep copy the fiber struct */
-    mml_fiber *new_fiber = (mml_fiber *)GC_malloc(sizeof(mml_fiber));
+    mml_fiber *new_fiber;
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) new_fiber = (mml_fiber *)mml_gc_alloc_fiber((int64_t)sizeof(mml_fiber));
+    else
+#endif
+        new_fiber = (mml_fiber *)GC_malloc(sizeof(mml_fiber));
     if (!new_fiber) { fprintf(stderr, "OOM: fiber copy\n"); exit(1); }
     memcpy(new_fiber, orig_fiber, sizeof(mml_fiber));
 
@@ -3070,6 +3104,10 @@ int64_t mml_copy_continuation(int64_t k_i64) {
     memcpy(new_fiber->stack, orig_fiber->stack, MML_FIBER_STACK_SIZE);
     new_fiber->stack_freed = 0;
     fiber_register_stack_roots(new_fiber);
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) mml_gc_finalize_fiber(new_fiber);
+    else
+#endif
     GC_register_finalizer(new_fiber, fiber_stack_finalizer, NULL, NULL, NULL);
 
     /* Compute stack relocation offset */
