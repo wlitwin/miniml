@@ -357,7 +357,11 @@ let record_fields_from_type ty =
 let emit_make_closure ctx ~fn_name ~arity ~captures =
   let n_captures = List.length captures in
   let total_slots = 3 + n_captures in
-  let ptr = emit_alloc ctx (total_slots * 8) (make_header 0 mml_hdr_closure) in
+  (* Record the total word count in the header size field. The runtime never
+     reads it today (apply uses cls[1]=arity / cls[2]=num_applied), but a precise
+     GC tracer needs it to know how many capture slots to scan: for a root closure
+     it traces slots [3, size); slots 0..2 are fn_ptr / arity / num_applied. *)
+  let ptr = emit_alloc ctx (total_slots * 8) (make_header total_slots mml_hdr_closure) in
   (* Store fn_ptr at offset 0 *)
   let fn_ptr_i64 =
     Ir_emit.emit_ptrtoint ctx.ir ~value:(Printf.sprintf "@%s" fn_name)

@@ -2306,9 +2306,14 @@ mml_value mml_apply(mml_value closure_val, mml_value *new_args, int64_t n_new) {
         }
         return mml_apply_call(root, saved, n_saved, new_args, n_new, arity);
     } else if (total < arity) {
-        /* Under-application: create PAP closure */
-        int64_t pap_size = (4 + total) * 8;
-        mml_value *pap = (mml_value *)mml_alloc(pap_size, MML_MAKE_HDR(MML_HDR_CLOSURE, 0));
+        /* Under-application: create PAP closure. Record the total word count
+           (4 + saved args) in the header so a precise GC tracer can scan it:
+           slots 0..2 are the unused-fn / arity / num_applied metadata, slot 3 is
+           the original closure pointer, slots [4, size) are the saved args — so
+           the tracer scans [3, size) uniformly with a root closure. */
+        int64_t pap_slots = 4 + total;
+        int64_t pap_size = pap_slots * 8;
+        mml_value *pap = (mml_value *)mml_alloc(pap_size, MML_MAKE_HDR(MML_HDR_CLOSURE, pap_slots));
         pap[0] = 0;  /* unused fn_ptr slot for PAP */
         pap[1] = arity;
         pap[2] = total;
