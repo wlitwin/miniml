@@ -2489,50 +2489,45 @@ void mml_sys_store_args(int argc, char **argv);
 
 int main(int argc, char **argv) {
     mml_sys_store_args(argc, argv);
-    GC_INIT();
-    /* MiniML globals (@mml_g_*) are emitted into the "__DATA,__mmlgc" section so the
-       MPS collector can root exactly them. Boehm's macOS data-segment scanner only
-       knows a fixed set of section names and does NOT scan custom sections, so we
-       must register __mmlgc as a Boehm root explicitly — otherwise live globals are
-       collected. (Under MML_GC=mps, mml_gc_init additionally roots it for MPS.) */
-    {
-        const struct mach_header_64 *mh =
-            (const struct mach_header_64 *)_dyld_get_image_header(0);
-        unsigned long sz = 0;
-        uint8_t *p = getsectiondata(mh, "__DATA", "__mmlgc", &sz);
-        if (p && sz) GC_add_roots(p, p + sz);
-    }
-    /* Default to a Go-like heap-growth policy: keep free space ≈ the live set so
-       the heap roughly doubles between collections, instead of Boehm's default
-       divisor=3 (collect once free space falls to 1/3 of live — very eager). This
-       cuts mark/sweep frequency ~3x, a large throughput win for allocation-heavy
-       workloads (the compiler spent ~45% of its time in GC marking), at the cost
-       of up to ~2x heap headroom — bounded by the live set and reclaimed each
-       collection. Skipped when GC_FREE_SPACE_DIVISOR is set so users keep full
-       control (Boehm already read the env var during GC_INIT). */
-    if (!getenv("GC_FREE_SPACE_DIVISOR")) GC_set_free_space_divisor(1);
 #ifdef MML_HAVE_MPS
-    {
-        const char *g = getenv("MML_GC");
-        if (g && strcmp(g, "mps") == 0) {
-            /* &argc sits at the top of main's frame: everything mml_main allocates
-               and references lives in deeper (lower) frames, so [sp, &argc] covers
-               the live stack. */
-            mml_gc_init((void *)&argc);
-            mml_use_mps = 1;
-            /* mml_current_handler is a runtime.c global in plain __DATA (not the
-               codegen's __mmlgc section), so MPS does not otherwise scan it. Register
-               it as a permanent ambiguous root: it holds the top of the active handler
-               chain (AMS pool), and the parent-chain scan keeps the rest alive. */
-            mml_gc_add_area_root(&mml_current_handler,
-                                 (char *)&mml_current_handler + sizeof(mml_current_handler));
-            /* Likewise mml_current_fiber: the active fiber (an MPS object) is reachable
-               via this global; the root nails it (and its result/op_arg refs survive). */
-            mml_gc_add_area_root(&mml_current_fiber,
-                                 (char *)&mml_current_fiber + sizeof(mml_current_fiber));
-        }
-    }
+    /* SINGLE-GC mode (MML_GC=mps): every allocation — values, strings, the handler /
+       fiber / continuation structs, and transient scratch — goes through MPS. Boehm is
+       NEVER initialized or touched, so there is exactly one collector. Detected before
+       any Boehm call so GC_INIT is skipped. */
+    if (getenv("MML_GC") && strcmp(getenv("MML_GC"), "mps") == 0) {
+        /* &argc sits at the top of main's frame: everything mml_main allocates and
+           references lives in deeper (lower) frames, so [sp, &argc] covers the live
+           stack. mml_gc_init also roots the __DATA,__mmlgc globals for MPS. */
+        mml_gc_init((void *)&argc);
+        mml_use_mps = 1;
+        /* mml_current_handler / mml_current_fiber are runtime.c globals in plain __DATA
+           (not the codegen's __mmlgc section) that hold MPS objects (the active handler
+           chain top and the active fiber), so MPS does not otherwise scan them: root
+           each as a permanent ambiguous root. */
+        mml_gc_add_area_root(&mml_current_handler,
+                             (char *)&mml_current_handler + sizeof(mml_current_handler));
+        mml_gc_add_area_root(&mml_current_fiber,
+                             (char *)&mml_current_fiber + sizeof(mml_current_fiber));
+    } else
 #endif
+    {
+        GC_INIT();
+        /* MiniML globals (@mml_g_*) live in the "__DATA,__mmlgc" section; Boehm's macOS
+           data-segment scanner only knows a fixed set of section names and does NOT scan
+           custom sections, so register __mmlgc as a Boehm root explicitly. */
+        {
+            const struct mach_header_64 *mh =
+                (const struct mach_header_64 *)_dyld_get_image_header(0);
+            unsigned long sz = 0;
+            uint8_t *p = getsectiondata(mh, "__DATA", "__mmlgc", &sz);
+            if (p && sz) GC_add_roots(p, p + sz);
+        }
+        /* Go-like heap-growth policy: keep free space ≈ the live set (heap roughly
+           doubles between collections) instead of Boehm's eager divisor=3 — a large
+           throughput win for the allocation-heavy compiler. Skipped when the user set
+           GC_FREE_SPACE_DIVISOR. */
+        if (!getenv("GC_FREE_SPACE_DIVISOR")) GC_set_free_space_divisor(1);
+    }
     mml_value result = mml_main();
     /*
      * Match bytecode VM output behavior:
@@ -2797,14 +2792,15 @@ static void pool_put_stack(void *usable_ptr) {
  * heap objects referenced only from a fiber stack are wrongly collected. The
  * guard page is excluded (it is PROT_NONE; scanning it would SIGSEGV). */
 static void fiber_register_stack_roots(mml_fiber *f) {
-    GC_add_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
 #ifdef MML_HAVE_MPS
-    /* Also scan the suspended/running fiber stack for MPS roots — heap objects
-       referenced only from a fiber's locals must pin under the moving collector. */
-    f->mps_stack_root = mml_use_mps
-        ? mml_gc_add_area_root(f->stack, (char *)f->stack + MML_FIBER_STACK_SIZE)
-        : NULL;
+    if (mml_use_mps) {
+        /* Scan the suspended/running fiber stack as an MPS root — heap objects
+           referenced only from a fiber's locals must pin/retain under MPS. */
+        f->mps_stack_root = mml_gc_add_area_root(f->stack, (char *)f->stack + MML_FIBER_STACK_SIZE);
+        return;
+    }
 #endif
+    GC_add_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
 }
 
 /* Idempotently release a fiber's guarded stack. Safe to call more than once
@@ -2812,10 +2808,12 @@ static void fiber_register_stack_roots(mml_fiber *f) {
  * root registration before unmapping so the collector never scans freed pages. */
 static void fiber_free_stack(mml_fiber *f) {
     if (f && !f->stack_freed && f->stack) {
-        GC_remove_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
 #ifdef MML_HAVE_MPS
-        if (f->mps_stack_root) { mml_gc_remove_area_root(f->mps_stack_root); f->mps_stack_root = NULL; }
+        if (mml_use_mps) {
+            if (f->mps_stack_root) { mml_gc_remove_area_root(f->mps_stack_root); f->mps_stack_root = NULL; }
+        } else
 #endif
+        GC_remove_roots(f->stack, (char*)f->stack + MML_FIBER_STACK_SIZE);
         /* Return the stack to the pool for reuse instead of unmapping. Removing the
          * GC roots first ensures the idle pooled stack is never scanned (no false
          * roots from stale frames). */
