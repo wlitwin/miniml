@@ -412,6 +412,23 @@ ir-parity-full: self-host-compile-js  ## Full-corpus cross-compiler IR parity (a
 test-native: build  ## Run native compiler tests: make test-native [FILTER="name"]
 	dune exec native_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
+# ── MPS moving GC (native_rt/mml_gc.c) — UNWIRED; standalone format validation ──
+
+MPS_DIR := third_party/mps/code
+MPS_OBJ := /tmp/mml_mps.o
+# Boehm header path (mml_gc.c includes runtime.h which includes <gc/gc.h>).
+GC_INC := $(shell if [ -f /opt/homebrew/include/gc/gc.h ]; then echo -I/opt/homebrew/include; \
+                  elif [ -f /usr/local/include/gc/gc.h ]; then echo -I/usr/local/include; \
+                  else pkg-config --cflags bdw-gc 2>/dev/null; fi)
+
+$(MPS_OBJ): $(MPS_DIR)/mps.c
+	clang -c -O2 -o $@ $(MPS_DIR)/mps.c
+
+test-mml-gc: $(MPS_OBJ)  ## Stress-test the MPS object format in native_rt/mml_gc.c (moving-GC project)
+	clang -O2 -I$(MPS_DIR) -Inative_rt $(GC_INC) -o /tmp/mml_gc_test \
+		native_rt/mml_gc_test.c native_rt/mml_gc.c $(MPS_OBJ)
+	@/tmp/mml_gc_test && echo "test-mml-gc passed"
+
 # ── Help ───────────────────────────────────────────────────
 
 help:  ## Show this help
