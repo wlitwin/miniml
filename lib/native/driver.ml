@@ -230,6 +230,22 @@ let unit_object ~opt ~name ~ir =
    whole-program -O2 used to give. It is off by default because LTO re-optimizes
    the whole program at every link, which would defeat fast incremental rebuilds;
    `mml build --release` opts in. *)
+(* Experimental MPS moving-GC backend (roadmap: native moving GC). Opt-in at build
+   time via MML_LINK_MPS so the default build/gate stay byte-identical and MPS-free;
+   selected at runtime within an MPS-linked binary by MML_GC=mps (else Boehm). When
+   enabled, runtime.c is compiled with -DMML_HAVE_MPS and the binary links mml_gc.o +
+   the (big, cached) mps.o. *)
+let mps_enabled () = try Sys.getenv "MML_LINK_MPS" <> "" with Not_found -> false
+
+let find_mps_dir () =
+  let candidates =
+    [ "third_party/mps/code"; "../../../third_party/mps/code" ]
+  in
+  match List.find_opt (fun d -> Sys.file_exists (Filename.concat d "mps.c")) candidates with
+  | Some d -> d
+  | None ->
+      error "Cannot find third_party/mps/code (MML_LINK_MPS needs the project root)"
+
 let compile_to_native ?(release = false) ~source_file ~output () =
   let source = read_file_str source_file in
   let units = compile_units source in
@@ -237,6 +253,31 @@ let compile_to_native ?(release = false) ~source_file ~output () =
   let context_asm = find_context_asm () in
   let gc_cflags, gc_ldflags = gc_flags () in
   let opt = if release then "-O2 -flto" else "-O2" in
+  (* MPS objects (cached) + the -DMML_HAVE_MPS / include flags folded into runtime.c. *)
+  let mps_runtime_cflags, mps_objs =
+    if not (mps_enabled ()) then ("", [])
+    else
+      let mdir = find_mps_dir () in
+      let mps_c = Filename.concat mdir "mps.c" in
+      let mml_gc_c = find_runtime_file "mml_gc.c" in
+      let mps_inc = "-I" ^ mdir in
+      let mps_obj =
+        ensure_object ~key_extra:"mps-O2" ~content:(read_file_str mps_c)
+          ~compile:(fun o ->
+            run_clang
+              (Printf.sprintf "clang -O2 -c %s -o %s" (Filename.quote mps_c)
+                 (Filename.quote o)))
+      in
+      let mml_gc_obj =
+        ensure_object ~key_extra:("mmlgc" ^ opt)
+          ~content:(framed (read_file_str mml_gc_c) ^ mps_inc ^ gc_cflags)
+          ~compile:(fun o ->
+            run_clang
+              (Printf.sprintf "clang %s -DMML_HAVE_MPS %s %s -c %s -o %s" opt mps_inc
+                 gc_cflags (Filename.quote mml_gc_c) (Filename.quote o)))
+      in
+      ("-DMML_HAVE_MPS " ^ mps_inc, [ mml_gc_obj; mps_obj ])
+  in
 
   (* Each MiniML unit -> cached object. The stdlib unit's .ll is build-stable, so
      after the first build its object is a cache hit (the dominant compile cost). *)
@@ -244,12 +285,12 @@ let compile_to_native ?(release = false) ~source_file ~output () =
   (* The C runtime and the context-switch asm rarely change: cache their objects
      too, keyed by their source contents (+ GC include flags for the runtime). *)
   let runtime_obj =
-    ensure_object ~key_extra:opt
-      ~content:(framed (read_file_str runtime_c) ^ gc_cflags)
+    ensure_object ~key_extra:(opt ^ mps_runtime_cflags)
+      ~content:(framed (read_file_str runtime_c) ^ gc_cflags ^ mps_runtime_cflags)
       ~compile:(fun o ->
         run_clang
-          (Printf.sprintf "clang %s %s -c %s -o %s" opt gc_cflags
-             (Filename.quote runtime_c) (Filename.quote o)))
+          (Printf.sprintf "clang %s %s %s -c %s -o %s" opt gc_cflags
+             mps_runtime_cflags (Filename.quote runtime_c) (Filename.quote o)))
   in
   let context_obj =
     (* hand-written assembly: not LLVM-optimizable, so no opt flags / no -flto *)
@@ -262,9 +303,10 @@ let compile_to_native ?(release = false) ~source_file ~output () =
   (* Link the (mostly cached) objects into the final executable; -flto here drives
      the cross-module optimization when release. *)
   run_clang
-    (Printf.sprintf "clang %s %s -o %s %s %s %s" opt gc_ldflags
+    (Printf.sprintf "clang %s %s -o %s %s %s %s %s" opt gc_ldflags
        (Filename.quote output) (Filename.quote runtime_obj)
        (Filename.quote context_obj)
+       (String.concat " " (List.map Filename.quote mps_objs))
        (String.concat " " (List.map Filename.quote unit_objs)))
 
 let emit_ir_to_stdout ~source_file =
