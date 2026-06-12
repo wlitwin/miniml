@@ -2296,6 +2296,14 @@ mml_value mml_apply(mml_value closure_val, mml_value *new_args, int64_t n_new) {
 
     if (total == arity) {
         /* Exact application */
+        if (n_saved == 0) {
+            /* No previously-saved args: new_args is already the complete,
+               contiguous argument list, so call directly and skip
+               mml_apply_call's VLA buffer + copy loops (and the stack-probe
+               they trigger). This is the dominant path — every saturated call
+               of a non-partial closure, e.g. HOF callbacks. */
+            return mml_call_fn((void *)(intptr_t)root[0], root, new_args, arity);
+        }
         return mml_apply_call(root, saved, n_saved, new_args, n_new, arity);
     } else if (total < arity) {
         /* Under-application: create PAP closure */
@@ -2317,17 +2325,29 @@ mml_value mml_apply(mml_value closure_val, mml_value *new_args, int64_t n_new) {
     }
 }
 
+/* The single-/double-/triple-arg entry points fast-path the overwhelmingly
+   common case: the closure has exactly that arity and is not a partial
+   application (cls[2] == num_applied == 0). Then the closure IS its own env and
+   we issue the indirect call directly — skipping mml_apply, its arg-array
+   build, and mml_apply_call's VLA. PAPs / under- / over-application fall through
+   to the general mml_apply. (Layout: cls[0]=fn, cls[1]=arity, cls[2]=num_applied.) */
 mml_value mml_apply1(mml_value cls, mml_value a0) {
+    mml_value *c = (mml_value *)(intptr_t)cls;
+    if (c[1] == 1 && c[2] == 0) return ((fn1)(void *)(intptr_t)c[0])(c, a0);
     mml_value args[] = {a0};
     return mml_apply(cls, args, 1);
 }
 
 mml_value mml_apply2(mml_value cls, mml_value a0, mml_value a1) {
+    mml_value *c = (mml_value *)(intptr_t)cls;
+    if (c[1] == 2 && c[2] == 0) return ((fn2)(void *)(intptr_t)c[0])(c, a0, a1);
     mml_value args[] = {a0, a1};
     return mml_apply(cls, args, 2);
 }
 
 mml_value mml_apply3(mml_value cls, mml_value a0, mml_value a1, mml_value a2) {
+    mml_value *c = (mml_value *)(intptr_t)cls;
+    if (c[1] == 3 && c[2] == 0) return ((fn3)(void *)(intptr_t)c[0])(c, a0, a1, a2);
     mml_value args[] = {a0, a1, a2};
     return mml_apply(cls, args, 3);
 }
@@ -2354,6 +2374,15 @@ void mml_sys_store_args(int argc, char **argv);
 int main(int argc, char **argv) {
     mml_sys_store_args(argc, argv);
     GC_INIT();
+    /* Default to a Go-like heap-growth policy: keep free space ≈ the live set so
+       the heap roughly doubles between collections, instead of Boehm's default
+       divisor=3 (collect once free space falls to 1/3 of live — very eager). This
+       cuts mark/sweep frequency ~3x, a large throughput win for allocation-heavy
+       workloads (the compiler spent ~45% of its time in GC marking), at the cost
+       of up to ~2x heap headroom — bounded by the live set and reclaimed each
+       collection. Skipped when GC_FREE_SPACE_DIVISOR is set so users keep full
+       control (Boehm already read the env var during GC_INIT). */
+    if (!getenv("GC_FREE_SPACE_DIVISOR")) GC_set_free_space_divisor(1);
     mml_value result = mml_main();
     /*
      * Match bytecode VM output behavior:
