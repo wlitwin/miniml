@@ -127,6 +127,12 @@ static mps_fmt_t   mml_fmt;
 static mps_thr_t   mml_thread;
 static mps_root_t  mml_stack_root;
 
+/* Stress mode (MML_GC_STRESS=N): force a full collection every N allocations, so
+   the moving/forwarding path is exercised even by tiny programs that would never
+   fill a generation. For correctness testing only — extremely slow. */
+static long mml_stress_n = 0;
+static long mml_stress_ctr = 0;
+
 static void die(const char *what, mps_res_t res) {
     fprintf(stderr, "mml_gc: %s failed (res %d)\n", what, (int)res);
     exit(1);
@@ -134,6 +140,9 @@ static void die(const char *what, mps_res_t res) {
 
 void mml_gc_init(void *stack_cold) {
     mps_res_t res;
+    /* MPS requires the cold stack marker word-aligned. Round UP (away from the hot
+       end) so the scanned range never shrinks below a real root. */
+    stack_cold = (void *)(((uintptr_t)stack_cold + 7) & ~(uintptr_t)7);
     MPS_ARGS_BEGIN(args) {
         MPS_ARGS_ADD(args, MPS_KEY_ARENA_SIZE, (size_t)256 * 1024 * 1024);
         res = mps_arena_create_k(&mml_arena, mps_arena_class_vm(), args);
@@ -163,9 +172,19 @@ void mml_gc_init(void *stack_cold) {
     if (res != MPS_RES_OK) die("pool_create", res);
 
     if ((res = mps_ap_create_k(&mml_ap, mml_pool, mps_args_none)) != MPS_RES_OK) die("ap_create", res);
+
+    {
+        const char *s = getenv("MML_GC_STRESS");
+        if (s && *s) mml_stress_n = atol(s);
+    }
 }
 
 void *mml_gc_alloc(int64_t nbytes, int64_t header) {
+    if (mml_stress_n && ++mml_stress_ctr >= mml_stress_n) {
+        mml_stress_ctr = 0;
+        mps_arena_collect(mml_arena);
+        mps_arena_release(mml_arena);
+    }
     size_t bytes = ALIGN_UP(HDR_SZ + (size_t)nbytes);
     mps_addr_t p;
     do {

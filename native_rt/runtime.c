@@ -14,6 +14,13 @@
 #include <errno.h>
 #include <gc/gc.h>
 #include "runtime.h"
+#ifdef MML_HAVE_MPS
+/* Experimental MPS moving-GC backend (see native_rt/mml_gc.c). Compiled in only
+   under -DMML_HAVE_MPS (an MML_LINK_MPS build); selected at runtime by MML_GC=mps.
+   When off, every path below is the unchanged Boehm code. */
+#include "mml_gc.h"
+static int mml_use_mps = 0;
+#endif
 
 /* Forward declaration of the generated entry point */
 extern mml_value mml_main(void);
@@ -204,6 +211,13 @@ mml_value mml_string_of_int(mml_value v) {
 /* ---- Float operations ---- */
 
 mml_value mml_box_float(double d) {
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) {
+        int64_t *c = (int64_t *)mml_gc_alloc(8, MML_MAKE_HDR(MML_HDR_FLOAT, 0));
+        *(double *)c = d;
+        return (mml_value)(intptr_t)c;
+    }
+#endif
     int64_t *p = (int64_t *)GC_malloc(16);  /* 8 header + 8 double */
     if (!p) mml_panic("out of memory in box_float");
     p[0] = MML_MAKE_HDR(MML_HDR_FLOAT, 0);
@@ -688,6 +702,17 @@ void mml_panic_mml(mml_value s) {
 /* ---- String allocation helpers ---- */
 
 mml_value mml_string_alloc(int64_t len) {
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) {
+        /* data = [len word][len bytes][NUL]; mml_gc_alloc writes the header + zeroes
+           and returns the client (= the len word). Written before any later alloc, so
+           the format's size read (from the len word) is always valid. */
+        int64_t *c = (int64_t *)mml_gc_alloc(8 + len + 1, MML_MAKE_HDR(MML_HDR_STRING, 0));
+        c[0] = len << 1;
+        ((char *)(c + 1))[len] = '\0';
+        return (mml_value)(intptr_t)c;
+    }
+#endif
     int64_t *p = (int64_t *)GC_malloc_atomic(8 + 8 + len + 1);  /* +8 for header */
     if (!p) mml_panic("out of memory in string_alloc");
     p[0] = MML_MAKE_HDR(MML_HDR_STRING, 0);
@@ -712,6 +737,9 @@ mml_value mml_string_from_buf(const char *buf, int64_t len) {
 /* ---- Heap allocation ---- */
 
 void *mml_alloc(int64_t nbytes, int64_t header) {
+#ifdef MML_HAVE_MPS
+    if (mml_use_mps) return mml_gc_alloc(nbytes, header);
+#endif
     int64_t *p = (int64_t *)GC_malloc((size_t)(nbytes + 8));
     if (!p) mml_panic("out of memory");
     p[0] = header;
@@ -2388,6 +2416,18 @@ int main(int argc, char **argv) {
        collection. Skipped when GC_FREE_SPACE_DIVISOR is set so users keep full
        control (Boehm already read the env var during GC_INIT). */
     if (!getenv("GC_FREE_SPACE_DIVISOR")) GC_set_free_space_divisor(1);
+#ifdef MML_HAVE_MPS
+    {
+        const char *g = getenv("MML_GC");
+        if (g && strcmp(g, "mps") == 0) {
+            /* &argc sits at the top of main's frame: everything mml_main allocates
+               and references lives in deeper (lower) frames, so [sp, &argc] covers
+               the live stack. */
+            mml_gc_init((void *)&argc);
+            mml_use_mps = 1;
+        }
+    }
+#endif
     mml_value result = mml_main();
     /*
      * Match bytecode VM output behavior:
