@@ -1688,21 +1688,43 @@ and emit_int_binop ctx op e1 e2 =
         Ir_emit.emit_binop ctx.ir ~op:"shl" ~ty:"i64" ~lhs:rem ~rhs:"1"
       in
       Ir_emit.emit_binop ctx.ir ~op:"or" ~ty:"i64" ~lhs:shifted ~rhs:"1"
-  (* Comparison ops: tagged ints preserve ordering *)
-  | Ast.Lt ->
-      let cmp = Ir_emit.emit_icmp ctx.ir ~cmp:"slt" ~ty:"i64" ~lhs:a ~rhs:b in
-      Ir_emit.emit_select ctx.ir ~cond:cmp ~ty:"i64" ~if_true:true_value
-        ~if_false:false_value
-  | Ast.Gt ->
-      let cmp = Ir_emit.emit_icmp ctx.ir ~cmp:"sgt" ~ty:"i64" ~lhs:a ~rhs:b in
-      Ir_emit.emit_select ctx.ir ~cond:cmp ~ty:"i64" ~if_true:true_value
-        ~if_false:false_value
-  | Ast.Le ->
-      let cmp = Ir_emit.emit_icmp ctx.ir ~cmp:"sle" ~ty:"i64" ~lhs:a ~rhs:b in
-      Ir_emit.emit_select ctx.ir ~cond:cmp ~ty:"i64" ~if_true:true_value
-        ~if_false:false_value
-  | Ast.Ge ->
-      let cmp = Ir_emit.emit_icmp ctx.ir ~cmp:"sge" ~ty:"i64" ~lhs:a ~rhs:b in
+  (* Ordering ops. Tagged ints preserve ordering, so int-like operands compare
+     directly; floats unbox; everything else (strings, lists, arrays, tuples,
+     records, variants) is a boxed pointer whose ADDRESS is meaningless, so route
+     through mml_structural_compare and test its tagged -1/0/1 result against 0
+     (tagged ordering preserves -1<0<1). *)
+  | Ast.Lt | Ast.Gt | Ast.Le | Ast.Ge ->
+      let icmp_op =
+        match op with
+        | Ast.Lt -> "slt"
+        | Ast.Gt -> "sgt"
+        | Ast.Le -> "sle"
+        | _ -> "sge"
+      in
+      let fcmp_op =
+        match op with
+        | Ast.Lt -> "olt"
+        | Ast.Gt -> "ogt"
+        | Ast.Le -> "ole"
+        | _ -> "oge"
+      in
+      let cmp =
+        match Types.repr e1.ty with
+        | Types.TInt | Types.TBool | Types.TUnit | Types.TByte | Types.TRune ->
+            Ir_emit.emit_icmp ctx.ir ~cmp:icmp_op ~ty:"i64" ~lhs:a ~rhs:b
+        | Types.TFloat ->
+            let da = emit_unbox_float ctx a in
+            let db = emit_unbox_float ctx b in
+            Ir_emit.emit_fcmp ctx.ir ~cmp:fcmp_op ~lhs:da ~rhs:db
+        | _ ->
+            add_extern ctx "mml_structural_compare" "i64" [ "i64"; "i64" ];
+            let r =
+              Ir_emit.emit_call ctx.ir ~ret_ty:"i64"
+                ~name:"mml_structural_compare" ~args:[ ("i64", a); ("i64", b) ]
+            in
+            Ir_emit.emit_icmp ctx.ir ~cmp:icmp_op ~ty:"i64" ~lhs:r
+              ~rhs:(tag_int 0)
+      in
       Ir_emit.emit_select ctx.ir ~cond:cmp ~ty:"i64" ~if_true:true_value
         ~if_false:false_value
   | Ast.Eq -> (
@@ -4706,17 +4728,111 @@ and emit_operator_closure ctx op_name expr_ty =
       | "lnot" -> "lnot"
       | s -> sanitize_name s
     in
+    (* Comparison/ordering operators (the structural Ord/Eq instance methods,
+       e.g. __structural_lt) on a NON-scalar operand must compare structurally,
+       not as raw words — an int wrapper would pointer-compare a boxed variant /
+       tuple / record. Detect a non-scalar first argument and route to a
+       dedicated structural wrapper. *)
+    let is_structural_cmp =
+      match op_name with
+      | "<" | ">" | "<=" | ">=" | "=" | "<>" -> (
+          match ty with
+          | Types.TArrow (arg_ty, _, _) -> (
+              match Types.repr arg_ty with
+              | Types.TInt | Types.TBool | Types.TByte | Types.TRune
+              | Types.TUnit | Types.TFloat ->
+                  false
+              | _ -> true)
+          | _ -> false)
+      | _ -> false
+    in
     let wrapper_key =
-      Printf.sprintf "mml_op_%s_%s"
-        (if is_float then "float" else "int")
-        op_suffix
+      if is_structural_cmp then Printf.sprintf "mml_op_struct_%s" op_suffix
+      else
+        Printf.sprintf "mml_op_%s_%s"
+          (if is_float then "float" else "int")
+          op_suffix
     in
     if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
       Hashtbl.replace ctx.generated_wrappers wrapper_key ();
-      emit_operator_wrapper ctx wrapper_key op_name is_float
+      if is_structural_cmp then
+        emit_structural_cmp_wrapper ctx wrapper_key op_name
+      else emit_operator_wrapper ctx wrapper_key op_name is_float
     end;
     let arity = match op_name with "not" | "neg" | "lnot" -> 1 | _ -> 2 in
     emit_make_closure ctx ~fn_name:wrapper_key ~arity ~captures:[]
+
+(* A first-class closure for a structural Eq/Ord operator (always structural,
+   regardless of operand type — used for the __structural_* instance methods). *)
+and emit_structural_op_value ctx op_name =
+  let op_suffix =
+    match op_name with
+    | "<" -> "lt"
+    | ">" -> "gt"
+    | "<=" -> "lte"
+    | ">=" -> "gte"
+    | "=" -> "eq"
+    | "<>" -> "neq"
+    | _ -> failwith ("emit_structural_op_value: " ^ op_name)
+  in
+  let wrapper_key = Printf.sprintf "mml_op_struct_%s" op_suffix in
+  if not (Hashtbl.mem ctx.generated_wrappers wrapper_key) then begin
+    Hashtbl.replace ctx.generated_wrappers wrapper_key ();
+    emit_structural_cmp_wrapper ctx wrapper_key op_name
+  end;
+  emit_make_closure ctx ~fn_name:wrapper_key ~arity:2 ~captures:[]
+
+(* Wrapper for a structural ordering/equality operator on a boxed value:
+   <,>,<=,>= go through mml_structural_compare (tagged -1/0/1, tested against 0);
+   =,<> through mml_structural_eq. Mirrors the type-directed binop lowering, but
+   for the first-class operator-closure form (e.g. an Ord/Eq instance method). *)
+and emit_structural_cmp_wrapper ctx wrapper_name op_name =
+  with_fresh_ir ctx (fun fn_ir ->
+      let params =
+        [ ("ptr", "%env"); ("i64", "%a0"); ("i64", "%a1") ]
+      in
+      Ir_emit.emit_define_start_gen fn_ir ~linkage:"linkonce_odr" ~ret_ty:"i64"
+        ~name:wrapper_name ~params;
+      Ir_emit.emit_label fn_ir "entry";
+      let result =
+        match op_name with
+        | "=" | "<>" ->
+            add_extern ctx "mml_structural_eq" "i64" [ "i64"; "i64" ];
+            let eq =
+              Ir_emit.emit_call fn_ir ~ret_ty:"i64" ~name:"mml_structural_eq"
+                ~args:[ ("i64", "%a0"); ("i64", "%a1") ]
+            in
+            if op_name = "=" then eq
+            else
+              let cmp =
+                Ir_emit.emit_icmp fn_ir ~cmp:"eq" ~ty:"i64" ~lhs:eq
+                  ~rhs:true_value
+              in
+              Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64"
+                ~if_true:false_value ~if_false:true_value
+        | _ ->
+            let icmp_op =
+              match op_name with
+              | "<" -> "slt"
+              | ">" -> "sgt"
+              | "<=" -> "sle"
+              | _ -> "sge"
+            in
+            add_extern ctx "mml_structural_compare" "i64" [ "i64"; "i64" ];
+            let r =
+              Ir_emit.emit_call fn_ir ~ret_ty:"i64"
+                ~name:"mml_structural_compare"
+                ~args:[ ("i64", "%a0"); ("i64", "%a1") ]
+            in
+            let cmp =
+              Ir_emit.emit_icmp fn_ir ~cmp:icmp_op ~ty:"i64" ~lhs:r
+                ~rhs:(tag_int 0)
+            in
+            Ir_emit.emit_select fn_ir ~cond:cmp ~ty:"i64" ~if_true:true_value
+              ~if_false:false_value
+      in
+      Ir_emit.emit_ret fn_ir "i64" result;
+      Ir_emit.emit_define_end fn_ir)
 
 (** Generate an operator wrapper function *)
 and emit_operator_wrapper ctx wrapper_name op_name is_float =
@@ -5154,12 +5270,17 @@ and emit_builtin_as_value ctx name expr_ty =
       end;
       add_extern ctx "mml_poly_hash" "i64" [ "i64" ];
       Some (emit_make_closure ctx ~fn_name:wrapper_key ~arity:1 ~captures:[])
-  | "__structural_eq" -> Some (emit_operator_closure ctx "=" expr_ty)
-  | "__structural_neq" -> Some (emit_operator_closure ctx "<>" expr_ty)
-  | "__structural_lt" -> Some (emit_operator_closure ctx "<" expr_ty)
-  | "__structural_gt" -> Some (emit_operator_closure ctx ">" expr_ty)
-  | "__structural_le" -> Some (emit_operator_closure ctx "<=" expr_ty)
-  | "__structural_ge" -> Some (emit_operator_closure ctx ">=" expr_ty)
+  (* The structural Eq/Ord instance methods are structural BY DEFINITION, so they
+     always use the structural wrapper — never an int/float one. Their type here
+     is the generic class-method signature (operand often TUnit after constraint
+     transform), so emit_operator_closure's type-based int/struct choice can't be
+     trusted; force structural. mml_structural_{eq,compare} handle scalars too. *)
+  | "__structural_eq" -> Some (emit_structural_op_value ctx "=")
+  | "__structural_neq" -> Some (emit_structural_op_value ctx "<>")
+  | "__structural_lt" -> Some (emit_structural_op_value ctx "<")
+  | "__structural_gt" -> Some (emit_structural_op_value ctx ">")
+  | "__structural_le" -> Some (emit_structural_op_value ctx "<=")
+  | "__structural_ge" -> Some (emit_structural_op_value ctx ">=")
   | _ -> None
 
 (** Generate a string concat wrapper function *)
