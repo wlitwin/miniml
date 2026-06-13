@@ -7,40 +7,49 @@
    by wrapping it as `module Foo = ... end`, reusing MiniML's in-file module
    system (which already does interface extraction and encapsulation).
 
-   This OCaml-only build driver discovers the files, infers each module's
-   dependencies from its references, orders them topologically, and produces the
-   combined source the compiler builds. Per-module caching (incremental builds)
-   and true separate codegen + linking are later increments toward full separate
-   compilation; the module boundaries and interfaces established here are the
-   foundation for both. *)
+   This build driver discovers the files, infers each module's dependencies from
+   its references, orders them topologically, and produces the combined source
+   the compiler builds. Per-module caching (incremental builds) and true separate
+   codegen + linking are later increments toward full separate compilation; the
+   module boundaries and interfaces established here are the foundation for both.
+
+   Written against the compiler-agnostic system-access surface (Path / Fs / IO —
+   the OCaml twins of the MiniML builtins) so it can be mechanically translated
+   into the in-MiniML toolchain (Path B, roadmap #16). *)
 
 exception Build_error of string
 
 type unit_ = { name : string; path : string; source : string }
 type t = { name : string; entry : unit_; libs : unit_ list; tests : unit_ list }
 
-let read_file path =
-  let ic = open_in_bin path in
-  let s = In_channel.input_all ic in
-  close_in ic;
-  s
+let read_file path = IO.read_file path
+let write_file path s = IO.write_file path s
 
-let write_file path s =
-  let oc = open_out_bin path in
-  output_string oc s;
-  close_out oc
+(* True when [s] ends with [suf] (the in-subset replacement for
+   Filename.check_suffix). *)
+let has_suffix (s : string) (suf : string) : bool =
+  let ls = String.length s and lf = String.length suf in
+  ls >= lf && String.sub s (ls - lf) lf = suf
+
+(* Uppercase the first byte (the in-subset replacement for
+   String.capitalize_ascii). *)
+let capitalize (s : string) : string =
+  if s = "" then s
+  else
+    String.uppercase_ascii (String.sub s 0 1)
+    ^ String.sub s 1 (String.length s - 1)
 
 (* `foo.mml` -> module `Foo`; `string_utils.mml` -> `String_utils`. *)
 let module_name_of (path : string) : string =
-  String.capitalize_ascii (Filename.remove_extension (Filename.basename path))
+  capitalize (Path.remove_extension (Path.basename path))
 
 (* The library modules of a directory (every `.mml` but `main.mml`). *)
 let dir_units (dir : string) : unit_ list =
-  Sys.readdir dir |> Array.to_list
-  |> List.filter (fun f -> Filename.check_suffix f ".mml" && f <> "main.mml")
+  Fs.read_dir dir
+  |> List.filter (fun f -> has_suffix f ".mml" && f <> "main.mml")
   |> List.sort String.compare
   |> List.map (fun f ->
-         let path = Filename.concat dir f in
+         let path = Path.join dir f in
          { name = module_name_of path; path; source = read_file path })
 
 (* Resolve module [m] at version [v] to a local directory: the root manifest's
@@ -48,7 +57,7 @@ let dir_units (dir : string) : unit_ list =
    cache — fetching it over git on a cache miss. *)
 let locate (root : string) (mf : Manifest.t) (m : string) (v : Semver.t) : string =
   match Manifest.replacement mf m with
-  | Some p -> if Filename.is_relative p then Filename.concat root p else p
+  | Some p -> if not (Path.is_absolute p) then Path.join root p else p
   | None -> (
       try Fetch.ensure m v
       with Fetch.Fetch_error msg -> raise (Build_error msg))
@@ -57,9 +66,13 @@ let locate (root : string) (mf : Manifest.t) (m : string) (v : Semver.t) : strin
    `open Name`? Inferred from the token stream so it tolerates a not-yet-valid
    file. A bare `Name` (e.g. a constructor) is ignored to avoid false edges. *)
 let deps_of (modules : string list) (u : unit_) : string list =
-  match Lexer.tokenize u.source with
-  | exception _ -> []
-  | toks ->
+  (* tolerate a not-yet-valid file: a lex error yields no dependency edges *)
+  let toks_opt =
+    try Some (Lexer.tokenize u.source) with Lexer.Lex_error _ -> None
+  in
+  match toks_opt with
+  | None -> []
+  | Some toks ->
       let arr = Array.of_list toks in
       let found = Hashtbl.create 16 in
       Array.iteri
@@ -89,7 +102,7 @@ let topo_order (libs : unit_ list) : unit_ list =
       raise (Build_error (Printf.sprintf "module dependency cycle through %s" name))
     else begin
       Hashtbl.replace on_stack name ();
-      List.iter visit (try List.assoc name dep_map with Not_found -> []);
+      List.iter visit (match List.assoc_opt name dep_map with Some d -> d | None -> []);
       Hashtbl.remove on_stack name;
       Hashtbl.replace visited name ();
       order := List.assoc name by_name :: !order
@@ -105,8 +118,8 @@ let topo_order (libs : unit_ list) : unit_ list =
    modules to the build flat (referenced as `Foo.bar`), so a module-name
    collision is an error. *)
 let load (dir : string) : t =
-  let manifest_path = Filename.concat dir "mml.mod" in
-  if not (Sys.file_exists manifest_path) then
+  let manifest_path = Path.join dir "mml.mod" in
+  if not (IO.file_exists manifest_path) then
     raise (Build_error (Printf.sprintf "no mml.mod manifest in %s" dir));
   let mf = Manifest.parse (read_file manifest_path) in
   if mf.Manifest.name = "" then
@@ -114,8 +127,8 @@ let load (dir : string) : t =
   (* MVS: read each module@version's manifest from its resolved directory. *)
   let load_manifest m v =
     let d = locate dir mf m v in
-    let p = Filename.concat d "mml.mod" in
-    if Sys.file_exists p then Manifest.parse (read_file p)
+    let p = Path.join d "mml.mod" in
+    if IO.file_exists p then Manifest.parse (read_file p)
     else { Manifest.name = m; mml = None; requires = []; replaces = [] }
   in
   let build_list = Deps.mvs mf load_manifest in
@@ -123,8 +136,8 @@ let load (dir : string) : t =
      mml.sum, recording it the first time (trust on first use); a mismatch is a
      hard error. Local `replace`d directories are skipped (they are the user's
      own working tree). *)
-  let sum_path = Filename.concat dir "mml.sum" in
-  let sums = ref (if Sys.file_exists sum_path then Sumfile.parse (read_file sum_path) else []) in
+  let sum_path = Path.join dir "mml.sum" in
+  let sums = ref (if IO.file_exists sum_path then Sumfile.parse (read_file sum_path) else []) in
   let changed = ref false in
   List.iter
     (fun (m, v) ->
@@ -149,18 +162,18 @@ let load (dir : string) : t =
     build_list |> List.concat_map (fun (m, v) -> dir_units (locate dir mf m v))
   in
   let own =
-    Sys.readdir dir |> Array.to_list
-    |> List.filter (fun f -> Filename.check_suffix f ".mml")
+    Fs.read_dir dir
+    |> List.filter (fun f -> has_suffix f ".mml")
     |> List.sort String.compare
     |> List.map (fun f ->
-           let path = Filename.concat dir f in
+           let path = Path.join dir f in
            { name = module_name_of path; path; source = read_file path })
   in
   (* main.mml is the entry; `*_test.mml` are test files (run only by `mml test`,
      excluded from the build); everything else is a library module. *)
-  let entry, rest = List.partition (fun u -> Filename.basename u.path = "main.mml") own in
+  let entry, rest = List.partition (fun u -> Path.basename u.path = "main.mml") own in
   let tests, own_libs =
-    List.partition (fun (u : unit_) -> Filename.check_suffix u.path "_test.mml") rest
+    List.partition (fun (u : unit_) -> has_suffix u.path "_test.mml") rest
   in
   let libs = dep_units @ own_libs in
   (* reject two modules with the same name (a dependency clashing with the
@@ -218,8 +231,7 @@ let map_line (segs : (int * string) list) (l : int) : string * int =
 
 (* Whether [path] is a project directory (has an mml.mod). *)
 let is_project (path : string) : bool =
-  (try Sys.is_directory path with _ -> false)
-  && Sys.file_exists (Filename.concat path "mml.mod")
+  Fs.is_directory path && IO.file_exists (Path.join path "mml.mod")
 
 (* --- Tests (run by `mml test`) ------------------------------------------ *)
 
@@ -242,9 +254,14 @@ let test_program (p : t) (test_file : unit_) (expr : string) : string =
 (* The names of a test file's test bindings: top-level `let test_*` declarations
    (the convention a test predicate follows). *)
 let test_decl_names (u : unit_) : string list =
-  match Parser.parse_program (Lexer.tokenize u.source) with
-  | exception _ -> []
-  | decls ->
+  (* tolerate a not-yet-valid file: a lex/parse error yields no test names *)
+  let decls_opt =
+    try Some (Parser.parse_program (Lexer.tokenize u.source))
+    with Lexer.Lex_error _ -> None | Parser.Parse_error _ -> None
+  in
+  match decls_opt with
+  | None -> []
+  | Some decls ->
       List.filter_map
         (function
           | Ast.DLet { name; _ } when String.starts_with ~prefix:"test_" name -> Some name

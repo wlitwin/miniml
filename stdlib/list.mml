@@ -247,6 +247,16 @@ module List =
         | None -> go rest acc
     in go xs []
 
+  (* Split into (those satisfying p, those not), each preserving order. *)
+  pub let partition (p: 'a -> bool) (xs: 'a list) : ('a list * 'a list) =
+    let rec go xs yes no =
+      match xs with
+      | [] -> (List.rev yes, List.rev no)
+      | x :: rest ->
+        if p x do go rest (x :: yes) no
+        else go rest yes (x :: no)
+    in go xs [] []
+
   pub let sort_uniq cmp xs =
     let sorted = List.sort cmp xs in
     let rec dedup xs =

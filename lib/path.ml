@@ -31,6 +31,12 @@ let extension (p : string) : string =
   | Some 0 -> ""
   | Some i -> String.sub base i (String.length base - i)
 
+(* The path without its final extension, e.g. dir/x.txt -> dir/x (a leading-dot
+   file like .bashrc is unchanged — it has no extension). *)
+let remove_extension (p : string) : string =
+  let e = extension p in
+  String.sub p 0 (String.length p - String.length e)
+
 (* Join two path segments with a single separator; an absolute b wins. *)
 let join (a : string) (b : string) : string =
   if a = "" then b
