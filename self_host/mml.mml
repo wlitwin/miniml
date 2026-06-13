@@ -27,6 +27,7 @@ module Mml =
     "  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n" ^
     "  check <files/dirs...>     typecheck and report errors (exit 1 on any)\n" ^
     "  get <url>[@version]       fetch a dependency and add it to mml.mod\n" ^
+    "  lsp                       start the language server (stdio JSON-RPC)\n" ^
     "  version                   print the version\n" ^
     "  help                      show this help\n"
 
@@ -175,6 +176,7 @@ module Mml =
       | _ :: "fmt" :: rest -> cmd_fmt rest
       | _ :: "check" :: (f :: rest) -> cmd_check (f :: rest)
       | _ :: "get" :: arg :: _ -> cmd_get arg
+      | _ :: "lsp" :: _ -> Lsp.serve ()
       | _ :: "version" :: _ -> IO.write (version ^ "\n")
       | _ :: "--version" :: _ -> IO.write (version ^ "\n")
       | _ :: "help" :: _ -> IO.write usage

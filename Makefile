@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost hover-def-selfhost completions-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost hover-def-selfhost completions-selfhost lsp-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -398,6 +398,31 @@ check-run-completions-selfhost:
 	@nat=$$(/tmp/mml_completions_check_bin); \
 	  if [ "$$nat" = "OK" ]; then echo "self-host analysis completions passed (VM/native round-trip)"; \
 	  else echo "FAIL completions (native): $$nat"; exit 1; fi
+# The LANGUAGE SERVER (self_host/lsp.mml) — the capstone of the in-MiniML LSP
+# (roadmap #16c): the JSON-RPC protocol layer (handle_message: initialize,
+# didOpen/didChange doc tracking, hover, definition incl. cross-file, completion,
+# publishDiagnostics) on the in-MiniML Json library + the stdio Content-Length
+# framing loop (serve, over IO.read_line/read_bytes/write). The MiniML twin of
+# lib/lsp.ml. Reuses the full compiler + json + diagnostic + analysis. Verified
+# three ways: emit-js typecheck/compile; the protocol layer behaviorally on BOTH
+# the OCaml VM and native (a real JSON-RPC session through handle_message,
+# asserting "OK"); and the stdio transport END-TO-END — a native `Lsp.serve`
+# binary fed a Content-Length-framed initialize/hover/exit session, checking the
+# framed replies (lsp_serve_e2e.py).
+LSP_SELFHOST_FILES = $(DIAGNOSTICS_SELFHOST_FILES:self_host/diagnostic.mml=self_host/json.mml self_host/diagnostic.mml)
+LSP_SELFHOST_FILES := $(LSP_SELFHOST_FILES) self_host/lsp.mml
+check-run-lsp-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js $(LSP_SELFHOST_FILES) > /dev/null
+	@cat $(LSP_SELFHOST_FILES) compiler_test/lsp_selfhost_check.mml > /tmp/mml_lsp_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_lsp_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL lsp (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_lsp_concat.mml -o /tmp/mml_lsp_check_bin
+	@nat=$$(/tmp/mml_lsp_check_bin); \
+	  if [ "$$nat" != "OK" ]; then echo "FAIL lsp (native): $$nat"; exit 1; fi
+	@printf 'let () = Lsp.serve ()\n' > /tmp/mml_lsp_serve_main.mml
+	@cat $(LSP_SELFHOST_FILES) /tmp/mml_lsp_serve_main.mml > /tmp/mml_lsp_serve_concat.mml
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_lsp_serve_concat.mml -o /tmp/mml_lsp_serve_bin
+	@python3 compiler_test/lsp_serve_e2e.py /tmp/mml_lsp_serve_bin
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt
@@ -569,7 +594,8 @@ MML_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mm
                      self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml \
                      self_host/formatter.mml self_host/semver.mml self_host/sumfile.mml \
                      self_host/manifest.mml self_host/deps.mml self_host/fetch.mml \
-                     self_host/project.mml self_host/mml.mml
+                     self_host/project.mml self_host/json.mml self_host/diagnostic.mml \
+                     self_host/analysis.mml self_host/lsp.mml self_host/mml.mml
 
 native-selfhost-typecheck: build  ## Typecheck the self-hosted native backend in-context
 	dune exec bin/main.exe -- --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null
