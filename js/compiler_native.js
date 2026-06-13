@@ -13262,11 +13262,36 @@ function Types$generalize_with_map(level, ty) {
                 _t2147 = ({_tag: 7, _name: "TArrow", _val: [go(a), go_eff(eff), go(r)]});
                 break _t2148;
               }
+              if (_t2146._tag === 2) {
+                const t = _t2146;
+                _t2147 = t;
+                break _t2148;
+              }
+              if (_t2146._tag === 4) {
+                const t = _t2146;
+                _t2147 = t;
+                break _t2148;
+              }
               if (_t2146._tag === 8) {
                 const a = _t2146._val[0];
                 const eff = _t2146._val[1];
                 const r = _t2146._val[2];
                 _t2147 = ({_tag: 8, _name: "TCont", _val: [go(a), go_eff(eff), go(r)]});
+                break _t2148;
+              }
+              if (_t2146._tag === 1) {
+                const t = _t2146;
+                _t2147 = t;
+                break _t2148;
+              }
+              if (_t2146._tag === 16) {
+                const t = _t2146;
+                _t2147 = t;
+                break _t2148;
+              }
+              if (_t2146._tag === 0) {
+                const t = _t2146;
+                _t2147 = t;
                 break _t2148;
               }
               if (_t2146._tag === 10) {
@@ -13284,9 +13309,24 @@ function Types$generalize_with_map(level, ty) {
                 _t2147 = ({_tag: 11, _name: "TRecord", _val: go_rrow(row)});
                 break _t2148;
               }
+              if (_t2146._tag === 5) {
+                const t = _t2146;
+                _t2147 = t;
+                break _t2148;
+              }
+              if (_t2146._tag === 3) {
+                const t = _t2146;
+                _t2147 = t;
+                break _t2148;
+              }
               if (_t2146._tag === 9) {
                 const ts = _t2146._val;
                 _t2147 = ({_tag: 9, _name: "TTuple", _val: List$map(go, ts)});
+                break _t2148;
+              }
+              if (_t2146._tag === 6) {
+                const t = _t2146;
+                _t2147 = t;
                 break _t2148;
               }
               if (_t2146._tag === 15) {
@@ -13333,9 +13373,7 @@ function Types$generalize_with_map(level, ty) {
                 _t2147 = ({_tag: 12, _name: "TVariant", _val: [name, List$map(go, args)]});
                 break _t2148;
               }
-              const t = _t2146;
-              _t2147 = t;
-              break _t2148;
+              _match_fail("line 0");
             }
             return _t2147;
           }
@@ -27167,11 +27205,21 @@ function Typechecker$map_texpr_children(f, te) {
         let _t5152;
         const _t5151 = __x;
         _t5153: {
+          if (_t5151._tag === 3) {
+            const leaf = _t5151;
+            _t5152 = leaf;
+            break _t5153;
+          }
           if (_t5151._tag === 1) {
             const g = _t5151._val;
             const __rec_upd_5154 = g;
             const _t5155 = ({arm_idx: __rec_upd_5154.arm_idx, bindings: __rec_upd_5154.bindings, guard: f(g.guard), on_false: map_tree(g.on_false), on_true: map_tree(g.on_true)});
             _t5152 = ({_tag: 1, _name: "DGuard", _val: _t5155});
+            break _t5153;
+          }
+          if (_t5151._tag === 2) {
+            const leaf = _t5151;
+            _t5152 = leaf;
             break _t5153;
           }
           if (_t5151._tag === 0) {
@@ -27193,9 +27241,7 @@ function Typechecker$map_texpr_children(f, te) {
             _t5152 = ({_tag: 0, _name: "DSwitch", _val: _t5157});
             break _t5153;
           }
-          const leaf = _t5151;
-          _t5152 = leaf;
-          break _t5153;
+          _match_fail("line 0");
         }
         return _t5152;
       }
@@ -54138,9 +54184,24 @@ function Texpr_opt$optimize_decl(mutables, pure_fns, decl) {
   let _t12211;
   const _t12210 = decl;
   _t12212: {
+    if (_t12210._tag === 6) {
+      const d = _t12210;
+      _t12211 = d;
+      break _t12212;
+    }
+    if (_t12210._tag === 7) {
+      const d = _t12210;
+      _t12211 = d;
+      break _t12212;
+    }
     if (_t12210._tag === 5) {
       const e = _t12210._val;
       _t12211 = ({_tag: 5, _name: "TDExpr", _val: Texpr_opt$optimize_expr(mutables, pure_fns, e)});
+      break _t12212;
+    }
+    if (_t12210._tag === 8) {
+      const d = _t12210;
+      _t12211 = d;
       break _t12212;
     }
     if (_t12210._tag === 0) {
@@ -54184,9 +54245,17 @@ function Texpr_opt$optimize_decl(mutables, pure_fns, decl) {
       _t12211 = ({_tag: 9, _name: "TDModule", _val: [name, List$map(_call(Texpr_opt$optimize_decl, [mutables, pure_fns]), decls), schemes]});
       break _t12212;
     }
-    const d = _t12210;
-    _t12211 = d;
-    break _t12212;
+    if (_t12210._tag === 10) {
+      const d = _t12210;
+      _t12211 = d;
+      break _t12212;
+    }
+    if (_t12210._tag === 4) {
+      const d = _t12210;
+      _t12211 = d;
+      break _t12212;
+    }
+    _match_fail("line 0");
   }
   return _t12211;
 }
@@ -66776,19 +66845,44 @@ function Js_codegen$compile_app(ctx, _te, fn_, arg) {
       const _t15121 = [base_fn.expr, all_args];
       _t15123: {
         if (_t15121[0]._tag === 7) {
-          if (_t15121[1] !== null) {
-            if (_t15121[1]._tl === null) {
-              const pname = _t15121[0]._val;
-              const a = _t15121[1]._hd;
-              if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+          if (_t15121[0]._val === "Stdlib.print") {
+            if (_t15121[1] !== null) {
+              if (_t15121[1]._tl === null) {
                 const pname = _t15121[0]._val;
                 const a = _t15121[1]._hd;
-                _t15122 = Js_codegen$float_shape(ctx.type_env, a.ty);
-                break _t15123;
-              } else {
-                _t15122 = ({_tag: 0, _name: "None"});
-                break _t15123;
+                if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+                  const pname = _t15121[0]._val;
+                  const a = _t15121[1]._hd;
+                  _t15122 = Js_codegen$float_shape(ctx.type_env, a.ty);
+                  break _t15123;
+                } else {
+                  _t15122 = ({_tag: 0, _name: "None"});
+                  break _t15123;
+                }
               }
+              _t15122 = ({_tag: 0, _name: "None"});
+              break _t15123;
+            }
+            _t15122 = ({_tag: 0, _name: "None"});
+            break _t15123;
+          }
+          if (_t15121[0]._val === "print") {
+            if (_t15121[1] !== null) {
+              if (_t15121[1]._tl === null) {
+                const pname = _t15121[0]._val;
+                const a = _t15121[1]._hd;
+                if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+                  const pname = _t15121[0]._val;
+                  const a = _t15121[1]._hd;
+                  _t15122 = Js_codegen$float_shape(ctx.type_env, a.ty);
+                  break _t15123;
+                } else {
+                  _t15122 = ({_tag: 0, _name: "None"});
+                  break _t15123;
+                }
+              }
+              _t15122 = ({_tag: 0, _name: "None"});
+              break _t15123;
             }
             _t15122 = ({_tag: 0, _name: "None"});
             break _t15123;
@@ -71998,19 +72092,44 @@ function Js_codegen$compile_app_cps(ctx, te, fn_, arg, cont) {
       const _t16570 = [base_fn.expr, all_args];
       _t16572: {
         if (_t16570[0]._tag === 7) {
-          if (_t16570[1] !== null) {
-            if (_t16570[1]._tl === null) {
-              const pname = _t16570[0]._val;
-              const a = _t16570[1]._hd;
-              if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+          if (_t16570[0]._val === "Stdlib.print") {
+            if (_t16570[1] !== null) {
+              if (_t16570[1]._tl === null) {
                 const pname = _t16570[0]._val;
                 const a = _t16570[1]._hd;
-                _t16571 = Js_codegen$float_shape(ctx.type_env, a.ty);
-                break _t16572;
-              } else {
-                _t16571 = ({_tag: 0, _name: "None"});
-                break _t16572;
+                if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+                  const pname = _t16570[0]._val;
+                  const a = _t16570[1]._hd;
+                  _t16571 = Js_codegen$float_shape(ctx.type_env, a.ty);
+                  break _t16572;
+                } else {
+                  _t16571 = ({_tag: 0, _name: "None"});
+                  break _t16572;
+                }
               }
+              _t16571 = ({_tag: 0, _name: "None"});
+              break _t16572;
+            }
+            _t16571 = ({_tag: 0, _name: "None"});
+            break _t16572;
+          }
+          if (_t16570[0]._val === "print") {
+            if (_t16570[1] !== null) {
+              if (_t16570[1]._tl === null) {
+                const pname = _t16570[0]._val;
+                const a = _t16570[1]._hd;
+                if ((Js_codegen$lookup_var(ctx, pname) === "print")) {
+                  const pname = _t16570[0]._val;
+                  const a = _t16570[1]._hd;
+                  _t16571 = Js_codegen$float_shape(ctx.type_env, a.ty);
+                  break _t16572;
+                } else {
+                  _t16571 = ({_tag: 0, _name: "None"});
+                  break _t16572;
+                }
+              }
+              _t16571 = ({_tag: 0, _name: "None"});
+              break _t16572;
             }
             _t16571 = ({_tag: 0, _name: "None"});
             break _t16572;

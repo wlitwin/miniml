@@ -27,7 +27,7 @@ module Formatter =
       end;
       Ref.get n in
     match String.split "\n" c.ctext with
-    | ls -> ls
+    | ([] | _ :: []) as ls -> ls
     | first :: rest -> 
       let nonblank = List.filter (fn l -> (String.trim l) <> "") rest in
       let minlead =
@@ -1209,7 +1209,7 @@ module Formatter =
     | Ast.DExpr e -> Ast.DExpr (strip_e e)
     | Ast.DInstance r -> Ast.DInstance {r with inst_methods = List.map (fn (n, ps, e) -> (n, List.map norm_param ps, strip_e e)) r.inst_methods}
     | Ast.DModule ((n, items)) -> Ast.DModule (n, List.map (fn (md : Ast.module_decl) -> {md with decl = strip_decl md.decl}) items)
-    | d -> d
+    | (((((Ast.DType _ | Ast.DTypeAnd _) | Ast.DClass _) | Ast.DEffect _) | Ast.DExtern _) | Ast.DOpen _) as d -> d
 
 
   pub let strip_program (p : Ast.program) : Ast.program = List.map strip_decl p
