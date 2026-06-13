@@ -121,6 +121,26 @@ Prerequisites before pulling the trigger:
    the seed: a checked-in `compiler.json` / `mmlc` binary, a reproducible
    "build the seed from the last reference-compatible revision" recipe, or a
    staged bootstrap. This is the operational crux.
+
+   **Status (in progress).** An **OCaml-free bootstrap works today**:
+   `make bootstrap-ocaml-free` builds the production compiler `mmlc` using only
+   **node + the checked-in emit-js seed (`js/compiler_native.js`) + clang** — no
+   OCaml. The `mmlc` it produces emits native IR **byte-identical** to the
+   OCaml-VM-hosted build, so the self-host compiler is host-independent (this is
+   what the emit-js dynamic-shift fix unblocked — see the commit log). The seed
+   regenerates itself by the previous seed
+   (`node js/compiler_native.js --emit-js <self-host> -o js/compiler_native.js`),
+   so the loop needs no OCaml. CAVEAT: that emit-js seed is not yet a
+   *byte-identical* fixpoint — successive generations differ by a handful of
+   bytes, traced entirely to **non-ASCII characters (em-dashes) in prelude
+   comments and a few error-message strings**, which the tracked emit-js UTF-16
+   string gap degrades one step per generation. It is cosmetic — the compiler is
+   fully functional at every generation — but a clean reproducible-build fixpoint
+   wants either that UTF-16 gap fixed or the self-host sources + prelude
+   ASCII-ified. The native `mmlc` path already *is* a clean fixpoint
+   (gen2 == gen3, byte-identical IR). Decide the canonical seed artifact
+   (checked-in `compiler_native.js`, regenerated via the previous seed) and add a
+   periodic CI check of `make bootstrap-ocaml-free`.
 3. **The oracle stays.** `lib/oracle.ml` (and the `lib/` frontend types it
    shares) remain the spec — the cutover demotes the reference *backend/VM as the
    dev source*, it does not delete `lib/`. Keep `lib/` buildable as the oracle.

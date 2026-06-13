@@ -542,6 +542,20 @@ test-selfhost-native: build selfhost-native-compiler  ## Corpus through mmlc (se
 	MMLC_BIN=$(MMLC_BIN) NATIVE_TEST_JOBS=$(or $(NATIVE_TEST_JOBS),6) \
 	  dune exec native_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
+# ── OCaml-free bootstrap (Path-B cutover prerequisite #2, docs/freeze-point.md) ──
+# Build the production compiler `mmlc` using ONLY node + the checked-in emit-js
+# seed (js/compiler_native.js) + clang — NO OCaml. Proves the self-host compiler
+# can be rebuilt without the reference. The seed regenerates itself via the
+# previous seed (`node js/compiler_native.js --emit-js <self-host> -o
+# js/compiler_native.js`, a fixpoint), so the whole loop is OCaml-free. Requires
+# js/compiler_native.js current (rebuild with `make self-host-compile-native-js`).
+bootstrap-ocaml-free:
+	@cat $(SELF_HOST_FILES) > /tmp/mml_selfhost_src.mml
+	node js/compiler_native.js --emit-native /tmp/mml_selfhost_src.mml -o /tmp/mmlc_bootstrap
+	@printf 'let () = print "ocaml-free bootstrap: mmlc built by node+clang, no OCaml"\n' > /tmp/mml_boot_check.mml
+	/tmp/mmlc_bootstrap --emit-native /tmp/mml_boot_check.mml -o /tmp/mml_boot_check_bin
+	@/tmp/mml_boot_check_bin
+
 # ── MPS moving GC (native_rt/mml_gc.c) — the native backend's sole GC; standalone
 #    format validation (the runtime links it via the native driver, not this target) ──
 
