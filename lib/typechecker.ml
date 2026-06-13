@@ -27,7 +27,11 @@ and texpr_kind =
   | TEIndex of texpr * texpr
   | TECons of texpr * texpr
   | TENil
-  | TEConstruct of string * texpr option
+  | TEConstruct of string * texpr option * int
+      (* name, payload, resolved tag: nominal = index in variant decl order
+         (Types.nominal_ctor_tag), poly-variant = Types.polyvar_tag of the tag.
+         Resolved once at typecheck against the constructor's specific type, so
+         backends never re-derive it by (collision-prone) name lookup. *)
   | TEMatch of
       texpr * (Ast.pattern * texpr option * texpr) list * Ast.match_kind
   | TELetMut of string * texpr * texpr
@@ -759,7 +763,7 @@ let iter_texpr_children f te =
           f i;
           f v)
         pairs
-  | TEConstruct (_, arg) -> Option.iter f arg
+  | TEConstruct (_, arg, _) -> Option.iter f arg
   | TEMatch (scrutinee, arms, _) ->
       f scrutinee;
       List.iter
@@ -818,7 +822,7 @@ let map_texpr_children f te =
   | TEField (e, name) -> TEField (f e, name)
   | TEIndex (e, i) -> TEIndex (f e, f i)
   | TECons (h, t) -> TECons (f h, f t)
-  | TEConstruct (n, arg) -> TEConstruct (n, Option.map f arg)
+  | TEConstruct (n, arg, tag) -> TEConstruct (n, Option.map f arg, tag)
   | TEMatch (s, arms, p) ->
       TEMatch
         (f s, List.map (fun (pat, g, b) -> (pat, Option.map f g, f b)) arms, p)
@@ -1489,7 +1493,7 @@ let infer_implicit_constraints binding_name type_env vars te scheme =
               walk locals i;
               walk locals v)
             pairs
-      | TEConstruct (_, arg) -> Option.iter (walk locals) arg
+      | TEConstruct (_, arg, _) -> Option.iter (walk locals) arg
       | TEMatch (scrutinee, arms, _) ->
           walk locals scrutinee;
           List.iter
@@ -2094,7 +2098,7 @@ let improve_fundeps_in_expr vars type_env te =
     | TECons (h, t) ->
         walk locals h;
         walk locals t
-    | TEConstruct (_, arg) -> Option.iter (walk locals) arg
+    | TEConstruct (_, arg, _) -> Option.iter (walk locals) arg
     | TEMatch (s, arms, _) ->
         walk locals s;
         List.iter
@@ -2667,12 +2671,16 @@ let rec synth ctx level (expr : Ast.expr) : texpr =
   | Ast.EPolyVariant (tag, None) ->
       let tail = Types.new_pvvar level in
       let row = Types.PVRow (tag, None, tail) in
-      mk ctx (TEConstruct ("`" ^ tag, None)) (Types.TPolyVariant row)
+      mk ctx
+        (TEConstruct ("`" ^ tag, None, Types.polyvar_tag tag))
+        (Types.TPolyVariant row)
   | Ast.EPolyVariant (tag, Some arg) ->
       let arg_te = synth ctx level arg in
       let tail = Types.new_pvvar level in
       let row = Types.PVRow (tag, Some arg_te.ty, tail) in
-      mk ctx (TEConstruct ("`" ^ tag, Some arg_te)) (Types.TPolyVariant row)
+      mk ctx
+        (TEConstruct ("`" ^ tag, Some arg_te, Types.polyvar_tag tag))
+        (Types.TPolyVariant row)
   | Ast.ECoerce (inner, target_annot) ->
       let inner_te = synth ctx level inner in
       let target_ty = resolve_ty_annot ctx level target_annot in
@@ -3520,6 +3528,13 @@ and synth_construct ctx level name arg =
       if List.mem info.Types.ctor_type_name ctx.type_env.Types.hidden_ctor_types
       then error ctx (Printf.sprintf "unknown constructor: %s" name);
       let qname = qualify_ctor_name ctx.type_env name info in
+      (* Resolve the runtime tag now, against this constructor's SPECIFIC type
+         (info.ctor_type_name) — the authority that makes cross-module same-name
+         collisions impossible. Stamped onto every TEConstruct below. *)
+      let ctor_tag =
+        Types.nominal_ctor_tag ctx.type_env info.Types.ctor_type_name
+          (Types.short_unqual qname)
+      in
       (* Fresh tvars for universals (type params) + existentials *)
       let num_fresh = info.ctor_num_params + info.ctor_existentials in
       let all_fresh = List.init num_fresh (fun _ -> Types.new_tvar level) in
@@ -3535,13 +3550,13 @@ and synth_construct ctx level name arg =
               (info.ctor_type_name, List.map (subst_tgens all_fresh) params)
       in
       match (info.ctor_arg_ty, arg) with
-      | None, None -> mk ctx (TEConstruct (qname, None)) result_ty
+      | None, None -> mk ctx (TEConstruct (qname, None, ctor_tag)) result_ty
       | Some expected_ty, Some arg_expr ->
           let concrete_ty =
             freshen_arrow_effects level (subst_tgens all_fresh expected_ty)
           in
           let arg_te = check ctx level arg_expr concrete_ty in
-          mk ctx (TEConstruct (qname, Some arg_te)) result_ty
+          mk ctx (TEConstruct (qname, Some arg_te, ctor_tag)) result_ty
       | None, Some _ ->
           error ctx (Printf.sprintf "constructor %s takes no arguments" name)
       | Some expected_ty, None ->
@@ -3551,7 +3566,9 @@ and synth_construct ctx level name arg =
           in
           let param = "__x" in
           let param_var = mk ctx (TEVar param) concrete_ty in
-          let body = mk ctx (TEConstruct (qname, Some param_var)) result_ty in
+          let body =
+            mk ctx (TEConstruct (qname, Some param_var, ctor_tag)) result_ty
+          in
           mk ctx
             (TEFun (param, body, false))
             (Types.TArrow (concrete_ty, Types.EffEmpty, result_ty)))
@@ -4984,7 +5001,7 @@ let unify_constraint_tvars type_env constraints shared_tvars body_te =
     | TEFieldAssign (e1, _, e2) ->
         walk e1;
         walk e2
-    | TEConstruct (_, Some e) -> walk e
+    | TEConstruct (_, Some e, _) -> walk e
     | TEPerform (_, e) -> walk e
     | TEHandle (body, _) -> walk body
     | TEResume (e1, e2) ->
@@ -7488,8 +7505,10 @@ let rec xform_expr xctx te =
   | TEField (e, name) -> mk_xf xctx (TEField (xform_expr xctx e, name)) te.ty
   | TECons (hd, tl) ->
       mk_xf xctx (TECons (xform_expr xctx hd, xform_expr xctx tl)) te.ty
-  | TEConstruct (name, arg) ->
-      mk_xf xctx (TEConstruct (name, Option.map (xform_expr xctx) arg)) te.ty
+  | TEConstruct (name, arg, tag) ->
+      mk_xf xctx
+        (TEConstruct (name, Option.map (xform_expr xctx) arg, tag))
+        te.ty
   | TEMatch (scrutinee, arms, partial) ->
       let arms' =
         List.map
@@ -8591,7 +8610,7 @@ let rec handler_body_walk ~pred (te : texpr) =
            (fun (i, v) ->
              handler_body_walk ~pred i || handler_body_walk ~pred v)
            pairs
-  | TEConstruct (_, arg) -> (
+  | TEConstruct (_, arg, _) -> (
       match arg with Some e -> handler_body_walk ~pred e | None -> false)
   | TEHandle (body, arms) ->
       handler_body_walk ~pred body

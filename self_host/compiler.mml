@@ -517,7 +517,7 @@ module Compiler =
       compile_expr false s hd;
       compile_expr false s tl;
       emit s Bytecode.CONS
-    | Typechecker.TEConstruct ((name, arg)) -> 
+    | Typechecker.TEConstruct ((name, arg, tag)) -> 
       do
         if is_newtype_ctor s.type_env name do
           do
@@ -527,11 +527,6 @@ module Compiler =
 
           end
         else do
-          let tag =
-            if ((String.length name) > 0) && ((String.get name 0) = #60) do
-              Types.polyvar_tag (String.sub name 1 ((String.length name) - 1))
-            else
-              tag_for_constructor s.type_env name in
           let short_name =
             match String.rindex_opt name #2e with
             | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
@@ -998,7 +993,7 @@ module Compiler =
         let unit_idx = add_constant s Bytecode.VUnit in
         List.iter (fn _ -> emit s (Bytecode.CONST unit_idx)) names;
         emit s (Bytecode.MAKE_RECORD names)
-      | Typechecker.TEConstruct ((name, payload_opt)) -> 
+      | Typechecker.TEConstruct ((name, payload_opt, tag)) -> 
         do
           if is_newtype_ctor s.type_env name do
             do
@@ -1008,11 +1003,6 @@ module Compiler =
 
             end
           else do
-            let tag =
-              if ((String.length name) > 0) && ((String.get name 0) = #60) do
-                Types.polyvar_tag (String.sub name 1 ((String.length name) - 1))
-              else
-                tag_for_constructor s.type_env name in
             let short_name =
               match String.rindex_opt name #2e with
               | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)

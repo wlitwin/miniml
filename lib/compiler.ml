@@ -569,7 +569,7 @@ let rec compile_expr tail s (te : Typechecker.texpr) =
       compile_expr false s hd;
       compile_expr false s tl;
       emit s Bytecode.CONS
-  | Typechecker.TEConstruct (name, arg) ->
+  | Typechecker.TEConstruct (name, arg, tag) ->
       if is_newtype_ctor s.type_env name then begin
         (* Newtype constructor: erased at runtime — just compile the argument *)
         match arg with
@@ -577,11 +577,7 @@ let rec compile_expr tail s (te : Typechecker.texpr) =
         | None -> emit_constant s Bytecode.VUnit
       end
       else begin
-        let tag =
-          if String.length name > 0 && name.[0] = '`' then
-            Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-          else tag_for_constructor s.type_env name
-        in
+        (* [tag] is resolved at typecheck (nominal index / poly-variant hash). *)
         (* Use short name (without module prefix) for display in MAKE_VARIANT *)
         let short_name =
           match String.rindex_opt name '.' with
@@ -1088,7 +1084,7 @@ and emit_rec_placeholder s te =
         let unit_idx = add_constant s Bytecode.VUnit in
         List.iter (fun _ -> emit s (Bytecode.CONST unit_idx)) names;
         emit s (Bytecode.MAKE_RECORD names)
-    | Typechecker.TEConstruct (name, payload_opt) ->
+    | Typechecker.TEConstruct (name, payload_opt, tag) ->
         if is_newtype_ctor s.type_env name then begin
           match payload_opt with
           | Some inner -> go inner
@@ -1096,11 +1092,7 @@ and emit_rec_placeholder s te =
               error "cannot create placeholder for nullary newtype constructor"
         end
         else begin
-          let tag =
-            if String.length name > 0 && name.[0] = '`' then
-              Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-            else tag_for_constructor s.type_env name
-          in
+          (* [tag] resolved at typecheck (nominal index / poly-variant hash). *)
           let short_name =
             match String.rindex_opt name '.' with
             | Some i -> String.sub name (i + 1) (String.length name - i - 1)

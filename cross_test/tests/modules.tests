@@ -1329,3 +1329,45 @@ end
 ;;
 A.get (A.DUP 7) + A.get A.AX
 --- expect: 7
+
+# Construction side of the same collision: a module function CONSTRUCTS a
+# same-named constructor by its BARE name at a non-zero index. The runtime tag
+# of the built value must follow the constructor's own type (DUP = index 1 in
+# A.t), not whichever module's same-named constructor was registered first
+# (B.u's DUP = index 0). We observe the tag via the type-correct in-module
+# matcher: a wrong construction tag would route to the wrong arm. The tag is now
+# resolved once at typecheck and stamped on the node, so all backends agree.
+
+--- test: bare construction of same-named constructor uses its own type's tag
+module A =
+  pub type t = A0 | DUP | A2
+  pub let mk () = DUP
+  pub let name = fn
+    | A0 -> "a0"
+    | DUP -> "dup"
+    | A2 -> "a2"
+end
+;;
+module B =
+  pub type u = DUP | B1
+end
+;;
+A.name (A.mk ())
+--- expect: dup
+
+--- test: bare payload construction of same-named constructor uses own tag
+module A =
+  pub type t = A0 | A1 | DUP of int
+  pub let mk n = DUP n
+  pub let get = fn
+    | A0 -> -1
+    | A1 -> -2
+    | DUP n -> n
+end
+;;
+module B =
+  pub type u = DUP of string | B1
+end
+;;
+A.get (A.mk 42)
+--- expect: 42

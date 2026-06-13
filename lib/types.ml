@@ -315,6 +315,37 @@ let find_effect_op type_env op_name =
         edef.effect_ops)
     type_env.effects
 
+(* Strip a module/type prefix: "M.Green" -> "Green". *)
+let short_unqual name =
+  match String.rindex_opt name '.' with
+  | Some i -> String.sub name (i + 1) (String.length name - i - 1)
+  | None -> name
+
+(* The runtime tag of a nominal constructor = its 0-based index within its
+   variant's declaration order. THE single source of truth for nominal tags:
+   resolved against a SPECIFIC variant type ([type_name]), so cross-module
+   same-name collisions (e.g. Token.MOD vs Bytecode.MOD) are structurally
+   impossible — the type is the authority, never the bare name. The typechecker
+   stamps this onto each constructor node; backends read it instead of
+   re-deriving it by name. *)
+let nominal_ctor_tag type_env type_name short_name =
+  match
+    List.find_opt
+      (fun (n, _, _, _) -> String.equal n type_name)
+      type_env.variants
+  with
+  | None -> failwith (Printf.sprintf "unknown variant type: %s" type_name)
+  | Some (_, _, variant_def, _) ->
+      let rec find_tag i = function
+        | [] ->
+            failwith
+              (Printf.sprintf "constructor %s not found in type %s" short_name
+                 type_name)
+        | (cname, _) :: _ when String.equal cname short_name -> i
+        | _ :: rest -> find_tag (i + 1) rest
+      in
+      find_tag 0 variant_def
+
 let rec ty_to_str = function
   | TInt -> "int"
   | TFloat -> "float"

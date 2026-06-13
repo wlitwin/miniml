@@ -264,9 +264,12 @@ let rec emit_expr e (te : texpr) =
       block e (Printf.sprintf "TECons %s" k) (fun () ->
           emit_expr e h;
           emit_expr e t)
-  | TEConstruct (n, None) -> line e (Printf.sprintf "(TEConstruct %s %s)" (q n) k)
-  | TEConstruct (n, Some arg) ->
-      block e (Printf.sprintf "TEConstruct %s %s" (q n) k) (fun () -> emit_expr e arg)
+  | TEConstruct (n, None, tag) ->
+      line e (Printf.sprintf "(TEConstruct %s %d %s)" (q n) tag k)
+  | TEConstruct (n, Some arg, tag) ->
+      block e
+        (Printf.sprintf "TEConstruct %s %d %s" (q n) tag k)
+        (fun () -> emit_expr e arg)
   | TEMatch (scrut, arms, _kind) ->
       (* Should not survive Pipeline.lower; serialized anyway for un-lowered dumps. *)
       block e (Printf.sprintf "TEMatch %s" k) (fun () ->
