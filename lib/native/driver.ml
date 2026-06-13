@@ -131,30 +131,6 @@ let compile_units (source : string) : (string * string) list =
   Codegen.compile_units ~target_triple:(detect_target_triple ()) type_env
     stdlib_programs typed_program
 
-(* Discover Boehm GC flags for the platform, split into COMPILE flags (the include
-   path, needed when compiling runtime.c which #includes <gc.h>) and LINK flags
-   (the library, needed only at the final link). Keeping them apart avoids clang's
-   "-lgc: linker input unused" warning when compiling to an object. *)
-let gc_flags () =
-  if Sys.file_exists "/opt/homebrew/include/gc/gc.h" then
-    ("-I/opt/homebrew/include", "-L/opt/homebrew/lib -lgc")
-  else if Sys.file_exists "/usr/local/include/gc/gc.h" then
-    ("-I/usr/local/include", "-L/usr/local/lib -lgc")
-  else
-    let line cmd =
-      let ic = Unix.open_process_in cmd in
-      let s = try input_line ic with End_of_file -> "" in
-      ignore (Unix.close_process_in ic);
-      s
-    in
-    let cflags = line "pkg-config --cflags bdw-gc 2>/dev/null" in
-    let ldflags =
-      match line "pkg-config --libs bdw-gc 2>/dev/null" with
-      | "" -> "-lgc"
-      | s -> s
-    in
-    (cflags, ldflags)
-
 let run_clang cmd =
   let exit_code = Sys.command cmd in
   if exit_code <> 0 then
@@ -230,12 +206,10 @@ let unit_object ~opt ~name ~ir =
    whole-program -O2 used to give. It is off by default because LTO re-optimizes
    the whole program at every link, which would defeat fast incremental rebuilds;
    `mml build --release` opts in. *)
-(* Experimental MPS moving-GC backend (roadmap: native moving GC). Opt-in at build
-   time via MML_LINK_MPS so the default build/gate stay byte-identical and MPS-free;
-   selected at runtime within an MPS-linked binary by MML_GC=mps (else Boehm). When
-   enabled, runtime.c is compiled with -DMML_HAVE_MPS and the binary links mml_gc.o +
-   the (big, cached) mps.o. *)
-let mps_enabled () = try Sys.getenv "MML_LINK_MPS" <> "" with Not_found -> false
+(* MPS is the native backend's sole garbage collector: runtime.c is always compiled
+   with -DMML_HAVE_MPS and the binary always links mml_gc.o + the (big, cached) mps.o.
+   Boehm has been removed — no bdw-gc include or link. *)
+let mps_enabled () = true
 
 let find_mps_dir () =
   let candidates =
@@ -244,14 +218,14 @@ let find_mps_dir () =
   match List.find_opt (fun d -> Sys.file_exists (Filename.concat d "mps.c")) candidates with
   | Some d -> d
   | None ->
-      error "Cannot find third_party/mps/code (MML_LINK_MPS needs the project root)"
+      error "Cannot find third_party/mps/code (native GC needs the project root)"
 
 let compile_to_native ?(release = false) ~source_file ~output () =
   let source = read_file_str source_file in
   let units = compile_units source in
   let runtime_c = find_runtime_c () in
   let context_asm = find_context_asm () in
-  let gc_cflags, gc_ldflags = gc_flags () in
+  let gc_cflags, gc_ldflags = ("", "") in
   let opt = if release then "-O2 -flto" else "-O2" in
   (* MPS objects (cached) + the -DMML_HAVE_MPS / include flags folded into runtime.c. *)
   let mps_runtime_cflags, mps_objs =
