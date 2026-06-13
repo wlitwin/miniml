@@ -524,6 +524,24 @@ ir-parity-full: self-host-compile-js  ## Full-corpus cross-compiler IR parity (a
 test-native: build  ## Run native compiler tests: make test-native [FILTER="name"]
 	dune exec native_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
 
+# ── Self-host native test net (Path-B cutover prerequisite #1, docs/freeze-point.md) ──
+# Runs the cross-test corpus through the SELF-HOST native compiler (mmlc) instead
+# of the OCaml reference, checking expected VALUES — so it verifies the self-host's
+# own native codegen WITHOUT diffing against the reference. This is the
+# independent-net leg the cutover needs (the `native` gate stage tests the
+# reference native backend; this tests the production one). On-demand, not in the
+# fast `make check`: it builds mmlc (the self-host compiler as a native binary)
+# and pays clang per test. Type-error tests are skipped (frontend, covered by
+# playground/parity/oracle which share the typechecker); Value + RuntimeError run.
+MMLC_BIN := /tmp/mmlc
+selfhost-native-compiler: self-host-compile-js  ## Build mmlc (the self-host compiler, native)
+	@cat $(SELF_HOST_FILES) > /tmp/mml_selfhost_src.mml
+	dune exec bin/main.exe -- --run-json js/compiler.json --emit-native /tmp/mml_selfhost_src.mml -o $(MMLC_BIN)
+
+test-selfhost-native: build selfhost-native-compiler  ## Corpus through mmlc (self-host native), checking expected values
+	MMLC_BIN=$(MMLC_BIN) NATIVE_TEST_JOBS=$(or $(NATIVE_TEST_JOBS),6) \
+	  dune exec native_test/runner.exe -- cross_test/tests/*.tests $(if $(FILTER),-t "$(FILTER)")
+
 # ── MPS moving GC (native_rt/mml_gc.c) — the native backend's sole GC; standalone
 #    format validation (the runtime links it via the native driver, not this target) ──
 

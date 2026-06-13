@@ -93,8 +93,29 @@ Prerequisites before pulling the trigger:
    matches the reference." Post-cutover that is gone. We need confidence from:
    the cross-tests' *expected values* (they assert concrete results, not just
    agreement), the `oracle` as the semantic spec, and cross-backend agreement
-   *within* the self-host (emit-js vs native vs the bytecode VM). Quantify and
-   close the coverage these provide before retiring the differential stages.
+   *within* the self-host (emit-js vs native vs the bytecode VM).
+
+   **Status (in progress).** The independent net's three self-host legs are now
+   demonstrated against the *expected values* of the whole corpus, none of them
+   diffing against the reference:
+   - **emit-js** — the `playground` gate stage (self-host compiler → JS → node),
+     2242/2242.
+   - **bytecode** — `parity` runs the self-host bytecode over the corpus
+     (today it also cross-checks the reference VM, but the corpus's expected
+     values stand on their own).
+   - **native** — NEW: `make test-selfhost-native` builds `mmlc` (the self-host
+     compiler as a native binary) and runs the corpus *through it* (the
+     production native path), checking expected values — **2139 passed, 0 failed**
+     (the 103 skipped are type-error tests; type-error detection is the shared
+     frontend, covered by the legs above + `oracle`). Implemented as an
+     `MMLC_BIN` mode in `native_test/runner.ml`.
+
+   Plus the `oracle` (executable spec) over the corpus and `fuzz` (differential
+   over generated programs). Remaining for this prerequisite: a periodic
+   self-host-native run in CI (it is heavy — clang per test — so it is on-demand,
+   not in the fast `make check`), and a written accounting of the one residual
+   class translate-parity uniquely caught (value-*invisible* self-host codegen
+   drift not exercised by the corpus) — mitigated by `fuzz` + corpus breadth.
 2. **Bootstrap-seed management.** Once `self_host/` is edited past what the
    frozen OCaml parser accepts, it can only be built by a *prior* `mml`. Decide
    the seed: a checked-in `compiler.json` / `mmlc` binary, a reproducible
