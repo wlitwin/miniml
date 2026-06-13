@@ -2,7 +2,7 @@ open Test_helpers
 module D = Interpreter.Diagnostic
 module A = Interpreter.Analysis
 
-let st = get_stdlib_state ()
+let st = get_analysis_ctx ()
 
 (* The single diagnostic [src] should produce, or fail loudly. *)
 let only src : D.t =
