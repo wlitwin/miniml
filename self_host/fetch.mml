@@ -1,0 +1,110 @@
+module Fetch =
+  effect Fetch_errorExn =
+    fetch_error : string -> 'a
+  end
+
+  pub let temp_dir () : string =
+    match Sys.getenv "TMPDIR" with
+    | Some d -> d
+    | None -> "/tmp"
+
+
+  pub let cache_root () : string =
+    match Sys.getenv "MML_CACHE" with
+    | Some d -> d
+    | None -> 
+      do
+        match Sys.getenv "HOME" with
+        | Some h -> Path.join (Path.join h ".mml") "cache"
+        | None -> Path.join (temp_dir ()) "mml-cache"
+
+      end
+
+
+  pub let cache_path (module_path : string) (version : Semver.t) : string = Path.join (Path.join (cache_root ()) module_path) (Semver.to_string version)
+
+  pub let rec mkdir_p (dir : string) : unit =
+    if (dir <> "") && ((dir <> "/") && ((dir <> ".") && (not (IO.file_exists dir)))) do
+      mkdir_p (Path.dirname dir);
+      Fs.make_dir dir
+    end
+
+  pub let git_url (module_path : string) : string =
+    if IO.file_exists module_path do
+      module_path
+    else
+      "https://" ^ module_path
+
+  pub let rm_rf (path : string) : unit = (Process.run "rm" ("-rf" :: path :: []); ())
+
+  pub let ensure (module_path : string) (version : Semver.t) : string =
+    let dest = cache_path module_path version in
+    if IO.file_exists dest do
+      dest
+    else do
+      mkdir_p (Path.dirname dest);
+      let tmp = dest ^ ".tmp" in
+      rm_rf tmp;
+      let (code, _out, _err) = Process.run "git" ("clone" :: "--quiet" :: "--depth" :: "1" :: "--branch" :: Semver.to_string version :: "--" :: git_url module_path :: tmp :: []) in
+      if code <> 0 do
+        rm_rf tmp;
+        perform fetch_error ($"could not fetch {module_path}@{Semver.to_string version} (git clone of {git_url module_path} failed)")
+      end;
+      rm_rf (Path.join tmp ".git");
+      Fs.rename tmp dest;
+      dest
+    end
+
+  pub let tree_hash (dir : string) : string =
+    let rec files prefix = ((Fs.read_dir (if prefix = "" do
+      dir
+    else
+      Path.join dir prefix)) |> (List.sort String.compare)) |> (List.concat_map (fn name -> let rel =
+      if prefix = "" do
+        name
+      else
+        Path.join prefix name in
+    if Fs.is_directory (Path.join dir rel) do
+      files rel
+    else
+      rel :: [])) in
+    let buf = Buffer.create 4096 in
+    List.iter (fn rel -> Buffer.add_string buf rel;
+    Buffer.add_byte buf #0a;
+    Buffer.add_string buf (IO.read_file (Path.join dir rel));
+    Buffer.add_byte buf #00) (List.sort String.compare (files ""));
+    "h1:" ^ (Digest.md5 (Buffer.contents buf))
+
+  pub let has_suffix (s : string) (suf : string) : bool =
+    let ls = String.length s in
+    let lf = String.length suf in
+    (ls >= lf) && ((String.sub s (ls - lf) lf) = suf)
+
+  pub let latest_version (module_path : string) : Semver.t option =
+    let (_code, out, _err) = Process.run "git" ("ls-remote" :: "--tags" :: "--" :: git_url module_path :: []) in
+    let best = Ref.create None in
+    List.iter (fn line ->
+      do
+        match String.rindex_opt line #2f with
+        | Some i -> 
+          do
+            let tag = String.sub line (i + 1) (((String.length line) - i) - 1) in
+            let tag =
+              if has_suffix tag "^{}" do
+                String.sub tag 0 ((String.length tag) - 3)
+              else
+                tag in
+            match Semver.parse tag with
+            | Some v -> Ref.set best (Some (match Ref.get best with
+            | Some b -> Semver.max b v
+            | None -> v
+            ))
+            | None -> ()
+
+          end
+        | None -> ()
+
+      end) (String.split "\n" out);
+    Ref.get best
+
+end
