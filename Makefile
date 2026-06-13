@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -299,6 +299,22 @@ check-run-json-selfhost:
 	@nat=$$(/tmp/mml_json_check_bin); \
 	  if [ "$$nat" = "OK" ]; then echo "self-host json library passed (emit-js compile + VM/native round-trip)"; \
 	  else echo "FAIL json (native): $$nat"; exit 1; fi
+# The structured-diagnostics library (self_host/diagnostic.mml): severity + source
+# spans (byte offset + 1-based line/col) + stable codes, the position model the
+# in-MiniML LSP consumes (roadmap #16c, the second LSP module). A faithful twin of
+# lib/diagnostic.ml. Depends only on Token + Lexer (already translated). Typechecked
+# + compiled on emit-js, then a behavioral self-check (pos_of_offset, span_at token
+# coverage, line_span, clamping, rendering) is run on BOTH the OCaml VM and the
+# native binary, asserting "OK".
+check-run-diag-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js self_host/token.mml self_host/lexer.mml self_host/diagnostic.mml > /dev/null
+	@cat self_host/token.mml self_host/lexer.mml self_host/diagnostic.mml compiler_test/diag_selfhost_check.mml > /tmp/mml_diag_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_diag_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL diag (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_diag_concat.mml -o /tmp/mml_diag_check_bin
+	@nat=$$(/tmp/mml_diag_check_bin); \
+	  if [ "$$nat" = "OK" ]; then echo "self-host diagnostic library passed (emit-js compile + VM/native round-trip)"; \
+	  else echo "FAIL diag (native): $$nat"; exit 1; fi
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt

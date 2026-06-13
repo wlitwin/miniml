@@ -1,0 +1,117 @@
+module Diagnostic =
+  -- Structured compiler diagnostics (roadmap #19), the MiniML twin of
+  -- lib/diagnostic.ml — ported for the in-MiniML LSP (#16c).
+  --
+  -- The compiler's three phases each raise a (string, Token.loc) error via an
+  -- effect (Lexer.lex_error / Parser.parse_error / Typechecker.type_error) — a
+  -- message and a single start point. This module is the structured,
+  -- position-rich form the tooling consumes: a severity, a source SPAN
+  -- (start..end, with byte offset and 1-based line/col), a stable code, and
+  -- optional related-information notes. Protocol-agnostic (byte offsets +
+  -- compiler-convention line/col); the LSP maps to its own 0-based ranges at the
+  -- boundary.
+  open Token
+
+  pub type severity = Error | Warning | Information | Hint
+
+  -- A source position: byte offset and the 1-based line/col it sits at.
+  pub type pos = { offset: int; line: int; col: int }
+
+  -- A half-open source span [lo, hi). lo = hi is an empty (caret) span.
+  pub type span = { lo: pos; hi: pos }
+
+  pub type related = { rel_span: span; rel_message: string }
+
+  pub type t = {
+    code: string;
+    severity: severity;
+    span: span;
+    message: string;
+    related: related list
+  }
+
+  -- The 1-based line/col of byte offset in src, by a single left-to-right scan.
+  -- Offsets past the end clamp to the end.
+  pub let pos_of_offset (src : string) (offset : int) : pos =
+    let n = String.length src in
+    let lim = if offset < 0 do 0 else if offset > n do n else offset in
+    let line = Ref.create 1 in
+    let col = Ref.create 1 in
+    let i = Ref.create 0 in
+    for (Ref.get i) < lim do
+      (if (String.get src (Ref.get i)) = #0a do
+        Ref.set line ((Ref.get line) + 1);
+        Ref.set col 1
+      else
+        Ref.set col ((Ref.get col) + 1));
+      Ref.set i ((Ref.get i) + 1)
+    end;
+    { offset = lim; line = Ref.get line; col = Ref.get col }
+
+  -- The end offset of the significant token that starts exactly at start in src
+  -- (so a span covers the offending token, not just its first byte). Falls back
+  -- to a one-byte span if the source doesn't lex or no token starts there.
+  pub let token_end (src : string) (start : int) : int =
+    handle
+      let tokens = Lexer.tokenize src in
+      (match List.find (fn (t : Token.token) -> t.loc.offset = start) tokens with
+       | Some t -> if t.end_offset > start do t.end_offset else start + 1
+       | None -> start + 1)
+    with
+    | return x -> x
+    | lex_error _arg _k -> start + 1
+
+  -- Build a span starting at loc and covering the token there. A locationless
+  -- error (loc.line <= 0, as some type errors carry) yields an empty span at the
+  -- start of the file — the caller still gets a well-formed diagnostic.
+  pub let span_at (src : string) (loc : Token.loc) : span =
+    if loc.line <= 0 do
+      let z = pos_of_offset src 0 in
+      { lo = z; hi = z }
+    else do
+      let lo = pos_of_offset src loc.offset in
+      { lo = lo; hi = pos_of_offset src (token_end src loc.offset) }
+    end
+
+  -- The span covering 1-based line in src (start of line to the newline) — for
+  -- diagnostics that carry only a line number, e.g. typechecker warnings.
+  pub let line_span (src : string) (line : int) : span =
+    let n = String.length src in
+    let off = Ref.create 0 in
+    let ln = Ref.create 1 in
+    for ((Ref.get ln) < line) && ((Ref.get off) < n) do
+      (if (String.get src (Ref.get off)) = #0a do Ref.set ln ((Ref.get ln) + 1) end);
+      Ref.set off ((Ref.get off) + 1)
+    end;
+    let lo = Ref.get off in
+    let hi = Ref.create lo in
+    for ((Ref.get hi) < n) && ((String.get src (Ref.get hi)) <> #0a) do
+      Ref.set hi ((Ref.get hi) + 1)
+    end;
+    { lo = pos_of_offset src lo; hi = pos_of_offset src (Ref.get hi) }
+
+  -- Construct an Error-severity diagnostic with no related notes.
+  pub let make (code : string) (span : span) (message : string) : t =
+    { code = code; severity = Error; span = span; message = message; related = [] }
+
+  -- Construct a diagnostic with an explicit severity (no related notes).
+  pub let make_sev (severity : severity) (code : string) (span : span) (message : string) : t =
+    { code = code; severity = severity; span = span; message = message; related = [] }
+
+  pub let severity_name (s : severity) : string =
+    match s with
+    | Error -> "error"
+    | Warning -> "warning"
+    | Information -> "information"
+    | Hint -> "hint"
+
+  -- A compact one-line rendering, for tests and CLI output:
+  --   [code] severity L:C-L:C: message
+  pub let to_string (d : t) : string =
+    let sev = severity_name d.severity in
+    let l1 = string_of_int d.span.lo.line in
+    let c1 = string_of_int d.span.lo.col in
+    let l2 = string_of_int d.span.hi.line in
+    let c2 = string_of_int d.span.hi.col in
+    $"[{d.code}] {sev} {l1}:{c1}-{l2}:{c2}: {d.message}"
+end
