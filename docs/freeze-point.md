@@ -1,0 +1,119 @@
+# The Path-B Freeze Point
+
+This document marks the milestone where MiniML became its own production
+toolchain (roadmap #14 "Path B", #16), and fixes the roles of the two compilers
+going forward. It is the prose counterpart of the decision in
+`roadmap/phase-4-self-host`.
+
+## Status: Path B is reached
+
+The shipping artifact is now MiniML, compiling itself, natively:
+
+- **Self-host fixpoint.** The native `mmlc` (the self-host compiler built as a
+  native binary) compiles its own ~26k-line source into `mmlc2`; gen-2 and gen-3
+  IR are byte-identical. The compiler reproduces itself.
+- **Full parity.** The self-host compiler agrees with the OCaml reference on the
+  entire cross-test corpus across every backend (`make check`: 2242 tests × VM,
+  emit-js, native, oracle, parity, playground), and `ir-parity` confirms the two
+  agree at the *lowered-IR* level, not just on output values.
+- **A real toolchain.** `self_host/mml.mml` is a native `mml` binary —
+  `run` / `build` / `check` / `fmt` / `get` — written in MiniML over the
+  reusable compiler driver (`self_host/driver.mml`). `mml fmt` is byte-identical
+  to the OCaml reference formatter.
+- **MiniML-native tooling.** The formatter, package-manager data layer
+  (semver/sumfile/manifest/deps), git/fs fetch layer, and project/build system
+  all run as MiniML, on emit-js and native, gated.
+
+In short: **what ships is MiniML.** The capability question is settled.
+
+## Roles after the freeze point
+
+| Component | Role |
+|---|---|
+| `self_host/` + the native `mml` | **Production toolchain.** What users run; what ships. |
+| `lib/oracle.ml` | **The executable spec.** Authoritative for evaluation semantics (`docs/semantics.md` is its prose form). New language semantics land here first. |
+| `lib/` reference compiler | **Bootstrap + dev source + differential oracle.** It (a) bootstraps the self-host, (b) is the source the self-host is mechanically translated from (`make translate-all`), and (c) is the independent implementation the gate diffs against. |
+| `tools/ocaml_to_mml` | **The projection.** Keeps `self_host/` faithful to `lib/` by construction. |
+
+The "freeze" is therefore not a deletion. It is a **commitment of intent**: the
+OCaml reference is no longer an end in itself — it exists to *specify*,
+*bootstrap*, and *cross-check* the MiniML production compiler. No feature is
+"done" until it exists in the production (MiniML) toolchain.
+
+## What "frozen" means, and how it is enforced
+
+- **No reference-only language features.** Anything that changes the language
+  must reach the self-host. Because the self-host is translated from `lib/`, this
+  is automatic for compiler changes; the gate makes it non-optional:
+  - `parity` — self-host bytecode vs the OCaml VM over the corpus.
+  - `ir-parity` — the *lowered IR* of both compilers, diffed over the whole
+    corpus; catches value-invisible faithfulness drift.
+  - `oracle` — every backend checked against the executable spec.
+  - `native-selfhost-build` — the self-host drives clang/MPS to a real binary.
+- **The hand-maintained surface is small and gated.** `self_host/main.mml`,
+  `self_host/driver.mml`, and `self_host/mml.mml` are written by hand (an entry
+  and a driver are inherently per-host); everything else under `self_host/` is
+  generated. Each hand-written tool has a `*-selfhost` gate stage compiling it on
+  emit-js and native, and the formatter additionally has byte-parity
+  (`fmt-selfhost-parity`).
+
+Nothing merges unless `make check` is green, so the two compilers cannot silently
+diverge.
+
+## The bootstrap chain (today)
+
+```
+OCaml reference (lib/, bin/main.exe)
+   │  make translate-all        (ocaml_to_mml: lib/*.ml → self_host/*.mml)
+   ▼
+self_host/ (MiniML)
+   │  bin/main.exe --emit-json  → js/compiler.json   (self-host on the OCaml VM)
+   │  bin/main.exe --emit-native self_host concat → mmlc   (native self-host)
+   ▼
+mmlc / mml      (the production compiler + toolchain, native)
+   │  mmlc compiles its own source → mmlc2 ; gen2 == gen3   (fixpoint)
+```
+
+The OCaml reference is the seed. Everything downstream is MiniML.
+
+## The next phase: full cutover (planned, not yet taken)
+
+The canonical Path-B end state — the one Go reached after its own C→Go
+translator — is to **stop translating and maintain the compiler directly in
+MiniML**, demoting the OCaml reference to bootstrap-and-spec only. We are
+deliberately *not* doing this as part of reaching the freeze point, because the
+cost is not capability — it is the **differential safety net**. The current
+quality bar rests on continuously diffing the self-host against an independent
+OCaml implementation; cutting over removes that, and must be paid for first.
+
+Prerequisites before pulling the trigger:
+
+1. **An independent test story that does not lean on translate-parity.** Today
+   `parity`/`ir-parity`/`translate` derive their authority from "the self-host
+   matches the reference." Post-cutover that is gone. We need confidence from:
+   the cross-tests' *expected values* (they assert concrete results, not just
+   agreement), the `oracle` as the semantic spec, and cross-backend agreement
+   *within* the self-host (emit-js vs native vs the bytecode VM). Quantify and
+   close the coverage these provide before retiring the differential stages.
+2. **Bootstrap-seed management.** Once `self_host/` is edited past what the
+   frozen OCaml parser accepts, it can only be built by a *prior* `mml`. Decide
+   the seed: a checked-in `compiler.json` / `mmlc` binary, a reproducible
+   "build the seed from the last reference-compatible revision" recipe, or a
+   staged bootstrap. This is the operational crux.
+3. **The oracle stays.** `lib/oracle.ml` (and the `lib/` frontend types it
+   shares) remain the spec — the cutover demotes the reference *backend/VM as the
+   dev source*, it does not delete `lib/`. Keep `lib/` buildable as the oracle.
+4. **Compiler-dev ergonomics in MiniML.** Editing the compiler in `self_host/`
+   directly wants the MiniML LSP (hover/go-to-def/diagnostics) at a level that
+   makes it as pleasant as the OCaml/merlin workflow that got us here.
+5. **Gate rework.** `translate` and `ir-parity` lose meaning (no projection to
+   verify); `parity` becomes "two independently-maintained implementations agree"
+   (still valuable if `lib/` is kept) or is retired. Re-architect `make check`
+   around the self-host-direct model before, not after.
+
+**Decision criterion.** Cut over when (1)–(2) are demonstrably in place — i.e.
+when retiring the translate-parity net provably does not lower coverage, and the
+bootstrap is reproducible from a trusted seed. Until then, the translate workflow
+is a feature, not scaffolding: it is a faithfulness guarantee and keeps
+OCaml-grade tooling under the compiler. The freeze point above is the honest
+milestone; the cutover is the next deliberate phase.
