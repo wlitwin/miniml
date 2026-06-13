@@ -76,15 +76,36 @@ mmlc / mml      (the production compiler + toolchain, native)
 
 The OCaml reference is the seed. Everything downstream is MiniML.
 
-## The next phase: full cutover (planned, not yet taken)
+## The cutover (TAKEN — soft cut, 2026-06-13)
 
 The canonical Path-B end state — the one Go reached after its own C→Go
 translator — is to **stop translating and maintain the compiler directly in
-MiniML**, demoting the OCaml reference to bootstrap-and-spec only. We are
-deliberately *not* doing this as part of reaching the freeze point, because the
-cost is not capability — it is the **differential safety net**. The current
-quality bar rests on continuously diffing the self-host against an independent
-OCaml implementation; cutting over removes that, and must be paid for first.
+MiniML**, demoting the OCaml reference to bootstrap-and-spec only. After the two
+gating prerequisites below were demonstrated (the independent test net and the
+OCaml-free bootstrap), we took the cutover as a **soft cut**:
+
+- `self_host/` is now the **source of truth** — edit it directly. `translate-all`
+  is removed from the build (the self-host-compile / playground targets compile
+  `self_host/` as-is); it survives only as an explicit, deliberately-run
+  *re-sync-from-reference* tool that OVERWRITES the translated modules from the
+  frozen `lib/`.
+- The `lib/` reference COMPILER is **frozen** (the oracle `lib/oracle.ml` stays
+  live as the spec; `lib/` also still bootstraps and cross-checks).
+- The differential gates (`parity`/`ir-parity`/`translate`) are **kept, not
+  deleted** — they are green at the cut and now serve as a *frozen-reference
+  regression net*: free regression detection that stays valid until a deliberate
+  `self_host/` change first legitimately diverges from the frozen `lib/`, at
+  which point the diverged stage is retired. Keeping the net while it costs
+  nothing is strictly better than destroying it at the cut.
+- The forward authority is the **self-host-direct** verification:
+  `make test-selfhost-native` (corpus through `mmlc`, expected values),
+  `make bootstrap-ocaml-free` (node-only rebuild), the `playground` stage
+  (self-host emit-js), and `oracle` + `fuzz`.
+
+This was a soft cut precisely because the cost of a hard cut is not capability —
+it is the **differential safety net**, and the soft cut keeps that net for free
+until divergence forces each piece off. The prerequisites that had to be paid
+first:
 
 Prerequisites before pulling the trigger:
 
