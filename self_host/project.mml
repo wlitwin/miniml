@@ -1,0 +1,240 @@
+module Project =
+  effect Build_errorExn =
+    build_error : string -> 'a
+  end
+
+  pub type unit_ = {
+    name: string;
+    path: string;
+    source: string
+  }
+
+  pub type t = {
+    name: string;
+    entry: unit_;
+    libs: unit_ list;
+    tests: unit_ list
+  }
+
+  pub let read_file path = IO.read_file path
+
+  pub let write_file path s = IO.write_file path s
+
+  pub let has_suffix (s : string) (suf : string) : bool =
+    let ls = String.length s in
+    let lf = String.length suf in
+    (ls >= lf) && ((String.sub s (ls - lf) lf) = suf)
+
+  pub let capitalize (s : string) : string =
+    if s = "" do
+      s
+    else
+      (String.uppercase (String.sub s 0 1)) ^ (String.sub s 1 ((String.length s) - 1))
+
+  pub let module_name_of (path : string) : string = capitalize (Path.remove_extension (Path.basename path))
+
+  pub let dir_units (dir : string) : unit_ list = (((Fs.read_dir dir) |> (List.filter (fn f -> (has_suffix f ".mml") && (f <> "main.mml")))) |> (List.sort String.compare)) |> (List.map (fn f -> let path = Path.join dir f in
+  {name = module_name_of path; path; source = read_file path}))
+
+  pub let locate (root : string) (mf : Manifest.t) (m : string) (v : Semver.t) : string =
+    match Manifest.replacement mf m with
+    | Some p -> 
+      if not (Path.is_absolute p) do
+        Path.join root p
+      else
+        p
+    | None -> do try
+      Fetch.ensure m v
+    with
+    | fetch_error msg -> perform build_error msg
+    end
+
+
+  pub let deps_of (modules : string list) (u : unit_) : string list =
+    let toks_opt = do try
+      Some (Lexer.tokenize u.source)
+    with
+    | lex_error _ -> None
+    end in
+    match toks_opt with
+    | None -> []
+    | Some toks -> 
+      let arr = Array.of_list toks in
+      let found = Hashtbl.create 16 in
+      Array.iteri (fn i (t : Token.token) ->
+        do
+          match t.kind with
+          | Token.UIDENT name when (name <> u.name) && (List.mem name modules) -> 
+            let next_dot = ((i + 1) < (Array.length arr)) && ((Array.get arr (i + 1)).kind = Token.DOT) in
+            let prev_open = (i > 0) && ((Array.get arr (i - 1)).kind = Token.OPEN) in
+            if next_dot || prev_open do
+              Hashtbl.set found name ()
+            end
+          | _ -> ()
+
+        end) arr;
+      Hashtbl.fold (fn k () acc -> k :: acc) found []
+
+
+  pub let topo_order (libs : unit_ list) : unit_ list =
+    let names = List.map (fn (u : unit_) -> u.name) libs in
+    let by_name = List.map (fn (u : unit_) -> (u.name, u)) libs in
+    let dep_map = List.map (fn (u : unit_) -> (u.name, deps_of names u)) libs in
+    let visited = Hashtbl.create 32 in
+    let on_stack = Hashtbl.create 32 in
+    let order = Ref.create [] in
+    let rec visit name =
+      if Hashtbl.has visited name do
+        ()
+      else if Hashtbl.has on_stack name do
+        perform build_error ($"module dependency cycle through {name}")
+      else do
+        Hashtbl.set on_stack name ();
+        List.iter visit (match List.assoc_opt name dep_map with
+        | Some d -> d
+        | None -> []
+        );
+        Hashtbl.remove on_stack name;
+        Hashtbl.set visited name ();
+        Ref.set order (List.assoc name by_name :: Ref.get order)
+      end in
+    List.iter (fn (u : unit_) -> visit u.name) libs;
+    List.rev (Ref.get order)
+
+  pub let load (dir : string) : t =
+    let manifest_path = Path.join dir "mml.mod" in
+    if not (IO.file_exists manifest_path) do
+      perform build_error ($"no mml.mod manifest in {dir}")
+    end;
+    let mf = Manifest.parse (read_file manifest_path) in
+    if mf.name = "" do
+      perform build_error "mml.mod: missing a `module <name>` line"
+    end;
+    let load_manifest m v =
+      let d = locate dir mf m v in
+      let p = Path.join d "mml.mod" in
+      if IO.file_exists p do
+        Manifest.parse (read_file p)
+      else
+        {name = m; mml = None; requires = []; replaces = []} in
+    let build_list = Deps.mvs mf load_manifest in
+    let sum_path = Path.join dir "mml.sum" in
+    let sums = Ref.create (if IO.file_exists sum_path do
+      Sumfile.parse (read_file sum_path)
+    else
+      []) in
+    let changed = Ref.create false in
+    List.iter (fn (m, v) -> if (Manifest.replacement mf m) = None do
+      let h = Fetch.tree_hash (locate dir mf m v) in
+      let vs = Semver.to_string v in
+      match Sumfile.lookup (Ref.get sums) m vs with
+      | Some recorded when recorded <> h -> perform build_error ($"checksum mismatch for {m}@{vs}: mml.sum has {recorded} but the cache has {h}")
+      | Some _ -> ()
+      | None -> 
+        Ref.set sums ({module_path = m; version = vs; hash = h} :: Ref.get sums);
+        Ref.set changed true
+
+    end) build_list;
+    if Ref.get changed do
+      (* try/catch-all *) write_file sum_path (Sumfile.to_string (Ref.get sums))
+    end;
+    let dep_units = build_list |> (List.concat_map (fn (m, v) -> dir_units (locate dir mf m v))) in
+    let own = (((Fs.read_dir dir) |> (List.filter (fn f -> has_suffix f ".mml"))) |> (List.sort String.compare)) |> (List.map (fn f -> let path = Path.join dir f in
+    {name = module_name_of path; path; source = read_file path})) in
+    let (entry, rest) = List.partition (fn u -> (Path.basename u.path) = "main.mml") own in
+    let (tests, own_libs) = List.partition (fn (u : unit_) -> has_suffix u.path "_test.mml") rest in
+    let libs = List.concat dep_units own_libs in
+    let seen = Hashtbl.create 32 in
+    List.iter (fn (u : unit_) ->
+      do
+        match Hashtbl.get seen u.name with
+        | Some other -> perform build_error ($"module name {u.name} defined by both {other} and {u.path}")
+        | None -> Hashtbl.set seen u.name u.path
+
+      end) libs;
+    match entry with
+    | e :: [] -> {name = mf.name; entry = e; libs; tests}
+    | [] -> perform build_error "no entry point (expected main.mml)"
+    | _ -> perform build_error "more than one main.mml"
+
+
+  pub let combined_with_map (p : t) : string * (int * string) list =
+    let buf = Buffer.create 4096 in
+    let line = Ref.create 1 in
+    let add s =
+      Buffer.add_string buf s;
+      String.iter (fn c -> if c = #0a do
+        Ref.set line (Ref.get line + 1)
+      end) s in
+    let segs = Ref.create [] in
+    let emit wrap (u : unit_) =
+      if wrap do
+        add ($"module {u.name} =
+")
+      end;
+      Ref.set segs ((Ref.get line, u.path) :: Ref.get segs);
+      add u.source;
+      if not (((String.length u.source) > 0) && ((String.get u.source ((String.length u.source) - 1)) = #0a)) do
+        add "\n"
+      end;
+      if wrap do
+        add "end;;\n"
+      end in
+    List.iter (emit true) (topo_order p.libs);
+    emit false p.entry;
+    (Buffer.contents buf, List.rev (Ref.get segs))
+
+  pub let combined_source (p : t) : string = fst (combined_with_map p)
+
+  pub let map_line (segs : (int * string) list) (l : int) : string * int =
+    let rec go best =
+      fn
+        | (start, file) :: rest -> go (if start <= l do
+          Some (start, file)
+        else
+          best) rest
+        | [] -> best
+     in
+    match go None segs with
+    | Some ((start, file)) -> (file, (l - start) + 1)
+    | None -> 
+      do
+        match segs with
+        | (_, f) :: _ -> (f, l)
+        | [] -> ("?", l)
+
+      end
+
+
+  pub let is_project (path : string) : bool = (Fs.is_directory path) && (IO.file_exists (Path.join path "mml.mod"))
+
+  pub let libs_wrapped (p : t) : string =
+    let buf = Buffer.create 4096 in
+    List.iter (fn (u : unit_) -> Buffer.add_string buf ($"module {u.name} =
+{u.source}
+end;;
+")) (topo_order p.libs);
+    Buffer.contents buf
+
+  pub let test_program (p : t) (test_file : unit_) (expr : string) : string = $"{libs_wrapped p}
+{test_file.source}
+;; {expr}
+"
+
+  pub let test_decl_names (u : unit_) : string list =
+    let decls_opt = do try
+      Some (Parser.parse_program (Lexer.tokenize u.source))
+    with
+    | lex_error _ -> None
+    | parse_error _ -> None
+    end in
+    match decls_opt with
+    | None -> []
+    | Some decls -> List.filter_map (fn
+      | Ast.DLet {name; _} when String.starts_with "test_" name -> Some name
+      | Ast.DLetRec b when String.starts_with "test_" b.lr_name -> Some (b.lr_name)
+      | _ -> None
+    ) decls
+
+
+end

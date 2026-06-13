@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -273,6 +273,16 @@ check-run-fetch-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js self_host/semver.mml self_host/fetch.mml > /dev/null
 	@cat self_host/semver.mml self_host/fetch.mml > /tmp/mml_fetch_concat.mml
 	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_fetch_concat.mml > /dev/null && echo "self-host fetch git/fs layer compile passed (emit-js + native)"
+# The package-manager build system (project): local module discovery, token-based
+# dependency inference, topo-ordering, MVS resolution + integrity, combined-source
+# emission. The second translated system-driving tool (Path B #16); it reuses the
+# compiler frontend (Lexer/Parser/Ast) and the pkg layer, and exercises
+# cross-module exception-as-effect (Fetch.Fetch_error caught in Project). Compiled
+# on BOTH emit-js and native.
+check-run-project-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js $(PROJECT_SELFHOST_FILES) > /dev/null
+	@cat $(PROJECT_SELFHOST_FILES) > /tmp/mml_project_concat.mml
+	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_project_concat.mml > /dev/null && echo "self-host project build system compile passed (emit-js + native)"
 check-run-native-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
 # End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
@@ -318,7 +328,7 @@ NATIVE_TRANSLATE_FILES = ir_emit codegen
 # the `fmt-selfhost` gate stage) AND produces byte-identical output to the OCaml
 # reference over the corpus (guarded by `fmt-selfhost-parity`, 58/58). The only
 # residual gap is emit-js's UTF-8 string rep on non-ASCII byte ops (tracked).
-TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter semver sumfile manifest deps fetch
+TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter semver sumfile manifest deps fetch project
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
@@ -400,6 +410,16 @@ FMT_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mm
                      self_host/lexer.mml self_host/parser.mml \
                      self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml \
                      self_host/formatter.mml
+
+# The package-manager build system (project) + its full dependency chain: the
+# compiler frontend it reuses for dependency inference (token..parser) and the
+# pkg layer (semver/sumfile/manifest/deps/fetch). Shared by the project-selfhost
+# gate stage (compiled on emit-js + native).
+PROJECT_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
+                         self_host/types.mml self_host/match_tree_types.mml \
+                         self_host/lexer.mml self_host/parser.mml \
+                         self_host/semver.mml self_host/sumfile.mml self_host/manifest.mml \
+                         self_host/deps.mml self_host/fetch.mml self_host/project.mml
 
 native-selfhost-typecheck: build translate-all  ## Typecheck the self-hosted native backend in-context
 	dune exec bin/main.exe -- --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null
