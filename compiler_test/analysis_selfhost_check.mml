@@ -1,0 +1,40 @@
+-- Behavioral self-check for self_host/analysis.mml's syntactic layer (gate stage
+-- `analysis-selfhost`). Concatenated after the compiler frontend + diagnostic.mml
+-- + analysis.mml and run on the OCaml VM + native; must print "OK". Mirrors the
+-- OCaml test/test_workspace_index.ml expectations. ASCII-only.
+let () =
+  let has lst q = (match List.find (fn pair -> let (k, _) = pair in k = q) lst with Some _ -> true | None -> false) in
+  let src = "let top = 1\nmodule Foo =\n  pub let bar = 2\n  let baz = 3\nend\nlet zz = Foo.bar top" in
+  let syms = Analysis.index_symbols src in
+  let src2 = "module M =\n  pub let f = let inner = 1 in inner\nend" in
+  let syms2 = Analysis.index_symbols src2 in
+  -- member loc is the name token (M.f on line 2)
+  let mf_line = (match List.find (fn pair -> let (k, _) = pair in k = "M.f") syms2 with
+    | Some (_, l) -> l.line | None -> 0 - 1) in
+  let idx = Analysis.build_index
+    (("types.mml", "module Types =\n  pub let repr = 1\nend")
+     :: ("lexer.mml", "module Lexer =\n  pub let tokenize = 2\nend") :: []) in
+  let lookup_file q = (match Analysis.index_lookup idx q with Some (f, _) -> f | None -> "?") in
+  let lookup_line q = (match Analysis.index_lookup idx q with Some (_, l) -> l.line | None -> 0 - 1) in
+  -- qualified_at on the 'bar' segment of 'Foo.bar' (line 6, col ~14)
+  let qcur = Analysis.offset_of_line_col src 6 14 in
+  let checks = [
+    ("idx-top", has syms "top");
+    ("idx-module", has syms "Foo");
+    ("idx-member-bar", has syms "Foo.bar");
+    ("idx-member-baz", has syms "Foo.baz");
+    ("member-f", has syms2 "M.f");
+    ("no-body-letin-leak", not (has syms2 "M.inner"));
+    ("member-loc-line", mf_line = 2);
+    ("xfile-types-file", lookup_file "Types.repr" = "types.mml");
+    ("xfile-types-line", lookup_line "Types.repr" = 2);
+    ("xfile-lexer", lookup_file "Lexer.tokenize" = "lexer.mml");
+    ("qualified-at", (match Analysis.qualified_at src qcur with Some "Foo.bar" -> true | _ -> false));
+    ("bare-not-qualified", (match Analysis.qualified_at "let foo = bar" 11 with None -> true | _ -> false));
+    ("token-at", (match Analysis.token_at "let xyz = 1" 5 with Some t -> t.loc.offset = 4 | None -> false));
+    ("token-at-miss", (match Analysis.token_at "ab cd" 2 with None -> true | Some _ -> false));
+    ("offset-line-col", Analysis.offset_of_line_col "ab\ncd\nef" 3 1 = 6)
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)

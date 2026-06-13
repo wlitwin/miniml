@@ -2644,6 +2644,13 @@ module Parser =
       Ast.DExpr expr :: []
 
 
+  -- Public entry to parse a single top-level declaration. The compiler proper
+  -- parses whole programs (parse_program); tooling — the LSP's declaration-
+  -- boundary error recovery in Analysis — needs to parse one declaration at a
+  -- time so a syntax error in one doesn't blank the rest of the file. A thin
+  -- wrapper over the internal parse_decl (a member of the parse_atom rec group).
+  pub let parse_decl_at p = parse_decl p
+
   pub let parse_program_in p =
     Ref.set fresh_param_counter 0;
     let decls = Ref.create [] in
