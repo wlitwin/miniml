@@ -35,6 +35,13 @@
 
 exception Unsupported of string
 
+(* Raised by the comment-reanchoring pass when it can't confidently map comments
+   back onto the formatted tree; [format_source] catches it and falls back to
+   comment-free formatting. A dedicated exception (not stdlib [Exit] under a
+   catch-all) so the fallback is explicit — and so it translates to a specific
+   MiniML effect handler rather than an inexpressible catch-all-over-exceptions. *)
+exception Reanchor_bail
+
 (* A recovered comment, with the offset of the significant token it precedes
    ([cnext]) so it can be re-anchored to that token during rendering. Defined
    here (above [render]) because [render] flushes inline comments at [Mark]s. *)
@@ -77,10 +84,15 @@ let comment_lines (c : comment) : string list =
   | ([] | [ _ ]) as ls -> ls
   | first :: rest ->
       let nonblank = List.filter (fun l -> String.trim l <> "") rest in
+      (* Minimum leading-whitespace across the non-blank continuation lines.
+         Seed the fold with the first line's lead (0 when there are none) rather
+         than max_int — MiniML has no max_int, and this keeps the shared source
+         in the common subset. *)
       let minlead =
-        List.fold_left (fun m l -> min m (lead l)) max_int nonblank
+        match nonblank with
+        | [] -> 0
+        | hd :: tl -> List.fold_left (fun m l -> min m (lead l)) (lead hd) tl
       in
-      let minlead = if minlead = max_int then 0 else minlead in
       let fix l =
         if String.trim l = "" then ""
         else
@@ -253,15 +265,23 @@ let wrap ~op ~cl ~pad ~sep (items : doc list) : doc =
 let string_lit s =
   let buf = Buffer.create (String.length s + 2) in
   Buffer.add_char buf '"';
-  String.iter
-    (fun c ->
-      match c with
+  (* Iterate by BYTE index, not String.iter: in MiniML String.iter yields runes
+     (decoded codepoints), so a multi-byte UTF-8 char would round-trip through a
+     single truncated byte. String.get / String.length are byte-based in both
+     OCaml and MiniML, so this emits every byte verbatim in both compilers. *)
+  let n = String.length s in
+  let rec go i =
+    if i < n then begin
+      (match String.get s i with
       | '"' -> Buffer.add_string buf "\\\""
       | '\\' -> Buffer.add_string buf "\\\\"
       | '\n' -> Buffer.add_string buf "\\n"
       | '\t' -> Buffer.add_string buf "\\t"
-      | c -> Buffer.add_char buf c)
-    s;
+      | c -> Buffer.add_char buf c);
+      go (i + 1)
+    end
+  in
+  go 0;
   Buffer.add_char buf '"';
   Buffer.contents buf
 
@@ -1111,7 +1131,7 @@ let all_comments (src : string) : comment list =
    comments always fall in the gaps between sibling spans). *)
 let node_span (node : Cst.tree) : int * int =
   match Cst.leaves node with
-  | [] -> raise Exit
+  | [] -> raise Reanchor_bail
   | ls ->
       let first = List.hd ls in
       let last = List.nth ls (List.length ls - 1) in
@@ -1170,7 +1190,7 @@ let module_body_range (node : Cst.tree) : int * int =
       let ls = Cst.leaves node in
       let hi = (List.nth ls (List.length ls - 1)).token.loc.offset in
       (lo, hi)
-  | _ -> raise Exit
+  | _ -> raise Reanchor_bail
 
 (* How many AST decls a span's source slice parses to. Counting (not comparing)
    sidesteps the fresh-param counter differing between a full parse and a slice
@@ -1183,18 +1203,18 @@ let decls_in_slice ~top (src : string) ((s, e) : int * int) : int =
   else
     match Parser.parse_program (Lexer.tokenize ("module Fmt__Wrap =\n" ^ slice ^ "\nend")) with
     | [ Ast.DModule (_, items) ] -> List.length items
-    | _ -> raise Exit
+    | _ -> raise Reanchor_bail
 
 (* Split [items] into consecutive groups of the given [counts] (one group per
    CST Decl node). Any length mismatch means our span/AST model is off — bail. *)
 let segment (counts : int list) (items : 'a list) : 'a list list =
   let rec take k xs acc =
     if k = 0 then (List.rev acc, xs)
-    else match xs with [] -> raise Exit | x :: r -> take (k - 1) r (x :: acc)
+    else match xs with [] -> raise Reanchor_bail | x :: r -> take (k - 1) r (x :: acc)
   in
   let rec go counts items acc =
     match counts with
-    | [] -> if items <> [] then raise Exit else List.rev acc
+    | [] -> if items <> [] then raise Reanchor_bail else List.rev acc
     | k :: rest ->
         let g, items' = take k items [] in
         go rest items' (g :: acc)
@@ -1309,7 +1329,7 @@ and doc_module_decl_c (src : string) (node : Cst.tree) (comments : comment list)
           (Array.map (fun nd -> decls_in_slice ~top:false src (node_span nd)) inner_nodes)
       in
       let groups = Array.of_list (segment counts inner_items) in
-      if Array.length groups <> Array.length inner_nodes then raise Exit;
+      if Array.length groups <> Array.length inner_nodes then raise Reanchor_bail;
       text vis
       ^^ text ("module " ^ name ^ " =")
       ^^ nest (doc_level ~top:false src inner_nodes groups comments ~lo ~hi)
@@ -1339,7 +1359,7 @@ let format_source_with_comments (src : string) (prog : Ast.program) : string =
   let top_nodes =
     match tree with
     | Cst.Node (Cst.SourceFile, _) -> child_decl_nodes tree
-    | _ -> raise Exit
+    | _ -> raise Reanchor_bail
   in
   let comments = all_comments src in
   let counts =
@@ -1347,7 +1367,7 @@ let format_source_with_comments (src : string) (prog : Ast.program) : string =
   in
   let items = List.map (fun d -> Ast.{ vis = Private; decl = d }) prog in
   let groups = Array.of_list (segment counts items) in
-  if Array.length groups <> Array.length top_nodes then raise Exit;
+  if Array.length groups <> Array.length top_nodes then raise Reanchor_bail;
   (* Inline comments — those inside a leaf declaration's span — are flushed at
      render time by their anchoring [Mark]s; the declaration weaver ([doc_level])
      handles the rest (gaps between declarations). *)
@@ -1367,9 +1387,12 @@ let format_source_with_comments (src : string) (prog : Ast.program) : string =
 let format_source (src : string) : string =
   let tokens = Lexer.tokenize src in
   let prog = Parser.parse_program tokens in
-  try format_source_with_comments src prog with
-  | Unsupported _ as e -> raise e
-  | _ -> format_program prog
+  (* Comment-aware formatting, falling back to comment-free [format_program] if
+     the reanchoring pass bails ([Reanchor_bail]). [Unsupported] is NOT caught —
+     it propagates to the caller (the format runner / `mml fmt`), which skips
+     unsupported constructs. Catching one named exception (not a catch-all) is
+     what makes this expressible as a MiniML effect handler. *)
+  try format_source_with_comments src prog with Reanchor_bail -> format_program prog
 
 (* --- Deep loc-stripping, for the semantic-preservation property --------- *)
 
