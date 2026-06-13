@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -283,6 +283,16 @@ check-run-project-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(PROJECT_SELFHOST_FILES) > /dev/null
 	@cat $(PROJECT_SELFHOST_FILES) > /tmp/mml_project_concat.mml
 	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_project_concat.mml > /dev/null && echo "self-host project build system compile passed (emit-js + native)"
+# The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
+# dispatch over the migrated tooling — `fmt` (Formatter, byte-faithful with the
+# OCaml `mml fmt`) and `get` (Fetch + Semver, rewrites mml.mod), plus
+# version/help. The Path-B `mml` binary capstone (roadmap #16/#24); run/build/
+# check still go through the compiler entry until its driver is factored into a
+# reusable module. Compiled on BOTH emit-js and native.
+check-run-mml-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js $(MML_SELFHOST_FILES) > /dev/null
+	@cat $(MML_SELFHOST_FILES) > /tmp/mml_tool_concat.mml
+	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_tool_concat.mml > /dev/null && echo "self-host mml tool entry compile passed (emit-js + native)"
 check-run-native-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
 # End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
@@ -420,6 +430,16 @@ PROJECT_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecod
                          self_host/lexer.mml self_host/parser.mml \
                          self_host/semver.mml self_host/sumfile.mml self_host/manifest.mml \
                          self_host/deps.mml self_host/fetch.mml self_host/project.mml
+
+# The all-in-one `mml` tool entry (self_host/mml.mml) + everything it dispatches:
+# the formatter front (for `fmt`) and the fetch/semver layer (for `get`). The
+# Path-B `mml` binary (roadmap #16/#24). Compiled on emit-js + native.
+MML_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
+                     self_host/types.mml self_host/match_tree_types.mml \
+                     self_host/lexer.mml self_host/parser.mml \
+                     self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml \
+                     self_host/formatter.mml self_host/semver.mml self_host/fetch.mml \
+                     self_host/mml.mml
 
 native-selfhost-typecheck: build translate-all  ## Typecheck the self-hosted native backend in-context
 	dune exec bin/main.exe -- --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null

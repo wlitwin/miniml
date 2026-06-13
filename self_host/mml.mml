@@ -1,0 +1,104 @@
+-- `mml` — the MiniML all-in-one toolchain binary, in MiniML (roadmap #16/#24,
+-- Path B). The self-hosted twin of bin/mml.ml: Go-style subcommands over the
+-- migrated tooling. This entry wires the tooling that has been translated into
+-- self_host/ and needs no embedded VM:
+--   fmt      — format files (Formatter, byte-faithful with the OCaml `mml fmt`)
+--   get      — fetch a dependency and record it in mml.mod (Fetch + Semver)
+--   version  — print the version
+--   help     — usage
+-- run / build / check still go through the compiler entry (main.mml's flag
+-- interface); folding them in here is the next step, once the compiler driver
+-- (builtin setup + build_llvm) is factored out of main.mml into a reusable
+-- module. Hand-written, like main.mml (the entry is inherently per-host).
+
+module Mml =
+  let version = "0.1.0-dev"
+
+  let usage =
+    "mml - the MiniML toolchain (self-hosted)\n\n" ^
+    "Usage: mml <command> [args]\n\n" ^
+    "Commands:\n" ^
+    "  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n" ^
+    "  get <url>[@version]       fetch a dependency and add it to mml.mod\n" ^
+    "  version                   print the version\n" ^
+    "  help                      show this help\n"
+
+  -- fmt: format each file to stdout, or rewrite it in place with -w.
+  let cmd_fmt args =
+    let (write, files) = match args with
+      | "-w" :: rest -> (true, rest)
+      | _ -> (false, args)
+    in
+    match files with
+    | [] -> IO.write_err "mml fmt: expected one or more files\n"; Sys.exit 1
+    | _ ->
+      List.iter (fn f ->
+        let out = Formatter.format_source (IO.read_file f) in
+        if write do IO.write_file f out else IO.write out
+      ) files
+
+  -- Split "url@version" into (url, Some version) or (url, None).
+  let split_at_version (arg : string) : (string * string option) =
+    match String.rindex_opt arg (Byte.of_int 64) with
+    | None -> (arg, None)
+    | Some i ->
+      (String.sub arg 0 i,
+       Some (String.sub arg (i + 1) ((String.length arg) - i - 1)))
+
+  -- Whether an mml.mod line is a `require` for module [m] (to drop a stale one).
+  let is_require_for (m : string) (line : string) : bool =
+    match List.filter (fn s -> s <> "") (String.split " " (String.trim line)) with
+    | "require" :: name :: _ -> name = m
+    | _ -> false
+
+  -- get <url>[@version]: resolve the version (latest released tag if omitted),
+  -- fetch it into the cache, then rewrite ./mml.mod's require for it.
+  -- Write the resolved require into ./mml.mod (after fetching), then report.
+  let record_require (url : string) (version : Semver.t) =
+    if not (IO.file_exists "mml.mod") do
+      IO.write_err "mml get: no mml.mod in the current directory\n"; Sys.exit 1
+    else
+      -- drop any existing require for this module, drop blank lines, append the new
+      let lines = String.split "\n" (IO.read_file "mml.mod") in
+      let kept = List.filter (fn l -> (not (is_require_for url l)) && (String.trim l <> "")) lines in
+      let text = (String.concat "\n" kept) ^ "\nrequire " ^ url ^ " " ^ (Semver.to_string version) ^ "\n" in
+      IO.write_file "mml.mod" text;
+      IO.write ("added require " ^ url ^ " " ^ (Semver.to_string version) ^ "\n")
+
+  let cmd_get arg =
+    let (url, ver) = split_at_version arg in
+    -- Resolve the version (explicit tag, or the latest released tag). Both yield
+    -- a Semver.t option; the exits live at statement position (MiniML Sys.exit is
+    -- `int -> unit`, not OCaml's polymorphic bottom, so it can't sit where a
+    -- Semver.t is expected).
+    let resolved =
+      match ver with
+      | Some v -> Semver.parse v
+      | None -> Fetch.latest_version url
+    in
+    match resolved with
+    | None ->
+      (match ver with
+       | Some v -> IO.write_err ("mml get: " ^ v ^ " is not a version (vMAJOR.MINOR.PATCH)\n")
+       | None -> IO.write_err ("mml get: no released (semver-tagged) versions found for " ^ url ^ "\n"));
+      Sys.exit 1
+    | Some version ->
+      do try
+        let _dir = Fetch.ensure url version in ()
+      with
+      | fetch_error msg -> IO.write_err ("mml get: " ^ msg ^ "\n"); Sys.exit 1
+      end;
+      record_require url version
+
+  let () =
+    match Sys.args () with
+    | _ :: "fmt" :: rest -> cmd_fmt rest
+    | _ :: "get" :: arg :: _ -> cmd_get arg
+    | _ :: "version" :: _ -> IO.write (version ^ "\n")
+    | _ :: "--version" :: _ -> IO.write (version ^ "\n")
+    | _ :: "help" :: _ -> IO.write usage
+    | _ :: "--help" :: _ -> IO.write usage
+    | _ :: cmd :: _ ->
+      IO.write_err ("mml: unknown command " ^ cmd ^ "\n\n"); IO.write_err usage; Sys.exit 1
+    | _ -> IO.write usage
+end
