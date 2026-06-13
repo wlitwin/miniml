@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity pkg-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -239,11 +239,16 @@ check-run-fmt:
 # not exercised by the ASCII corpus; native closure capture only blocks the
 # native `mml fmt` binary, not the emit-js/playground formatter path.
 check-run-fmt-selfhost:
-	$(CHECK_BIN)/bin/main.exe --emit-js \
-	  self_host/token.mml self_host/ast.mml self_host/bytecode.mml self_host/types.mml \
-	  self_host/match_tree_types.mml self_host/lexer.mml self_host/parser.mml \
-	  self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml self_host/formatter.mml \
+	$(CHECK_BIN)/bin/main.exe --emit-js $(FMT_SELFHOST_FILES) \
 	  > /dev/null && echo "self-host formatter typecheck+compile passed"
+# The native backend must compile the translated formatter to LLVM IR — guards
+# the native `mml fmt` binary path (roadmap #16). Catches the closure-conversion
+# regression class (item 35: a malformed match confused top-level closure
+# capture). Concatenated single-file, mirroring native-selfhost-emit-ir, because
+# the native driver resolves the stdlib prelude per-file.
+check-run-fmt-selfhost-native:
+	@cat $(FMT_SELFHOST_FILES) > /tmp/mml_fmt_selfhost_concat.mml
+	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_fmt_selfhost_concat.mml > /dev/null && echo "native self-host formatter compile passed"
 # The self-host formatter (compiled to JS, run on node) must produce
 # BYTE-IDENTICAL output to the OCaml reference `mml fmt` over the whole
 # stdlib/ + self_host/ corpus — the formatter analogue of ir-parity, catching
@@ -376,6 +381,16 @@ NATIVE_SELF_HOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecod
                          self_host/types.mml self_host/match_tree_types.mml \
                          self_host/lexer.mml self_host/parser.mml self_host/typechecker.mml \
                          self_host/ir_emit.mml self_host/codegen.mml
+
+# The translated formatter (utf8/cst/cst_build/formatter) plus the frontend it
+# depends on, in dependency order. Shared by the fmt-selfhost (emit-js compile),
+# fmt-selfhost-parity (emit-js byte-parity), and fmt-selfhost-native (native IR
+# compile) gate stages, and by compiler_test/fmt_selfhost_parity.sh.
+FMT_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
+                     self_host/types.mml self_host/match_tree_types.mml \
+                     self_host/lexer.mml self_host/parser.mml \
+                     self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml \
+                     self_host/formatter.mml
 
 native-selfhost-typecheck: build translate-all  ## Typecheck the self-hosted native backend in-context
 	dune exec bin/main.exe -- --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null
