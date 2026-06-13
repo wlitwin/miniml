@@ -657,7 +657,7 @@ let rec rec_placeholder env (te : Typechecker.texpr) : value =
   | Typechecker.TERecord fields ->
       VRecord (List.map (fun (n, _) -> (n, ref VUnit)) fields)
   | Typechecker.TEArray es -> VArray (Array.make (List.length es) VUnit)
-  | Typechecker.TEConstruct (name, payload) -> (
+  | Typechecker.TEConstruct (name, payload, _) -> (
       let ctor_info =
         List.assoc_opt name env.globals.type_env.Types.constructors
       in
@@ -919,7 +919,7 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
                         | _ -> unsupported "indexed record update on this type"))
           in
           go pairs bv)
-  | Typechecker.TEConstruct (name, payload) -> (
+  | Typechecker.TEConstruct (name, payload, _) -> (
       let ctor_info =
         List.assoc_opt name env.globals.type_env.Types.constructors
       in

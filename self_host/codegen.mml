@@ -323,7 +323,7 @@ module Codegen =
         | TEFieldAssign ((e1, _, e2)) -> 
           scan e1;
           scan e2
-        | TEConstruct ((_, arg)) -> Option.iter scan arg
+        | TEConstruct ((_, arg, _)) -> Option.iter scan arg
         | (TEForLoop e | TEFoldContinue e) -> scan e
         | TEIndex ((e1, e2)) -> 
           scan e1;
@@ -400,7 +400,7 @@ module Codegen =
     | TERecordUpdateIdx ((base, pairs)) -> (mentions_var name base) || (List.exists (fn (i, v) -> (mentions_var name i) || (mentions_var name v)) pairs)
     | TEField ((e, _)) -> mentions_var name e
     | TEFieldAssign ((e1, _, e2)) -> (mentions_var name e1) || (mentions_var name e2)
-    | TEConstruct ((_, arg)) -> (Option.is_some arg) && (mentions_var name (Option.unwrap arg))
+    | TEConstruct ((_, arg, _)) -> (Option.is_some arg) && (mentions_var name (Option.unwrap arg))
     | TEMatch ((scrut, arms, _)) -> (mentions_var name scrut) || (List.exists (fn (_, guard, body) -> (match guard with
     | Some g -> mentions_var name g
     | None -> false
@@ -665,7 +665,7 @@ module Codegen =
     | TERecordUpdate ((base, overrides)) -> emit_record_update ctx base overrides
     | TERecordUpdateIdx ((base, pairs)) -> emit_record_update_idx ctx base pairs
     | TEFieldAssign ((record_expr, field_name, value_expr)) -> emit_field_assign ctx record_expr field_name value_expr
-    | TEConstruct ((name, arg)) -> emit_construct ctx name arg
+    | TEConstruct ((name, arg, tag)) -> emit_construct ctx name arg tag
     | TEMatch ((scrutinee, arms, _partial)) -> emit_match ctx scrutinee arms
     | TENil -> unit_value
     | TECons ((hd_expr, tl_expr)) -> 
@@ -877,7 +877,7 @@ module Codegen =
           i := i + 1
         end;
         (Ir_emit.emit_ptrtoint ctx.ir ptr, nbytes)
-      | Typechecker.TEConstruct ((name, payload_opt)) -> 
+      | Typechecker.TEConstruct ((name, payload_opt, tag)) -> 
         do
           if is_newtype_ctor ctx name do
             do
@@ -889,11 +889,6 @@ module Codegen =
           else
             match payload_opt with
             | Some _ -> 
-              let tag =
-                if ((String.length name) > 0) && ((String.get name 0) = #60) do
-                  Types.polyvar_tag (String.sub name 1 ((String.length name) - 1))
-                else
-                  tag_for_constructor ctx name in
               let hdr_tag =
                 if ((String.length name) > 0) && ((String.get name 0) = #60) do
                   mml_hdr_polyvar
@@ -1647,7 +1642,7 @@ module Codegen =
     let elem_ptr = field_elem_ptr ctx ptr record_expr.ty field_name in
     Ir_emit.emit_store ctx.ir "i64" v elem_ptr;
     unit_value
-  and emit_construct ctx name arg =
+  and emit_construct ctx name arg tag =
     if is_newtype_ctor ctx name do
       do
         match arg with
@@ -1656,11 +1651,6 @@ module Codegen =
 
       end
     else do
-      let tag =
-        if ((String.length name) > 0) && ((String.get name 0) = #60) do
-          Types.polyvar_tag (String.sub name 1 ((String.length name) - 1))
-        else
-          tag_for_constructor ctx name in
       let tag_val = tag_int tag in
       match arg with
       | None -> tag_val
@@ -3853,7 +3843,7 @@ else
         capture_field_evidence e1.ty fname;
         scan_expr e1;
         scan_expr e2
-      | TEConstruct ((_, arg)) -> Option.iter scan_expr arg
+      | TEConstruct ((_, arg, _)) -> Option.iter scan_expr arg
       | TENil -> ()
       | TECons ((hd, tl)) -> 
         scan_expr hd;

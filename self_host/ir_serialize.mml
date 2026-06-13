@@ -199,8 +199,8 @@ module Ir_serialize =
     emit_expr e idx)
     | TECons ((h, t)) -> block e ($"TECons {k}") (fn () -> emit_expr e h;
     emit_expr e t)
-    | TEConstruct ((n, None)) -> line e ($"(TEConstruct {q n} {k})")
-    | TEConstruct ((n, Some arg)) -> block e ($"TEConstruct {q n} {k}") (fn () -> emit_expr e arg)
+    | TEConstruct ((n, None, tag)) -> line e ($"(TEConstruct {q n} {tag} {k})")
+    | TEConstruct ((n, Some arg, tag)) -> block e ($"TEConstruct {q n} {tag} {k}") (fn () -> emit_expr e arg)
     | TEMatch ((scrut, arms, _kind)) -> block e ($"TEMatch {k}") (fn () -> emit_expr e scrut;
     List.iter (fn (_pat, guard, body) -> block e "arm" (fn () -> do
       match guard with

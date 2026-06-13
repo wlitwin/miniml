@@ -383,7 +383,7 @@ module Js_codegen =
     | Typechecker.TECons ((e1, e2)) -> two e1 e2 (fn v1 v2 -> Typechecker.TECons (v1, v2))
     | Typechecker.TEIndex ((e1, e2)) -> two e1 e2 (fn v1 v2 -> Typechecker.TEIndex (v1, v2))
     | Typechecker.TEField ((e, fname)) -> one e (fn v -> Typechecker.TEField (v, fname))
-    | Typechecker.TEConstruct ((name, Some e)) -> one e (fn v -> Typechecker.TEConstruct (name, Some v))
+    | Typechecker.TEConstruct ((name, Some e, tag)) -> one e (fn v -> Typechecker.TEConstruct (name, Some v, tag))
     | Typechecker.TEAssign ((name, e)) -> one e (fn v -> Typechecker.TEAssign (name, v))
     | Typechecker.TEFieldAssign ((r, fname, e)) -> two r e (fn rv v -> Typechecker.TEFieldAssign (rv, fname, v))
     | Typechecker.TEReturn e -> one e (fn v -> Typechecker.TEReturn v)
@@ -622,7 +622,7 @@ module Js_codegen =
       let hd_js = compile_non_tail ctx hd in
       let tl_js = compile_non_tail ctx tl in
       "({_hd: " ^ (hd_js ^ (", _tl: " ^ (tl_js ^ "})")))
-    | Typechecker.TEConstruct ((name, arg)) -> 
+    | Typechecker.TEConstruct ((name, arg, tag)) -> 
       do
         if is_newtype_ctor ctx.type_env name do
           do
@@ -632,11 +632,6 @@ module Js_codegen =
 
           end
         else do
-          let tag =
-            if ((String.length name) > 0) && ((String.get name 0) = #60) do
-              Types.polyvar_tag (String.sub name 1 ((String.length name) - 1))
-            else
-              tag_for_constructor ctx.type_env name in
           let sname = short_constructor_name name in
           match arg with
           | Some e -> 
@@ -763,7 +758,7 @@ module Js_codegen =
         let sorted = List.sort (fn (a, _) (b, _) -> String.compare a b) fields in
         let field_strs = List.map (fn (name, _) -> (mangle_name name) ^ ": null") sorted in
         emit_line ctx ($"let {js_name} = \{{String.concat ", " field_strs}\};")
-      | Typechecker.TEConstruct ((name, payload_opt)) -> 
+      | Typechecker.TEConstruct ((name, payload_opt, tag)) -> 
         do
           if is_newtype_ctor ctx.type_env name do
             do
@@ -773,11 +768,6 @@ module Js_codegen =
 
             end
           else do
-            let tag =
-              if ((String.length name) > 0) && ((String.get name 0) = #60) do
-                Types.polyvar_tag (String.sub name 1 ((String.length name) - 1))
-              else
-                tag_for_constructor ctx.type_env name in
             let sname = short_constructor_name name in
             match payload_opt with
             | Some _ -> emit_line ctx ($"let {js_name} = \{_tag: {tag}, _name: {escape_js_string sname}, _val: null\};")
@@ -806,7 +796,7 @@ module Js_codegen =
       | Typechecker.TERecord _ -> 
         let computed = compile_non_tail ctx te in
         emit_line ctx ($"Object.assign({js_name}, {computed});")
-      | Typechecker.TEConstruct ((name, _)) when is_newtype_ctor ctx.type_env name -> go te
+      | Typechecker.TEConstruct ((name, _, _)) when is_newtype_ctor ctx.type_env name -> go te
       | Typechecker.TEConstruct _ -> 
         let computed = compile_non_tail ctx te in
         let tmp = fresh_tmp ctx in

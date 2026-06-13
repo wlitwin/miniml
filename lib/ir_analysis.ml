@@ -133,8 +133,8 @@ let rec expr_has_perform_with ~check_perform ~enter_funs ~on_app
   | Typechecker.TEFieldAssign (r, _, v) -> go r || go v
   | Typechecker.TEField (e, _) -> go e
   | Typechecker.TEIndex (b, i) -> go b || go i
-  | Typechecker.TEConstruct (_, Some e) -> go e
-  | Typechecker.TEConstruct (_, None) -> false
+  | Typechecker.TEConstruct (_, Some e, _) -> go e
+  | Typechecker.TEConstruct (_, None, _) -> false
   | Typechecker.TEArray es -> List.exists go es
   | Typechecker.TERecordUpdate (base, overrides) ->
       go base || List.exists (fun (_, e) -> go e) overrides

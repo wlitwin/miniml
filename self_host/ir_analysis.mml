@@ -76,8 +76,8 @@ module Ir_analysis =
     | Typechecker.TEFieldAssign ((r, _, v)) -> (go r) || (go v)
     | Typechecker.TEField ((e, _)) -> go e
     | Typechecker.TEIndex ((b, i)) -> (go b) || (go i)
-    | Typechecker.TEConstruct ((_, Some e)) -> go e
-    | Typechecker.TEConstruct ((_, None)) -> false
+    | Typechecker.TEConstruct ((_, Some e, _)) -> go e
+    | Typechecker.TEConstruct ((_, None, _)) -> false
     | Typechecker.TEArray es -> List.exists go es
     | Typechecker.TERecordUpdate ((base, overrides)) -> (go base) || (List.exists (fn (_, e) -> go e) overrides)
     | Typechecker.TERecordUpdateIdx ((base, pairs)) -> (go base) || (List.exists (fn (i, v) -> (go i) || (go v)) pairs)

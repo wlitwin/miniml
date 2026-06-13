@@ -490,7 +490,7 @@ let rec _is_captured_in_closures name (body : Typechecker.texpr) =
       | TEFieldAssign (e1, _, e2) ->
           scan e1;
           scan e2
-      | TEConstruct (_, arg) -> Option.iter scan arg
+      | TEConstruct (_, arg, _) -> Option.iter scan arg
       | TEForLoop e | TEFoldContinue e -> scan e
       | TEIndex (e1, e2) ->
           scan e1;
@@ -586,7 +586,7 @@ and mentions_var name (e : Typechecker.texpr) =
            pairs
   | TEField (e, _) -> mentions_var name e
   | TEFieldAssign (e1, _, e2) -> mentions_var name e1 || mentions_var name e2
-  | TEConstruct (_, arg) ->
+  | TEConstruct (_, arg, _) ->
       Option.is_some arg && mentions_var name (Option.get arg)
   | TEMatch (scrut, arms, _) ->
       mentions_var name scrut
@@ -968,7 +968,7 @@ let rec emit_expr (ctx : codegen_ctx) (expr : Typechecker.texpr) : string =
   | TERecordUpdateIdx (base, pairs) -> emit_record_update_idx ctx base pairs
   | TEFieldAssign (record_expr, field_name, value_expr) ->
       emit_field_assign ctx record_expr field_name value_expr
-  | TEConstruct (name, arg) -> emit_construct ctx name arg
+  | TEConstruct (name, arg, tag) -> emit_construct ctx name arg tag
   | TEMatch (scrutinee, arms, _partial) -> emit_match ctx scrutinee arms
   | TENil -> unit_value
   | TECons (hd_expr, tl_expr) ->
@@ -1239,7 +1239,7 @@ and emit_rec_placeholder ctx te =
           Ir_emit.emit_store ctx.ir ~ty:"i64" ~value:unit_value ~ptr:p
         done;
         (Ir_emit.emit_ptrtoint ctx.ir ~value:ptr, nbytes)
-    | Typechecker.TEConstruct (name, payload_opt) ->
+    | Typechecker.TEConstruct (name, payload_opt, tag) ->
         if is_newtype_ctor ctx name then begin
           match payload_opt with
           | Some inner -> go inner
@@ -1250,11 +1250,7 @@ and emit_rec_placeholder ctx te =
         else begin
           match payload_opt with
           | Some _ ->
-              let tag =
-                if String.length name > 0 && name.[0] = '`' then
-                  Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-                else tag_for_constructor ctx name
-              in
+              (* [tag] resolved at typecheck (nominal / poly-variant). *)
               let hdr_tag =
                 if String.length name > 0 && name.[0] = '`' then mml_hdr_polyvar
                 else mml_hdr_variant
@@ -2386,7 +2382,7 @@ and emit_field_assign ctx record_expr field_name value_expr =
 
 (* ---- Variant constructors ---- *)
 
-and emit_construct ctx name arg =
+and emit_construct ctx name arg tag =
   if is_newtype_ctor ctx name then begin
     (* Newtype constructor: erased at runtime *)
     match arg with
@@ -2394,11 +2390,7 @@ and emit_construct ctx name arg =
     | None -> tag_int 0 (* unit *)
   end
   else begin
-    let tag =
-      if String.length name > 0 && name.[0] = '`' then
-        Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-      else tag_for_constructor ctx name
-    in
+    (* [tag] resolved at typecheck (nominal index / poly-variant hash). *)
     let tag_val = tag_int tag in
     match arg with
     | None ->
@@ -5577,7 +5569,7 @@ and free_vars_of_fun ?(ctx = None) params body =
         capture_field_evidence e1.ty fname;
         scan_expr e1;
         scan_expr e2
-    | TEConstruct (_, arg) -> Option.iter scan_expr arg
+    | TEConstruct (_, arg, _) -> Option.iter scan_expr arg
     | TENil -> ()
     | TECons (hd, tl) ->
         scan_expr hd;

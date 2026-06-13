@@ -264,6 +264,25 @@ module Types =
   else
     None) edef.effect_ops) type_env.effects
 
+  pub let short_unqual name =
+    match String.rindex_opt name #2e with
+    | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
+    | None -> name
+
+
+  pub let nominal_ctor_tag type_env type_name short_name =
+    match List.find (fn (n, _, _, _) -> n = type_name) type_env.variants with
+    | None -> failwith ($"unknown variant type: {type_name}")
+    | Some ((_, _, variant_def, _)) -> 
+      let rec find_tag i =
+        fn
+          | [] -> failwith ($"constructor {short_name} not found in type {type_name}")
+          | (cname, _) :: _ when cname = short_name -> i
+          | _ :: rest -> find_tag (i + 1) rest
+       in
+      find_tag 0 variant_def
+
+
   pub let rec ty_to_str =
     fn
       | TInt -> "int"

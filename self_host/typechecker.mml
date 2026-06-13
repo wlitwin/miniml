@@ -32,7 +32,7 @@ module Typechecker =
     | TEIndex of texpr * texpr
     | TECons of texpr * texpr
     | TENil
-    | TEConstruct of string * texpr option
+    | TEConstruct of string * texpr option * int
     | TEMatch of texpr * (Ast.pattern * texpr option * texpr) list * Ast.match_kind
     | TELetMut of string * texpr * texpr
     | TEAssign of string * texpr
@@ -702,7 +702,7 @@ module Typechecker =
       f base;
       List.iter (fn (i, v) -> f i;
       f v) pairs
-    | TEConstruct ((_, arg)) -> Option.iter f arg
+    | TEConstruct ((_, arg, _)) -> Option.iter f arg
     | TEMatch ((scrutinee, arms, _)) -> 
       f scrutinee;
       List.iter (fn (_, guard, body) -> Option.iter f guard;
@@ -752,7 +752,7 @@ module Typechecker =
     | TEField ((e, name)) -> TEField (f e, name)
     | TEIndex ((e, i)) -> TEIndex (f e, f i)
     | TECons ((h, t)) -> TECons (f h, f t)
-    | TEConstruct ((n, arg)) -> TEConstruct (n, Option.map f arg)
+    | TEConstruct ((n, arg, tag)) -> TEConstruct (n, Option.map f arg, tag)
     | TEMatch ((s, arms, p)) -> TEMatch (f s, List.map (fn (pat, g, b) -> (pat, Option.map f g, f b)) arms, p)
     | TEMatchTree cm -> 
       let scrutinee' = f cm.scrutinee in
@@ -1371,7 +1371,7 @@ module Typechecker =
           walk locals base;
           List.iter (fn (i, v) -> walk locals i;
           walk locals v) pairs
-        | TEConstruct ((_, arg)) -> Option.iter (walk locals) arg
+        | TEConstruct ((_, arg, _)) -> Option.iter (walk locals) arg
         | TEMatch ((scrutinee, arms, _)) -> 
           walk locals scrutinee;
           List.iter (fn (_, guard, body) -> Option.iter (walk locals) guard;
@@ -2024,7 +2024,7 @@ module Typechecker =
       | TECons ((h, t)) -> 
         walk locals h;
         walk locals t
-      | TEConstruct ((_, arg)) -> Option.iter (walk locals) arg
+      | TEConstruct ((_, arg, _)) -> Option.iter (walk locals) arg
       | TEMatch ((s, arms, _)) -> 
         walk locals s;
         List.iter (fn (_, g, b) -> Option.iter (walk locals) g;
@@ -2539,12 +2539,12 @@ module Typechecker =
     | Ast.EPolyVariant ((tag, None)) -> 
       let tail = Types.new_pvvar level in
       let row = Types.PVRow (tag, None, tail) in
-      mk ctx (TEConstruct ("`" ^ tag, None)) (Types.TPolyVariant row)
+      mk ctx (TEConstruct ("`" ^ tag, None, Types.polyvar_tag tag)) (Types.TPolyVariant row)
     | Ast.EPolyVariant ((tag, Some arg)) -> 
       let arg_te = synth ctx level arg in
       let tail = Types.new_pvvar level in
       let row = Types.PVRow (tag, Some (arg_te.ty), tail) in
-      mk ctx (TEConstruct ("`" ^ tag, Some arg_te)) (Types.TPolyVariant row)
+      mk ctx (TEConstruct ("`" ^ tag, Some arg_te, Types.polyvar_tag tag)) (Types.TPolyVariant row)
     | Ast.ECoerce ((inner, target_annot)) -> 
       let inner_te = synth ctx level inner in
       let target_ty = resolve_ty_annot ctx level target_annot in
@@ -3143,6 +3143,7 @@ module Typechecker =
           error ctx ($"unknown constructor: {name}")
         end;
         let qname = qualify_ctor_name ctx.type_env name info in
+        let ctor_tag = Types.nominal_ctor_tag ctx.type_env info.ctor_type_name (Types.short_unqual qname) in
         let num_fresh = info.ctor_num_params + info.ctor_existentials in
         let all_fresh = List.init num_fresh (fn _ -> Types.new_tvar level) in
         let fresh_universals = List.filteri (fn i _ -> i < info.ctor_num_params) all_fresh in
@@ -3152,17 +3153,17 @@ module Typechecker =
           | Some params -> Types.TVariant (info.ctor_type_name, List.map (subst_tgens all_fresh) params)
          in
         match (info.ctor_arg_ty, arg) with
-        | (None, None) -> mk ctx (TEConstruct (qname, None)) result_ty
+        | (None, None) -> mk ctx (TEConstruct (qname, None, ctor_tag)) result_ty
         | (Some expected_ty, Some arg_expr) -> 
           let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh expected_ty) in
           let arg_te = check ctx level arg_expr concrete_ty in
-          mk ctx (TEConstruct (qname, Some arg_te)) result_ty
+          mk ctx (TEConstruct (qname, Some arg_te, ctor_tag)) result_ty
         | (None, Some _) -> error ctx ($"constructor {name} takes no arguments")
         | (Some expected_ty, None) -> 
           let concrete_ty = freshen_arrow_effects level (subst_tgens all_fresh expected_ty) in
           let param = "__x" in
           let param_var = mk ctx (TEVar param) concrete_ty in
-          let body = mk ctx (TEConstruct (qname, Some param_var)) result_ty in
+          let body = mk ctx (TEConstruct (qname, Some param_var, ctor_tag)) result_ty in
           mk ctx (TEFun (param, body, false)) (Types.TArrow (concrete_ty, Types.EffEmpty, result_ty))
 
       end
@@ -4150,7 +4151,7 @@ module Typechecker =
       | TEFieldAssign ((e1, _, e2)) -> 
         walk e1;
         walk e2
-      | TEConstruct ((_, Some e)) -> walk e
+      | TEConstruct ((_, Some e, _)) -> walk e
       | TEPerform ((_, e)) -> walk e
       | TEHandle ((body, _)) -> walk body
       | TEResume ((e1, e2)) -> 
@@ -5668,7 +5669,7 @@ module Typechecker =
     | TERecordUpdateIdx ((base, pairs)) -> mk_xf xctx (TERecordUpdateIdx (xform_expr xctx base, List.map (fn (i, v) -> (xform_expr xctx i, xform_expr xctx v)) pairs)) te.ty
     | TEField ((e, name)) -> mk_xf xctx (TEField (xform_expr xctx e, name)) te.ty
     | TECons ((hd, tl)) -> mk_xf xctx (TECons (xform_expr xctx hd, xform_expr xctx tl)) te.ty
-    | TEConstruct ((name, arg)) -> mk_xf xctx (TEConstruct (name, Option.map (xform_expr xctx) arg)) te.ty
+    | TEConstruct ((name, arg, tag)) -> mk_xf xctx (TEConstruct (name, Option.map (xform_expr xctx) arg, tag)) te.ty
     | TEMatch ((scrutinee, arms, partial)) -> 
       let arms' = List.map (fn (pat, guard, body) -> let pvars = pat_bound_names pat in
       let xctx' = {xctx with xf_locals = List.concat pvars xctx.xf_locals} in
@@ -6530,7 +6531,7 @@ module Typechecker =
   | TERecord fields -> List.exists (fn (_, e) -> handler_body_walk pred e) fields
   | TERecordUpdate ((base, overrides)) -> (handler_body_walk pred base) || (List.exists (fn (_, e) -> handler_body_walk pred e) overrides)
   | TERecordUpdateIdx ((base, pairs)) -> (handler_body_walk pred base) || (List.exists (fn (i, v) -> (handler_body_walk pred i) || (handler_body_walk pred v)) pairs)
-  | TEConstruct ((_, arg)) -> 
+  | TEConstruct ((_, arg, _)) -> 
     do
       match arg with
       | Some e -> handler_body_walk pred e

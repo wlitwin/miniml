@@ -802,8 +802,8 @@ let anf_decompose (te : Typechecker.texpr) =
       two e1 e2 (fun v1 v2 -> Typechecker.TEIndex (v1, v2))
   | Typechecker.TEField (e, fname) ->
       one e (fun v -> Typechecker.TEField (v, fname))
-  | Typechecker.TEConstruct (name, Some e) ->
-      one e (fun v -> Typechecker.TEConstruct (name, Some v))
+  | Typechecker.TEConstruct (name, Some e, tag) ->
+      one e (fun v -> Typechecker.TEConstruct (name, Some v, tag))
   | Typechecker.TEAssign (name, e) ->
       one e (fun v -> Typechecker.TEAssign (name, v))
   | Typechecker.TEFieldAssign (r, fname, e) ->
@@ -1178,7 +1178,7 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
       let hd_js = compile_non_tail ctx hd in
       let tl_js = compile_non_tail ctx tl in
       "({_hd: " ^ hd_js ^ ", _tl: " ^ tl_js ^ "})"
-  | Typechecker.TEConstruct (name, arg) ->
+  | Typechecker.TEConstruct (name, arg, tag) ->
       if is_newtype_ctor ctx.type_env name then begin
         (* Newtype constructor: erased at runtime *)
         match arg with
@@ -1186,11 +1186,7 @@ and compile_expr ctx (te : Typechecker.texpr) : string =
         | None -> "undefined"
       end
       else begin
-        let tag =
-          if String.length name > 0 && name.[0] = '`' then
-            Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-          else tag_for_constructor ctx.type_env name
-        in
+        (* [tag] resolved at typecheck (nominal index / poly-variant hash). *)
         let sname = short_constructor_name name in
         match arg with
         | Some e ->
@@ -1346,18 +1342,14 @@ and emit_js_placeholder ctx js_name te =
         emit_line ctx
           (Printf.sprintf "let %s = {%s};" js_name
              (String.concat ", " field_strs))
-    | Typechecker.TEConstruct (name, payload_opt) ->
+    | Typechecker.TEConstruct (name, payload_opt, tag) ->
         if is_newtype_ctor ctx.type_env name then
           match payload_opt with
           | Some inner -> go inner
           | None ->
               error "cannot create placeholder for nullary newtype constructor"
         else begin
-          let tag =
-            if String.length name > 0 && name.[0] = '`' then
-              Types.polyvar_tag (String.sub name 1 (String.length name - 1))
-            else tag_for_constructor ctx.type_env name
-          in
+          (* [tag] resolved at typecheck (nominal index / poly-variant hash). *)
           let sname = short_constructor_name name in
           match payload_opt with
           | Some _ ->
@@ -1397,8 +1389,8 @@ and emit_js_backpatch ctx js_name te =
     | Typechecker.TERecord _ ->
         let computed = compile_non_tail ctx te in
         emit_line ctx (Printf.sprintf "Object.assign(%s, %s);" js_name computed)
-    | Typechecker.TEConstruct (name, _) when is_newtype_ctor ctx.type_env name
-      ->
+    | Typechecker.TEConstruct (name, _, _)
+      when is_newtype_ctor ctx.type_env name ->
         go te (* newtype is erased — backpatch the underlying *)
     | Typechecker.TEConstruct _ ->
         let computed = compile_non_tail ctx te in

@@ -62,8 +62,8 @@ module Texpr_opt =
     | TERecord fields -> List.forall (fn (_, e) -> is_pure mutables pure_fns e) fields
     | TERecordUpdate ((base, fields)) -> (is_pure mutables pure_fns base) && (List.forall (fn (_, e) -> is_pure mutables pure_fns e) fields)
     | TECons ((h, t)) -> (is_pure mutables pure_fns h) && (is_pure mutables pure_fns t)
-    | TEConstruct ((_, None)) -> true
-    | TEConstruct ((_, Some e)) -> is_pure mutables pure_fns e
+    | TEConstruct ((_, None, _)) -> true
+    | TEConstruct ((_, Some e, _)) -> is_pure mutables pure_fns e
     | TEField ((_, _)) -> false
     | TEBinop ((op, l, r)) -> 
       do
