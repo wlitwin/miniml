@@ -18,10 +18,11 @@
    - after optimization: lowering invariants still hold (the optimizer must
      not reintroduce pre-lowering forms)
 
-   NOTE: the self-hosted compiler (self_host/main.mml) currently runs a
-   DIFFERENT pipeline — classify + lower only, no texpr_opt (texpr_opt.ml is
-   not in the translation set). Tracked as a structural divergence to resolve
-   (roadmap #3b). *)
+   The self-hosted compiler (self_host/pipeline.mml) runs this SAME sequence,
+   including Texpr_opt.optimize_program — texpr_opt.ml + pipeline.ml are in the
+   translation set and main.mml lowers through Pipeline.lower. (This closed the
+   former classify+lower-only divergence, roadmap #3b, in 50f3438; the two
+   compilers now run identical passes, which ir-parity validates.) *)
 
 exception Invariant_violation of string
 
