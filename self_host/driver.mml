@@ -1,0 +1,889 @@
+-- Compiler setup cache — allows self-hosted compiler to skip expensive
+-- setup_modules/setup_classes on subsequent compilations in the browser.
+-- Declared at top level so they resolve to __cache_has (not Driver.__cache_has).
+extern __cache_has : string -> bool
+extern __cache_get : string -> 'a
+extern __cache_set : string -> 'a -> unit
+
+-- The compiler DRIVER, factored out of the entry so it is reusable: the
+-- `compiler` binary (self_host/main.mml) and the all-in-one tool
+-- (self_host/mml.mml) both call into it. Holds the builtin/class/module setup,
+-- the emit-js/ir/llvm/native backends + the native toolchain glue (clang/MPS),
+-- and the CLI dispatch (run_cli). No top-level entry of its own — importing it
+-- does nothing until a caller invokes a pub function. (Path B, roadmap #16/#24.)
+module Driver =
+  open Token
+  open Ast
+  open Types
+  open Typechecker
+  open Match_tree
+  open Bytecode
+  open Compiler
+  open Serialize
+  open Js_codegen
+  open Lexer
+  open Parser
+
+  -- ---- Helpers ----
+
+  let rec list_iter f xs =
+    match xs with
+    | [] -> ()
+    | x :: rest -> f x; list_iter f rest
+
+  let rec list_iteri_aux f i xs =
+    match xs with
+    | [] -> ()
+    | x :: rest -> f i x; list_iteri_aux f (i + 1) rest
+
+  let list_iteri f xs = list_iteri_aux f 0 xs
+
+  -- ---- Native global tracking ----
+  -- We track native globals as a list of JSON fragments
+
+  let mut native_global_entries = ([] : string list)
+
+  -- Native-extern declarations for the LLVM backend. register_module_fn registers
+  -- module builtins (String.compare, Array.get, Sys.time, …) straight into the type
+  -- env, so unlike the OCaml reference compiler — whose parsed `module String {extern
+  -- …}` prelude lands these as TDExtern decls in setup_typed — they never reach the
+  -- native codegen's collect_module_externs (which scans program TDExterns to know
+  -- which names map to `mml_<m>_<f>` runtime calls). Without that table the codegen
+  -- can lower an APPLIED `String.compare a b` (explicit emit_named_call arm) but not a
+  -- first-class `List.sort String.compare`, which falls through emit_var to an
+  -- "unbound variable" panic. We mirror the OCaml architecture by recording each
+  -- registered module extern as a TDExtern here and feeding them to the native path.
+  let mut module_extern_decls = ([] : Typechecker.tprogram)
+
+  let register_native_ext idx name arity =
+    native_global_entries := serialize_native_ext idx name arity :: native_global_entries
+
+  let register_native_dict idx fields =
+    native_global_entries := serialize_native_dict idx fields :: native_global_entries
+
+  let build_native_globals_json () =
+    String.concat "," (List.rev native_global_entries)
+
+  -- ---- Builtin registration helpers ----
+
+  let add_global global_names name =
+    let idx = Dynarray.length global_names in
+    Dynarray.push global_names name;
+    idx
+
+  let register_module_fn (ctx : Typechecker.ctx) global_names mod_name fn_name ty arity =
+    let qualified = mod_name ^ "." ^ fn_name in
+    let idx = add_global global_names qualified in
+    register_native_ext idx qualified arity;
+    let max_gen = Typechecker.max_tgen_in_ty ty in
+    let scheme = if max_gen >= 0 do { quant = max_gen + 1; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = ty }
+                 else mono ty in
+    module_extern_decls := Typechecker.TDExtern (qualified, scheme) :: module_extern_decls;
+    let vars = (qualified, scheme) :: ctx.vars in
+    ((fn_name, scheme), { ctx with vars = vars })
+
+  let register_class_in_ctx (ctx : Typechecker.ctx) name tyvars methods =
+    let num_params = List.length tyvars in
+    let class_def = {
+      class_name = name;
+      class_params = tyvars;
+      class_methods = methods;
+      class_fundeps = [];
+    } in
+    let new_vars = List.fold (fn vars (mname, mty) ->
+      let max_gen = Typechecker.max_tgen_in_ty mty in
+      let quant = if max_gen + 1 > num_params do max_gen + 1 else num_params in
+      (mname, { quant = quant; equant = 0; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body = mty }) :: vars
+    ) ctx.vars methods in
+    let type_env = { ctx.type_env with classes = class_def :: ctx.type_env.classes } in
+    { ctx with vars = new_vars; type_env = type_env }
+
+  let register_native_instance (ctx : Typechecker.ctx) global_names class_name tys methods =
+    -- methods: (method_name, ext_name, arity) list
+    let dname = dict_name class_name tys in
+    let idx = add_global global_names dname in
+    let dict_fields = List.map (fn (mname, ext_name, arity) -> (mname, ext_name, arity)) methods in
+    register_native_dict idx dict_fields;
+    -- Also register individual method globals for direct dispatch (sorted by method name)
+    let sorted = List.sort (fn (a, _, _) (b, _, _) -> String.compare a b) methods in
+    List.iter (fn (mname, ext_name, arity) ->
+      let midx = add_global global_names (dname ^ "$" ^ mname) in
+      register_native_ext midx ext_name arity
+    ) sorted;
+    let inst = {
+      inst_class = class_name;
+      inst_tys = tys;
+      inst_dict_name = dname;
+      inst_constraints = [];
+    } in
+    let type_env = { ctx.type_env with instances = inst :: ctx.type_env.instances } in
+    { ctx with type_env = type_env }
+
+  -- ---- JS capture mode ----
+  -- When true, compile_setup captures typed ASTs and skips bytecode compilation
+
+  let mut js_capture_mode = false
+  let mut captured_typed_setups = ([] : (Types.type_env * Typechecker.tprogram) list)
+
+  -- ---- Helpers for extern registration ----
+
+  let rec arity_of_type ty =
+    match ty with
+    | TArrow (_, _, ret) -> 1 + arity_of_type ret
+    | _ -> 0
+
+  let find_global_index global_names name =
+    let len = Dynarray.length global_names in
+    let rec find i =
+      if i >= len do -1
+      else if (Dynarray.get global_names i) = name do i
+      else find (i + 1) in
+    find 0
+
+  let register_externs_from_program typed_program global_names =
+    List.iter (fn decl ->
+      match decl with
+      | Typechecker.TDExtern (name, scheme) ->
+        let idx = find_global_index global_names name in
+        if idx >= 0 do
+          let arity = arity_of_type scheme.body in
+          register_native_ext idx name arity
+        end
+      | _ -> ()
+    ) typed_program
+
+  -- ---- Compile a setup source string ----
+  -- Returns (ctx, proto, typed_program). The typed program is exposed so
+  -- callers can inspect declarations (e.g. setup_classes collects the extern
+  -- signatures of stdlib/builtins.mml for the Stdlib module).
+
+  let compile_setup (ctx : Typechecker.ctx) global_names mutable_globals source =
+    let tokens = Lexer.tokenize source in
+    let program = Parser.parse_program tokens in
+    let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+    let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+    let typed_program2 = Pipeline.lower true [] ctx2.type_env typed_program2 in
+    if js_capture_mode do
+      captured_typed_setups := List.concat captured_typed_setups [(ctx2.type_env, typed_program2)];
+      (ctx2, { name = ""; arity = 0; num_locals = 0;
+               code = Array.of_list []; constants = Array.of_list [];
+               line_table = Array.of_list [] }, typed_program2)
+    else
+      let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+      register_externs_from_program typed_program2 global_names;
+      (ctx2, compiled.main, typed_program2)
+
+  -- ---- Arrow type helpers ----
+
+  let arr a b = TArrow (a, EffEmpty, b)
+  let arr2 a b c = arr a (arr b c)
+  let arr3 a b c d = arr a (arr b (arr c d))
+  -- IO-effectful arrows: the IO effect sits on the LAST (fully-applied) arrow,
+  -- matching the OCaml ref's `... -> T / IO` signatures for Sys/IO builtins.
+  -- Without this the self-host typed these as pure, diverging from the reference
+  -- compiler (a value-invisible builtin-signature drift the IR-parity runner
+  -- surfaced; roadmap #13 / the [#2] single-source-of-truth gap for Sys/IO).
+  let io_eff = EffRow ("IO", [], EffEmpty)
+  let arr_io a b = TArrow (a, io_eff, b)
+  let arr2_io a b c = arr a (arr_io b c)
+
+  -- ---- Setup builtins ----
+  -- Core builtin signatures live in stdlib/builtins.mml — the single source of
+  -- truth shared with the OCaml reference compiler (lib/interp.ml). They are
+  -- loaded by setup_classes (below); setup_builtins only creates the empty
+  -- containers, mirroring lib/interp.ml's structure.
+
+  let setup_builtins () =
+    let global_names = Dynarray.create 256 "" in
+    let mutable_globals = Hashtbl.create 8 in
+    let ctx = Typechecker.empty_ctx in
+    (ctx, global_names, mutable_globals)
+
+  -- ---- Setup type classes and instances from stdlib source ----
+
+  let setup_classes (ctx : Typechecker.ctx) global_names mutable_globals =
+    let mut ctx = ctx in
+    let mut setup_protos = ([] : Bytecode.prototype list) in
+
+    let load name =
+      let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals
+        (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
+      ctx := ctx2; setup_protos := proto :: setup_protos
+    in
+
+    -- Load core builtin signatures FIRST (stdlib/builtins.mml — the single
+    -- source of truth shared with lib/interp.ml). compile_setup registers a
+    -- native ext for each extern by name; here we collect the schemes for the
+    -- Stdlib module and bind Stdlib.-qualified aliases.
+    let (ctx2, builtins_proto, builtins_program) = compile_setup ctx global_names mutable_globals
+      (IO.read_file "stdlib/builtins.mml") in
+    ctx := ctx2; setup_protos := builtins_proto :: setup_protos;
+    let stdlib_pub_vars = List.filter_map (fn decl ->
+      match decl with
+      | Typechecker.TDExtern (name, scheme) -> Some (name, scheme)
+      | _ -> None
+    ) builtins_program in
+    -- Bind Stdlib.-qualified aliases (impl registered under the unqualified
+    -- ext name; type bound in ctx.vars)
+    list_iter (fn (name, scheme) ->
+      let stdlib_name = "Stdlib." ^ name in
+      let sidx = add_global global_names stdlib_name in
+      register_native_ext sidx name (arity_of_type scheme.body);
+      ctx := { ctx with vars = (stdlib_name, scheme) :: ctx.vars }
+    ) stdlib_pub_vars;
+
+    -- Load class definitions, primitive instances, and stdlib source
+    -- (classes.mml defines Num, Eq, Ord, Bitwise, Show, Iter, Index classes
+    --  and their primitive instances via extern declarations)
+    load "classes";
+    load "option_type";
+    load "iter";
+    load "map_class";
+    load "show";
+    -- Build Stdlib module_info
+    let stdlib_constructors =
+      List.filter (fn (name, _) ->
+        name = "None" || name = "Some"
+      ) ctx.type_env.constructors
+    in
+    let stdlib_info = {
+      mod_name = "Stdlib"; mod_pub_vars = stdlib_pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_newtypes = [];
+      mod_pub_constructors = stdlib_constructors;
+      mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Stdlib", stdlib_info) :: ctx.type_env.modules } };
+
+    (ctx, List.rev setup_protos)
+
+  -- ---- Setup all modules (interleaved native + source to match OCaml register_all order) ----
+
+  let setup_modules (ctx : Typechecker.ctx) global_names mutable_globals =
+    let mut pub_vars = ([] : (string * scheme) list) in
+    let mut ctx = ctx in
+    let mut setup_protos = ([] : Bytecode.prototype list) in
+
+    let register_fn mod_name fn_name ty arity =
+      let (pv, ctx2) = register_module_fn ctx global_names mod_name fn_name ty arity in
+      pub_vars := pv :: pub_vars;
+      ctx := ctx2
+    in
+
+    let load name =
+      let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals
+        (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
+      ctx := ctx2; setup_protos := proto :: setup_protos
+    in
+
+    let load_source source =
+      let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals source in
+      ctx := ctx2; setup_protos := proto :: setup_protos
+    in
+
+    -- String module (26 native fns)
+    pub_vars := [];
+    register_fn "String" "length" (arr TString TInt) 1;
+    register_fn "String" "sub" (arr3 TString TInt TInt TString) 3;
+    register_fn "String" "split" (arr2 TString TString (TList TString)) 2;
+    register_fn "String" "trim" (arr TString TString) 1;
+    register_fn "String" "starts_with" (arr2 TString TString TBool) 2;
+    register_fn "String" "contains" (arr2 TString TString TBool) 2;
+    register_fn "String" "replace" (arr3 TString TString TString TString) 3;
+    register_fn "String" "to_int" (arr TString (TVariant ("option", [TInt]))) 1;
+    register_fn "String" "to_float" (arr TString (TVariant ("option", [TFloat]))) 1;
+    register_fn "String" "uppercase" (arr TString TString) 1;
+    register_fn "String" "lowercase" (arr TString TString) 1;
+    register_fn "String" "get" (arr2 TString TInt TByte) 2;
+    register_fn "String" "to_bytes" (arr TString (TList TByte)) 1;
+    register_fn "String" "of_bytes" (arr (TList TByte) TString) 1;
+    register_fn "String" "to_byte_array" (arr TString (TArray TByte)) 1;
+    register_fn "String" "of_byte_array" (arr (TArray TByte) TString) 1;
+    register_fn "String" "to_runes" (arr TString (TList TRune)) 1;
+    register_fn "String" "of_runes" (arr (TList TRune) TString) 1;
+    register_fn "String" "get_rune" (arr2 TString TInt TRune) 2;
+    register_fn "String" "of_byte" (arr TByte TString) 1;
+    register_fn "String" "rune_length" (arr TString TInt) 1;
+    register_fn "String" "make" (arr2 TInt TByte TString) 2;
+    register_fn "String" "index_opt" (arr2 TString TByte (TVariant ("option", [TInt]))) 2;
+    register_fn "String" "rindex_opt" (arr2 TString TByte (TVariant ("option", [TInt]))) 2;
+    register_fn "String" "concat" (arr2 TString (TList TString) TString) 2;
+    register_fn "String" "compare" (arr2 TString TString TInt) 2;
+    let string_info = {
+      mod_name = "String"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_newtypes = []; mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("String", string_info) :: ctx.type_env.modules } };
+    -- String.iter (source-defined, adds 1 global)
+    load_source "module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end";
+    -- String.map (source-defined, adds 1 global)
+    load_source "module String = pub let map f s = let n = String.length s in let rec go i = if i >= n do [] else (f (String.get s i)) :: (go (i + 1)) in String.of_bytes (go 0) end";
+
+    -- List module (source)
+    load "list";
+
+    -- Array module (8 native fns)
+    pub_vars := [];
+    register_fn "Array" "make" (arr2 TInt (TGen 0) (TArray (TGen 0))) 2;
+    register_fn "Array" "get" (arr2 (TArray (TGen 0)) TInt (TGen 0)) 2;
+    register_fn "Array" "set" (arr3 (TArray (TGen 0)) TInt (TGen 0) TUnit) 3;
+    register_fn "Array" "length" (arr (TArray (TGen 0)) TInt) 1;
+    register_fn "Array" "to_list" (arr (TArray (TGen 0)) (TList (TGen 0))) 1;
+    register_fn "Array" "of_list" (arr (TList (TGen 0)) (TArray (TGen 0))) 1;
+    register_fn "Array" "copy" (arr (TArray (TGen 0)) (TArray (TGen 0))) 1;
+    register_fn "Array" "sub" (arr3 (TArray (TGen 0)) TInt TInt (TArray (TGen 0))) 3;
+    let array_info = {
+      mod_name = "Array"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_newtypes = []; mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Array", array_info) :: ctx.type_env.modules } };
+
+    -- array_extra (source)
+    load "array_extra";
+
+    -- IO module (5 native fns)
+    pub_vars := [];
+    register_fn "IO" "read_file" (arr_io TString TString) 1;
+    register_fn "IO" "write_file" (arr2_io TString TString TUnit) 2;
+    register_fn "IO" "append_file" (arr2_io TString TString TUnit) 2;
+    register_fn "IO" "read_line" (arr_io TUnit TString) 1;
+    register_fn "IO" "file_exists" (arr_io TString TBool) 1;
+    register_fn "IO" "write" (arr_io TString TUnit) 1;
+    register_fn "IO" "write_err" (arr_io TString TUnit) 1;
+    register_fn "IO" "flush" (arr_io TUnit TUnit) 1;
+    register_fn "IO" "read_bytes" (arr_io TInt TString) 1;
+    let io_info = {
+      mod_name = "IO"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_newtypes = []; mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("IO", io_info) :: ctx.type_env.modules } };
+
+    -- Sys module (4 native fns)
+    pub_vars := [];
+    register_fn "Sys" "args" (arr_io TUnit (TList TString)) 1;
+    register_fn "Sys" "getenv" (arr_io TString (TVariant ("option", [TString]))) 1;
+    register_fn "Sys" "exit" (arr_io TInt TUnit) 1;
+    register_fn "Sys" "time" (arr_io TUnit TFloat) 1;
+    let sys_info = {
+      mod_name = "Sys"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_newtypes = []; mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Sys", sys_info) :: ctx.type_env.modules } };
+
+    -- Source-defined modules (matching OCaml register_all order)
+    load "math";
+    load "result";
+    load "byte";
+    load "rune";
+    load "map";
+    load "set";
+    load "enum";
+    load "seq";
+    load "option";
+    load "buffer";
+    load "fmt";
+    load "hash";
+    load "hashtbl";
+    load "ref";
+    load "dynarray";
+    load "compat";
+    load "fs";
+    load "path";
+    load "process";
+    load "digest";
+
+    -- Runtime module (native, registered last to match OCaml ordering)
+    pub_vars := [];
+    register_fn "Runtime" "eval" (arr TString TUnit) 1;
+    register_fn "Runtime" "eval_file" (arr TString TUnit) 1;
+    let runtime_info = {
+      mod_name = "Runtime"; mod_pub_vars = pub_vars;
+      mod_pub_mutable_vars = []; mod_pub_types = []; mod_opaque_types = [];
+      mod_newtypes = []; mod_pub_constructors = []; mod_instances = []; mod_submodules = []; mod_pub_classes = [];
+    } in
+    ctx := { ctx with type_env = { ctx.type_env with modules = ("Runtime", runtime_info) :: ctx.type_env.modules } };
+
+    (ctx, List.rev setup_protos)
+
+  -- ---- Batch compilation ----
+
+  let run_batch manifest_file =
+    handle
+      let manifest = IO.read_file manifest_file in
+      let files = List.filter (fn s -> s <> "") (String.split "\n" manifest) in
+
+      -- Setup type environment (done once)
+      let (ctx, global_names, mutable_globals) = setup_builtins () in
+      let (ctx, class_protos) = setup_classes ctx global_names mutable_globals in
+      let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
+      let setup_protos = List.concat class_protos module_protos in
+
+      -- Snapshot post-setup mutable state
+      let base_gn_len = Dynarray.length global_names in
+      let base_native = native_global_entries in
+      let base_mutable = Hashtbl.to_list mutable_globals in
+
+      -- Compile each file
+      list_iter (fn filename ->
+        -- Reset state to post-setup snapshot
+        global_names.count := base_gn_len;
+        native_global_entries := base_native;
+        Hashtbl.clear mutable_globals;
+        list_iter (fn (k, v) -> Hashtbl.set mutable_globals k v) base_mutable;
+
+        handle
+          let source = IO.read_file filename in
+          let tokens = Lexer.tokenize source in
+          let program = Parser.parse_program tokens in
+          let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+          let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let typed_program2 = Pipeline.lower true [] ctx2.type_env typed_program2 in
+          let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+          register_externs_from_program typed_program2 global_names;
+          let ng_json = build_native_globals_json () in
+          let json = Serialize.serialize_bundle global_names ng_json setup_protos compiled.main in
+          print json;
+          print "===BATCH-SEP==="
+        with
+        | return x -> x
+        | lex_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | parse_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | type_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | compile_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | unify_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+      ) files
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+
+  -- ---- Emit JS ----
+
+  let run_emit_js args =
+    handle
+      -- Enable JS capture mode — compile_setup will capture typed ASTs
+      -- and skip bytecode compilation
+      js_capture_mode := true;
+      captured_typed_setups := [];
+
+      let (ctx, global_names, mutable_globals) =
+        if __cache_has "emit_js" do
+          let (c, gn, mg, cts) = __cache_get "emit_js" in
+          captured_typed_setups := cts;
+          (c, gn, mg)
+        else
+          let (ctx, global_names, mutable_globals) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+          let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+          __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+          (ctx, global_names, mutable_globals)
+      in
+
+      let filename = match args with
+        | _ :: file :: _ -> file
+        | _ -> failwith "Usage: compiler --emit-js <source-file>"
+      in
+      let source = IO.read_file filename in
+
+      -- Typecheck user source
+      let tokens = Lexer.tokenize source in
+      let program = Parser.parse_program tokens in
+      let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+      let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+      let typed_program2 = Pipeline.lower true [] ctx2.type_env typed_program2 in
+
+      -- Generate JS
+      let js = Js_codegen.compile_program_with_stdlib ctx2.type_env captured_typed_setups typed_program2 in
+      print js
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("JS codegen error: " ^ msg)
+
+  -- ---- Emit IR (lowered-IR S-expression dump, roadmap #13) ----
+
+  let run_emit_ir args =
+    handle
+      -- Capture mode populates captured_typed_setups with the typed stdlib so the
+      -- optimizer sees the same extern-purity info the OCaml ref passes.
+      js_capture_mode := true;
+      captured_typed_setups := [];
+
+      let (ctx, global_names, mutable_globals) =
+        if __cache_has "emit_js" do
+          let (c, gn, mg, cts) = __cache_get "emit_js" in
+          captured_typed_setups := cts;
+          (c, gn, mg)
+        else
+          let (ctx, global_names, mutable_globals) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+          let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+          __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+          (ctx, global_names, mutable_globals)
+      in
+
+      let filename = match args with
+        | _ :: file :: _ -> file
+        | _ -> failwith "Usage: compiler --emit-ir <source-file>"
+      in
+      let source = IO.read_file filename in
+
+      let tokens = Lexer.tokenize source in
+      let program = Parser.parse_program tokens in
+      let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+      let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+      let stdlib_programs = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
+      let typed_program2 = Pipeline.lower true stdlib_programs ctx2.type_env typed_program2 in
+
+      print (Ir_serialize.serialize_program typed_program2)
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("IR serialize error: " ^ msg)
+
+  -- ---- Emit native LLVM IR (roadmap #16 Gap-1: self-host native backend) ----
+
+  -- Host glue: derive the LLVM target triple from `uname` (mirrors the OCaml
+  -- driver's detect_target_triple). Lives here in main.mml as a bootstrap-special
+  -- — the system-interaction layer — so Codegen stays a pure IR generator that
+  -- takes the triple as an input.
+  let detect_target_triple () =
+    let run_trim cmd cmd_args =
+      let (_, out, _) = Process.run cmd cmd_args in
+      String.trim out
+    in
+    let arch = match run_trim "uname" ["-m"] with "" -> "x86_64" | s -> s in
+    let os = match run_trim "uname" ["-s"] with "" -> "Linux" | s -> s in
+    if os = "Darwin" do
+      let ver = match run_trim "sw_vers" ["-productVersion"] with "" -> "11.0" | s -> s in
+      let major = match String.split "." ver with v :: _ -> v | [] -> "11" in
+      (if arch = "arm64" do "arm64" else "x86_64") ^ "-apple-macosx" ^ major ^ ".0.0"
+    else if arch = "aarch64" do "aarch64-unknown-linux-gnu"
+    else "x86_64-unknown-linux-gnu"
+
+  -- Compile a source file to a single combined LLVM IR unit (stdlib + user program
+  -- in one .ll). Shared by --emit-llvm (print it) and --emit-native (clang it to a
+  -- binary). Mirrors the OCaml driver's compile_ir. Frontend/codegen effects
+  -- (lex/parse/type/codegen errors) are handled by the CALLER's `handle`.
+  pub let build_llvm filename =
+    -- Capture mode so the stdlib setups become stdlib_programs, matching the
+    -- regime Codegen expects (and the OCaml driver's lower_all).
+    js_capture_mode := true;
+    captured_typed_setups := [];
+    let (ctx, _global_names, _mutable_globals) =
+      if __cache_has "emit_js" do
+        let (c, gn, mg, cts) = __cache_get "emit_js" in
+        captured_typed_setups := cts;
+        (c, gn, mg)
+      else
+        let (ctx, global_names, mutable_globals) = setup_builtins () in
+        let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+        let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+        __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+        (ctx, global_names, mutable_globals)
+    in
+    let source = IO.read_file filename in
+    let tokens = Lexer.tokenize source in
+    let program = Parser.parse_program tokens in
+    let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+    let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+    -- User program lowered with the (unlowered) stdlib programs for extern-purity
+    -- info; each stdlib program then lowered on its own. Same split as the driver.
+    let stdlib_raw = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
+    let typed_program2 = Pipeline.lower true stdlib_raw ctx2.type_env typed_program2 in
+    let stdlib_programs = List.map (fn p -> let (te, prog) = p in (te, Pipeline.lower true [] te prog)) captured_typed_setups in
+    -- Expose the module builtins' externs (String.compare, Array.get, …) to the
+    -- native codegen's collect_module_externs as one synthetic stdlib unit of
+    -- TDExterns, matching the OCaml driver's setup_typed. TDExterns lower to nothing
+    -- and emit_decl ignores them, so this only populates the name→arity table that
+    -- lets first-class uses of these builtins resolve.
+    let extern_unit = (ctx2.type_env, Pipeline.lower true [] ctx2.type_env module_extern_decls) in
+    let stdlib_programs = List.concat stdlib_programs [extern_unit] in
+    let triple = detect_target_triple () in
+    Codegen.compile_program_with_stdlib triple ctx2.type_env stdlib_programs typed_program2
+
+  -- ---- Native runtime / toolchain discovery (host glue) ----
+
+  let find_runtime_file name =
+    let p = "native_rt/" ^ name in
+    if IO.file_exists p do p
+    else failwith ("cannot find " ^ p ^ " (run --emit-native from the project root)")
+
+  let detect_context_asm () =
+    let (_, arch_raw, _) = Process.run "uname" ["-m"] in
+    let arch = String.trim arch_raw in
+    if (arch = "arm64") || (arch = "aarch64") do find_runtime_file "context_arm64.S"
+    else find_runtime_file "context_x86_64.S"
+
+  -- Locate the vendored MPS source (the sole garbage collector). Boehm is gone.
+  let find_mps_dir () =
+    if IO.file_exists "third_party/mps/code/mps.c" do "third_party/mps/code"
+    else failwith "cannot find third_party/mps/code (native GC needs the project root)"
+
+  -- Print the combined LLVM IR for a source file (mirrors `make emit-ir`).
+  let run_emit_llvm args =
+    handle
+      let filename = match args with
+        | _ :: file :: _ -> file
+        | _ -> failwith "Usage: compiler --emit-llvm <source-file>"
+      in
+      print (build_llvm filename)
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("native codegen error: " ^ msg)
+
+  -- Compile a source file to a native executable: build the .ll, then drive clang
+  -- with the C runtime, the arch context-switch asm, and the MPS garbage collector
+  -- (mml_gc.c + the mps.c amalgamation). This is the hand-written native driver
+  -- (roadmap #16 Gap-1) — the self-hosted compiler producing real binaries.
+  pub let run_emit_native filename out_path =
+    handle
+      let ll = build_llvm filename in
+      let ll_path = out_path ^ ".ll" in
+      IO.write_file ll_path ll;
+      let runtime_c = find_runtime_file "runtime.c" in
+      let mml_gc_c = find_runtime_file "mml_gc.c" in
+      let context_asm = detect_context_asm () in
+      let mps_dir = find_mps_dir () in
+      -- One clang invocation compiles+links the .ll, runtime.c, context asm, mml_gc.c
+      -- and the MPS amalgamation. MPS is the only GC; no bdw-gc.
+      let clang_args =
+        List.concat ["-O2"; "-I" ^ mps_dir]
+          (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
+            ["-o"; out_path]) in
+      let (code, _out, cerr) = Process.run "clang" clang_args in
+      if code <> 0 do
+        failwith ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr)
+      else
+        print ("compiled " ^ filename ^ " -> " ^ out_path)
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("native codegen error: " ^ msg)
+
+  -- Quiet native build for the `mml` tool: same as run_emit_native but returns a
+  -- success bool (printing any error to stderr) instead of printing "compiled …"
+  -- / failwith-ing, so `mml build`/`run` control their own output. run_emit_native
+  -- (the `compiler` CLI path the gate exercises) is left untouched.
+  pub let build_native_quiet filename out_path =
+    handle
+      let ll = build_llvm filename in
+      let ll_path = out_path ^ ".ll" in
+      IO.write_file ll_path ll;
+      let runtime_c = find_runtime_file "runtime.c" in
+      let mml_gc_c = find_runtime_file "mml_gc.c" in
+      let context_asm = detect_context_asm () in
+      let mps_dir = find_mps_dir () in
+      let clang_args =
+        List.concat ["-O2"; "-I" ^ mps_dir]
+          (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
+            ["-o"; out_path]) in
+      let (code, _out, cerr) = Process.run "clang" clang_args in
+      if code <> 0 do
+        IO.write_err ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr ^ "\n"); false
+      else true
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in IO.write_err (msg ^ "\n"); false
+    | parse_error arg _k -> let (msg, _loc) = arg in IO.write_err (msg ^ "\n"); false
+    | type_error arg _k -> let (msg, _loc) = arg in IO.write_err (msg ^ "\n"); false
+    | compile_error msg _k -> IO.write_err (msg ^ "\n"); false
+    | unify_error msg _k -> IO.write_err (msg ^ "\n"); false
+    | codegen_error msg _k -> IO.write_err ("native codegen error: " ^ msg ^ "\n"); false
+
+  -- ---- Batch emit-IR (one invocation, IR per file, for the IR-parity gate) ----
+
+  let run_batch_emit_ir manifest_file =
+    handle
+      -- Capture mode so the stdlib setups become stdlib_programs (matching the
+      -- OCaml ref's regime), populated once during setup.
+      js_capture_mode := true;
+      captured_typed_setups := [];
+      let (ctx, global_names, mutable_globals) = setup_builtins () in
+      let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+      let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+      let stdlib_programs = List.map (fn p -> let (_, prog) = p in prog) captured_typed_setups in
+
+      let manifest = IO.read_file manifest_file in
+      let files = List.filter (fn s -> s <> "") (String.split "\n" manifest) in
+      list_iter (fn filename ->
+        handle
+          let source = IO.read_file filename in
+          let tokens = Lexer.tokenize source in
+          let program = Parser.parse_program tokens in
+          let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+          let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let typed_program2 = Pipeline.lower true stdlib_programs ctx2.type_env typed_program2 in
+          print (Ir_serialize.serialize_program typed_program2);
+          print "===BATCH-SEP==="
+        with
+        | return x -> x
+        | lex_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | parse_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | type_error arg _k -> let (msg, _loc) = arg in print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | compile_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+        | unify_error msg _k -> print ("COMPILE-ERROR:" ^ msg); print "===BATCH-SEP==="
+      ) files
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+    | compile_error msg _k -> failwith msg
+    | unify_error msg _k -> failwith msg
+    | codegen_error msg _k -> failwith ("IR serialize error: " ^ msg)
+
+  -- Typecheck a single source file (setup + lex + parse + typecheck +
+  -- transform); no diagnostics layer in the self-host yet, so on failure it
+  -- prints the first error to stderr and returns false, true otherwise. Used by
+  -- `mml check`.
+  pub let check_file filename =
+    handle
+      js_capture_mode := true;
+      captured_typed_setups := [];
+      let (ctx, _gn, _mg) =
+        if __cache_has "emit_js" do
+          let (c, gn, mg, cts) = __cache_get "emit_js" in
+          captured_typed_setups := cts;
+          (c, gn, mg)
+        else
+          let (ctx, global_names, mutable_globals) = setup_builtins () in
+          let (ctx, _class_protos) = setup_classes ctx global_names mutable_globals in
+          let (ctx, _module_protos) = setup_modules ctx global_names mutable_globals in
+          __cache_set "emit_js" (ctx, global_names, mutable_globals, captured_typed_setups);
+          (ctx, global_names, mutable_globals)
+      in
+      let source = IO.read_file filename in
+      let tokens = Lexer.tokenize source in
+      let program = Parser.parse_program tokens in
+      let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+      let _ = Typechecker.transform_constraints ctx2 typed_program in
+      true
+    with
+    | return x -> x
+    | lex_error arg _k -> let (msg, _loc) = arg in IO.write_err (filename ^ ": " ^ msg ^ "\n"); false
+    | parse_error arg _k -> let (msg, _loc) = arg in IO.write_err (filename ^ ": " ^ msg ^ "\n"); false
+    | type_error arg _k -> let (msg, _loc) = arg in IO.write_err (filename ^ ": " ^ msg ^ "\n"); false
+    | compile_error msg _k -> IO.write_err (filename ^ ": " ^ msg ^ "\n"); false
+    | unify_error msg _k -> IO.write_err (filename ^ ": " ^ msg ^ "\n"); false
+
+  -- ---- Main entry point (the `compiler` CLI; main.mml calls this) ----
+
+  pub let run_cli args =
+    let batch_file = match args with
+      | _ :: "--batch" :: f :: _ -> Some f
+      | _ -> None
+    in
+    let batch_ir_file = match args with
+      | _ :: "--batch-emit-ir" :: f :: _ -> Some f
+      | _ -> None
+    in
+    let emit_js = List.exists (fn a -> a = "--emit-js") args in
+    let emit_ir = List.exists (fn a -> a = "--emit-ir") args in
+    let emit_llvm = List.exists (fn a -> a = "--emit-llvm") args in
+    let emit_native = List.exists (fn a -> a = "--emit-native") args in
+    let no_optimize = List.exists (fn a -> a = "--no-optimize") args in
+    if no_optimize do Ref.set Compiler.optimize_enabled false end;
+    let args = List.filter (fn a -> a <> "--no-optimize" && a <> "--emit-js" && a <> "--emit-ir" && a <> "--emit-llvm" && a <> "--emit-native") args in
+    match batch_ir_file with
+    | Some f -> run_batch_emit_ir f
+    | None ->
+    match batch_file with
+    | Some f -> run_batch f
+    | None ->
+      if emit_ir do
+        run_emit_ir args
+      else if emit_llvm do
+        run_emit_llvm args
+      else if emit_native do
+        -- --emit-native <source> -o <output>: parse the -o target, the remaining
+        -- non-flag arg is the source.
+        let rec find_out xs = match xs with
+          | "-o" :: o :: _ -> o
+          | _ :: rest -> find_out rest
+          | [] -> "a.out"
+        in
+        let out_path = find_out args in
+        let filename = match List.filter (fn a -> (a <> "-o") && (a <> out_path)) args with
+          | _ :: f :: _ -> f
+          | _ -> failwith "Usage: compiler --emit-native <source-file> -o <output>"
+        in
+        run_emit_native filename out_path
+      else if emit_js do
+        run_emit_js args
+      else
+        handle
+          let filename = match args with
+            | _ :: "--emit-json" :: file :: _ -> file
+            | _ :: file :: _ -> file
+            | _ -> failwith "Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>"
+          in
+          let source = IO.read_file filename in
+
+          -- Setup type environment (with caching)
+          let (ctx, global_names, mutable_globals, setup_protos, base_gn_len, base_native, base_mutable) =
+            if __cache_has "emit_json" do
+              __cache_get "emit_json"
+            else
+              let (ctx, global_names, mutable_globals) = setup_builtins () in
+              let (ctx, class_protos) = setup_classes ctx global_names mutable_globals in
+              let (ctx, module_protos) = setup_modules ctx global_names mutable_globals in
+              let setup_protos = List.concat class_protos module_protos in
+              let base_gn_len = Dynarray.length global_names in
+              let base_native = native_global_entries in
+              let base_mutable = Hashtbl.to_list mutable_globals in
+              __cache_set "emit_json" (ctx, global_names, mutable_globals, setup_protos, base_gn_len, base_native, base_mutable);
+              (ctx, global_names, mutable_globals, setup_protos, base_gn_len, base_native, base_mutable)
+          in
+
+          -- Reset mutable state to post-setup snapshot
+          global_names.count := base_gn_len;
+          native_global_entries := base_native;
+          Hashtbl.clear mutable_globals;
+          list_iter (fn (k, v) -> Hashtbl.set mutable_globals k v) base_mutable;
+
+          -- Compile user source
+          let tokens = Lexer.tokenize source in
+          let program = Parser.parse_program tokens in
+          let (ctx2, typed_program) = Typechecker.check_program_in_ctx ctx program in
+          let typed_program2 = Typechecker.transform_constraints ctx2 typed_program in
+          let typed_program2 = Pipeline.lower true [] ctx2.type_env typed_program2 in
+          let compiled = Compiler.compile_program_with_globals ctx2.type_env global_names mutable_globals typed_program2 in
+          register_externs_from_program typed_program2 global_names;
+
+          -- Serialize
+          let ng_json = build_native_globals_json () in
+          let json = Serialize.serialize_bundle global_names ng_json setup_protos compiled.main in
+          print json
+        with
+        | return x -> x
+        | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
+        | parse_error arg _k -> let (msg, _loc) = arg in failwith msg
+        | type_error arg _k -> let (msg, _loc) = arg in failwith msg
+        | compile_error msg _k -> failwith msg
+        | unify_error msg _k -> failwith msg
+end

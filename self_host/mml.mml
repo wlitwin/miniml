@@ -6,10 +6,12 @@
 --   get      — fetch a dependency and record it in mml.mod (Fetch + Semver)
 --   version  — print the version
 --   help     — usage
--- run / build / check still go through the compiler entry (main.mml's flag
--- interface); folding them in here is the next step, once the compiler driver
--- (builtin setup + build_llvm) is factored out of main.mml into a reusable
--- module. Hand-written, like main.mml (the entry is inherently per-host).
+--   run <target> [args]      native-compile and run a file or project
+--   build [-o OUT] <target>  native-compile to an executable
+--   check <files/dirs>       typecheck and report errors (exit 1 on any)
+-- run/build/check call the compiler DRIVER (self_host/driver.mml, factored out
+-- of main.mml's entry so it is reusable). Hand-written, like main.mml (the entry
+-- is inherently per-host).
 
 module Mml =
   let version = "0.1.0-dev"
@@ -17,11 +19,26 @@ module Mml =
   let usage =
     "mml - the MiniML toolchain (self-hosted)\n\n" ^
     "Usage: mml <command> [args]\n\n" ^
+    "A <target> is a single .mml file or a project directory (one with an\n" ^
+    "mml.mod manifest; each foo.mml becomes module Foo, main.mml is the entry).\n\n" ^
     "Commands:\n" ^
+    "  run <target> [args...]    native-compile and run\n" ^
+    "  build [-o OUT] <target>   native-compile to an executable\n" ^
     "  fmt [-w] <files...>       format to stdout, or rewrite in place with -w\n" ^
+    "  check <files/dirs...>     typecheck and report errors (exit 1 on any)\n" ^
     "  get <url>[@version]       fetch a dependency and add it to mml.mod\n" ^
     "  version                   print the version\n" ^
     "  help                      show this help\n"
+
+  -- Resolve a build/run/check target to a single source file on disk: a project
+  -- directory's combined source (libs wrapped as modules + the entry) written to
+  -- a temp file, or the file itself. May perform build_error (project load).
+  let source_file_of (target : string) : string =
+    if Project.is_project target do
+      let combined = Project.combined_source (Project.load target) in
+      let tmp = "/tmp/mml_combined.mml" in
+      IO.write_file tmp combined; tmp
+    else target
 
   -- fmt: format each file to stdout, or rewrite it in place with -w.
   let cmd_fmt args =
@@ -90,15 +107,81 @@ module Mml =
       end;
       record_require url version
 
+  -- build [-o OUT] <target>: native-compile a file/project to an executable.
+  let cmd_build args =
+    let rec parse out target xs =
+      match xs with
+      | "-o" :: o :: rest -> parse (Some o) target rest
+      | f :: rest -> parse out (Some f) rest
+      | [] -> (out, target)
+    in
+    let (out_opt, target_opt) = parse None None args in
+    match target_opt with
+    | None -> IO.write_err "mml build: expected a source file or project directory\n"; Sys.exit 1
+    | Some target ->
+      let out =
+        match out_opt with
+        | Some o -> o
+        | None -> if Project.is_project target do Path.basename target else Path.remove_extension target
+      in
+      do try
+        let src = source_file_of target in
+        if Driver.build_native_quiet src out do
+          IO.write ("compiled " ^ target ^ " -> " ^ out ^ "\n")
+        else Sys.exit 1
+      with
+      | build_error msg -> IO.write_err ("mml build: " ^ msg ^ "\n"); Sys.exit 1
+      end
+
+  -- run <target> [args]: native-compile to a temp binary, then exec it.
+  let cmd_run target args =
+    do try
+      let src = source_file_of target in
+      let bin = "/tmp/mml_run_bin" in
+      if Driver.build_native_quiet src bin do
+        let (code, out, err) = Process.run bin args in
+        IO.write out; IO.write_err err; Sys.exit code
+      else Sys.exit 1
+    with
+    | build_error msg -> IO.write_err ("mml run: " ^ msg ^ "\n"); Sys.exit 1
+    end
+
+  -- check <files/dirs>: typecheck each, report ok / errors; exit 1 on any error.
+  let cmd_check files =
+    let rec go ok fs =
+      match fs with
+      | [] -> ok
+      | f :: rest ->
+        let target_ok =
+          do try Driver.check_file (source_file_of f)
+          with | build_error msg -> IO.write_err ("mml check: " ^ msg ^ "\n"); false
+          end
+        in
+        if target_ok do IO.write (f ^ ": ok\n") end;
+        go (ok && target_ok) rest
+    in
+    if not (go true files) do Sys.exit 1 end
+
   let () =
-    match Sys.args () with
-    | _ :: "fmt" :: rest -> cmd_fmt rest
-    | _ :: "get" :: arg :: _ -> cmd_get arg
-    | _ :: "version" :: _ -> IO.write (version ^ "\n")
-    | _ :: "--version" :: _ -> IO.write (version ^ "\n")
-    | _ :: "help" :: _ -> IO.write usage
-    | _ :: "--help" :: _ -> IO.write usage
-    | _ :: cmd :: _ ->
-      IO.write_err ("mml: unknown command " ^ cmd ^ "\n\n"); IO.write_err usage; Sys.exit 1
-    | _ -> IO.write usage
+    -- Run the command, then exit 0 explicitly. The success arms return unit and
+    -- fall through to this exit; commands that set their own status (run forwards
+    -- the child's code, errors exit 1) have already exited. Exiting here also
+    -- suppresses the self-host runtime's REPL-style final-value display (a bare
+    -- terminal IO.write would otherwise leave a trailing "()" on the tool's stdout).
+    let _ =
+      match Sys.args () with
+      | _ :: "run" :: target :: rest -> cmd_run target rest
+      | _ :: "build" :: rest -> cmd_build rest
+      | _ :: "fmt" :: rest -> cmd_fmt rest
+      | _ :: "check" :: (f :: rest) -> cmd_check (f :: rest)
+      | _ :: "get" :: arg :: _ -> cmd_get arg
+      | _ :: "version" :: _ -> IO.write (version ^ "\n")
+      | _ :: "--version" :: _ -> IO.write (version ^ "\n")
+      | _ :: "help" :: _ -> IO.write usage
+      | _ :: "--help" :: _ -> IO.write usage
+      | _ :: cmd :: _ ->
+        IO.write_err ("mml: unknown command " ^ cmd ^ "\n\n"); IO.write_err usage; Sys.exit 1
+      | _ -> IO.write usage
+    in
+    Sys.exit 0
 end
