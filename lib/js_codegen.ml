@@ -588,27 +588,15 @@ let escape_js_string s =
 
 (* ---- Tag lookup ---- *)
 
+(* Resolve a constructor name to its runtime tag. Used only by the direct
+   pattern-binding path (compile_pattern); `match` is lowered to match trees
+   that carry the tag. Index computation is the shared Types.nominal_ctor_tag. *)
 let tag_for_constructor type_env name =
   match List.assoc_opt name type_env.Types.constructors with
   | None -> error (Printf.sprintf "unknown constructor: %s" name)
   | Some info ->
-      let _, _, variant_def, _ =
-        List.find
-          (fun (n, _, _, _) -> String.equal n info.Types.ctor_type_name)
-          type_env.Types.variants
-      in
-      let short_name =
-        match String.rindex_opt name '.' with
-        | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-        | None -> name
-      in
-      let rec find_tag idx = function
-        | [] ->
-            error (Printf.sprintf "constructor %s not found in variant" name)
-        | (cname, _) :: _ when String.equal cname short_name -> idx
-        | _ :: rest -> find_tag (idx + 1) rest
-      in
-      find_tag 0 variant_def
+      Types.nominal_ctor_tag type_env info.Types.ctor_type_name
+        (Types.short_unqual name)
 
 let short_constructor_name name =
   match String.rindex_opt name '.' with

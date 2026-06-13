@@ -230,20 +230,7 @@ module Js_codegen =
   pub let tag_for_constructor type_env name =
     match List.assoc_opt name type_env.constructors with
     | None -> error ($"unknown constructor: {name}")
-    | Some info -> 
-      let (_, _, variant_def, _) = list_find (fn (n, _, _, _) -> n = info.ctor_type_name) type_env.variants in
-      let short_name =
-        match String.rindex_opt name #2e with
-        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-        | None -> name
-       in
-      let rec find_tag idx =
-        fn
-          | [] -> error ($"constructor {name} not found in variant")
-          | (cname, _) :: _ when cname = short_name -> idx
-          | _ :: rest -> find_tag (idx + 1) rest
-       in
-      find_tag 0 variant_def
+    | Some info -> Types.nominal_ctor_tag type_env info.ctor_type_name (Types.short_unqual name)
 
 
   pub let short_constructor_name name =

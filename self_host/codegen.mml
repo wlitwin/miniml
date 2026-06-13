@@ -55,24 +55,11 @@ module Codegen =
   pub let create_ctx target_triple type_env =
     let tbl = Hashtbl.create 16 in
     let variant_defs = List.map (fn (name, _nparams, vdef, _is_gadt) -> (name, vdef)) type_env.variants in
-    let constructors = List.map (fn (name, info) -> let vdef =
-      match List.assoc_opt info.ctor_type_name variant_defs with
-      | Some vdef -> vdef
-      | None -> []
-     in
-    let tag =
-      let short_key =
-        match String.rindex_opt name #2e with
-        | Some i -> String.sub name (i + 1) (((String.length name) - i) - 1)
-        | None -> name
-       in
-      let rec find_tag i =
-        fn
-          | [] -> 0
-          | (cname, _) :: _ when cname = short_key -> i
-          | _ :: rest -> find_tag (i + 1) rest
-       in
-      find_tag 0 vdef in
+    let constructors = List.map (fn (name, info) -> let tag =
+      if List.mem_assoc info.ctor_type_name variant_defs do
+        Types.nominal_ctor_tag type_env info.ctor_type_name (Types.short_unqual name)
+      else
+        0 in
     (name, (info.ctor_type_name, tag))) type_env.constructors in
     {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple; current_fn_void = false}
 

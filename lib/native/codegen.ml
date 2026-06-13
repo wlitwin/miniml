@@ -121,27 +121,17 @@ let create_ctx ?(target_triple = "") type_env =
   let constructors =
     List.map
       (fun (name, info) ->
-        let vdef =
-          match List.assoc_opt info.Types.ctor_type_name variant_defs with
-          | Some vdef -> vdef
-          | None -> []
-        in
         let tag =
-          (* A constructor is registered under both its qualified ("M.C") and
-             bare ("C") names; [vdef] lists the type's constructors by their
-             bare names, so match on the bare form of the key — otherwise a
-             qualified key never matches and falls through to 0. *)
-          let short_key =
-            match String.rindex_opt name '.' with
-            | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-            | None -> name
-          in
-          let rec find_tag i = function
-            | [] -> 0
-            | (cname, _) :: _ when cname = short_key -> i
-            | _ :: rest -> find_tag (i + 1) rest
-          in
-          find_tag 0 vdef
+          (* Precompute each constructor's tag into the ctx table for O(1)
+             codegen lookup. The index = Types.nominal_ctor_tag (the single
+             definition); we only call it when the constructor's type is known
+             (a constructor is registered under both "M.C" and bare "C", so the
+             type may legitimately be absent from this unit's variant_defs — keep
+             the prior lenient 0 fallback there rather than raising at ctx init). *)
+          if List.mem_assoc info.Types.ctor_type_name variant_defs then
+            Types.nominal_ctor_tag type_env info.Types.ctor_type_name
+              (Types.short_unqual name)
+          else 0
         in
         (name, (info.ctor_type_name, tag)))
       type_env.Types.constructors
