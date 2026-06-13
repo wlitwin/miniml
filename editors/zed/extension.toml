@@ -1,0 +1,12 @@
+id = "miniml"
+name = "MiniML"
+version = "0.0.1"
+schema_version = 1
+authors = ["Walter Litwinczyk <walter@litwinczyk.com>"]
+description = "MiniML language support — diagnostics, hover, go-to-definition and completion via `mml lsp`."
+
+# Launch the in-MiniML language server. The command itself is returned by the
+# extension code (src/lib.rs): it runs `mml lsp` from your $PATH.
+[language_servers.mml]
+name = "mml lsp"
+languages = ["MiniML"]

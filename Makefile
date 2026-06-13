@@ -615,6 +615,15 @@ self-host-run: build  ## Compile self-hosted compiler and run a file through it
 	dune exec bin/main.exe -- --emit-json $(SELF_HOST_FILES) > /tmp/selfhost_compiler.json
 	dune exec bin/main.exe -- --run-json /tmp/selfhost_compiler.json $(FILE)
 
+# The production `mml` toolchain binary (Path B): native-compile the whole
+# self-hosted tool — compiler driver + formatter + package manager + LANGUAGE
+# SERVER — into a single executable. `./mml <cmd>`: run / build / fmt / check /
+# get / lsp / version / help. Point an editor's LSP client at `mml lsp`.
+mml: build  ## Build the native `mml` toolchain binary (incl. `mml lsp`) → ./mml
+	@cat $(MML_SELFHOST_FILES) > /tmp/mml_tool_concat.mml
+	dune exec bin_native/main.exe -- /tmp/mml_tool_concat.mml -o mml
+	@echo "Built ./mml — try: ./mml help   (language server: ./mml lsp)"
+
 # ── Playground ────────────────────────────────────────────
 
 playground: build  ## Build the playground site (self-hosted compiler as JS + stdlib bundle)

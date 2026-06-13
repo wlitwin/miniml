@@ -21,15 +21,18 @@ is built on the reference compiler's analysis library
 dune build
 ```
 
-The server is the `lsp` subcommand of the all-in-one `mml` binary
-(`_build/default/bin/mml.exe`, or `mml` once installed):
+The server is the `lsp` subcommand of the all-in-one `mml` binary. The
+production binary is the **self-hosted** one — build it once with:
 
 ```sh
-mml lsp        # reads Content-Length-framed JSON-RPC on stdin, replies on stdout
+make mml        # native-compiles self_host/ into ./mml (compiler + fmt + pkg + LSP)
+./mml lsp       # reads Content-Length-framed JSON-RPC on stdin, replies on stdout
 ```
 
-(The standalone `_build/default/bin/lsp_main.exe` is an equivalent entry point.)
-Point your editor's generic LSP client at `mml lsp` for the `mml` language.
+Put `./mml` somewhere on your `PATH` (e.g. `cp ./mml ~/.local/bin/`) so editors
+can find it by name. (The OCaml reference build `_build/default/bin/mml.exe lsp`
+and the standalone `_build/default/bin/lsp_main.exe` are equivalent entry points
+for development.) Point your editor's generic LSP client at `mml lsp`.
 
 ## Editor setup
 
@@ -42,12 +45,28 @@ vim.api.nvim_create_autocmd("FileType", {
   callback = function(args)
     vim.lsp.start({
       name = "miniml",
-      cmd = { "/ABSOLUTE/PATH/TO/_build/default/bin/mml.exe", "lsp" },
-      root_dir = vim.fs.dirname(vim.fs.find({ "dune-project" }, { upward = true })[1]),
+      cmd = { "mml", "lsp" },   -- `mml` on $PATH (or an absolute path to ./mml)
+      root_dir = vim.fs.dirname(vim.fs.find({ "mml.mod", ".git" }, { upward = true })[1]),
     })
   end,
 })
 ```
+
+### Zed
+
+Zed attaches language servers through an **extension** (it doesn't take a raw LSP
+command in `settings.json` the way VS Code does). A minimal dev extension that
+launches `mml lsp` lives in [`editors/zed/`](../editors/zed/). To use it:
+
+1. `make mml` and put `./mml` on your `PATH` (`cp ./mml ~/.local/bin/`).
+2. In Zed, run **`zed: install dev extension`** (command palette) and pick the
+   `editors/zed/` directory. Zed builds the extension (needs the Rust
+   `wasm32-wasip1` target: `rustup target add wasm32-wasip1`).
+3. Open a `.mml` file. Diagnostics, hover, go-to-definition and completion come
+   from `mml lsp`.
+
+See `editors/zed/README.md` for the version caveats (the `zed_extension_api`
+version pins to your Zed release).
 
 ### VS Code
 
@@ -56,7 +75,7 @@ Use any generic LSP-client extension (or a few lines with
 
 ```js
 const serverOptions = {
-  command: "/ABSOLUTE/PATH/TO/_build/default/bin/mml.exe",
+  command: "mml",          // on $PATH (or an absolute path to ./mml)
   args: ["lsp"],
   transport: TransportKind.stdio,
 };
@@ -83,8 +102,9 @@ mml run   file.mml                 # typecheck, compile and run
 ## Known limitations
 
 - **Go to definition on a function parameter** returns nothing (parameters carry
-  no source position in the desugared typed tree). Module-member and qualified
-  (`M.foo`) targets are not yet resolved.
+  no source position in the desugared typed tree). Qualified `Module.member`
+  targets ARE resolved cross-file via the workspace symbol index (it scans
+  `self_host/`, `stdlib/` and the root's `*.mml` once per session).
 - **Completion** is not scope-filtered at the cursor (it offers every local name
   in the file); the editor's prefix filter handles most of the noise.
 - **Full-document sync** only (the whole text is re-analysed on each change).
