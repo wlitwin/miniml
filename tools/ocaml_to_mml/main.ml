@@ -1029,6 +1029,38 @@ and emit_sprintf e args =
               | '!' ->
                   (* %! is a flush directive: no output, no argument. *)
                   i := !i + 2
+              | '.'
+                when !i + 3 < len
+                     && fmt.[!i + 2] = '*'
+                     && (fmt.[!i + 3] = 'g' || fmt.[!i + 3] = 'f') ->
+                  (* %.*g / %.*f — argument-supplied precision. MiniML's format
+                     mini-syntax has no `*`, so route to the cross-backend
+                     __fmt_float_g / __fmt_float primitives (== C %.*g / %.*f),
+                     each consuming TWO args (precision, then value). *)
+                  let conv = fmt.[!i + 3] in
+                  let prec = pop_arg () in
+                  let value = pop_arg () in
+                  let fn = if conv = 'g' then "__fmt_float_g" else "__fmt_float" in
+                  Buffer.add_char buf '{';
+                  Buffer.add_string buf fn;
+                  Buffer.add_char buf ' ';
+                  let pe = create_emitter () in
+                  if needs_parens_subexpr prec then (
+                    emit pe "(";
+                    emit_expr pe prec;
+                    emit pe ")")
+                  else emit_expr pe prec;
+                  Buffer.add_string buf (contents pe);
+                  Buffer.add_char buf ' ';
+                  let ve = create_emitter () in
+                  if needs_parens_subexpr value then (
+                    emit ve "(";
+                    emit_expr ve value;
+                    emit ve ")")
+                  else emit_expr ve value;
+                  Buffer.add_string buf (contents ve);
+                  Buffer.add_char buf '}';
+                  i := !i + 4
               | _ ->
                   (* Flags/width/precision: skip to conversion char, emit {expr:fmt} *)
                   if

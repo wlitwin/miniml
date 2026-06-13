@@ -3838,6 +3838,12 @@ and emit_named_call ctx name f_expr args =
       add_extern ctx "mml_fmt_float_str" "i64" [ "i64"; "i64" ];
       Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_fmt_float_str"
         ~args:[ ("i64", prec); ("i64", v) ]
+  | "__fmt_float_g" ->
+      let prec = emit_expr ctx (List.nth args 0) in
+      let v = emit_expr ctx (List.nth args 1) in
+      add_extern ctx "mml_fmt_float_g_str" "i64" [ "i64"; "i64" ];
+      Ir_emit.emit_call ctx.ir ~ret_ty:"i64" ~name:"mml_fmt_float_g_str"
+        ~args:[ ("i64", prec); ("i64", v) ]
   | "__fmt_hex" ->
       let a = emit_expr ctx (List.hd args) in
       add_extern ctx "mml_fmt_hex" "i64" [ "i64" ];
@@ -5374,6 +5380,7 @@ and is_builtin_name = function
   | "Rune.to_int" | "Rune.of_int" | "__rune_to_int" | "__rune_of_int"
   | "__rune_to_string" | "__math_pow" | "__math_sqrt" | "__math_floor"
   | "__math_ceil" | "__math_round" | "__float_bits_hex" | "__fmt_float"
+  | "__fmt_float_g"
   | "__fmt_hex"
   | "__fmt_hex_upper" | "__fmt_oct" | "__fmt_bin" | "__fmt_zero_pad"
   | "__fmt_pad_left" | "__fmt_pad_right" | "Stdlib.mod" | "failwith"

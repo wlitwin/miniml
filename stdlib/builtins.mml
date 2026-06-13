@@ -58,6 +58,7 @@ extern __float_bits_hex : float -> string
 
 (* Formatting *)
 extern __fmt_float : int -> float -> string
+extern __fmt_float_g : int -> float -> string
 extern __fmt_hex : int -> string
 extern __fmt_hex_upper : int -> string
 extern __fmt_oct : int -> string

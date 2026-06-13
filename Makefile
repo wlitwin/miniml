@@ -108,7 +108,7 @@ test-cst: build  ## Lossless CST round-trip: lex+reconstruct the whole corpus, a
 test-fmt: build  ## Formatter correctness: semantic-preservation + idempotence over the corpus (#21)
 	dune exec compiler_test/format_runner.exe
 
-test-fmt-selfhost-parity: build  ## Byte-parity of the self-host formatter vs OCaml over the corpus (Path B; pending backend gaps)
+test-fmt-selfhost-parity: build  ## Byte-parity of the self-host formatter vs OCaml over the corpus (Path B; 58/58, gated by fmt-selfhost-parity)
 	./compiler_test/fmt_selfhost_parity.sh
 
 test-all: test-unit test-ocaml test-translate  ## Run ALL local tests (unit + cross-VM + translator)
@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost pkg-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity pkg-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -234,15 +234,24 @@ check-run-fmt:
 # The formatter, translated into self_host/, must typecheck + compile through the
 # pipeline (guards the translated tooling from bit-rot as the translator/compiler
 # evolve — e.g. the custom-operator support the formatter's `^^` relies on). Full
-# byte-faithful self-host OUTPUT is validated by test-fmt-selfhost-parity, which
-# is blocked on backend gaps (emit-js UTF-8 string rep + float fmt; native closure
-# capture) and is therefore not yet a gate stage.
+# byte-faithful self-host OUTPUT is now gated separately by fmt-selfhost-parity
+# (58/58 on the corpus). The remaining backend gap (emit-js UTF-8 string rep) is
+# not exercised by the ASCII corpus; native closure capture only blocks the
+# native `mml fmt` binary, not the emit-js/playground formatter path.
 check-run-fmt-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js \
 	  self_host/token.mml self_host/ast.mml self_host/bytecode.mml self_host/types.mml \
 	  self_host/match_tree_types.mml self_host/lexer.mml self_host/parser.mml \
 	  self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml self_host/formatter.mml \
 	  > /dev/null && echo "self-host formatter typecheck+compile passed"
+# The self-host formatter (compiled to JS, run on node) must produce
+# BYTE-IDENTICAL output to the OCaml reference `mml fmt` over the whole
+# stdlib/ + self_host/ corpus — the formatter analogue of ir-parity, catching
+# any translation-faithfulness regression in the tooling. Uses the pre-built
+# gate binaries (MML_PREBUILT) so it doesn't contend on the dune build lock.
+check-run-fmt-selfhost-parity:
+	MML_PREBUILT=1 MML="$(CHECK_BIN)/bin/main.exe" MMLFMT="$(CHECK_BIN)/bin/mml.exe fmt" \
+	  ./compiler_test/fmt_selfhost_parity.sh
 # The package-manager data layer (semver/sumfile/manifest/deps), translated into
 # self_host/ for the in-MiniML toolchain (Path B #16). Pure data — no UTF-8/float/
 # closure backend hazards — so it compiles AND runs faithfully on every backend.
@@ -292,9 +301,9 @@ TRANSLATE_FILES = ast token bytecode types match_tree_types match_tree lexer typ
 NATIVE_TRANSLATE_FILES = ir_emit codegen
 # Tooling modules (lib/*.ml) translated for the in-MiniML toolchain (Path B,
 # roadmap #16). The formatter is the first: it translates + compiles (guarded by
-# the `fmt-selfhost` gate stage). Full byte-faithful self-host output is pending
-# backend gaps surfaced by the parity script (emit-js UTF-8 string rep + float
-# formatting; native top-level closure capture) — see test-fmt-selfhost-parity.
+# the `fmt-selfhost` gate stage) AND produces byte-identical output to the OCaml
+# reference over the corpus (guarded by `fmt-selfhost-parity`, 58/58). The only
+# residual gap is emit-js's UTF-8 string rep on non-ASCII byte ops (tracked).
 TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter semver sumfile manifest deps
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
