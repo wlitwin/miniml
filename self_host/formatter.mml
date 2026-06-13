@@ -1,0 +1,1217 @@
+module Formatter =
+  effect UnsupportedExn =
+    unsupported : string -> 'a
+  end
+
+  effect Reanchor_bailExn =
+    reanchor_bail : unit -> 'a
+  end
+
+  pub type comment = {
+    cs: int;
+    ce: int;
+    cnext: int;
+    ctext: string;
+    cown: bool
+  }
+
+  pub let render_pending = Ref.create []
+
+  pub let member_marks = Ref.create None
+
+  pub let comment_lines (c : comment) : string list =
+    let lead l =
+      let n = Ref.create 0 in
+      for ((Ref.get n) < (String.length l)) && (((String.get l (Ref.get n)) = #20) || ((String.get l (Ref.get n)) = #09)) do
+        Ref.set n (Ref.get n + 1)
+      end;
+      Ref.get n in
+    match String.split "\n" c.ctext with
+    | ls -> ls
+    | first :: rest -> 
+      let nonblank = List.filter (fn l -> (String.trim l) <> "") rest in
+      let minlead =
+        match nonblank with
+        | [] -> 0
+        | hd :: tl -> List.fold (fn m l -> min m (lead l)) (lead hd) tl
+       in
+      let fix l =
+        if (String.trim l) = "" do
+          ""
+        else do
+          let li = lead l in
+          (String.make (li - minlead) #20) ^ (String.sub l li ((String.length l) - li))
+        end in
+      first :: List.map fix rest
+
+
+  pub type doc =
+    | Nil
+    | Text of string
+    | Line
+    | GLine
+    | GSoft
+    | Cat of doc * doc
+    | Nest of int * doc
+    | Group of doc
+    | Mark of int
+
+
+  pub let __op_5e5e a b = Cat (a, b)
+
+  pub let text s = Text s
+
+  pub let line = Line
+
+  pub let concat ds = List.fold __op_5e5e Nil ds
+
+  pub let rec sepby sep =
+    fn
+      | [] -> Nil
+      | d :: [] -> d
+      | d :: rest -> __op_5e5e (d) (__op_5e5e (sep) (sepby sep rest))
+
+
+  pub let max_width = 80
+
+  pub let render (d : doc) : string =
+    let buf = Buffer.create 1024 in
+    let newline indent =
+      Buffer.add_byte buf #0a;
+      let mut _loop_var = 1 in
+      for _loop_var <= indent do
+        Buffer.add_byte buf #20;
+        _loop_var := _loop_var + 1
+      end in
+    let will_flush off = List.exists (fn c -> c.cnext = off) (Ref.get render_pending) in
+    let rec forces_break =
+      fn
+        | Line -> true
+        | Mark off -> will_flush off
+        | Cat ((a, b)) -> (forces_break a) || (forces_break b)
+        | (Nest ((_, a)) | Group a) -> forces_break a
+        | _ -> false
+     in
+    let rec fits rem items =
+      if rem < 0 do
+        false
+      else
+        match items with
+        | [] -> true
+        | (i, flat, d) :: rest -> 
+          do
+            match d with
+            | Nil -> fits rem rest
+            | Text s -> fits (rem - (String.length s)) rest
+            | Cat ((a, b)) -> fits rem ((i, flat, a) :: (i, flat, b) :: rest)
+            | Nest ((n, a)) -> fits rem ((i + n, flat, a) :: rest)
+            | Group a -> fits rem ((i, true, a) :: rest)
+            | Line -> true
+            | GLine -> 
+              if flat do
+                fits (rem - 1) rest
+              else
+                true
+            | GSoft -> 
+              if flat do
+                fits rem rest
+              else
+                true
+            | Mark off -> 
+              if will_flush off do
+                true
+              else
+                fits rem rest
+
+          end
+     in
+    let rec go col stack =
+      match stack with
+      | [] -> ()
+      | (i, flat, d) :: rest -> 
+        do
+          match d with
+          | Nil -> go col rest
+          | Text s -> 
+            Buffer.add_string buf s;
+            go (col + (String.length s)) rest
+          | Cat ((a, b)) -> go col ((i, flat, a) :: (i, flat, b) :: rest)
+          | Nest ((n, a)) -> go col ((i + n, flat, a) :: rest)
+          | Line -> 
+            newline i;
+            go i rest
+          | GLine -> 
+            if flat do
+              Buffer.add_byte buf #20;
+              go (col + 1) rest
+            else do
+              newline i;
+              go i rest
+            end
+          | GSoft -> 
+            if flat do
+              go col rest
+            else do
+              newline i;
+              go i rest
+            end
+          | Group a -> 
+            let flat' = (not (forces_break a)) && (fits (max_width - col) ((i, true, a) :: rest)) in
+            go col ((i, flat', a) :: rest)
+          | Mark off -> 
+            let flushed = Ref.create false in
+            Ref.set render_pending (List.filter (fn c -> if c.cnext = off do
+              do
+                match comment_lines c with
+                | [] -> ()
+                | first :: conts -> 
+                  Buffer.add_string buf first;
+                  List.iter (fn l -> newline i;
+                  Buffer.add_string buf l) conts
+
+              end;
+              newline i;
+              Ref.set flushed true;
+              false
+            else
+              true) (Ref.get render_pending));
+            go (if Ref.get flushed do
+              i
+            else
+              col) rest
+
+        end
+     in
+    go 0 ((0, false, d) :: []);
+    Buffer.contents buf
+
+  pub let indent_width = 2
+
+  pub let nest d = Nest (indent_width, d)
+
+  pub let parens d = __op_5e5e (text "(") (__op_5e5e (d) (text ")"))
+
+  pub let group d = Group d
+
+  pub let wrap op cl pad sep (items : doc list) : doc =
+    match items with
+    | [] -> __op_5e5e (text op) (text cl)
+    | _ -> 
+      let edge =
+        if pad do
+          GLine
+        else
+          GSoft in
+      group (__op_5e5e (text op) (__op_5e5e (nest (__op_5e5e (edge) (sepby (__op_5e5e (text sep) (GLine)) items))) (__op_5e5e (edge) (text cl))))
+
+
+  pub let string_lit s =
+    let buf = Buffer.create ((String.length s) + 2) in
+    Buffer.add_byte buf #22;
+    let n = String.length s in
+    let rec go i =
+      if i < n do
+        do
+          match String.get s i with
+          | _c when _c = #22 -> Buffer.add_string buf "\\\""
+          | _c when _c = #5c -> Buffer.add_string buf "\\\\"
+          | _c when _c = #0a -> Buffer.add_string buf "\\n"
+          | _c when _c = #09 -> Buffer.add_string buf "\\t"
+          | c -> Buffer.add_byte buf c
+
+        end;
+        go (i + 1)
+      end in
+    go 0;
+    Buffer.add_byte buf #22;
+    Buffer.contents buf
+
+  pub let rune_lit cp =
+    let body =
+      match cp with
+      | 10 -> "\\n"
+      | 9 -> "\\t"
+      | 92 -> "\\\\"
+      | 39 -> "\\'"
+      | 0 -> "\\0"
+      | _ when (cp >= 32) && (cp < 127) -> String.make 1 (Byte.of_int cp)
+      | _ -> Utf8.rune_to_string cp
+     in
+    "'" ^ (body ^ "'")
+
+  pub let float_lit f =
+    let lexes_to s =
+      match Lexer.tokenize s with
+      | {kind = Token.FLOAT g; _} :: {kind = Token.EOF; _} :: [] -> g = f
+      | _ -> false
+     in
+    let has_exp s = (String.contains "e" s) || (String.contains "E" s) in
+    let rec try_g p =
+      if p > 17 do
+        None
+      else do
+        let s = $"{p:.*}g" in
+        if has_exp s do
+          try_g (p + 1)
+        else do
+          let s =
+            if String.contains "." s do
+              s
+            else
+              s ^ ".0" in
+          if lexes_to s do
+            Some s
+          else
+            try_g (p + 1)
+        end
+      end in
+    match try_g 1 with
+    | Some s -> s
+    | None -> 
+      let rec try_f p =
+        if p > 30 do
+          $"{f:.17f}"
+        else do
+          let s = $"{p:.*}f" in
+          if lexes_to s do
+            s
+          else
+            try_f (p + 1)
+        end in
+      try_f 1
+
+
+  pub let rec doc_ty (t : Ast.ty_annot) : doc =
+    match t with
+    | Ast.TyName s -> text s
+    | Ast.TyVar s -> text ("'" ^ s)
+    | Ast.TyList t -> __op_5e5e (doc_ty_atom t) (text " list")
+    | Ast.TyArray t -> __op_5e5e (doc_ty_atom t) (text " array")
+    | Ast.TyArrow ((a, b, eff)) -> 
+      do
+        let base = __op_5e5e (doc_ty_atom a) (__op_5e5e (text " -> ") (doc_ty b)) in
+        match eff with
+        | None -> base
+        | Some e -> __op_5e5e (base) (__op_5e5e (text " / ") (doc_eff_bare e))
+
+      end
+    | Ast.TyTuple ts -> sepby (text " * ") (List.map doc_ty_atom ts)
+    | Ast.TyApp ((args, name)) -> 
+      do
+        match args with
+        | [] -> text name
+        | a :: [] -> __op_5e5e (doc_ty_atom a) (__op_5e5e (text " ") (text name))
+        | _ -> __op_5e5e (parens (sepby (text ", ") (List.map doc_ty args))) (__op_5e5e (text " ") (text name))
+
+      end
+    | Ast.TyQualified ((path, name)) -> text ((String.concat "." path) ^ ("." ^ name))
+    | Ast.TyRecord ((fields, is_open)) -> 
+      let fs = List.concat (List.map (fn (n, t) -> __op_5e5e (text (n ^ " : ")) (doc_ty t)) fields) (if is_open do
+        text ".." :: []
+      else
+        []) in
+      __op_5e5e (text "{ ") (__op_5e5e (sepby (text "; ") fs) (text " }"))
+    | Ast.TyWithEffect ((t, e)) -> __op_5e5e (doc_ty t) (__op_5e5e (text " / ") (doc_eff_bare e))
+    | Ast.TyPolyVariant ((kind, tags)) -> 
+      let open_marker =
+        match kind with
+        | Ast.PVExact -> ""
+        | Ast.PVLower -> "> "
+        | Ast.PVUpper -> "< "
+       in
+      let tag (name, payload) =
+        match payload with
+        | None -> text ("`" ^ name)
+        | Some t -> __op_5e5e (text ("`" ^ (name ^ " of "))) (doc_ty t)
+       in
+      __op_5e5e (text ("[" ^ open_marker)) (__op_5e5e (sepby (text " | ") (List.map tag tags)) (text "]"))
+
+  and doc_eff (e : Ast.eff_annot) : doc =
+    match e with
+    | Ast.EffAnnotPure -> Nil
+    | Ast.EffAnnotRow _ -> doc_eff_bare e
+
+  and doc_eff_bare (e : Ast.eff_annot) : doc =
+    match e with
+    | Ast.EffAnnotPure -> text "pure"
+    | Ast.EffAnnotRow items -> sepby (text ", ") (List.map (fn
+      | Ast.EffLabel ((n, [])) -> text n
+      | Ast.EffLabel ((n, args)) -> __op_5e5e (text n) (__op_5e5e (text " ") (sepby (text " ") (List.map doc_ty_atom args)))
+      | Ast.EffVar v -> text ("'" ^ v)
+    ) items)
+
+  and doc_ty_atom (t : Ast.ty_annot) : doc =
+    match t with
+    | ((((Ast.TyName _ | Ast.TyVar _) | Ast.TyQualified _) | Ast.TyRecord _) | Ast.TyPolyVariant _) -> doc_ty t
+    | _ -> parens (doc_ty t)
+
+
+  pub let rec doc_pat (p : Ast.pattern) : doc =
+    match p with
+    | Ast.PatWild -> text "_"
+    | Ast.PatVar s -> text s
+    | Ast.PatInt n -> text (string_of_int n)
+    | Ast.PatFloat f -> text (float_lit f)
+    | Ast.PatBool b -> text (if b do
+      "true"
+    else
+      "false")
+    | Ast.PatString s -> text (string_lit s)
+    | Ast.PatUnit -> text "()"
+    | Ast.PatNil -> text "[]"
+    | Ast.PatTuple ps -> parens (sepby (text ", ") (List.map doc_pat ps))
+    | Ast.PatCons ((a, b)) -> __op_5e5e (doc_pat_atom a) (__op_5e5e (text " :: ") (doc_pat_atom b))
+    | Ast.PatConstruct ((name, None)) -> text name
+    | Ast.PatConstruct ((name, Some arg)) -> __op_5e5e (text name) (__op_5e5e (text " ") (doc_pat_atom arg))
+    | Ast.PatRecord fields -> __op_5e5e (text "{ ") (__op_5e5e (sepby (text "; ") (List.map (fn (n, p) -> __op_5e5e (text (n ^ " = ")) (doc_pat p)) fields)) (text " }"))
+    | Ast.PatAs ((p, name)) -> __op_5e5e (doc_pat_atom p) (text (" as " ^ name))
+    | Ast.PatOr ((a, b)) -> __op_5e5e (doc_pat a) (__op_5e5e (text " | ") (doc_pat b))
+    | Ast.PatArray ps -> __op_5e5e (text "#[") (__op_5e5e (sepby (text "; ") (List.map doc_pat ps)) (text "]"))
+    | Ast.PatPolyVariant ((tag, None)) -> text ("`" ^ tag)
+    | Ast.PatPolyVariant ((tag, Some p)) -> __op_5e5e (text ("`" ^ (tag ^ " "))) (doc_pat_atom p)
+    | Ast.PatPin name -> text ("^" ^ name)
+    | Ast.PatAnnot ((p, t)) -> parens (__op_5e5e (doc_pat p) (__op_5e5e (text " : ") (doc_ty t)))
+    | Ast.PatMap entries -> __op_5e5e (text "#{") (__op_5e5e (sepby (text "; ") (List.map (fn (k, v) -> __op_5e5e (doc_pat k) (__op_5e5e (text ": ") (doc_pat v))) entries)) (text "}"))
+    | Ast.PatSet elems -> __op_5e5e (text "#{") (__op_5e5e (sepby (text "; ") (List.map doc_pat elems)) (text "}"))
+
+  and doc_pat_atom (p : Ast.pattern) : doc =
+    match p with
+    | (((((((((((((((Ast.PatWild | Ast.PatVar _) | Ast.PatInt _) | Ast.PatFloat _) | Ast.PatBool _) | Ast.PatString _) | Ast.PatUnit) | Ast.PatNil) | Ast.PatTuple _) | Ast.PatRecord _) | Ast.PatArray _) | Ast.PatConstruct ((_, None))) | Ast.PatPolyVariant ((_, None))) | Ast.PatPin _) | Ast.PatMap _) | Ast.PatSet _) -> doc_pat p
+    | _ -> parens (doc_pat p)
+
+
+  pub let binop_str =
+    fn
+      | Ast.Add -> "+"
+      | Ast.Sub -> "-"
+      | Ast.Mul -> "*"
+      | Ast.Div -> "/"
+      | Ast.Mod -> "mod"
+      | Ast.Eq -> "="
+      | Ast.Neq -> "<>"
+      | Ast.Lt -> "<"
+      | Ast.Gt -> ">"
+      | Ast.Le -> "<="
+      | Ast.Ge -> ">="
+      | Ast.And -> "&&"
+      | Ast.Or -> "||"
+      | Ast.Concat -> "^"
+      | Ast.Land -> "land"
+      | Ast.Lor -> "lor"
+      | Ast.Lxor -> "lxor"
+      | Ast.Lsl -> "lsl"
+      | Ast.Lsr -> "lsr"
+      | Ast.Pipe -> "|>"
+
+
+  pub let unop_str =
+    fn
+      | Ast.Neg -> "-"
+      | Ast.Not -> "not "
+      | Ast.Lnot -> "lnot "
+
+
+  pub let is_keyword_operator =
+    fn
+      | ((((((("land" | "lor") | "lxor") | "lsl") | "lsr") | "lnot") | "mod") | "not") -> true
+      | _ -> false
+
+
+  pub let is_operator_name s = (s <> "") && (let c = String.get s 0 in
+  (not (((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || (c = #5f)))) || (is_keyword_operator s))
+
+  pub let doc_var s =
+    match String.rindex_opt s #2e with
+    | Some i when (i > 0) && (i < ((String.length s) - 1)) -> 
+      let modpath = String.sub s 0 i in
+      let last = String.sub s (i + 1) (((String.length s) - i) - 1) in
+      if is_operator_name last do
+        text (modpath ^ (".(" ^ (last ^ ")")))
+      else
+        text s
+    | _ -> 
+      if is_operator_name s do
+        text ("(" ^ (s ^ ")"))
+      else
+        text s
+
+
+  pub let tp_clause =
+    fn
+      | [] -> Nil
+      | tps -> __op_5e5e (text " (type ") (__op_5e5e (sepby (text " ") (List.map (fn t -> text ("'" ^ t)) tps)) (text ")"))
+
+
+  pub let rec strip_loc (e : Ast.expr) : Ast.expr =
+    match e with
+    | Ast.ELoc ((_, e)) -> strip_loc e
+    | e -> e
+
+
+  pub let is_atom (e : Ast.expr) : bool =
+    match strip_loc e with
+    | ((((((((((((((((((Ast.EInt _ | Ast.EFloat _) | Ast.EBool _) | Ast.EString _) | Ast.EByte _) | Ast.ERune _) | Ast.EUnit) | Ast.EVar _) | Ast.ENil) | Ast.ETuple _) | Ast.EList _) | Ast.EArray _) | Ast.ERecord _) | Ast.EMap _) | Ast.ESet _) | Ast.EConstruct ((_, None))) | Ast.EPolyVariant ((_, None))) | Ast.EField _) | Ast.EIndex _) -> true
+    | _ -> false
+
+
+  pub let body_stays_inline (e : Ast.expr) : bool =
+    match strip_loc e with
+    | ((((((((((((Ast.ELet _ | Ast.ELetMut _) | Ast.ELetRec _) | Ast.ELetRecAnd _) | Ast.ESeq _) | Ast.EMatch _) | Ast.EHandle _) | Ast.EIf _) | Ast.EWhile _) | Ast.EFor _) | Ast.EForFold _) | Ast.EForNumeric _) | Ast.EWhileLet _) -> true
+    | _ -> false
+
+
+  pub let binop_prec =
+    fn
+      | Ast.Pipe -> 1
+      | Ast.Or -> 2
+      | Ast.And -> 3
+      | (((((Ast.Eq | Ast.Neq) | Ast.Lt) | Ast.Gt) | Ast.Le) | Ast.Ge) -> 4
+      | ((((Ast.Add | Ast.Sub) | Ast.Concat) | Ast.Lor) | Ast.Lxor) -> 7
+      | (((((Ast.Mul | Ast.Div) | Ast.Mod) | Ast.Land) | Ast.Lsl) | Ast.Lsr) -> 8
+
+
+  pub let cons_prec = 6
+
+  pub type operand_kind =
+    | Tight
+    | OpK of int
+    | Loose
+
+
+  pub let operand_kind (e : Ast.expr) : operand_kind =
+    match strip_loc e with
+    | Ast.EBinop ((op, _, _)) -> OpK (binop_prec op)
+    | Ast.ECons _ -> OpK cons_prec
+    | ((((((((((((((((((((Ast.EInt _ | Ast.EFloat _) | Ast.EBool _) | Ast.EString _) | Ast.EByte _) | Ast.ERune _) | Ast.EUnit) | Ast.EVar _) | Ast.ENil) | Ast.ETuple _) | Ast.EList _) | Ast.EArray _) | Ast.ERecord _) | Ast.ERecordUpdate _) | Ast.EMap _) | Ast.ESet _) | Ast.EConstruct ((_, None))) | Ast.EPolyVariant ((_, None))) | Ast.EField _) | Ast.EIndex _) | Ast.EApp _) -> Tight
+    | _ -> Loose
+
+
+  pub let rec flatten_binop prec (e : Ast.expr) : Ast.expr * (Ast.binop * Ast.expr) list =
+    match strip_loc e with
+    | Ast.EBinop ((op, l, r)) when (binop_prec op) = prec -> 
+      let (first, rest) = flatten_binop prec l in
+      (first, List.concat rest ((op, r) :: []))
+    | _ -> (e, [])
+
+
+  pub let is_destructure_pat (p : Ast.pattern) : bool =
+    match p with
+    | (Ast.PatTuple _ | Ast.PatRecord _) -> true
+    | _ -> false
+
+
+  pub let rec absorbs_semicolon (e : Ast.expr) : bool =
+    match strip_loc e with
+    | ((((((Ast.EFun _ | Ast.EMatch _) | Ast.EHandle _) | Ast.ELet _) | Ast.ELetRec _) | Ast.ELetMut _) | Ast.ELetRecAnd _) -> true
+    | Ast.ESeq ((_, b)) -> absorbs_semicolon b
+    | Ast.EIf ((_, _, f)) -> 
+      do
+        match strip_loc f with
+        | Ast.EUnit -> false
+        | _ -> absorbs_semicolon f
+
+      end
+    | _ -> false
+
+
+  pub let rec absorbs_pipe (e : Ast.expr) : bool =
+    match strip_loc e with
+    | (Ast.EMatch _ | Ast.EHandle _) -> true
+    | ((Ast.ELet ((_, _, b)) | Ast.ELetMut ((_, _, b))) | Ast.ELetRec ((_, _, _, b))) -> absorbs_pipe b
+    | (Ast.ELetRecAnd ((_, b)) | Ast.EFun ((_, b))) -> absorbs_pipe b
+    | Ast.EIf ((_, _, f)) -> 
+      do
+        match strip_loc f with
+        | Ast.EUnit -> false
+        | _ -> absorbs_pipe f
+
+      end
+    | Ast.ESeq ((_, b)) -> absorbs_pipe b
+    | _ -> false
+
+
+  pub let rec start_offset (e : Ast.expr) : int option =
+    match e with
+    | Ast.ELoc ((loc, _)) -> Some (loc.offset)
+    | (((((Ast.ESeq ((a, _)) | Ast.EBinop ((_, a, _))) | Ast.ECons ((a, _))) | Ast.EApp ((a, _))) | Ast.EField ((a, _))) | Ast.EIndex ((a, _))) -> start_offset a
+    | _ -> None
+
+
+  pub let mark (e : Ast.expr) : doc =
+    match start_offset e with
+    | Some o -> Mark o
+    | None -> Nil
+
+
+  pub let member_mark i : doc =
+    match Ref.get member_marks with
+    | Some arr when i < (Array.length arr) -> Mark (Array.get arr i)
+    | _ -> Nil
+
+
+  pub let rec doc_expr (e : Ast.expr) : doc = __op_5e5e (mark e) (doc_expr_body e)
+  and doc_expr_body (e : Ast.expr) : doc =
+    match strip_loc e with
+    | Ast.EInt n -> text (string_of_int n)
+    | Ast.EFloat f -> text (float_lit f)
+    | Ast.EBool b -> text (if b do
+      "true"
+    else
+      "false")
+    | Ast.EString s -> text (string_lit s)
+    | Ast.EByte n -> text ($"#{n:02x}")
+    | Ast.ERune n -> text (rune_lit n)
+    | Ast.EUnit -> text "()"
+    | Ast.EVar s -> doc_var s
+    | Ast.ENil -> text "[]"
+    | Ast.ETuple es -> wrap "(" ")" false "," (List.map doc_expr es)
+    | Ast.EList es -> wrap "[" "]" false ";" (List.map doc_expr es)
+    | Ast.EArray es -> wrap "#[" "]" false ";" (List.map doc_expr es)
+    | Ast.ERecord fields -> doc_record_fields fields
+    | Ast.ERecordUpdate ((base, fields)) -> __op_5e5e (text "{ ") (__op_5e5e (doc_atom base) (__op_5e5e (text " with ") (__op_5e5e (sepby (text "; ") (List.map (fn (n, e) -> __op_5e5e (text (n ^ " = ")) (doc_expr e)) fields)) (text " }"))))
+    | Ast.EField ((e, f)) -> __op_5e5e (doc_atom e) (text ("." ^ f))
+    | Ast.EIndex ((e, i)) -> __op_5e5e (doc_atom e) (__op_5e5e (text ".[") (__op_5e5e (doc_expr i) (text "]")))
+    | Ast.EConstruct ((name, None)) -> text name
+    | Ast.EConstruct ((name, Some arg)) -> __op_5e5e (text name) (__op_5e5e (text " ") (doc_arg arg))
+    | Ast.EPolyVariant ((tag, None)) -> text ("`" ^ tag)
+    | Ast.EPolyVariant ((tag, Some arg)) -> __op_5e5e (text ("`" ^ (tag ^ " "))) (doc_arg arg)
+    | Ast.ECons ((a, b)) -> __op_5e5e (doc_oper cons_prec true true a) (__op_5e5e (text " :: ") (doc_oper cons_prec true false b))
+    | Ast.EBinop ((op, _, _)) -> 
+      let p = binop_prec op in
+      let (first, steps) = flatten_binop p (strip_loc e) in
+      group (__op_5e5e (doc_oper p false true first) (concat (List.map (fn (o, operand) -> __op_5e5e (GLine) (__op_5e5e (text ((binop_str o) ^ " ")) (doc_oper p false false operand))) steps)))
+    | Ast.EUnop ((op, e)) -> __op_5e5e (text (unop_str op)) (doc_atom e)
+    | Ast.EApp _ as app -> doc_app app
+    | Ast.EAnnot ((e, t)) -> parens (__op_5e5e (doc_expr e) (__op_5e5e (text " : ") (doc_ty t)))
+    | Ast.ECoerce ((e, t)) -> parens (__op_5e5e (doc_expr e) (__op_5e5e (text " :> ") (doc_ty t)))
+    | Ast.EAssign ((name, e)) -> __op_5e5e (text (name ^ " := ")) (doc_seq_lhs e)
+    | Ast.EFieldAssign ((obj, f, e)) -> __op_5e5e (doc_atom obj) (__op_5e5e (text ("." ^ (f ^ " := "))) (doc_seq_lhs e))
+    | Ast.EIf ((c, t, f)) -> doc_if c t f
+    | Ast.ELet ((name, v, body)) -> __op_5e5e (text ("let " ^ (name ^ " = "))) (__op_5e5e (doc_expr v) (__op_5e5e (text " in") (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))))
+    | Ast.ELetMut ((name, v, body)) -> __op_5e5e (text ("let mut " ^ (name ^ " = "))) (__op_5e5e (doc_expr v) (__op_5e5e (text " in") (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))))
+    | Ast.ELetRec ((name, type_params, v, body)) -> __op_5e5e (text "let rec") (__op_5e5e (tp_clause type_params) (__op_5e5e (text " ") (__op_5e5e (doc_var name) (__op_5e5e (text " = ") (__op_5e5e (doc_expr v) (__op_5e5e (text " in") (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))))))))
+    | Ast.ESeq ((a, b)) -> __op_5e5e (doc_seq_lhs a) (__op_5e5e (text ";") (__op_5e5e (line) (__op_5e5e (mark b) (doc_expr b))))
+    | Ast.EFun ((param, body)) -> doc_fun (param :: []) body
+    | Ast.EMatch ((scrut, arms, kind)) -> doc_match scrut arms kind
+    | Ast.EReturn e -> __op_5e5e (text "return ") (doc_atom e)
+    | Ast.EBreak None -> text "break"
+    | Ast.EBreak (Some e) -> __op_5e5e (text "break ") (doc_atom e)
+    | Ast.EContinueLoop None -> text "continue"
+    | Ast.EContinueLoop (Some e) -> __op_5e5e (text "continue ") (doc_atom e)
+    | Ast.EPerform ((op, arg)) -> __op_5e5e (text ("perform " ^ (op ^ " "))) (doc_atom arg)
+    | Ast.EResume ((k, v)) -> __op_5e5e (text "resume ") (__op_5e5e (doc_atom k) (__op_5e5e (text " ") (doc_atom v)))
+    | Ast.ELocalOpen ((m, e)) -> __op_5e5e (text (m ^ ".(")) (__op_5e5e (doc_expr e) (text ")"))
+    | Ast.EWhile {while_cond; while_body} -> __op_5e5e (text "for ") (__op_5e5e (doc_expr while_cond) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark while_body) (doc_expr while_body)))) (__op_5e5e (line) (text "end")))))
+    | Ast.EForNumeric {fn_var; fn_init; fn_cond; fn_step; fn_body} -> __op_5e5e (text ("for " ^ (fn_var ^ " = "))) (__op_5e5e (doc_expr fn_init) (__op_5e5e (text "; ") (__op_5e5e (doc_expr fn_cond) (__op_5e5e (text "; ") (__op_5e5e (doc_expr fn_step) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark fn_body) (doc_expr fn_body)))) (__op_5e5e (line) (text "end")))))))))
+    | Ast.EFor {for_var; for_iter; for_body; for_index} -> 
+      let idx =
+        match for_index with
+        | Some i -> text (" with index " ^ i)
+        | None -> Nil
+       in
+      __op_5e5e (text ("for " ^ (for_var ^ " in "))) (__op_5e5e (doc_expr for_iter) (__op_5e5e (idx) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark for_body) (doc_expr for_body)))) (__op_5e5e (line) (text "end"))))))
+    | Ast.EForFold {loop_var; loop_iter; accum_var; accum_init; fold_body; fold_index} -> 
+      let idx =
+        match fold_index with
+        | Some i -> text (" with index " ^ i)
+        | None -> Nil
+       in
+      __op_5e5e (text ("for " ^ (loop_var ^ " in "))) (__op_5e5e (doc_expr loop_iter) (__op_5e5e (idx) (__op_5e5e (text (" with " ^ (accum_var ^ " = "))) (__op_5e5e (doc_expr accum_init) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark fold_body) (doc_expr fold_body)))) (__op_5e5e (line) (text "end"))))))))
+    | Ast.EWhileLet ((pat, e, body)) -> __op_5e5e (text "for let ") (__op_5e5e (doc_pat pat) (__op_5e5e (text " = ") (__op_5e5e (doc_expr e) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))) (__op_5e5e (line) (text "end")))))))
+    | Ast.EHandle ((body, arms)) -> doc_handle body arms
+    | Ast.EMap pairs -> doc_map pairs
+    | Ast.ESet es -> wrap "#{" "}" false ";" (List.map doc_expr es)
+    | Ast.ELetRecAnd ((bindings, body)) -> 
+      do
+        let one kw (name, tps, e) = __op_5e5e (text kw) (__op_5e5e (tp_clause tps) (__op_5e5e (text " ") (__op_5e5e (doc_var name) (__op_5e5e (text " = ") (doc_expr e))))) in
+        match bindings with
+        | [] -> doc_expr body
+        | first :: rest -> __op_5e5e (one "let rec" first) (__op_5e5e (concat (List.map (fn b -> __op_5e5e (line) (one "and" b)) rest)) (__op_5e5e (text " in") (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))))
+
+      end
+    | Ast.ECollTyped ((name, elems)) -> wrap ("#" ^ (name ^ "[")) "]" false ";" (List.map doc_expr elems)
+    | Ast.EMapTyped ((name, pairs)) -> wrap ("#" ^ (name ^ "{")) "}" false ";" (List.map (fn (k, v) -> __op_5e5e (doc_expr k) (__op_5e5e (text ": ") (doc_expr v))) pairs)
+    | Ast.ELoc _ -> failwith "assert false"
+
+  and doc_record_fields fields = wrap "{" "}" true ";" (List.map (fn (n, e) -> __op_5e5e (text (n ^ " = ")) (doc_expr e)) fields)
+  and doc_map pairs = wrap "#{" "}" false ";" (List.map (fn (k, v) -> __op_5e5e (doc_expr k) (__op_5e5e (text ": ") (doc_expr v))) pairs)
+  and doc_atom (e : Ast.expr) : doc =
+    if is_atom e do
+      doc_expr e
+    else
+      parens (doc_expr e)
+  and doc_oper parent_prec parent_right left (e : Ast.expr) : doc =
+    let needs =
+      match operand_kind e with
+      | Tight -> false
+      | Loose -> true
+      | OpK cp -> 
+        if cp <> parent_prec do
+          cp < parent_prec
+        else if left do
+          parent_right
+        else
+          not parent_right
+     in
+    if needs do
+      parens (doc_expr e)
+    else
+      doc_expr e
+  and doc_arg (e : Ast.expr) : doc =
+    match strip_loc e with
+    | (Ast.EConstruct _ | Ast.EPolyVariant _) -> parens (doc_expr e)
+    | _ -> doc_atom e
+
+  and doc_seq_lhs (e : Ast.expr) : doc =
+    if absorbs_semicolon e do
+      parens (doc_expr e)
+    else
+      doc_expr e
+  and doc_arm_body (e : Ast.expr) : doc =
+    if absorbs_pipe e do
+      parens (doc_expr e)
+    else
+      doc_expr e
+  and doc_app (e : Ast.expr) : doc =
+    let rec flatten acc e =
+      match strip_loc e with
+      | Ast.EApp ((f, x)) -> flatten (x :: acc) f
+      | head -> (head, acc)
+     in
+    let (head, args) = flatten [] e in
+    group (__op_5e5e (doc_atom head) (nest (concat (List.map (fn a -> __op_5e5e (GLine) (doc_arg a)) args))))
+  and doc_if c t f =
+    match strip_loc f with
+    | Ast.EUnit -> __op_5e5e (text "if ") (__op_5e5e (doc_expr c) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark t) (doc_expr t)))) (__op_5e5e (line) (text "end")))))
+    | _ -> 
+      let (f_doc, f_mark) =
+        match strip_loc f with
+        | Ast.ESeq _ -> (parens (doc_expr f), Nil)
+        | _ -> (doc_expr f, mark f)
+       in
+      __op_5e5e (text "if ") (__op_5e5e (doc_expr c) (__op_5e5e (text " do") (__op_5e5e (nest (__op_5e5e (line) (__op_5e5e (mark t) (doc_expr t)))) (__op_5e5e (line) (__op_5e5e (text "else") (nest (__op_5e5e (line) (__op_5e5e (f_mark) (f_doc)))))))))
+
+  and doc_fun params body = __op_5e5e (text "fn ") (__op_5e5e (sepby (text " ") (List.map doc_param params)) (__op_5e5e (text " -> ") (doc_expr body)))
+  and doc_param (p : Ast.param) : doc =
+    match (p.name, p.annot) with
+    | ("_", Some (Ast.TyName "unit")) -> text "()"
+    | (_, None) -> text p.name
+    | (_, Some t) -> parens (__op_5e5e (text p.name) (__op_5e5e (text " : ") (doc_ty t)))
+
+  and doc_match scrut arms kind =
+    match (kind, arms) with
+    | (Ast.Partial, (pat, None, body) :: []) when is_destructure_pat pat -> __op_5e5e (text "let ") (__op_5e5e (doc_pat pat) (__op_5e5e (text " = ") (__op_5e5e (doc_expr scrut) (__op_5e5e (text " in") (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))))))
+    | _ -> doc_match_full scrut arms kind
+
+  and doc_arm body_doc body =
+    if body_stays_inline body do
+      __op_5e5e (body_doc) (__op_5e5e (text " ") (doc_arm_body body))
+    else
+      __op_5e5e (body_doc) (group (nest (__op_5e5e (GLine) (doc_arm_body body))))
+  and doc_match_full scrut arms kind =
+    let prefix =
+      match kind with
+      | Ast.Partial -> __op_5e5e (text "@partial") (line)
+      | Ast.Total -> Nil
+     in
+    let arm (pat, guard, body) =
+      let g =
+        match guard with
+        | Some e -> __op_5e5e (text " when ") (doc_expr e)
+        | None -> Nil
+       in
+      doc_arm (__op_5e5e (line) (__op_5e5e (text "| ") (__op_5e5e (doc_pat pat) (__op_5e5e (g) (text " ->"))))) body in
+    __op_5e5e (prefix) (__op_5e5e (text "match ") (__op_5e5e (doc_expr scrut) (__op_5e5e (text " with") (concat (List.map arm arms)))))
+  and doc_handle body arms =
+    let arm =
+      fn
+        | Ast.HReturn ((name, b)) -> doc_arm (__op_5e5e (line) (text ("| return " ^ (name ^ " ->")))) b
+        | Ast.HOp {op_name; arg; k; body} -> doc_arm (__op_5e5e (line) (text ($"| {op_name} {arg} {k} ->"))) body
+     in
+    __op_5e5e (text "handle ") (__op_5e5e (doc_expr body) (__op_5e5e (text " with") (concat (List.map arm arms))))
+
+  pub let doc_params params = concat (List.map (fn p -> __op_5e5e (text " ") (doc_param p)) params)
+
+  pub let doc_ret_annot =
+    fn
+      | None -> Nil
+      | Some t -> __op_5e5e (text " : ") (doc_ty t)
+
+
+  pub let doc_constraints =
+    fn
+      | [] -> Nil
+      | cs -> __op_5e5e (text " where ") (sepby (text ", ") (List.map (fn (cls, vars) -> text (cls ^ (" " ^ (String.concat " " (List.map (fn v -> "'" ^ v) vars))))) cs))
+
+
+  pub let doc_type_def_binding (b : Ast.type_def_binding) : doc =
+    let params =
+      match b.td_params with
+      | [] -> Nil
+      | p :: [] -> text ("'" ^ (p ^ " "))
+      | ps -> __op_5e5e (parens (sepby (text ", ") (List.map (fn p -> text ("'" ^ p)) ps))) (text " ")
+     in
+    let deriving_ =
+      match b.td_deriving with
+      | [] -> Nil
+      | ds -> text (" deriving " ^ (String.concat ", " ds))
+     in
+    let rhs =
+      match b.td_def with
+      | Ast.TDAlias t -> doc_ty t
+      | Ast.TDRecord fields -> __op_5e5e (text "{ ") (__op_5e5e (sepby (text "; ") (List.map (fn (f : Ast.record_field_def) -> __op_5e5e (if f.rfd_mutable do
+        text "mut "
+      else
+        Nil) (__op_5e5e (text (f.rfd_name ^ " : ")) (doc_ty f.rfd_type))) fields)) (text " }"))
+      | Ast.TDVariant ctors -> 
+        let ctor (name, arg, ret) =
+          match (arg, ret) with
+          | (None, None) -> text name
+          | (Some t, None) -> __op_5e5e (text (name ^ " of ")) (doc_ty t)
+          | (Some a, Some r) -> __op_5e5e (text (name ^ " : ")) (__op_5e5e (doc_ty_atom a) (__op_5e5e (text " -> ") (doc_ty r)))
+          | (None, Some r) -> __op_5e5e (text (name ^ " : ")) (doc_ty r)
+         in
+        sepby (text " | ") (List.map ctor ctors)
+      | Ast.TDNewtype ((cname, t)) -> __op_5e5e (text (cname ^ " of ")) (doc_ty t)
+     in
+    __op_5e5e (params) (__op_5e5e (text (b.td_name ^ " = ")) (__op_5e5e (rhs) (deriving_)))
+
+  pub let type_kw (b : Ast.type_def_binding) =
+    match b.td_def with
+    | Ast.TDNewtype _ -> "newtype "
+    | _ -> "type "
+
+
+  pub let rec doc_decl (d : Ast.decl) : doc =
+    match d with
+    | Ast.DLet {name; params; ret_annot; constraints; body} -> __op_5e5e (text "let ") (__op_5e5e (doc_var name) (__op_5e5e (doc_params params) (__op_5e5e (doc_ret_annot ret_annot) (__op_5e5e (doc_constraints constraints) (__op_5e5e (text " =") (nest (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body)))))))))
+    | Ast.DLetMut ((name, body)) -> __op_5e5e (text "let mut ") (__op_5e5e (doc_var name) (__op_5e5e (text " =") (nest (__op_5e5e (line) (__op_5e5e (mark body) (doc_expr body))))))
+    | Ast.DLetRec b -> __op_5e5e (text "let rec") (__op_5e5e (tp_clause b.type_params) (__op_5e5e (text " ") (__op_5e5e (doc_var b.lr_name) (__op_5e5e (doc_params b.params) (__op_5e5e (doc_ret_annot b.ret_annot) (__op_5e5e (doc_constraints b.constraints) (__op_5e5e (text " =") (nest (__op_5e5e (line) (__op_5e5e (mark b.body) (doc_expr b.body)))))))))))
+    | Ast.DLetRecAnd bs -> 
+      do
+        let one kw (b : Ast.letrec_binding) = __op_5e5e (text kw) (__op_5e5e (tp_clause b.type_params) (__op_5e5e (text " ") (__op_5e5e (doc_var b.lr_name) (__op_5e5e (doc_params b.params) (__op_5e5e (doc_ret_annot b.ret_annot) (__op_5e5e (doc_constraints b.constraints) (__op_5e5e (text " =") (nest (__op_5e5e (line) (__op_5e5e (mark b.body) (doc_expr b.body))))))))))) in
+        match bs with
+        | [] -> Nil
+        | first :: rest -> __op_5e5e (one "let rec" first) (concat (List.map (fn b -> __op_5e5e (line) (one "and" b)) rest))
+
+      end
+    | Ast.DType b -> __op_5e5e (text (type_kw b)) (doc_type_def_binding b)
+    | Ast.DTypeAnd bs -> 
+      do
+        match bs with
+        | [] -> Nil
+        | first :: rest -> __op_5e5e (text (type_kw first)) (__op_5e5e (doc_type_def_binding first) (concat (List.map (fn b -> __op_5e5e (line) (__op_5e5e (text "and ") (doc_type_def_binding b))) rest)))
+
+      end
+    | Ast.DExpr e -> doc_expr e
+    | Ast.DExtern ((name, t)) -> __op_5e5e (text "extern ") (__op_5e5e (doc_var name) (__op_5e5e (text " : ") (doc_ty t)))
+    | Ast.DOpen ((m, None)) -> text ("open " ^ m)
+    | Ast.DOpen ((m, Some names)) -> text ($"open {m} ({String.concat ", " names})")
+    | Ast.DClass {class_name; tyvars; fundeps; methods} -> 
+      let tvs = concat (List.map (fn v -> text (" '" ^ v)) tyvars) in
+      let fds =
+        match fundeps with
+        | [] -> Nil
+        | _ -> 
+          let dep (from_vs, to_vs) =
+            let vs vs = String.concat " " (List.map (fn v -> "'" ^ v) vs) in
+            text ((vs from_vs) ^ (" -> " ^ (vs to_vs))) in
+          __op_5e5e (text " where ") (sepby (text ", ") (List.map dep fundeps))
+       in
+      let meth i (name, t) = __op_5e5e (line) (__op_5e5e (member_mark i) (__op_5e5e (doc_var name) (__op_5e5e (text " : ") (doc_ty t)))) in
+      __op_5e5e (text "class ") (__op_5e5e (text class_name) (__op_5e5e (tvs) (__op_5e5e (fds) (__op_5e5e (text " =") (__op_5e5e (nest (concat (List.mapi meth methods))) (__op_5e5e (line) (text "end")))))))
+    | Ast.DInstance {inst_class; inst_types; inst_constraints; inst_methods} -> 
+      let tys = concat (List.map (fn t -> __op_5e5e (text " ") (doc_ty_atom t)) inst_types) in
+      let meth i (name, params, body) = __op_5e5e (line) (__op_5e5e (member_mark i) (__op_5e5e (text "let ") (__op_5e5e (doc_var name) (__op_5e5e (doc_params params) (__op_5e5e (text " = ") (doc_expr body)))))) in
+      __op_5e5e (text "instance ") (__op_5e5e (text inst_class) (__op_5e5e (tys) (__op_5e5e (doc_constraints inst_constraints) (__op_5e5e (text " =") (__op_5e5e (nest (concat (List.mapi meth inst_methods))) (__op_5e5e (line) (text "end")))))))
+    | Ast.DEffect ((name, type_params, ops)) -> 
+      let tps = concat (List.map (fn v -> text (" '" ^ v)) type_params) in
+      let op i (n, t) = __op_5e5e (line) (__op_5e5e (member_mark i) (__op_5e5e (text (n ^ " : ")) (doc_ty t))) in
+      __op_5e5e (text "effect ") (__op_5e5e (text name) (__op_5e5e (tps) (__op_5e5e (text " =") (__op_5e5e (nest (concat (List.mapi op ops))) (__op_5e5e (line) (text "end"))))))
+    | Ast.DModule ((name, items)) -> 
+      let item md = __op_5e5e (doc_module_decl md) (text ";;") in
+      __op_5e5e (text ("module " ^ (name ^ " ="))) (__op_5e5e (nest (concat (List.map (fn md -> __op_5e5e (line) (item md)) items))) (__op_5e5e (line) (text "end")))
+
+  and doc_module_decl (md : Ast.module_decl) : doc =
+    let vis =
+      match md.vis with
+      | Ast.Public -> "pub "
+      | Ast.Private -> ""
+      | Ast.Opaque -> "opaque "
+     in
+    __op_5e5e (text vis) (doc_decl md.decl)
+
+  pub let format_program (prog : Ast.program) : string =
+    Ref.set render_pending [];
+    let docs = List.map doc_decl prog in
+    let joined = sepby (__op_5e5e (text ";;") (__op_5e5e (line) (line))) docs in
+    (render joined) ^ "\n"
+
+  pub let rstrip s =
+    let n = Ref.create (String.length s) in
+    for ((Ref.get n) > 0) && (((String.get s ((Ref.get n) - 1)) = #20) || (((String.get s ((Ref.get n) - 1)) = #09) || ((String.get s ((Ref.get n) - 1)) = #0d))) do
+      Ref.set n (Ref.get n - 1)
+    end;
+    String.sub s 0 (Ref.get n)
+
+  pub let scan_trivia abs cnext (s : string) : comment list =
+    let n = String.length s in
+    let out = Ref.create [] in
+    let i = Ref.create 0 in
+    let nl = Ref.create false in
+    for (Ref.get i) < n do
+      let c = String.get s (Ref.get i) in
+      if c = #0a do
+        Ref.set nl true;
+        Ref.set i (Ref.get i + 1)
+      else if (c = #20) || ((c = #09) || (c = #0d)) do
+        Ref.set i (Ref.get i + 1)
+      else if (c = #28) && ((((Ref.get i) + 1) < n) && ((String.get s ((Ref.get i) + 1)) = #2a)) do
+        let start = Ref.get i in
+        Ref.set i ((Ref.get i) + 2);
+        let depth = Ref.create 1 in
+        for ((Ref.get depth) > 0) && ((Ref.get i) < n) do
+          if (((Ref.get i) + 1) < n) && (((String.get s (Ref.get i)) = #28) && ((String.get s ((Ref.get i) + 1)) = #2a)) do
+            Ref.set depth ((Ref.get depth) + 1);
+            Ref.set i ((Ref.get i) + 2)
+          else if (((Ref.get i) + 1) < n) && (((String.get s (Ref.get i)) = #2a) && ((String.get s ((Ref.get i) + 1)) = #29)) do
+            Ref.set depth ((Ref.get depth) - 1);
+            Ref.set i ((Ref.get i) + 2)
+          else
+            Ref.set i (Ref.get i + 1)
+        end;
+        Ref.set out ({cs = abs + start; ce = abs + (Ref.get i); cnext; ctext = String.sub s start ((Ref.get i) - start); cown = Ref.get nl} :: Ref.get out);
+        Ref.set nl false
+      else if (c = #2d) && ((((Ref.get i) + 1) < n) && ((String.get s ((Ref.get i) + 1)) = #2d)) do
+        let start = Ref.get i in
+        for ((Ref.get i) < n) && ((String.get s (Ref.get i)) <> #0a) do
+          Ref.set i (Ref.get i + 1)
+        end;
+        Ref.set out ({cs = abs + start; ce = abs + (Ref.get i); cnext; ctext = rstrip (String.sub s start ((Ref.get i) - start)); cown = Ref.get nl} :: Ref.get out);
+        Ref.set nl false
+      else
+        Ref.set i (Ref.get i + 1)
+    end;
+    List.rev (Ref.get out)
+
+  pub let all_comments (src : string) : comment list =
+    let prev = Ref.create 0 in
+    List.concat_map (fn (p : Cst.piece) -> let abs = Ref.get prev in
+    Ref.set prev p.token.end_offset;
+    scan_trivia abs p.token.loc.offset p.leading) (Cst.of_source src)
+
+  pub let node_span (node : Cst.tree) : int * int =
+    match Cst.leaves node with
+    | [] -> perform reanchor_bail ()
+    | ls -> 
+      let first = List.hd ls in
+      let last = List.nth ls ((List.length ls) - 1) in
+      (first.token.loc.offset, last.token.end_offset)
+
+
+  pub let is_module_node (node : Cst.tree) : bool =
+    let rec first =
+      fn
+        | (p : Cst.piece) :: rest -> 
+          do
+            match p.token.kind with
+            | (Token.PUB | Token.OPAQUE) -> first rest
+            | k -> k = Token.MODULE
+
+          end
+        | [] -> false
+     in
+    first (Cst.leaves node)
+
+  pub let rec leaf_spans (t : Cst.tree) : (int * int) list =
+    match t with
+    | Cst.Node ((Cst.Decl, children)) -> 
+      if is_module_node t do
+        List.concat_map leaf_spans children
+      else
+        node_span t :: []
+    | Cst.Node ((_, children)) -> List.concat_map leaf_spans children
+    | Cst.Leaf _ -> []
+
+
+  pub let child_decl_nodes (node : Cst.tree) : Cst.tree array =
+    match node with
+    | Cst.Node ((_, children)) -> Array.of_list (List.filter (fn
+      | Cst.Node ((Cst.Decl, _)) -> true
+      | _ -> false
+    ) children)
+    | _ -> #[]
+
+
+  pub let module_body_range (node : Cst.tree) : int * int =
+    match node with
+    | Cst.Node ((_, children)) -> 
+      let rec find_lo before =
+        fn
+          | Cst.Node ((Cst.Decl, _)) :: _ -> before
+          | Cst.Leaf p :: rest -> find_lo p.token.end_offset rest
+          | _ :: rest -> find_lo before rest
+          | [] -> before
+       in
+      let lo = find_lo 0 children in
+      let ls = Cst.leaves node in
+      let hi = (List.nth ls ((List.length ls) - 1)).token.loc.offset in
+      (lo, hi)
+    | _ -> perform reanchor_bail ()
+
+
+  pub let decls_in_slice top (src : string) ((s, e) : int * int) : int =
+    let slice = String.sub src s (e - s) in
+    if top do
+      List.length (Parser.parse_program (Lexer.tokenize slice))
+    else
+      match Parser.parse_program (Lexer.tokenize ("module Fmt__Wrap =\n" ^ (slice ^ "\nend"))) with
+      | Ast.DModule ((_, items)) :: [] -> List.length items
+      | _ -> perform reanchor_bail ()
+
+
+  pub let segment (counts : int list) (items : 'a list) : 'a list list =
+    let rec take k xs acc =
+      if k = 0 do
+        (List.rev acc, xs)
+      else
+        match xs with
+        | [] -> perform reanchor_bail ()
+        | x :: r -> take (k - 1) r (x :: acc)
+     in
+    let rec go counts items acc =
+      match counts with
+      | [] -> 
+        if items <> [] do
+          perform reanchor_bail ()
+        else
+          List.rev acc
+      | k :: rest -> 
+        let (g, items') = take k items [] in
+        go rest items' (g :: acc)
+     in
+    go counts items []
+
+  pub let doc_comment (c : comment) : doc =
+    match comment_lines c with
+    | [] -> Nil
+    | first :: conts -> __op_5e5e (text first) (concat (List.map (fn l -> __op_5e5e (line) (text l)) conts))
+
+
+  pub let rec doc_level top (src : string) (nodes : Cst.tree array) (groups : Ast.module_decl list array) (comments : comment list) lo hi : doc =
+    let n = Array.length nodes in
+    let spans = Array.map node_span nodes in
+    let inside cs = Array.exists (fn (s, e) -> (s <= cs) && (cs < e)) spans in
+    let slot_of cs =
+      let c = Ref.create 0 in
+      Array.iter (fn (_, e) -> if e <= cs do
+        Ref.set c (Ref.get c + 1)
+      end) spans;
+      Ref.get c in
+    let slots = Array.make (n + 1) [] in
+    List.iter (fn c -> if (c.cs >= lo) && ((c.cs < hi) && (not (inside c.cs))) do
+      Array.set slots (slot_of c.cs) (c :: Array.get slots (slot_of c.cs))
+    end) comments;
+    Array.iteri (fn i l -> Array.set slots i (List.rev l)) slots;
+    let leading = Array.make (max n 1) [] in
+    let trailing = Array.make (max n 1) None in
+    let tail = Ref.create [] in
+    Array.iteri (fn i cs -> let (cs, tr) =
+      match cs with
+      | first :: rest when (i >= 1) && (not first.cown) -> (rest, Some first)
+      | _ -> (cs, None)
+     in
+    do
+      match tr with
+      | Some c -> Array.set trailing (i - 1) (Some c)
+      | None -> ()
+
+    end;
+    if i < n do
+      Array.set leading i cs
+    else
+      Ref.set tail cs) slots;
+    let trail_doc i =
+      match Array.get trailing i with
+      | Some c -> __op_5e5e (text " ") (doc_comment c)
+      | None -> Nil
+     in
+    if top do
+      let frag i =
+        let lead = concat (List.map (fn c -> __op_5e5e (doc_comment c) (line)) (Array.get leading i)) in
+        let body = sepby (__op_5e5e (text ";;") (__op_5e5e (line) (line))) (List.map (doc_module_decl_c src (Array.get nodes i) comments) (Array.get groups i)) in
+        let sep_after =
+          if i < (n - 1) do
+            text ";;"
+          else
+            Nil in
+        let gap =
+          if i < (n - 1) do
+            __op_5e5e (line) (line)
+          else
+            Nil in
+        __op_5e5e (lead) (__op_5e5e (body) (__op_5e5e (sep_after) (__op_5e5e (trail_doc i) (gap)))) in
+      let all = concat (List.init n frag) in
+      let tail_doc = concat (List.mapi (fn j c -> __op_5e5e (if (j > 0) || (n > 0) do
+        line
+      else
+        Nil) (doc_comment c)) (Ref.get tail)) in
+      __op_5e5e (all) (tail_doc)
+    else do
+      let frag i =
+        let lead = concat (List.map (fn c -> __op_5e5e (line) (doc_comment c)) (Array.get leading i)) in
+        let items = Array.get groups i in
+        let last = (List.length items) - 1 in
+        concat (List.mapi (fn j md -> __op_5e5e (if j = 0 do
+          lead
+        else
+          Nil) (__op_5e5e (line) (__op_5e5e (doc_module_decl_c src (Array.get nodes i) comments md) (__op_5e5e (text ";;") (if j = last do
+          trail_doc i
+        else
+          Nil))))) items) in
+      let all = concat (List.init n frag) in
+      let tail_doc = concat (List.map (fn c -> __op_5e5e (line) (doc_comment c)) (Ref.get tail)) in
+      __op_5e5e (all) (tail_doc)
+    end
+  and doc_module_decl_c (src : string) (node : Cst.tree) (comments : comment list) (md : Ast.module_decl) : doc =
+    let vis =
+      match md.vis with
+      | Ast.Public -> "pub "
+      | Ast.Private -> ""
+      | Ast.Opaque -> "opaque "
+     in
+    match md.decl with
+    | Ast.DModule ((name, inner_items)) -> 
+      let inner_nodes = child_decl_nodes node in
+      let (lo, hi) = module_body_range node in
+      let counts = Array.to_list (Array.map (fn nd -> decls_in_slice false src (node_span nd)) inner_nodes) in
+      let groups = Array.of_list (segment counts inner_items) in
+      if (Array.length groups) <> (Array.length inner_nodes) do
+        perform reanchor_bail ()
+      end;
+      __op_5e5e (text vis) (__op_5e5e (text ("module " ^ (name ^ " ="))) (__op_5e5e (nest (doc_level false src inner_nodes groups comments lo hi)) (__op_5e5e (line) (text "end"))))
+    | Ast.DClass {methods; _} -> member_decl vis node (List.length methods) md.decl
+    | Ast.DInstance {inst_methods; _} -> member_decl vis node (List.length inst_methods) md.decl
+    | Ast.DEffect ((_, _, ops)) -> member_decl vis node (List.length ops) md.decl
+    | _ -> __op_5e5e (text vis) (doc_decl md.decl)
+
+  and member_decl vis (node : Cst.tree) (n_members : int) (decl : Ast.decl) : doc =
+    let mnodes = child_decl_nodes node in
+    if (Array.length mnodes) = n_members do
+      Ref.set member_marks (Some (Array.map (fn nd -> fst (node_span nd)) mnodes))
+    end;
+    let body = doc_decl decl in
+    Ref.set member_marks None;
+    __op_5e5e (text vis) (body)
+
+  pub let format_source_with_comments (src : string) (prog : Ast.program) : string =
+    let tree = Cst_build.cst_of_source src in
+    let top_nodes =
+      match tree with
+      | Cst.Node ((Cst.SourceFile, _)) -> child_decl_nodes tree
+      | _ -> perform reanchor_bail ()
+     in
+    let comments = all_comments src in
+    let counts = Array.to_list (Array.map (fn nd -> decls_in_slice true src (node_span nd)) top_nodes) in
+    let items = List.map (fn d -> {vis = Private; decl = d}) prog in
+    let groups = Array.of_list (segment counts items) in
+    if (Array.length groups) <> (Array.length top_nodes) do
+      perform reanchor_bail ()
+    end;
+    let leaves = leaf_spans tree in
+    Ref.set render_pending (List.filter (fn c -> List.exists (fn (s, e) -> (s <= c.cs) && (c.cs < e)) leaves) comments);
+    let result = (render (doc_level true src top_nodes groups comments 0 (String.length src))) ^ "\n" in
+    Ref.set render_pending [];
+    result
+
+  pub let format_source (src : string) : string =
+    let tokens = Lexer.tokenize src in
+    let prog = Parser.parse_program tokens in
+    do try
+      format_source_with_comments src prog
+    with
+    | reanchor_bail -> format_program prog
+    end
+
+  pub let norm_param (p : Ast.param) : Ast.param = {p with is_generated = false}
+
+  pub let rec strip_e (e : Ast.expr) : Ast.expr =
+    match e with
+    | Ast.ELoc ((_, e)) -> strip_e e
+    | ((((((((Ast.EInt _ | Ast.EFloat _) | Ast.EBool _) | Ast.EString _) | Ast.EByte _) | Ast.ERune _) | Ast.EUnit) | Ast.EVar _) | Ast.ENil) -> e
+    | Ast.ELet ((n, a, b)) -> Ast.ELet (n, strip_e a, strip_e b)
+    | Ast.ELetRec ((n, ps, a, b)) -> Ast.ELetRec (n, ps, strip_e a, strip_e b)
+    | Ast.EFun ((p, b)) -> Ast.EFun (norm_param p, strip_e b)
+    | Ast.EApp ((f, x)) -> Ast.EApp (strip_e f, strip_e x)
+    | Ast.EIf ((c, t, f)) -> Ast.EIf (strip_e c, strip_e t, strip_e f)
+    | Ast.EBinop ((op, l, r)) -> Ast.EBinop (op, strip_e l, strip_e r)
+    | Ast.EUnop ((op, e)) -> Ast.EUnop (op, strip_e e)
+    | Ast.ETuple es -> Ast.ETuple (List.map strip_e es)
+    | Ast.ERecord fs -> Ast.ERecord (List.map (fn (n, e) -> (n, strip_e e)) fs)
+    | Ast.ERecordUpdate ((b, fs)) -> Ast.ERecordUpdate (strip_e b, List.map (fn (n, e) -> (n, strip_e e)) fs)
+    | Ast.EField ((e, f)) -> Ast.EField (strip_e e, f)
+    | Ast.EIndex ((e, i)) -> Ast.EIndex (strip_e e, strip_e i)
+    | Ast.ECons ((a, b)) -> Ast.ECons (strip_e a, strip_e b)
+    | Ast.EList es -> Ast.EList (List.map strip_e es)
+    | Ast.EArray es -> Ast.EArray (List.map strip_e es)
+    | Ast.EConstruct ((n, eo)) -> Ast.EConstruct (n, Option.map strip_e eo)
+    | Ast.EMatch ((s, arms, k)) -> Ast.EMatch (strip_e s, List.map (fn (p, g, b) -> (p, Option.map strip_e g, strip_e b)) arms, k)
+    | Ast.ELetMut ((n, a, b)) -> Ast.ELetMut (n, strip_e a, strip_e b)
+    | Ast.EAssign ((n, e)) -> Ast.EAssign (n, strip_e e)
+    | Ast.EFieldAssign ((o, f, e)) -> Ast.EFieldAssign (strip_e o, f, strip_e e)
+    | Ast.ESeq _ -> 
+      let rec flatten e =
+        match e with
+        | Ast.ELoc ((_, e)) -> flatten e
+        | Ast.ESeq ((a, b)) -> List.concat (flatten a) (flatten b)
+        | e -> strip_e e :: []
+       in
+      let rec rebuild =
+        fn
+          | [] -> Ast.EUnit
+          | x :: [] -> x
+          | x :: rest -> Ast.ESeq (x, rebuild rest)
+       in
+      rebuild (flatten e)
+    | Ast.EAnnot ((e, t)) -> Ast.EAnnot (strip_e e, t)
+    | Ast.EWhile {while_cond; while_body} -> Ast.EWhile {while_cond = strip_e while_cond; while_body = strip_e while_body}
+    | Ast.EFor r -> Ast.EFor {r with for_iter = strip_e r.for_iter; for_body = strip_e r.for_body}
+    | Ast.EForFold r -> Ast.EForFold {r with loop_iter = strip_e r.loop_iter; accum_init = strip_e r.accum_init; fold_body = strip_e r.fold_body}
+    | Ast.EWhileLet ((p, e, b)) -> Ast.EWhileLet (p, strip_e e, strip_e b)
+    | Ast.EForNumeric r -> Ast.EForNumeric {r with fn_init = strip_e r.fn_init; fn_cond = strip_e r.fn_cond; fn_step = strip_e r.fn_step; fn_body = strip_e r.fn_body}
+    | Ast.EBreak eo -> Ast.EBreak (Option.map strip_e eo)
+    | Ast.EContinueLoop eo -> Ast.EContinueLoop (Option.map strip_e eo)
+    | Ast.EReturn e -> Ast.EReturn (strip_e e)
+    | Ast.ELetRecAnd ((bs, b)) -> Ast.ELetRecAnd (List.map (fn (n, ps, e) -> (n, ps, strip_e e)) bs, strip_e b)
+    | Ast.EPerform ((op, e)) -> Ast.EPerform (op, strip_e e)
+    | Ast.EHandle ((b, arms)) -> Ast.EHandle (strip_e b, List.map (fn
+      | Ast.HReturn ((n, e)) -> Ast.HReturn (n, strip_e e)
+      | Ast.HOp r -> Ast.HOp {r with body = strip_e r.body}
+    ) arms)
+    | Ast.EResume ((k, v)) -> Ast.EResume (strip_e k, strip_e v)
+    | Ast.EMap ps -> Ast.EMap (List.map (fn (k, v) -> (strip_e k, strip_e v)) ps)
+    | Ast.EMapTyped ((t, ps)) -> Ast.EMapTyped (t, List.map (fn (k, v) -> (strip_e k, strip_e v)) ps)
+    | Ast.ESet es -> Ast.ESet (List.map strip_e es)
+    | Ast.ECollTyped ((t, es)) -> Ast.ECollTyped (t, List.map strip_e es)
+    | Ast.EPolyVariant ((tag, eo)) -> Ast.EPolyVariant (tag, Option.map strip_e eo)
+    | Ast.ECoerce ((e, t)) -> Ast.ECoerce (strip_e e, t)
+    | Ast.ELocalOpen ((m, e)) -> Ast.ELocalOpen (m, strip_e e)
+
+
+  pub let strip_letrec (b : Ast.letrec_binding) : Ast.letrec_binding = {b with params = List.map norm_param b.params; body = strip_e b.body}
+
+  pub let rec strip_decl (d : Ast.decl) : Ast.decl =
+    match d with
+    | Ast.DLet r -> Ast.DLet {r with params = List.map norm_param r.params; body = strip_e r.body}
+    | Ast.DLetMut ((n, e)) -> Ast.DLetMut (n, strip_e e)
+    | Ast.DLetRec b -> Ast.DLetRec (strip_letrec b)
+    | Ast.DLetRecAnd bs -> Ast.DLetRecAnd (List.map strip_letrec bs)
+    | Ast.DExpr e -> Ast.DExpr (strip_e e)
+    | Ast.DInstance r -> Ast.DInstance {r with inst_methods = List.map (fn (n, ps, e) -> (n, List.map norm_param ps, strip_e e)) r.inst_methods}
+    | Ast.DModule ((n, items)) -> Ast.DModule (n, List.map (fn (md : Ast.module_decl) -> {md with decl = strip_decl md.decl}) items)
+    | d -> d
+
+
+  pub let strip_program (p : Ast.program) : Ast.program = List.map strip_decl p
+
+end

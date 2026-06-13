@@ -108,6 +108,9 @@ test-cst: build  ## Lossless CST round-trip: lex+reconstruct the whole corpus, a
 test-fmt: build  ## Formatter correctness: semantic-preservation + idempotence over the corpus (#21)
 	dune exec compiler_test/format_runner.exe
 
+test-fmt-selfhost-parity: build  ## Byte-parity of the self-host formatter vs OCaml over the corpus (Path B; pending backend gaps)
+	./compiler_test/fmt_selfhost_parity.sh
+
 test-all: test-unit test-ocaml test-translate  ## Run ALL local tests (unit + cross-VM + translator)
 	@echo ""
 	@echo "All tests passed."
@@ -146,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -228,6 +231,18 @@ check-run-cst:
 	$(CHECK_BIN)/compiler_test/cst_roundtrip_runner.exe
 check-run-fmt:
 	$(CHECK_BIN)/compiler_test/format_runner.exe
+# The formatter, translated into self_host/, must typecheck + compile through the
+# pipeline (guards the translated tooling from bit-rot as the translator/compiler
+# evolve — e.g. the custom-operator support the formatter's `^^` relies on). Full
+# byte-faithful self-host OUTPUT is validated by test-fmt-selfhost-parity, which
+# is blocked on backend gaps (emit-js UTF-8 string rep + float fmt; native closure
+# capture) and is therefore not yet a gate stage.
+check-run-fmt-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js \
+	  self_host/token.mml self_host/ast.mml self_host/bytecode.mml self_host/types.mml \
+	  self_host/match_tree_types.mml self_host/lexer.mml self_host/parser.mml \
+	  self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml self_host/formatter.mml \
+	  > /dev/null && echo "self-host formatter typecheck+compile passed"
 check-run-native-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
 # End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
@@ -268,6 +283,12 @@ TRANSLATE_FILES = ast token bytecode types match_tree_types match_tree lexer typ
 # in sync, but NOT part of the playground bundle (SELF_HOST_FILES) — they are
 # verified by the `native-selfhost` gate stage instead.
 NATIVE_TRANSLATE_FILES = ir_emit codegen
+# Tooling modules (lib/*.ml) translated for the in-MiniML toolchain (Path B,
+# roadmap #16). The formatter is the first: it translates + compiles (guarded by
+# the `fmt-selfhost` gate stage). Full byte-faithful self-host output is pending
+# backend gaps surfaced by the parity script (emit-js UTF-8 string rep + float
+# formatting; native top-level closure capture) — see test-fmt-selfhost-parity.
+TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
@@ -283,7 +304,11 @@ translate-all: build  ## Translate all target files to self_host/
 		echo "Translating native/$$f.ml → self_host/$$f.mml"; \
 		$(TRANSLATOR) lib/native/$$f.ml > self_host/$$f.mml; \
 	done
-	@echo "Done. Translated $(words $(TRANSLATE_FILES) $(NATIVE_TRANSLATE_FILES)) files."
+	@for f in $(TOOLING_TRANSLATE_FILES); do \
+		echo "Translating $$f.ml → self_host/$$f.mml"; \
+		$(TRANSLATOR) lib/$$f.ml > self_host/$$f.mml; \
+	done
+	@echo "Done. Translated $(words $(TRANSLATE_FILES) $(NATIVE_TRANSLATE_FILES) $(TOOLING_TRANSLATE_FILES)) files."
 
 translate-preview: build  ## Preview translations to /tmp (without overwriting self_host/)
 	@for f in $(TRANSLATE_FILES); do \

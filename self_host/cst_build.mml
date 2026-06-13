@@ -1,0 +1,75 @@
+module Cst_build =
+  pub let map_kind =
+    fn
+      | Parser.CstSourceFile -> Cst.SourceFile
+      | Parser.CstDecl -> Cst.Decl
+      | Parser.CstExpr -> Cst.Expr
+      | Parser.CstPattern -> Cst.Pattern
+      | Parser.CstTypeExpr -> Cst.TypeExpr
+      | Parser.CstMatchArm -> Cst.MatchArm
+      | Parser.CstHandlerArm -> Cst.HandlerArm
+      | Parser.CstRecordField -> Cst.RecordField
+      | Parser.CstParam -> Cst.Param
+      | Parser.CstError -> Cst.Error
+
+
+  pub let tree_of_events (events : Parser.cst_event list) (pieces : Cst.piece list) : Cst.tree =
+    let pieces = Array.of_list pieces in
+    let pi = Ref.create 0 in
+    let stack = Ref.create [] in
+    let root = Ref.create None in
+    let add_child c =
+      match Ref.get stack with
+      | (k, cs) :: rest -> Ref.set stack ((k, c :: cs) :: rest)
+      | [] -> failwith "cst_build: leaf with no open node"
+     in
+    List.iter (fn ev ->
+      do
+        match ev with
+        | Parser.CstStart k -> Ref.set stack ((map_kind k, []) :: Ref.get stack)
+        | Parser.CstToken -> 
+          if (Ref.get pi) >= (Array.length pieces) do
+            failwith "cst_build: more token events than tokens"
+          end;
+          add_child (Cst.Leaf (Array.get pieces (Ref.get pi)));
+          Ref.set pi (Ref.get pi + 1)
+        | Parser.CstFinish -> 
+          do
+            match Ref.get stack with
+            | (k, cs) :: rest -> 
+              let node = Cst.Node (k, List.rev cs) in
+              Ref.set stack rest;
+              if rest = [] do
+                Ref.set root (Some node)
+              else
+                add_child node
+            | [] -> failwith "cst_build: finish with no open node"
+
+          end
+
+      end) events;
+    if (Ref.get stack) <> [] do
+      failwith "cst_build: unbalanced events (open node left)"
+    end;
+    let root =
+      match Ref.get root with
+      | Some r -> r
+      | None -> Cst.Node (Cst.SourceFile, [])
+     in
+    let trailing = Ref.create [] in
+    for (Ref.get pi) < (Array.length pieces) do
+      Ref.set trailing (Cst.Leaf (Array.get pieces (Ref.get pi)) :: Ref.get trailing);
+      Ref.set pi (Ref.get pi + 1)
+    end;
+    match root with
+    | Cst.Node ((k, cs)) -> Cst.Node (k, List.concat cs (List.rev (Ref.get trailing)))
+    | leaf -> Cst.Node (Cst.SourceFile, leaf :: List.rev (Ref.get trailing))
+
+
+  pub let cst_of_source source : Cst.tree =
+    let tokens = Lexer.tokenize source in
+    let (_prog, events) = Parser.parse_program_with_events tokens in
+    let pieces = Cst.pieces source tokens in
+    tree_of_events events pieces
+
+end

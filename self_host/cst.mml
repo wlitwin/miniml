@@ -1,0 +1,68 @@
+module Cst =
+  pub type trivia = string
+
+  pub type piece = {
+    leading: trivia;
+    token: Token.token;
+    text: string
+  }
+
+  pub let trivia_before source prev_end (tok : Token.token) : trivia = String.sub source prev_end (tok.loc.offset - prev_end)
+
+  pub let token_text source (tok : Token.token) : string = String.sub source tok.loc.offset (tok.end_offset - tok.loc.offset)
+
+  pub let pieces source (tokens : Token.token list) : piece list =
+    let prev_end = Ref.create 0 in
+    List.map (fn (tok : Token.token) -> let leading = trivia_before source (Ref.get prev_end) tok in
+    let text = token_text source tok in
+    Ref.set prev_end tok.end_offset;
+    {leading; token = tok; text}) tokens
+
+  pub let of_source source : piece list = pieces source (Lexer.tokenize source)
+
+  pub let reconstruct (ps : piece list) : string =
+    let buf = Buffer.create 1024 in
+    List.iter (fn p -> Buffer.add_string buf p.leading;
+    Buffer.add_string buf p.text) ps;
+    Buffer.contents buf
+
+  pub let roundtrip source : string = reconstruct (of_source source)
+
+  pub type node_kind =
+    | SourceFile
+    | Decl
+    | Expr
+    | Pattern
+    | TypeExpr
+    | MatchArm
+    | HandlerArm
+    | RecordField
+    | Param
+    | Error
+
+
+  pub type tree =
+    | Node of node_kind * tree list
+    | Leaf of piece
+
+
+  pub let rec to_source =
+    fn
+      | Leaf p -> p.leading ^ p.text
+      | Node ((_, children)) -> 
+        let buf = Buffer.create 256 in
+        List.iter (fn c -> Buffer.add_string buf (to_source c)) children;
+        Buffer.contents buf
+
+
+  pub let flat_of_source source : tree = Node (SourceFile, List.map (fn p -> Leaf p) (of_source source))
+
+  pub let rec leaves =
+    fn
+      | Leaf p -> p :: []
+      | Node ((_, children)) -> List.concat_map leaves children
+
+
+  pub let tokens (t : tree) : Token.token list = List.map (fn p -> p.token) (leaves t)
+
+end

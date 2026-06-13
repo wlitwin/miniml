@@ -143,8 +143,40 @@ let contents e = Buffer.contents e.buf
 (* --- Name translation --- *)
 
 (* MiniML keywords that can't be used as variable names *)
+(* MiniML has a FIXED operator set (the lexer/parser recognize only these as
+   infix/operator tokens) and NO custom-operator definitions. An OCaml operator
+   outside this set (e.g. the formatter's `( ^^ )` Doc-concat) cannot be a MiniML
+   operator at all, so we translate it to a mangled NAMED function — at its
+   definition, its value uses, and (in emit_apply) its infix applications, which
+   the OCaml AST has already resolved to plain 2-arg applications. *)
+let is_miniml_op op =
+  match op with
+  | "+" | "-" | "*" | "/" | "mod" | "+." | "-." | "*." | "/." -> true
+  | "=" | "<>" | "<" | ">" | "<=" | ">=" | "==" | "!=" -> true
+  | "^" | "&&" | "||" | ":=" | "::" | "@" -> true
+  | "land" | "lor" | "lxor" | "lsl" | "lsr" | "|>" | "!" -> true
+  | _ -> false
+
+let is_custom_operator name =
+  String.length name > 0
+  && (match name.[0] with
+     | '+' | '-' | '*' | '/' | '=' | '<' | '>' | '&' | '|' | '^' | ':' | '%'
+     | '!' ->
+         true
+     | _ -> false)
+  && not (is_miniml_op name)
+
+(* Deterministic identifier for a custom operator: "^^" -> "__op_5e5e". *)
+let mangle_op op =
+  "__op_"
+  ^ String.concat ""
+      (List.init (String.length op) (fun i ->
+           Printf.sprintf "%02x" (Char.code op.[i])))
+
 let escape_keyword name =
-  match name with
+  if is_custom_operator name then mangle_op name
+  else
+    match name with
   | "fn" -> "fn_"
   | "do" -> "do_"
   | "end" -> "end_"
@@ -1279,15 +1311,27 @@ and emit_apply e fn args =
                | _ -> false)
             || List.mem op
                  [ "mod"; "land"; "lor"; "lxor"; "lsl"; "lsr"; "||"; "&&" ]) ->
-      let needs_l = needs_parens_subexpr lhs in
-      let needs_r = needs_parens_subexpr rhs in
-      if needs_l then emit e "(";
-      emit_expr e lhs;
-      if needs_l then emit e ")";
-      emit e (" " ^ translate_op op ^ " ");
-      if needs_r then emit e "(";
-      emit_expr e rhs;
-      if needs_r then emit e ")"
+      if is_custom_operator op then begin
+        (* Not a MiniML operator: emit as a prefix call to the mangled named
+           function. Operands are paren-wrapped (function-argument position). *)
+        emit e (mangle_op op);
+        emit e " (";
+        emit_expr e lhs;
+        emit e ") (";
+        emit_expr e rhs;
+        emit e ")"
+      end
+      else begin
+        let needs_l = needs_parens_subexpr lhs in
+        let needs_r = needs_parens_subexpr rhs in
+        if needs_l then emit e "(";
+        emit_expr e lhs;
+        if needs_l then emit e ")";
+        emit e (" " ^ translate_op op ^ " ");
+        if needs_r then emit e "(";
+        emit_expr e rhs;
+        if needs_r then emit e ")"
+      end
   (* Prefix operators *)
   | Pexp_ident { txt = Lident op; _ }, [ (_, arg) ] when is_prefix_op op -> (
       match op with
