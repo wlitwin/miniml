@@ -76,20 +76,10 @@ let resolve_ctor_info type_env occ_ty name =
   | None -> List.assoc_opt name type_env.Types.constructors
 
 let tag_of_info type_env info name =
-  let _, _, variant_def, _ =
-    List.find
-      (fun (n, _, _, _) -> String.equal n info.Types.ctor_type_name)
-      type_env.Types.variants
-  in
-  let short_name = short_unqual name in
-  let rec find_tag i = function
-    | [] ->
-        failwith
-          (Printf.sprintf "match_tree: constructor %s not found in type" name)
-    | (cname, _) :: _ when cname = short_name -> i
-    | _ :: rest -> find_tag (i + 1) rest
-  in
-  find_tag 0 variant_def
+  (* Index computation lives in one place — Types.nominal_ctor_tag. Here the
+     authority for WHICH constructor is the occurrence type (resolve_ctor_info);
+     we then ask the shared resolver for its tag within that specific type. *)
+  Types.nominal_ctor_tag type_env info.Types.ctor_type_name (short_unqual name)
 
 let tag_for_constructor_ty type_env occ_ty name =
   match resolve_ctor_info type_env occ_ty name with

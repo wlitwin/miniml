@@ -198,27 +198,16 @@ let find_or_add_global s name =
 
 (* ---- Tag management for variants ---- *)
 
+(* Resolve a constructor name to its runtime tag. Used only by the direct
+   pattern-binding path (compile_pattern, for let/fun patterns); `match` goes
+   through match-tree lowering, which bakes the tag in. The index computation is
+   the shared Types.nominal_ctor_tag — this only resolves the name to its info. *)
 let tag_for_constructor type_env name =
   match List.assoc_opt name type_env.Types.constructors with
   | None -> error (Printf.sprintf "unknown constructor: %s" name)
   | Some info ->
-      let _, _, variant_def, _ =
-        List.find
-          (fun (n, _, _, _) -> String.equal n info.ctor_type_name)
-          type_env.Types.variants
-      in
-      (* Strip module prefix for matching: "M.Green" -> "Green" *)
-      let short_name =
-        match String.rindex_opt name '.' with
-        | Some i -> String.sub name (i + 1) (String.length name - i - 1)
-        | None -> name
-      in
-      let rec find_tag i = function
-        | [] -> error (Printf.sprintf "constructor %s not found in type" name)
-        | (cname, _) :: _ when cname = short_name -> i
-        | _ :: rest -> find_tag (i + 1) rest
-      in
-      find_tag 0 variant_def
+      Types.nominal_ctor_tag type_env info.ctor_type_name
+        (Types.short_unqual name)
 
 let is_newtype_ctor type_env name =
   match List.assoc_opt name type_env.Types.constructors with
