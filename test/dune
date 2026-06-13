@@ -84,6 +84,11 @@
  (modules test_definition))
 
 (test
+ (name test_workspace_index)
+ (libraries interpreter test_helpers)
+ (modules test_workspace_index))
+
+(test
  (name test_completion)
  (libraries interpreter test_helpers)
  (modules test_completion))
