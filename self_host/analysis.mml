@@ -487,4 +487,181 @@ module Analysis =
          (match loc with
           | Some (l : Token.loc) -> if l.line > 0 do Some (l.line, l.col) else None
           | None -> None))
+
+  -- --- Completion ---------------------------------------------------------
+
+  -- LSP CompletionItemKind values used here.
+  pub let kind_function = 3
+  pub let kind_variable = 6
+  pub let kind_keyword = 14
+
+  let keywords =
+    "let" :: "rec" :: "mut" :: "in" :: "if" :: "do" :: "else" :: "end" :: "fn"
+    :: "match" :: "with" :: "type" :: "newtype" :: "module" :: "effect" :: "class"
+    :: "instance" :: "extern" :: "open" :: "handle" :: "perform" :: "resume"
+    :: "for" :: "return" :: "break" :: "continue" :: "true" :: "false" :: "and"
+    :: "of" :: "where" :: "pub" :: "opaque" :: "when" :: []
+
+  -- A plain (unqualified, non-operator) identifier we'd offer as a completion.
+  let is_ident_like (s : string) : bool =
+    if String.length s = 0 do
+      false
+    else do
+      let c0 = String.get s 0 in
+      let ok_first = ((c0 >= #61) && (c0 <= #7a)) || (((c0 >= #41) && (c0 <= #5a)) || (c0 = #5f)) in
+      if not ok_first do
+        false
+      else if String.contains s "." do
+        false
+      else do
+        let n = String.length s in
+        let ok = Ref.create true in
+        let i = Ref.create 0 in
+        for (Ref.get i) < n do
+          let c = String.get s (Ref.get i) in
+          let good = ((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a))
+                     || (((c >= #30) && (c <= #39)) || ((c = #5f) || (c = #27)))) in
+          (if not good do Ref.set ok false end);
+          Ref.set i ((Ref.get i) + 1)
+        end;
+        Ref.get ok
+      end
+    end
+
+  -- The variables a pattern binds (PatVar / PatAs and their sub-patterns).
+  let rec pat_binders acc (p : Ast.pattern) : unit =
+    match p with
+    | Ast.PatVar n -> Ref.set acc (n :: Ref.get acc)
+    | Ast.PatAs (pp, n) -> Ref.set acc (n :: Ref.get acc); pat_binders acc pp
+    | Ast.PatTuple ps -> List.iter (fn q -> pat_binders acc q) ps
+    | Ast.PatArray ps -> List.iter (fn q -> pat_binders acc q) ps
+    | Ast.PatSet ps -> List.iter (fn q -> pat_binders acc q) ps
+    | Ast.PatCons (a, b) -> pat_binders acc a; pat_binders acc b
+    | Ast.PatOr (a, b) -> pat_binders acc a; pat_binders acc b
+    | Ast.PatConstruct (_, Some pp) -> pat_binders acc pp
+    | Ast.PatPolyVariant (_, Some pp) -> pat_binders acc pp
+    | Ast.PatAnnot (pp, _) -> pat_binders acc pp
+    | Ast.PatRecord fs -> List.iter (fn pair -> let (_, q) = pair in pat_binders acc q) fs
+    | Ast.PatMap pairs -> List.iter (fn pair -> let (k, v) = pair in pat_binders acc k; pat_binders acc v) pairs
+    | _ -> ()
+
+  -- Every name bound anywhere in an expression — let/fn-param/match-pattern/loop/
+  -- handler binders, recursively. Over-inclusive for completion (not scope-
+  -- filtered), which is fine: the editor filters by the typed prefix.
+  let rec expr_binders acc (e : Ast.expr) : unit =
+    let r q = expr_binders acc q in
+    let push n = Ref.set acc (n :: Ref.get acc) in
+    match e with
+    | Ast.ELoc (_, e2) -> r e2
+    | Ast.ELet (n, a, b) -> push n; r a; r b
+    | Ast.ELetMut (n, a, b) -> push n; r a; r b
+    | Ast.ELetRec (n, _, a, b) -> push n; r a; r b
+    | Ast.ELetRecAnd (bs, body) ->
+      List.iter (fn t -> let (n, _, e2) = t in push n; r e2) bs; r body
+    | Ast.EFun (p, b) -> push p.name; r b
+    | Ast.EMatch (s, arms, _) ->
+      r s;
+      List.iter (fn arm ->
+        let (pat, g, body) = arm in
+        pat_binders acc pat;
+        (match g with Some e2 -> r e2 | None -> ());
+        r body) arms
+    | Ast.EWhileLet (pat, e2, body) -> pat_binders acc pat; r e2; r body
+    | Ast.EFor {for_var; for_iter; for_body; for_index} ->
+      push for_var; (match for_index with Some i -> push i | None -> ()); r for_iter; r for_body
+    | Ast.EForFold {loop_var; loop_iter; accum_var; accum_init; fold_body; fold_index} ->
+      push loop_var; push accum_var; (match fold_index with Some i -> push i | None -> ());
+      r loop_iter; r accum_init; r fold_body
+    | Ast.EForNumeric {fn_var; fn_init; fn_cond; fn_step; fn_body} ->
+      push fn_var; r fn_init; r fn_cond; r fn_step; r fn_body
+    | Ast.EWhile {while_cond; while_body} -> r while_cond; r while_body
+    | Ast.EHandle (body, arms) ->
+      r body;
+      List.iter (fn arm ->
+        match arm with
+        | Ast.HReturn (n, e2) -> push n; r e2
+        | Ast.HOp {op_name = _; arg; k; body = hb} -> push arg; push k; r hb) arms
+    | Ast.EApp (a, b) -> r a; r b
+    | Ast.EBinop (_, a, b) -> r a; r b
+    | Ast.ECons (a, b) -> r a; r b
+    | Ast.ESeq (a, b) -> r a; r b
+    | Ast.EIndex (a, b) -> r a; r b
+    | Ast.EResume (a, b) -> r a; r b
+    | Ast.EIf (a, b, c) -> r a; r b; r c
+    | Ast.EUnop (_, e2) -> r e2
+    | Ast.EField (e2, _) -> r e2
+    | Ast.EAnnot (e2, _) -> r e2
+    | Ast.ECoerce (e2, _) -> r e2
+    | Ast.EReturn e2 -> r e2
+    | Ast.EPerform (_, e2) -> r e2
+    | Ast.ELocalOpen (_, e2) -> r e2
+    | Ast.EAssign (_, e2) -> r e2
+    | Ast.EConstruct (_, Some e2) -> r e2
+    | Ast.EPolyVariant (_, Some e2) -> r e2
+    | Ast.EBreak (Some e2) -> r e2
+    | Ast.EContinueLoop (Some e2) -> r e2
+    | Ast.EFieldAssign (o, _, e2) -> r o; r e2
+    | Ast.ETuple es -> List.iter r es
+    | Ast.EList es -> List.iter r es
+    | Ast.EArray es -> List.iter r es
+    | Ast.ESet es -> List.iter r es
+    | Ast.ECollTyped (_, es) -> List.iter r es
+    | Ast.ERecord fs -> List.iter (fn pair -> let (_, e2) = pair in r e2) fs
+    | Ast.ERecordUpdate (base, fs) -> r base; List.iter (fn pair -> let (_, e2) = pair in r e2) fs
+    | Ast.EMap pairs -> List.iter (fn pair -> let (k, v) = pair in r k; r v) pairs
+    | Ast.EMapTyped (_, pairs) -> List.iter (fn pair -> let (k, v) = pair in r k; r v) pairs
+    | _ -> ()
+
+  let decl_binders acc (d : Ast.decl) : unit =
+    match d with
+    | Ast.DLet {params; body; _} ->
+      List.iter (fn (p : Ast.param) -> Ref.set acc (p.name :: Ref.get acc)) params;
+      expr_binders acc body
+    | Ast.DLetMut (_, e) -> expr_binders acc e
+    | Ast.DExpr e -> expr_binders acc e
+    | Ast.DLetRec b ->
+      List.iter (fn (p : Ast.param) -> Ref.set acc (p.name :: Ref.get acc)) b.params;
+      expr_binders acc b.body
+    | Ast.DLetRecAnd bs ->
+      List.iter (fn (b : Ast.letrec_binding) ->
+        List.iter (fn (p : Ast.param) -> Ref.set acc (p.name :: Ref.get acc)) b.params;
+        expr_binders acc b.body) bs
+    | _ -> ()
+
+  -- The completion candidates visible in src: every name in scope (stdlib +
+  -- builtins, from the typecheck context) plus the file's own top-level
+  -- declarations and local bindings (let / parameters / patterns / loops /
+  -- handlers), plus the language keywords. Returned as (label, CompletionItemKind)
+  -- pairs, de-duplicated; the editor filters by the typed prefix. Local names are
+  -- over-inclusive (whole file, not scope-filtered).
+  pub let completions (state : Typechecker.ctx) (src : string) : (string * int) list =
+    let seen = Hashtbl.create 512 in
+    let out = Ref.create [] in
+    let add kind name =
+      if (is_ident_like name) && (not (Hashtbl.has seen name)) do
+        Hashtbl.set seen name true;
+        Ref.set out ((name, kind) :: Ref.get out)
+      end
+    in
+    -- the file's own names first (most relevant): top-level decls, then every
+    -- local binding (parameters, let-ins, pattern/loop/handler vars)
+    let _ = handle
+      let tokens = Lexer.tokenize src in
+      let (program, _d, defs) = parse_recover src tokens in
+      List.iter (fn pair -> let (name, _) = pair in add kind_variable name) defs;
+      let locals = Ref.create [] in
+      List.iter (fn d -> decl_binders locals d) program;
+      List.iter (fn n -> add kind_variable n) (Ref.get locals)
+    with
+    | return _ -> ()
+    | lex_error _a _k -> ()
+    in
+    -- everything in scope: stdlib + builtins
+    List.iter (fn pair ->
+      let (name, sch) = pair in
+      let kind = (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable) in
+      add kind name
+    ) state.vars;
+    List.iter (fn kw -> add kind_keyword kw) keywords;
+    List.rev (Ref.get out)
 end

@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost hover-def-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost hover-def-selfhost completions-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -383,6 +383,21 @@ check-run-hover-def-selfhost:
 	@nat=$$(/tmp/mml_hovdef_check_bin); \
 	  if [ "$$nat" = "OK" ]; then echo "self-host analysis hover/go-to-def passed (VM/native round-trip)"; \
 	  else echo "FAIL hover-def (native): $$nat"; exit 1; fi
+# The analysis COMPLETION layer (self_host/analysis.mml: pat_binders/expr_binders/
+# decl_binders + completions) — every name in scope (file decls + local binders +
+# stdlib/builtins from ctx.vars + keywords) as (label, CompletionItemKind) pairs,
+# de-duplicated (roadmap #16c, LSP step 3c-iii). The big Ast binder-walk. Reuses
+# the diagnostics stage's full-compiler + make_analysis_ctx; a behavioral
+# self-check (top-level/param/pattern/stdlib/keyword names present, kinds, dotted
+# names excluded, dedup) runs on BOTH the OCaml VM and native, asserting "OK".
+check-run-completions-selfhost:
+	@cat $(DIAGNOSTICS_SELFHOST_FILES) compiler_test/completions_selfhost_check.mml > /tmp/mml_completions_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_completions_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL completions (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_completions_concat.mml -o /tmp/mml_completions_check_bin
+	@nat=$$(/tmp/mml_completions_check_bin); \
+	  if [ "$$nat" = "OK" ]; then echo "self-host analysis completions passed (VM/native round-trip)"; \
+	  else echo "FAIL completions (native): $$nat"; exit 1; fi
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt
