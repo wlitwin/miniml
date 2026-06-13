@@ -79,8 +79,10 @@ let cmd_run target args =
   try ignore (I.Interp.wrap_errors (fun () -> I.Interp.run_string_in_state st (source_of target)))
   with
   | I.Interp.Error msg ->
-      (* attribute project errors to their source files; pass through for a file *)
-      if I.Project.is_project target then report_project st target
+      (* attribute project errors to their source files; pass through for a file.
+         Analysis takes the typechecking ctx (Analysis.state = Typechecker.ctx),
+         so hand it the run state's ctx. *)
+      if I.Project.is_project target then report_project st.I.Interp.ctx target
       else Printf.eprintf "%s\n" msg;
       exit 1
   | I.Project.Build_error msg ->

@@ -73,6 +73,11 @@ let stdlib_state_lazy =
 
 let get_stdlib_state () = Lazy.force stdlib_state_lazy
 
+(* The typechecking context with stdlib loaded — what Analysis functions now take
+   (Analysis.state = Typechecker.ctx, decoupled from the VM's repl_state). Reuses
+   the shared lazy state. *)
+let get_analysis_ctx () = (Lazy.force stdlib_state_lazy).Interpreter.Interp.ctx
+
 let run_stdlib source =
   Interpreter.Interp.run_string_in_state (get_stdlib_state ()) source
 

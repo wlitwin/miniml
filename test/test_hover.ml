@@ -1,7 +1,7 @@
 open Test_helpers
 module A = Interpreter.Analysis
 
-let st = get_stdlib_state ()
+let st = get_analysis_ctx ()
 
 let hover_is expected src ~line ~col () =
   match A.hover st src ~line ~col with

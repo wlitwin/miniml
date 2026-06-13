@@ -8,10 +8,17 @@
    expensive to build (it typechecks all of stdlib), so a caller builds one with
    [make_state] and reuses it across edits. *)
 
-type state = Interp.repl_state
+(* The analysis logic needs only a typechecker context with the standard library
+   loaded — NOT the VM (globals, bytecode, …). Keeping [state] = [Typechecker.ctx]
+   (rather than the VM's repl_state) makes every analysis function portable: the
+   self-hosted compiler builds the same ctx via its own driver setup, so this
+   module can be translated to MiniML like the rest of the toolchain (Path-B
+   cutover, docs/freeze-point.md). [make_state] is the OCaml ctx-builder (via the
+   VM's stdlib loader); the MiniML port supplies its own. *)
+type state = Typechecker.ctx
 
-(* A fresh analysis state with the full standard library loaded. *)
-let make_state () : state = Std.register_all (Interp.repl_state_init ())
+(* A fresh analysis context with the full standard library loaded. *)
+let make_state () : state = (Std.register_all (Interp.repl_state_init ())).Interp.ctx
 
 (* Token kinds that begin a top-level declaration — recovery resyncs to one of
    these (or `;;` / EOF) after a parse error. *)
@@ -253,7 +260,7 @@ let diagnostics (state : state) (src : string) : Diagnostic.t list =
       [ Diagnostic.make ~code:"lex" ~span:(Diagnostic.span_at src loc) msg ]
   | tokens ->
       let program, parse_diags, _ = parse_recover src tokens in
-      let ctx = ref state.Interp.ctx and type_diags = ref [] in
+      let ctx = ref state and type_diags = ref [] in
       let type_diag loc msg =
         type_diags := Diagnostic.make ~code:"type" ~span:(Diagnostic.span_at src loc) msg :: !type_diags
       in
@@ -325,7 +332,7 @@ let rec visit_tdecl f (td : Typechecker.tdecl) : unit =
    typed-side analogue of [parse_recover] and what hover / go-to-def run on. *)
 let typed_recover (state : state) (program : Ast.program) :
     Typechecker.tdecl list =
-  let ctx = ref state.Interp.ctx and acc = ref [] in
+  let ctx = ref state and acc = ref [] in
   List.iter
     (fun decl ->
       match Typechecker.check_program_in_ctx !ctx [ decl ] with
@@ -563,7 +570,7 @@ let completions (state : state) (src : string) : (string * int) list =
     (fun (name, (sch : Types.scheme)) ->
       let kind = match sch.Types.body with Types.TArrow _ -> kind_function | _ -> kind_variable in
       add kind name)
-    state.Interp.ctx.Typechecker.vars;
+    state.Typechecker.vars;
   List.iter (add kind_keyword) keywords;
   List.rev !out
 

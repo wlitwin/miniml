@@ -1,7 +1,7 @@
 open Test_helpers
 module A = Interpreter.Analysis
 
-let st = get_stdlib_state ()
+let st = get_analysis_ctx ()
 
 let def_is (el, ec) src ~line ~col () =
   match A.definition st src ~line ~col with
