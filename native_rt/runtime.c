@@ -329,6 +329,14 @@ mml_value mml_fmt_float_str(mml_value prec, mml_value val) {
     return mml_string_from_buf(buf, n);
 }
 
+mml_value mml_fmt_float_g_str(mml_value prec, mml_value val) {
+    int p = (int)MML_INT_VAL(prec);
+    double d = mml_unbox_float(val);
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "%.*g", p, d);
+    return mml_string_from_buf(buf, n);
+}
+
 mml_value mml_fmt_hex(mml_value val) {
     char buf[32];
     int n = snprintf(buf, sizeof(buf), "%llx", (unsigned long long)MML_INT_VAL(val));

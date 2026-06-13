@@ -4403,6 +4403,29 @@ function __int_to_hex(n) { return n.toString(16); }
 function __int_to_oct(n) { return n.toString(8); }
 function __int_to_bin(n) { return n.toString(2); }
 function __fmt_float(prec, f) { return f.toFixed(prec); }
+// C printf "%.*g": [prec] significant digits, %e style when the decimal
+// exponent < -4 or >= prec, else %f style, trailing zeros stripped, two-digit
+// exponent. This is __format_g generalized off its hardcoded precision 6
+// (__format_g(f) === __fmt_float_g(6, f)) — same spec as OCaml/native C %g.
+function __fmt_float_g(prec, f) {
+  let p = prec < 1 ? 1 : prec;
+  if (Number.isNaN(f)) return "nan";
+  if (f === Infinity) return "inf";
+  if (f === -Infinity) return "-inf";
+  if (f === 0) return Object.is(f, -0) ? "-0" : "0";
+  const es = f.toExponential(p - 1);
+  const X = parseInt(es.slice(es.indexOf("e") + 1), 10);
+  if (X < -4 || X >= p) {
+    let mant = es.slice(0, es.indexOf("e"));
+    if (mant.includes(".")) mant = mant.replace(/0+$/, "").replace(/\.$/, "");
+    let digits = String(Math.abs(X));
+    if (digits.length < 2) digits = "0" + digits;
+    return mant + "e" + (X < 0 ? "-" : "+") + digits;
+  }
+  let s = f.toFixed(Math.max(0, p - 1 - X));
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
+}
 function __fmt_hex(n) { return n.toString(16); }
 function __fmt_hex_upper(n) { return n.toString(16).toUpperCase(); }
 function __fmt_oct(n) { return n.toString(8); }

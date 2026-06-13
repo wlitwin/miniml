@@ -273,6 +273,16 @@ let builtins output_fn : builtin_def list =
                (as_float (List.nth args 1))));
     };
     {
+      name = "__fmt_float_g";
+      arity = 2;
+      impl =
+        (fun args ->
+          VString
+            (Printf.sprintf "%.*g"
+               (as_int (List.nth args 0))
+               (as_float (List.nth args 1))));
+    };
+    {
       name = "__fmt_hex";
       arity = 1;
       impl =

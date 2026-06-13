@@ -251,6 +251,7 @@ mml_value mml_byte_to_string(mml_value v);
 
 /* Format builtins */
 mml_value mml_fmt_float_str(mml_value prec, mml_value val);
+mml_value mml_fmt_float_g_str(mml_value prec, mml_value val);
 mml_value mml_fmt_hex(mml_value val);
 mml_value mml_fmt_hex_upper(mml_value val);
 mml_value mml_fmt_oct(mml_value val);

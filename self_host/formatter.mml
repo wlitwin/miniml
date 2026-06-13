@@ -250,7 +250,7 @@ module Formatter =
       if p > 17 do
         None
       else do
-        let s = $"{p:.*}g" in
+        let s = $"{__fmt_float_g p f}" in
         if has_exp s do
           try_g (p + 1)
         else do
@@ -272,7 +272,7 @@ module Formatter =
         if p > 30 do
           $"{f:.17f}"
         else do
-          let s = $"{p:.*}f" in
+          let s = $"{__fmt_float p f}" in
           if lexes_to s do
             s
           else

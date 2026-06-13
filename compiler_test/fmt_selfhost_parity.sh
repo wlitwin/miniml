@@ -12,7 +12,12 @@
 set -e
 cd "$(dirname "$0")/.."
 
-dune build bin/main.exe bin/mml.exe 2>/dev/null
+# MML / MMLFMT are overridable so the `make check` gate can pass pre-built
+# binaries (avoiding dune-build-lock contention with the parallel suites).
+# Standalone, they default to `dune exec`, which builds on demand.
+MML="${MML:-dune exec bin/main.exe --}"
+MMLFMT="${MMLFMT:-dune exec bin/mml.exe -- fmt}"
+[ -n "${MML_PREBUILT:-}" ] || dune build bin/main.exe bin/mml.exe 2>/dev/null
 
 # A tiny entry over the translated formatter: read a file, write its formatting
 # to raw stdout (IO.write — byte-exact, no pp framing).
@@ -30,12 +35,12 @@ FRONT="self_host/token.mml self_host/ast.mml self_host/bytecode.mml self_host/ty
 
 tool=/tmp/fmt_selfhost_tool.js
 # shellcheck disable=SC2086
-dune exec bin/main.exe -- --emit-js $FRONT "$harness" > "$tool"
+$MML --emit-js $FRONT "$harness" > "$tool"
 
 pass=0; skip=0; fail=0
 for f in stdlib/*.mml self_host/*.mml; do
   # Skip what the OCaml formatter itself can't handle (Unsupported / unparseable).
-  if ! dune exec bin/mml.exe -- fmt "$f" > /tmp/fmt_oc.txt 2>/dev/null; then
+  if ! $MMLFMT "$f" > /tmp/fmt_oc.txt 2>/dev/null; then
     skip=$((skip + 1)); continue
   fi
   # The emit-js harness auto-displays the program's final unit value as a

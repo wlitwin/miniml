@@ -174,3 +174,42 @@ Math.float_bits_hex 0.5
 --- test: float_bits_hex 3.14
 Math.float_bits_hex 3.14
 --- expect: 40091EB851EB851F
+
+=== Variable-precision float formatting (__fmt_float_g / __fmt_float) ===
+
+These back the formatter's float_lit (shortest round-tripping decimal).
+__fmt_float_g is C "%.*g" (N significant digits, %g style); __fmt_float is
+C "%.*f" (N decimal places). Cross-backend agreement is what lets the
+self-host formatter (emit-js) match the OCaml reference byte-for-byte.
+
+--- test: fmt_float_g 1 sig digit of zero
+__fmt_float_g 1 0.0
+--- expect: 0
+
+--- test: fmt_float_g 6 sig digits
+__fmt_float_g 6 3.14159
+--- expect: 3.14159
+
+--- test: fmt_float_g 2 sig digits rounds
+__fmt_float_g 2 3.14159
+--- expect: 3.1
+
+--- test: fmt_float_g switches to exponent when X >= prec
+__fmt_float_g 3 1000000.0
+--- expect: 1e+06
+
+--- test: fmt_float_g fixed-point at exponent boundary
+__fmt_float_g 4 0.0001234
+--- expect: 0.0001234
+
+--- test: fmt_float_g exponent below -4
+__fmt_float_g 2 0.00001
+--- expect: 1e-05
+
+--- test: fmt_float fixed 3 decimals
+__fmt_float 3 3.14159
+--- expect: 3.142
+
+--- test: fmt_float zero decimals rounds
+__fmt_float 0 3.7
+--- expect: 4
