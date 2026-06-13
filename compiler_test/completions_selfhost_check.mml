@@ -1,0 +1,34 @@
+-- Behavioral self-check for self_host/analysis.mml's completions (gate stage
+-- `completions-selfhost`). Concatenated after the full compiler (minus main.mml)
+-- + diagnostic.mml + analysis.mml and run on the OCaml VM + native; must print
+-- "OK". make_analysis_ctx reads stdlib/*.mml (run from repo root). Membership uses
+-- inline List.exists / List.fold (not a generic helper) to stay monomorphic.
+let () =
+  let st = Driver.make_analysis_ctx () in
+  let src = "let greeting = 1\nlet add a b = a + b\nlet go xs = match xs with\n  | hd :: tl -> hd\n  | [] -> 0" in
+  let comps = Analysis.completions st src in
+  let has q = List.exists (fn pair -> let (n, _) = pair in n = q) comps in
+  let kind_of q = List.fold (fn acc pair -> let (n, k) = pair in if n = q do k else acc) (0 - 1) comps in
+  let checks = [
+    ("toplevel-greeting", has "greeting");
+    ("toplevel-fn-add", has "add");
+    ("fn-param", has "a");
+    ("match-pat-binder-hd", has "hd");
+    ("match-pat-binder-tl", has "tl");
+    ("stdlib-print", has "print");
+    ("keyword-match", has "match");
+    -- a stdlib function (arrow type in ctx.vars) is kind_function (3)
+    ("stdlib-fn-kind", kind_of "string_of_int" = Analysis.kind_function);
+    -- a file-local name is kind_variable (6) — the file's own decls/binders are
+    -- all offered as variables; the function/variable split is only for ctx.vars
+    ("file-local-variable-kind", kind_of "greeting" = Analysis.kind_variable);
+    -- a keyword is kind_keyword (14)
+    ("match-is-keyword-kind", kind_of "match" = Analysis.kind_keyword);
+    -- qualified / dotted names are NOT offered (is_ident_like rejects '.')
+    ("no-dotted-names", not (List.exists (fn pair -> let (n, _) = pair in String.contains n ".") comps));
+    -- de-duplicated: 'add' appears exactly once
+    ("dedup-add", List.length (List.filter (fn pair -> let (n, _) = pair in n = "add") comps) = 1)
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)
