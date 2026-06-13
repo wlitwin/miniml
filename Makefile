@@ -345,7 +345,15 @@ translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
 	@test -n "$(FILE)" || (echo "Usage: make translate FILE=<lib/file.ml>"; exit 1)
 	$(TRANSLATOR) $(FILE)
 
-translate-all: build  ## Translate all target files to self_host/
+# PATH-B CUTOVER (docs/freeze-point.md): self_host/ is now the SOURCE OF TRUTH for
+# the compiler — edit it directly. `translate-all` is no longer part of the build
+# (the self-host-compile / playground targets compile self_host/ as-is). It is
+# kept as an explicit RE-SYNC-FROM-REFERENCE tool: running it OVERWRITES the
+# translated self_host/*.mml from the (now frozen) lib/ reference, so only run it
+# deliberately to re-seed from the reference — NOT as part of normal development
+# (it would clobber direct edits to the translated modules). The hand-maintained
+# entries (main/driver/mml) are never touched by it.
+translate-all: build  ## Re-sync self_host/ from the frozen lib/ reference (OVERWRITES; not part of the build post-cutover)
 	@for f in $(TRANSLATE_FILES); do \
 		echo "Translating $$f.ml → self_host/$$f.mml"; \
 		$(TRANSLATOR) lib/$$f.ml > self_host/$$f.mml; \
@@ -448,17 +456,17 @@ MML_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mm
                      self_host/manifest.mml self_host/deps.mml self_host/fetch.mml \
                      self_host/project.mml self_host/mml.mml
 
-native-selfhost-typecheck: build translate-all  ## Typecheck the self-hosted native backend in-context
+native-selfhost-typecheck: build  ## Typecheck the self-hosted native backend in-context
 	dune exec bin/main.exe -- --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null
 	@echo "native self-host backend: typecheck + compile passed"
 
 self-host-compile: build  ## Compile the self-hosted compiler to a JSON bundle
 	dune exec bin/main.exe -- --emit-json $(SELF_HOST_FILES)
 
-self-host-compile-js: build translate-all
+self-host-compile-js: build
 	dune exec bin/main.exe -- --emit-json $(SELF_HOST_FILES) > js/compiler.json
 
-self-host-compile-native-js: build translate-all  ## Compile self-hosted compiler to standalone JS
+self-host-compile-native-js: build  ## Compile self-hosted compiler to standalone JS
 	dune exec bin/main.exe -- --emit-js $(SELF_HOST_FILES) > js/compiler_native.js
 
 self-host-run: build  ## Compile self-hosted compiler and run a file through it
@@ -468,7 +476,7 @@ self-host-run: build  ## Compile self-hosted compiler and run a file through it
 
 # ── Playground ────────────────────────────────────────────
 
-playground: build translate-all  ## Build the playground site (self-hosted compiler as JS + stdlib bundle)
+playground: build  ## Build the playground site (self-hosted compiler as JS + stdlib bundle)
 	@echo "Building js/stdlib_sources.js..."
 	node js/build_stdlib_bundle.js
 	@echo "Compiling self-hosted compiler to js/compiler_native.js..."
