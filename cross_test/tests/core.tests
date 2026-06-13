@@ -1282,3 +1282,35 @@ let xs = [Green 3; Green 3; Blue 1; Red; Green 3; Blue 1]
 ;;
 List.length (List.sort_uniq compare xs)
 --- expect: 3
+
+# Dynamic (non-constant-foldable) bit shifts >= 32. JS <</>> are 32-bit (shift
+# count mod 32), so a shift amount the optimizer can't fold to a constant — here
+# derived from a `mut` — must NOT use the bare operators on emit-js. This is the
+# bug that broke the OCaml-free bootstrap: the self-host's llvm_encode_le_i64
+# loops `n lsr (i*8)` to serialize 64-bit native header words, miscompiling them
+# when the self-host itself runs on emit-js. (Path-B cutover; docs/freeze-point.md)
+--- test: dynamic lsr by >= 32 (mut shift amount)
+let mut i = 4
+;;
+(6 lsr (i * 8)) land 0xFF
+--- expect: 0
+
+--- test: dynamic lsl by >= 32 (mut shift amount)
+let mut i = 5
+;;
+1 lsl (i * 8)
+--- expect: 1099511627776
+
+--- test: little-endian i64 byte serialization (the llvm_encode_le_i64 shape)
+let encode n =
+  let buf = Buffer.create 24 in
+  let mut i = 0 in
+  for i <= 7 do
+    let byte = (n lsr (i * 8)) land 0xFF in
+    Buffer.add_string buf (string_of_int byte ^ " ");
+    i := i + 1
+  end;
+  Buffer.contents buf
+;;
+encode 6
+--- expect: 6 0 0 0 0 0 0 0 
