@@ -15,15 +15,17 @@ const dir = __dirname;
 const stdlibDir = path.join(dir, "..", "stdlib");
 
 // The set of stdlib modules to embed is DERIVED from the compiler itself
-// (self_host/main.mml), not hand-maintained here — a duplicated list silently
-// drifts (it once dropped fs/path/process/digest, breaking the playground with
-// "File not found: stdlib/fs.mml"). We scan main.mml for both ways it pulls in
-// a stdlib file: the direct `"stdlib/<name>.mml"` literal (builtins, loaded
-// first as the single source of builtin signatures) and every `load "<name>"`
-// call (the rest, in load order). Any future `load "x"` is bundled automatically.
+// (self_host/driver.mml — the compiler driver that loads the stdlib; main.mml is
+// now just the thin entry that calls Driver.run_cli), not hand-maintained here —
+// a duplicated list silently drifts (it once dropped fs/path/process/digest,
+// breaking the playground with "File not found: stdlib/fs.mml"). We scan
+// driver.mml for both ways it pulls in a stdlib file: the direct
+// `"stdlib/<name>.mml"` literal (builtins, loaded first as the single source of
+// builtin signatures) and every `load "<name>"` call (the rest, in load order).
+// Any future `load "x"` is bundled automatically.
 function stdlibFilesFromCompiler() {
   const mainMml = fs.readFileSync(
-    path.join(dir, "..", "self_host", "main.mml"),
+    path.join(dir, "..", "self_host", "driver.mml"),
     "utf-8"
   );
   const names = [];
@@ -40,7 +42,7 @@ function stdlibFilesFromCompiler() {
   for (const m of mainMml.matchAll(/^\s*load\s+"([a-z0-9_]+)"/gm)) add(m[1]);
   if (names.length === 0) {
     throw new Error(
-      "No stdlib modules found in self_host/main.mml — the scan patterns are stale"
+      "No stdlib modules found in self_host/driver.mml — the scan patterns are stale"
     );
   }
   return names;
