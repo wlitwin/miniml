@@ -1156,7 +1156,7 @@ module Js_codegen =
         end) all_args in
       let print_shape =
         match (base_fn.expr, all_args) with
-        | (Typechecker.TEVar (pname), a :: []) when (lookup_var ctx pname) = "print" -> float_shape ctx.type_env a.ty
+        | (Typechecker.TEVar (("print" | "Stdlib.print") as pname), a :: []) when (lookup_var ctx pname) = "print" -> float_shape ctx.type_env a.ty
         | _ -> None
        in
       if (known_arity = (Some n)) && (not has_implicit_args) do
@@ -2729,7 +2729,7 @@ module Js_codegen =
       let known_arity = count_arrows base_fn.ty in
       let print_shape =
         match (base_fn.expr, all_args) with
-        | (Typechecker.TEVar (pname), a :: []) when (lookup_var ctx pname) = "print" -> float_shape ctx.type_env a.ty
+        | (Typechecker.TEVar (("print" | "Stdlib.print") as pname), a :: []) when (lookup_var ctx pname) = "print" -> float_shape ctx.type_env a.ty
         | _ -> None
        in
       let call_expr =

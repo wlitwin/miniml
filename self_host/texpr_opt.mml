@@ -430,7 +430,7 @@ module Texpr_opt =
     | TDExpr e -> TDExpr (optimize_expr mutables pure_fns e)
     | TDLetRecAnd binds -> TDLetRecAnd (List.map (fn (n, e) -> (n, optimize_expr mutables pure_fns e)) binds)
     | TDModule ((name, decls, schemes)) -> TDModule (name, List.map (optimize_decl mutables pure_fns) decls, schemes)
-    | d -> d
+    | ((((TDType _ | TDClass _) | TDEffect _) | TDExtern _) | TDOpen _) as d -> d
 
 
   pub let optimize_program stdlib_programs type_env (program : tprogram) : tprogram =

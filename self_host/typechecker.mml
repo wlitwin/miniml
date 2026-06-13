@@ -761,7 +761,7 @@ module Typechecker =
         fn
           | Match_tree_types.DSwitch sw -> Match_tree_types.DSwitch {sw with cases = List.map (fn (test, binds, sub) -> (test, binds, map_tree sub)) sw.cases; default = Option.map map_tree sw.default}
           | Match_tree_types.DGuard g -> Match_tree_types.DGuard {g with guard = f g.guard; on_true = map_tree g.on_true; on_false = map_tree g.on_false}
-          | leaf -> leaf
+          | (Match_tree_types.DLeaf _ | Match_tree_types.DFail _) as leaf -> leaf
        in
       TEMatchTree {cm with scrutinee = scrutinee'; match_arms = match_arms'; tree = map_tree cm.tree}
     | TELetMut ((n, e1, e2)) -> TELetMut (n, f e1, f e2)

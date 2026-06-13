@@ -1025,7 +1025,7 @@ module Types =
       | TRecord row -> TRecord (go_rrow row)
       | TVariant ((name, args)) -> TVariant (name, List.map go args)
       | TPolyVariant row -> TPolyVariant (go_pv row)
-      | t -> t
+      | (((((((TInt | TFloat) | TBool) | TString) | TByte) | TRune) | TUnit) | TGen _) as t -> t
 
     and go_eff eff =
       match eff_repr eff with

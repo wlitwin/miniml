@@ -469,14 +469,16 @@ and emit_pattern e (pat : pattern) =
       emit e " : ";
       emit_type e t;
       emit e ")"
-  | Ppat_alias (p, name) -> (
-      match p.ppat_desc with
-      | Ppat_or _ ->
-          (* MiniML doesn't support (A | B) as x; use variable as catch-all *)
-          emit e name.txt
-      | _ ->
-          emit_pattern e p;
-          emit e (" as " ^ name.txt))
+  | Ppat_alias (p, name) ->
+      (* `p as name`. MiniML supports `(p1 | p2) as name` — a parenthesized
+         or-pattern is a pattern atom, and `as` binds outside it (see
+         lib/parser.ml parse_pattern_as / parse_pattern_atom). emit_pattern
+         already parenthesizes Ppat_or, so this is faithful for or-patterns too;
+         collapsing `(A | B) as x` to a bare `x` catch-all (as we used to) was a
+         semantics bug — it matched cases the or-pattern excludes, swallowing the
+         following arms. *)
+      emit_pattern e p;
+      emit e (" as " ^ name.txt)
   | Ppat_variant (label, arg) ->
       emit e ("`" ^ label);
       Option.iter
