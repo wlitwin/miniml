@@ -2174,16 +2174,21 @@ and compile_binop ctx op e1 e2 =
       match resolved with
       | Types.TInt ->
           let a, b = compile_two_ordered ctx e1 e2 in
-          let js_op =
-            match op with
-            | Ast.Land -> "&"
-            | Ast.Lor -> "|"
-            | Ast.Lxor -> "^"
-            | Ast.Lsl -> "<<"
-            | Ast.Lsr -> ">>"
-            | _ -> assert false
-          in
-          "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")"
+          (* Lsl/Lsr go through arithmetic helpers (JS <</>> are 32-bit, wrong for
+             dynamic shifts >= 32); Land/Lor/Lxor stay infix (the masked low bits
+             they target are 32-bit-safe). *)
+          (match op with
+          | Ast.Lsl -> "__int_lsl(" ^ a ^ ", " ^ b ^ ")"
+          | Ast.Lsr -> "__int_lsr(" ^ a ^ ", " ^ b ^ ")"
+          | _ ->
+              let js_op =
+                match op with
+                | Ast.Land -> "&"
+                | Ast.Lor -> "|"
+                | Ast.Lxor -> "^"
+                | _ -> assert false
+              in
+              "(" ^ a ^ " " ^ js_op ^ " " ^ b ^ ")")
       | _ ->
           let method_name =
             match op with
@@ -4708,6 +4713,15 @@ function __bor_int(a, b) { return a | b; }
 function __bxor_int(a, b) { return a ^ b; }
 function __bshl_int(a, b) { return a << b; }
 function __bshr_int(a, b) { return a >> b; }
+// Logical shifts over MiniML's <2^53 int envelope. JS <</>> are 32-bit (shift
+// count taken mod 32), so a DYNAMIC shift >= 32 (e.g. `n lsr (i*8)` in a loop)
+// is wrong with the bare operators — arithmetic keeps the high bits. Matches the
+// VM/native for non-negative ints across the envelope; negatives keep the prior
+// (32-bit) behaviour (logical shifts of negatives are already backend-divergent
+// and out of the agreed envelope). Constant shifts are still constant-folded by
+// texpr_opt, so these run only for genuinely dynamic shift amounts.
+function __int_lsl(a, b) { return a * 2 ** b; }
+function __int_lsr(a, b) { return a < 0 ? a >> b : Math.floor(a / 2 ** b); }
 function __bnot_int(a) { return ~a; }
 function __show_int(a) { return String(a); }
 function __show_float(a) { return string_of_float(a); }
