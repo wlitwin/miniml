@@ -100,6 +100,117 @@ let parse_recover (src : string) (tokens : Token.token list) :
   done;
   (List.rev !decls, List.rev !diags, List.rev !defs)
 
+(* --- Workspace symbol index (cross-file go-to-def) ----------------------- *)
+
+(* Every definition a file exports, as (qualified-name, name-loc): a top-level
+   `bar` is indexed as "bar"; a member `bar` of `module Foo` as "Foo.bar" (and
+   nested modules compose, "Foo.Bar.baz"). Built with the real parser + the same
+   decl-boundary recovery as parse_recover, so `end`-overloading and nested
+   let-ins are handled correctly (a token scan can't tell a member `let` from a
+   body `let`). Powers cross-file navigation of the self-hosted compiler sources
+   (heavily Module.member across ~30 files) — the dev-ex the Path-B cutover wants. *)
+let index_symbols (src : string) : (string * Token.loc) list =
+  let acc = ref [] in
+  let rec loop prefix (p : Parser.t) =
+    while Parser.peek_kind p <> Token.EOF do
+      p.Parser.suppress_do <- false;
+      let before = p.Parser.pos in
+      (match Parser.parse_decl p with
+      | ds ->
+          let slice =
+            Array.to_list (Array.sub p.Parser.tokens before (p.Parser.pos - before))
+          in
+          (match decl_name slice with
+          | Some (n, loc) ->
+              let qual = if prefix = "" then n else prefix ^ "." ^ n in
+              acc := (qual, loc) :: !acc;
+              (* a module's members get their own qualified entries *)
+              (match ds with
+              | [ Ast.DModule (mname, _) ] when Array.length p.Parser.tokens >= before + 4 ->
+                  (* slice = [MODULE; UIDENT; EQ; ...members...; END]; recurse on
+                     the inner members with the module name as the new prefix *)
+                  let arr = Array.of_list slice in
+                  let len = Array.length arr in
+                  if len > 4 then begin
+                    let inner = Array.to_list (Array.sub arr 3 (len - 4)) in
+                    let eof = { (arr.(len - 1)) with Token.kind = Token.EOF } in
+                    let mprefix = if prefix = "" then mname else prefix ^ "." ^ mname in
+                    (try loop mprefix (Parser.create (inner @ [ eof ])) with _ -> ())
+                  end
+              | _ -> ())
+          | None -> ())
+      | exception Parser.Parse_error _ ->
+          if p.Parser.pos = before then ignore (Parser.advance p);
+          let scanning = ref true in
+          while !scanning do
+            match Parser.peek_kind p with
+            | Token.EOF | Token.DOUBLE_SEMICOLON -> scanning := false
+            | k when is_decl_start k -> scanning := false
+            | _ -> ignore (Parser.advance p)
+          done);
+      if Parser.peek_kind p = Token.DOUBLE_SEMICOLON then ignore (Parser.advance p)
+    done
+  in
+  (try
+     Parser.fresh_param_counter := 0;
+     loop "" (Parser.create (Lexer.tokenize src))
+   with _ -> ());
+  List.rev !acc
+
+(* A workspace index: qualified-name -> the (file, name-loc) sites that define
+   it (a list, so genuine collisions are visible; go-to-def takes the first). *)
+type sym_index = (string, (string * Token.loc) list) Hashtbl.t
+
+let build_index (files : (string * string) list) : sym_index =
+  let idx : sym_index = Hashtbl.create 512 in
+  List.iter
+    (fun (path, src) ->
+      List.iter
+        (fun (qual, loc) ->
+          let prev = try Hashtbl.find idx qual with Not_found -> [] in
+          Hashtbl.replace idx qual (prev @ [ (path, loc) ]))
+        (index_symbols src))
+    files;
+  idx
+
+let index_lookup (idx : sym_index) (qual : string) : (string * Token.loc) option =
+  match Hashtbl.find_opt idx qual with Some (x :: _) -> Some x | _ -> None
+
+(* If the cursor sits on the final identifier of a qualified path
+   `Upper.lower` / `Upper.Mid.name`, return that full dotted name. Reads the
+   token stream around the cursor: an IDENT/UIDENT immediately preceded by
+   `UIDENT .` (one or more times). *)
+let qualified_at (src : string) (cursor : int) : string option =
+  match Lexer.tokenize src with
+  | exception _ -> None
+  | toks ->
+      let arr = Array.of_list toks in
+      let n = Array.length arr in
+      let idx = ref (-1) in
+      for i = 0 to n - 1 do
+        let t = arr.(i) in
+        if t.Token.loc.offset <= cursor && cursor < t.Token.end_offset then idx := i
+      done;
+      if !idx < 0 then None
+      else
+        let is_name k = match k with Token.IDENT _ | Token.UIDENT _ -> true | _ -> false in
+        let name_of k = match k with Token.IDENT s | Token.UIDENT s -> s | _ -> "" in
+        if not (is_name arr.(!idx).Token.kind) then None
+        else begin
+          (* walk left collecting `UIDENT .` segments before the cursor token *)
+          let segs = ref [ name_of arr.(!idx).Token.kind ] in
+          let j = ref (!idx) in
+          let continue = ref true in
+          while !continue && !j >= 2
+                && arr.(!j - 1).Token.kind = Token.DOT
+                && (match arr.(!j - 2).Token.kind with Token.UIDENT _ -> true | _ -> false)
+          do
+            segs := name_of arr.(!j - 2).Token.kind :: !segs;
+            j := !j - 2
+          done;
+          if List.length !segs >= 2 then Some (String.concat "." !segs) else None
+        end
+
 (* The typechecker's accumulated warnings ("Warning at line N: msg") as Warning
    diagnostics spanning that line. Anything that doesn't match the format is
    reported whole at the start of the file rather than dropped. *)

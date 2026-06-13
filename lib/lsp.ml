@@ -59,10 +59,49 @@ let arr xs = J.JArray xs
 type t = {
   docs : (string, string) Hashtbl.t; (* open document uri -> full text *)
   analysis : Analysis.state;
+  mutable root : string option; (* workspace root path (from initialize) *)
+  mutable index : Analysis.sym_index option; (* lazy cross-file symbol index *)
 }
 
 (* Build a server. Loads the standard library once (expensive). *)
-let create () : t = { docs = Hashtbl.create 16; analysis = Analysis.make_state () }
+let create () : t =
+  { docs = Hashtbl.create 16; analysis = Analysis.make_state (); root = None; index = None }
+
+(* file://… URI <-> path. The client sends file URIs; cross-file go-to-def must
+   answer with one. Minimal: strip the scheme; no percent-decoding (paths here
+   are plain ASCII). *)
+let path_of_uri (uri : string) : string =
+  let p = if String.length uri >= 7 && String.sub uri 0 7 = "file://" then
+            String.sub uri 7 (String.length uri - 7) else uri in
+  p
+let uri_of_path (p : string) : string = "file://" ^ p
+
+(* Build (once, lazily) the workspace symbol index by scanning the MiniML sources
+   under the root: self_host/ and stdlib/ (where the compiler + library live) and
+   the root's own *.mml. Cheap to skip when there is no root. *)
+let workspace_index (srv : t) : Analysis.sym_index option =
+  match srv.index with
+  | Some _ as i -> i
+  | None -> (
+      match srv.root with
+      | None -> None
+      | Some root ->
+          let read p = try Some (In_channel.with_open_bin p In_channel.input_all) with _ -> None in
+          let mml_in dir =
+            let d = Filename.concat root dir in
+            match Sys.readdir d with
+            | exception _ -> []
+            | names ->
+                names |> Array.to_list
+                |> List.filter (fun f -> Filename.check_suffix f ".mml")
+                |> List.filter_map (fun f ->
+                       let path = Filename.concat d f in
+                       match read path with Some s -> Some (path, s) | None -> None)
+          in
+          let files = mml_in "self_host" @ mml_in "stdlib" @ mml_in "." in
+          let idx = Analysis.build_index files in
+          srv.index <- Some idx;
+          Some idx)
 
 (* --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ---------------- *)
 
@@ -167,7 +206,13 @@ let handle (srv : t) (msg : json) : json list =
   in
   let doc_uri () = str (field "uri" (field "textDocument" params)) in
   match meth with
-  | "initialize" -> [ response (capabilities ()) ]
+  | "initialize" ->
+      (* capture the workspace root for cross-file go-to-def (rootUri preferred,
+         rootPath as a fallback; either may be absent) *)
+      (match str (field "rootUri" params) with
+      | "" -> (match str (field "rootPath" params) with "" -> () | p -> srv.root <- Some p)
+      | u -> srv.root <- Some (path_of_uri u));
+      [ response (capabilities ()) ]
   | "initialized" | "exit" -> []
   | "shutdown" -> [ response J.JNull ]
   | "textDocument/didOpen" ->
@@ -217,12 +262,32 @@ let handle (srv : t) (msg : json) : json list =
         | Some text -> (
             let line0 = int (field "line" pos) in
             let col = utf16_to_byte_col (nth_line text line0) (int (field "character" pos)) in
-            match Analysis.definition srv.analysis text ~line:(line0 + 1) ~col with
-            | Some (l, c) ->
-                let ch = byte_col_to_utf16 (nth_line text (l - 1)) c in
-                let p = obj [ ("line", J.JInt (l - 1)); ("character", J.JInt ch) ] in
-                obj [ ("uri", J.JString uri); ("range", obj [ ("start", p); ("end", p) ]) ]
-            | None -> J.JNull)
+            (* a Location response from (target-file-text, target-uri, 1-based loc) *)
+            let location tgt_text tgt_uri (l : int) (c : int) =
+              let ch = byte_col_to_utf16 (nth_line tgt_text (l - 1)) c in
+              let p = obj [ ("line", J.JInt (l - 1)); ("character", J.JInt ch) ] in
+              obj [ ("uri", J.JString tgt_uri); ("range", obj [ ("start", p); ("end", p) ]) ]
+            in
+            (* Cross-file qualified go-to-def first: if the cursor is on a
+               `Module.member` path and the workspace index has it, jump there
+               (possibly another file). Otherwise the same-file resolver. *)
+            let cursor = Analysis.offset_of_line_col text ~line:(line0 + 1) ~col in
+            let xfile =
+              match (Analysis.qualified_at text cursor, workspace_index srv) with
+              | Some qual, Some idx -> Analysis.index_lookup idx qual
+              | _ -> None
+            in
+            match xfile with
+            | Some (path, (loc : Token.loc)) ->
+                let tgt_text =
+                  if path_of_uri uri = path then text
+                  else (try In_channel.with_open_bin path In_channel.input_all with _ -> "")
+                in
+                location tgt_text (uri_of_path path) loc.line loc.col
+            | None -> (
+                match Analysis.definition srv.analysis text ~line:(line0 + 1) ~col with
+                | Some (l, c) -> location text uri l c
+                | None -> J.JNull))
         | None -> J.JNull
       in
       [ response result ]
