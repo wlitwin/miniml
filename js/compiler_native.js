@@ -24588,6 +24588,9 @@ function Parser$parse_decl(p) {
   }
   return _t4666;
 }
+function Parser$parse_decl_at(p) {
+  return Parser$parse_decl(p);
+}
 function Parser$parse_program_in(p) {
   Ref$set(Parser$fresh_param_counter, 0);
   const decls_4670 = Ref$create(null);
