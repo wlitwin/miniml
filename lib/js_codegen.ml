@@ -4501,7 +4501,7 @@ function Array$sub(a, s, l) { return array_sub(a, s, l); }
 // IO module
 function IO$read_file(path) {
   if (typeof globalThis._jsReadFile === "function") return globalThis._jsReadFile(path);
-  if (typeof require !== "undefined") return require("fs").readFileSync(path,"utf8");
+  if (typeof require !== "undefined") return require("fs").readFileSync(path,"latin1");
   throw new Error("IO.read_file: not available in this environment");
 }
 function IO$write_file(path, data) {
