@@ -409,6 +409,22 @@ module Driver =
 
     (ctx, List.rev setup_protos)
 
+  -- ---- Analysis context (compiler-as-a-library / LSP) ----
+
+  -- A typechecking context with the full standard library loaded — the `state`
+  -- the analysis surface (self_host/analysis.mml, the LSP) runs against. The
+  -- MiniML twin of lib/analysis.ml's make_state: it reuses the same
+  -- setup_builtins → setup_classes → setup_modules sequence the compiler proper
+  -- runs, but keeps only the resulting ctx (the protos/globals, which the
+  -- analysis doesn't need, are discarded). Expensive (typechecks all of stdlib),
+  -- so a caller builds one and reuses it across edits. Has the IO effect
+  -- (reading stdlib/*.mml); the caller handles it.
+  pub let make_analysis_ctx () : Typechecker.ctx =
+    let (ctx, global_names, mutable_globals) = setup_builtins () in
+    let (ctx, _) = setup_classes ctx global_names mutable_globals in
+    let (ctx, _) = setup_modules ctx global_names mutable_globals in
+    ctx
+
   -- ---- Batch compilation ----
 
   let run_batch manifest_file =

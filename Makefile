@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -341,6 +341,33 @@ check-run-analysis-selfhost:
 	@nat=$$(/tmp/mml_analysis_check_bin); \
 	  if [ "$$nat" = "OK" ]; then echo "self-host analysis (syntactic) passed (emit-js compile + VM/native round-trip)"; \
 	  else echo "FAIL analysis (native): $$nat"; exit 1; fi
+# The analysis DIAGNOSTICS layer (self_host/analysis.mml: diagnostics +
+# warning_diagnostics) + the driver's make_analysis_ctx — the make_state
+# integration the LSP needs (roadmap #16c): a Typechecker.ctx with stdlib loaded,
+# built via the same setup the compiler runs. diagnostics typechecks a source
+# per-declaration against that ctx (lex → one diag; parse → boundary recovery +
+# every syntax error; type → every type error, isolated per decl), the headline
+# LSP feature. Needs the FULL compiler (driver→pipeline→compiler→codegen), so the
+# gate concatenates everything but main.mml + diagnostic + analysis. make_analysis_ctx
+# reads stdlib/*.mml, so the behavioral self-check runs from the repo root on BOTH
+# the OCaml VM and the native binary, asserting "OK".
+DIAGNOSTICS_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/bytecode.mml \
+                  self_host/types.mml self_host/match_tree_types.mml self_host/lexer.mml \
+                  self_host/parser.mml self_host/typechecker.mml self_host/ir_analysis.mml \
+                  self_host/match_tree.mml self_host/texpr_opt.mml self_host/pipeline.mml \
+                  self_host/ir_serialize.mml self_host/optimize.mml self_host/compiler.mml \
+                  self_host/serialize.mml self_host/js_codegen.mml self_host/ir_emit.mml \
+                  self_host/codegen.mml self_host/driver.mml self_host/diagnostic.mml \
+                  self_host/analysis.mml
+check-run-diagnostics-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js $(DIAGNOSTICS_SELFHOST_FILES) > /dev/null
+	@cat $(DIAGNOSTICS_SELFHOST_FILES) compiler_test/diagnostics_selfhost_check.mml > /tmp/mml_diagnostics_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_diagnostics_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL diagnostics (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_diagnostics_concat.mml -o /tmp/mml_diagnostics_check_bin
+	@nat=$$(/tmp/mml_diagnostics_check_bin); \
+	  if [ "$$nat" = "OK" ]; then echo "self-host analysis diagnostics passed (emit-js compile + VM/native round-trip)"; \
+	  else echo "FAIL diagnostics (native): $$nat"; exit 1; fi
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt
