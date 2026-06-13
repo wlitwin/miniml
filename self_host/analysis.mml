@@ -355,4 +355,136 @@ module Analysis =
       let (msg, loc) = arg in
       let _ = Typechecker.take_warnings () in
       (Diagnostic.make "lex" (Diagnostic.span_at src loc) msg) :: []
+
+  -- --- Typed tree (per-declaration error isolation) -----------------------
+
+  -- Apply f to te and every typed sub-expression, parent before child.
+  let rec visit_texpr f (te : Typechecker.texpr) : unit =
+    f te;
+    Typechecker.iter_texpr_children (visit_texpr f) te
+
+  -- Apply f to every typed sub-expression of a declaration, recursing into
+  -- module bodies.
+  let rec visit_tdecl f (td : Typechecker.tdecl) : unit =
+    match td with
+    | Typechecker.TDLet (_, te) -> visit_texpr f te
+    | Typechecker.TDLetMut (_, te) -> visit_texpr f te
+    | Typechecker.TDLetRec (_, te) -> visit_texpr f te
+    | Typechecker.TDExpr te -> visit_texpr f te
+    | Typechecker.TDLetRecAnd binds -> List.iter (fn pair -> let (_, te) = pair in visit_texpr f te) binds
+    | Typechecker.TDModule (_, decls, _) -> List.iter (fn d -> visit_tdecl f d) decls
+    | _ -> ()
+
+  -- Typecheck program one declaration at a time against state's context,
+  -- threading the context but ISOLATING failures: a declaration that doesn't
+  -- typecheck is skipped (contributes no bindings), so a type error in one place
+  -- doesn't blank the typed tree the rest of the file produces. The typed-side
+  -- analogue of parse_recover; what hover / go-to-def run on.
+  pub let typed_recover (state : Typechecker.ctx) (program : Ast.program) : Typechecker.tdecl list =
+    let ctx = Ref.create state in
+    let acc = Ref.create [] in
+    List.iter (fn decl ->
+      let _ = handle
+        let (ctx2, tds) = Typechecker.check_program_in_ctx (Ref.get ctx) (decl :: []) in
+        Ref.set ctx ctx2;
+        Ref.set acc (List.rev_append tds (Ref.get acc))
+      with
+      | return _ -> ()
+      | type_error _a _k -> ()
+      | unify_error _m _k -> ()
+      in ()
+    ) program;
+    let _ = Typechecker.take_warnings () in
+    List.rev (Ref.get acc)
+
+  -- Tokenize, tolerating a lex error (→ no tokens).
+  let tokenize_opt (src : string) : Token.token list =
+    handle Lexer.tokenize src with | return t -> t | lex_error _a _k -> []
+
+  -- --- Hover --------------------------------------------------------------
+
+  -- The inferred type at 1-based line/col, rendered, or None if the position
+  -- isn't on a typed sub-expression. Finds the token under the cursor, then the
+  -- DEEPEST typed node starting at that token (pre-order visits parent before
+  -- child, so the last match at the token's offset is the innermost). Works
+  -- declaration-by-declaration, so a type error elsewhere doesn't suppress hover.
+  pub let hover (state : Typechecker.ctx) (src : string) (line : int) (col : int) : string option =
+    let cursor = offset_of_line_col src line col in
+    match token_at src cursor with
+    | None -> None
+    | Some tok ->
+      let target = tok.loc.offset in
+      let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
+      let best = Ref.create None in
+      List.iter (fn td -> visit_tdecl (fn te -> if te.loc.offset = target do Ref.set best (Some te.ty) end) td)
+        (typed_recover state program);
+      (match Ref.get best with
+       | Some ty -> Some (Types.pp_ty ty)
+       | None -> None)
+
+  -- --- Go to definition ---------------------------------------------------
+
+  -- Walk a typed declaration tracking the local bindings in scope; when the typed
+  -- node at target is a variable, record the innermost binder of its name (its
+  -- defining construct's location) into found. Patterns (match/fun multi-arg)
+  -- bind via the desugared TEFun/TELet chain, so the common cases are covered.
+  let rec resolve_local (target : int) found (td : Typechecker.tdecl) : unit =
+    let rec walk scope (te : Typechecker.texpr) : unit =
+      (match te.expr with
+       | Typechecker.TEVar name ->
+         if (te.loc.offset = target) && ((Ref.get found) = None) do
+           (match List.assoc_opt name scope with
+            | Some loc -> Ref.set found (Some loc)
+            | None -> ())
+         end
+       | _ -> ());
+      match te.expr with
+      | Typechecker.TELet (name, _, v, body) -> walk scope v; walk ((name, te.loc) :: scope) body
+      | Typechecker.TELetMut (name, v, body) -> walk scope v; walk ((name, te.loc) :: scope) body
+      | Typechecker.TELetRec (name, _, v, body) ->
+        let scope2 = (name, te.loc) :: scope in
+        walk scope2 v; walk scope2 body
+      | Typechecker.TELetRecAnd (binds, body) ->
+        let scope2 = List.concat (List.map (fn pair -> let (n, _) = pair in (n, te.loc)) binds) scope in
+        List.iter (fn pair -> let (_, e) = pair in walk scope2 e) binds;
+        walk scope2 body
+      | Typechecker.TEFun (param, body, _) -> walk ((param, te.loc) :: scope) body
+      | _ -> Typechecker.iter_texpr_children (fn c -> walk scope c) te
+    in
+    match td with
+    | Typechecker.TDLet (_, te) -> walk [] te
+    | Typechecker.TDLetMut (_, te) -> walk [] te
+    | Typechecker.TDLetRec (_, te) -> walk [] te
+    | Typechecker.TDExpr te -> walk [] te
+    | Typechecker.TDLetRecAnd binds -> List.iter (fn pair -> let (_, te) = pair in walk [] te) binds
+    | Typechecker.TDModule (_, decls, _) -> List.iter (fn d -> resolve_local target found d) decls
+    | _ -> ()
+
+  -- The definition location of the identifier at 1-based line/col, as a 1-based
+  -- (line, col), or None. A locally-bound name resolves to its binder; otherwise
+  -- a top-level declaration of that name. (Return type annotation omitted: a
+  -- `(int * int) option` annotation misparses — see the json/analysis quirk note.)
+  pub let definition (state : Typechecker.ctx) (src : string) (line : int) (col : int) =
+    let cursor = offset_of_line_col src line col in
+    match token_at src cursor with
+    | None -> None
+    | Some tok ->
+      let name = (match tok.kind with
+        | Token.IDENT n -> Some n
+        | Token.UIDENT n -> Some n
+        | _ -> None) in
+      (match name with
+       | None -> None
+       | Some nm ->
+         let (program, _d, defs) = parse_recover src (tokenize_opt src) in
+         let found = Ref.create None in
+         List.iter (fn td -> resolve_local tok.loc.offset found td) (typed_recover state program);
+         let loc = (match Ref.get found with
+           | Some l -> Some l
+           | None -> List.assoc_opt nm defs) in
+         -- A binder with no real location (e.g. a desugared parameter) yields
+         -- line 0 — report no definition rather than jumping to the file start.
+         (match loc with
+          | Some (l : Token.loc) -> if l.line > 0 do Some (l.line, l.col) else None
+          | None -> None))
 end

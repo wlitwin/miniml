@@ -1,0 +1,28 @@
+-- Behavioral self-check for self_host/analysis.mml's hover + go-to-definition
+-- (gate stage `hover-def-selfhost`). Concatenated after the full compiler (minus
+-- main.mml) + diagnostic.mml + analysis.mml and run on the OCaml VM + native;
+-- must print "OK". make_analysis_ctx reads stdlib/*.mml (run from repo root).
+let () =
+  let st = Driver.make_analysis_ctx () in
+  let src = "let n = 42\nlet m = n + 1" in
+  let src2 = "let foo = 1\nlet bar = foo + foo" in
+  let src3 = "let f x =\n  let y = x + 1 in\n  y + y" in
+  let checks = [
+    -- hover on the literal 42 (line 1, col 9) → int
+    ("hover-literal", (match Analysis.hover st src 1 9 with Some "int" -> true | _ -> false));
+    -- hover on the USE of n (line 2, col 9) → int
+    ("hover-use", (match Analysis.hover st src 2 9 with Some "int" -> true | _ -> false));
+    -- hover on a binding site has no typed node → None
+    ("hover-binder-none", (match Analysis.hover st src 1 5 with None -> true | _ -> false));
+    -- hover off any token → None
+    ("hover-miss", (match Analysis.hover st src 1 4 with None -> true | _ -> false));
+    -- go-to-def of the first 'foo' use (line 2, col 11) → its top-level binder line 1
+    ("def-toplevel", (match Analysis.definition st src2 2 11 with Some (1, _) -> true | _ -> false));
+    -- go-to-def of a local let-bound 'y' (line 3) → its let on line 2
+    ("def-local", (match Analysis.definition st src3 3 3 with Some (2, _) -> true | _ -> false));
+    -- go-to-def off a non-identifier → None
+    ("def-miss", (match Analysis.definition st src2 1 1 with None -> true | _ -> false))
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)
