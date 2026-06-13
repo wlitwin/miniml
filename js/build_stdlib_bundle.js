@@ -14,13 +14,39 @@ const path = require("path");
 const dir = __dirname;
 const stdlibDir = path.join(dir, "..", "stdlib");
 
-// Keep in sync with the compiler's stdlib load order (self_host/main.mml).
-const STDLIB_FILES = [
-  "builtins", "classes", "option_type", "iter", "map_class", "show",
-  "byte", "rune", "math", "list", "array_extra", "result", "option",
-  "buffer", "hash", "hashtbl", "ref", "dynarray", "map", "set",
-  "enum", "seq", "fmt", "compat",
-];
+// The set of stdlib modules to embed is DERIVED from the compiler itself
+// (self_host/main.mml), not hand-maintained here — a duplicated list silently
+// drifts (it once dropped fs/path/process/digest, breaking the playground with
+// "File not found: stdlib/fs.mml"). We scan main.mml for both ways it pulls in
+// a stdlib file: the direct `"stdlib/<name>.mml"` literal (builtins, loaded
+// first as the single source of builtin signatures) and every `load "<name>"`
+// call (the rest, in load order). Any future `load "x"` is bundled automatically.
+function stdlibFilesFromCompiler() {
+  const mainMml = fs.readFileSync(
+    path.join(dir, "..", "self_host", "main.mml"),
+    "utf-8"
+  );
+  const names = [];
+  const seen = new Set();
+  const add = (n) => {
+    if (!seen.has(n)) {
+      seen.add(n);
+      names.push(n);
+    }
+  };
+  // Direct literals first (e.g. stdlib/builtins.mml, loaded specially up front).
+  for (const m of mainMml.matchAll(/"stdlib\/([a-z0-9_]+)\.mml"/g)) add(m[1]);
+  // Then the `load "x"` sequence, in source order.
+  for (const m of mainMml.matchAll(/^\s*load\s+"([a-z0-9_]+)"/gm)) add(m[1]);
+  if (names.length === 0) {
+    throw new Error(
+      "No stdlib modules found in self_host/main.mml — the scan patterns are stale"
+    );
+  }
+  return names;
+}
+
+const STDLIB_FILES = stdlibFilesFromCompiler();
 
 const stdlibSources = {};
 for (const name of STDLIB_FILES) {
