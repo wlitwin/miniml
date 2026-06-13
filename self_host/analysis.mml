@@ -288,4 +288,71 @@ module Analysis =
     with
     | return x -> x
     | lex_error _a _k -> None
+
+  -- --- Diagnostics --------------------------------------------------------
+
+  -- The typechecker's accumulated warnings ("Warning at line N: msg") as Warning
+  -- diagnostics spanning that line. Anything that doesn't match the format is
+  -- reported whole at the start of the file rather than dropped.
+  pub let warning_diagnostics (src : string) (ws : string list) : Diagnostic.t list =
+    let prefix = "Warning at line " in
+    let plen = String.length prefix in
+    List.map (fn w ->
+      let parsed =
+        if (String.length w > plen) && ((String.sub w 0 plen) = prefix) do
+          let rest = String.sub w plen ((String.length w) - plen) in
+          (match String.index_opt rest #3a with
+           | Some i ->
+             (match String.to_int (String.trim (String.sub rest 0 i)) with
+              | Some line -> Some (line, String.trim (String.sub rest (i + 1) (((String.length rest) - i) - 1)))
+              | None -> None)
+           | None -> None)
+        else
+          None
+      in
+      match parsed with
+      | Some pair ->
+        let (line, msg) = pair in
+        Diagnostic.make_sev Diagnostic.Warning "warning" (Diagnostic.line_span src line) msg
+      | None ->
+        Diagnostic.make_sev Diagnostic.Warning "warning"
+          (Diagnostic.span_at src ({line = 1; col = 1; offset = 0} : Token.loc)) w
+    ) ws
+
+  -- Typecheck src against state's stdlib context and return its diagnostics. Lex
+  -- errors stop early (one diagnostic). Otherwise parsing recovers at declaration
+  -- boundaries and reports EVERY syntax error, then each declaration is
+  -- typechecked INDEPENDENTLY (threading the context on success) so EVERY type
+  -- error is reported, not just the first. Typechecker warnings are surfaced too.
+  -- A clean source yields []. (The OCaml `... with exception Type_error` becomes a
+  -- per-declaration `handle ... with type_error | unify_error`.)
+  pub let diagnostics (state : Typechecker.ctx) (src : string) : Diagnostic.t list =
+    handle
+      let tokens = Lexer.tokenize src in
+      let (program, parse_diags, _defs) = parse_recover src tokens in
+      let ctx = Ref.create state in
+      let type_diags = Ref.create [] in
+      List.iter (fn decl ->
+        let _ = handle
+          let (ctx2, tds) = Typechecker.check_program_in_ctx (Ref.get ctx) (decl :: []) in
+          -- binding succeeded: thread the context so later declarations see it,
+          -- then resolve this declaration's constraints
+          Ref.set ctx ctx2;
+          let _ = Typechecker.transform_constraints ctx2 tds in ()
+        with
+        | return _ -> ()
+        | type_error arg _k ->
+          let (msg, loc) = arg in
+          Ref.set type_diags (Diagnostic.make "type" (Diagnostic.span_at src loc) msg :: Ref.get type_diags)
+        | unify_error _msg _k -> ()
+        in ()
+      ) program;
+      let warns = warning_diagnostics src (Typechecker.take_warnings ()) in
+      List.concat parse_diags (List.concat (List.rev (Ref.get type_diags)) warns)
+    with
+    | return x -> x
+    | lex_error arg _k ->
+      let (msg, loc) = arg in
+      let _ = Typechecker.take_warnings () in
+      (Diagnostic.make "lex" (Diagnostic.span_at src loc) msg) :: []
 end

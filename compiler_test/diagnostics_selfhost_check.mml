@@ -1,0 +1,27 @@
+-- Behavioral self-check for self_host/analysis.mml's DIAGNOSTICS layer + the
+-- driver's make_analysis_ctx (gate stage `diagnostics-selfhost`). Concatenated
+-- after the full compiler (minus main.mml) + diagnostic.mml + analysis.mml and
+-- run on the OCaml VM + native; must print "OK". make_analysis_ctx reads
+-- stdlib/*.mml, so the gate runs it from the repo root. ASCII-only.
+let () =
+  let st = Driver.make_analysis_ctx () in
+  let code_of ds = (match ds with d :: _ -> d.code | [] -> "NONE") in
+  let clean = Analysis.diagnostics st "let x = 1\nlet y = x + 2" in
+  let terr = Analysis.diagnostics st "let x = 1 + true" in
+  let perr = Analysis.diagnostics st "let = bad\nlet good = 1" in
+  let lexerr = Analysis.diagnostics st "let s = \"unterminated" in
+  -- two independent type errors in separate decls → both reported (per-decl
+  -- isolation threads the context and keeps going)
+  let two = Analysis.diagnostics st "let a = 1 + true\nlet b = 2 + false" in
+  let checks = [
+    ("clean-empty", List.length clean = 0);
+    ("type-code", code_of terr = "type");
+    ("type-msg", (match terr with d :: _ -> d.message = "cannot unify int with bool" | [] -> false));
+    ("type-has-loc", (match terr with d :: _ -> d.span.lo.line >= 1 | [] -> false));
+    ("parse-code", code_of perr = "parse");
+    ("lex-code", code_of lexerr = "lex");
+    ("two-independent", List.length two = 2)
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)
