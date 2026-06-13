@@ -1,0 +1,41 @@
+module Manifest =
+  pub type require = {
+    module_path: string;
+    version: Semver.t
+  }
+
+  pub type t = {
+    name: string;
+    mml: string option;
+    requires: require list;
+    replaces: (string * string) list
+  }
+
+  pub let parse (text : string) : t =
+    let name = Ref.create "" in
+    let mml = Ref.create None in
+    let requires = Ref.create [] in
+    let replaces = Ref.create [] in
+    List.iter (fn raw -> let line =
+      match String.index_opt raw #23 with
+      | Some i -> String.sub raw 0 i
+      | None -> raw
+     in
+    match (String.split " " (String.trim line)) |> (List.filter ((<>) "")) with
+    | "module" :: n :: [] -> Ref.set name n
+    | "mml" :: v :: [] -> Ref.set mml (Some v)
+    | "require" :: m :: v :: [] -> 
+      do
+        match Semver.parse v with
+        | Some sv -> Ref.set requires ({module_path = m; version = sv} :: Ref.get requires)
+        | None -> ()
+
+      end
+    | "replace" :: m :: "=>" :: p :: [] -> Ref.set replaces ((m, p) :: Ref.get replaces)
+    | _ -> ()
+    ) (String.split "\n" text);
+    {name = Ref.get name; mml = Ref.get mml; requires = List.rev (Ref.get requires); replaces = List.rev (Ref.get replaces)}
+
+  pub let replacement (m : t) (path : string) : string option = List.assoc_opt path m.replaces
+
+end

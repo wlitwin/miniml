@@ -17,14 +17,18 @@
 let mvs (root : Manifest.t) (load : string -> Semver.t -> Manifest.t) :
     (string * Semver.t) list =
   let selected : (string, Semver.t) Hashtbl.t = Hashtbl.create 16 in
-  let visited : (string * string, unit) Hashtbl.t = Hashtbl.create 16 in
+  (* Key the visited-set by a single string "module@version" rather than a
+     (string * string) tuple: MiniML's Hashtbl needs a Hash instance for its key
+     type, and tuples have none (OCaml's Hashtbl hashes polymorphically). Module
+     paths don't contain '@', so the join is unambiguous. *)
+  let visited : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   let rec visit (m : Manifest.t) =
     List.iter
       (fun (r : Manifest.require) ->
         (match Hashtbl.find_opt selected r.module_path with
         | Some v -> Hashtbl.replace selected r.module_path (Semver.max v r.version)
         | None -> Hashtbl.replace selected r.module_path r.version);
-        let key = (r.module_path, Semver.to_string r.version) in
+        let key = r.module_path ^ "@" ^ Semver.to_string r.version in
         if not (Hashtbl.mem visited key) then begin
           Hashtbl.replace visited key ();
           visit (load r.module_path r.version)

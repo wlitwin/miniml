@@ -19,9 +19,11 @@ let parse (s : string) : t option =
       | _ -> None)
   | _ -> None
 
+(* Polymorphic [compare] (not Int.compare, which MiniML lacks); on ints it is
+   the same total order, and is available in both OCaml and MiniML. *)
 let compare (a : t) (b : t) : int =
-  match Int.compare a.major b.major with
-  | 0 -> ( match Int.compare a.minor b.minor with 0 -> Int.compare a.patch b.patch | c -> c)
+  match compare a.major b.major with
+  | 0 -> ( match compare a.minor b.minor with 0 -> compare a.patch b.patch | c -> c)
   | c -> c
 
 let max (a : t) (b : t) : t = if compare a b >= 0 then a else b

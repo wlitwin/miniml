@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost pkg-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -243,6 +243,13 @@ check-run-fmt-selfhost:
 	  self_host/match_tree_types.mml self_host/lexer.mml self_host/parser.mml \
 	  self_host/utf8.mml self_host/cst.mml self_host/cst_build.mml self_host/formatter.mml \
 	  > /dev/null && echo "self-host formatter typecheck+compile passed"
+# The package-manager data layer (semver/sumfile/manifest/deps), translated into
+# self_host/ for the in-MiniML toolchain (Path B #16). Pure data — no UTF-8/float/
+# closure backend hazards — so it compiles AND runs faithfully on every backend.
+check-run-pkg-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js \
+	  self_host/semver.mml self_host/sumfile.mml self_host/manifest.mml self_host/deps.mml \
+	  > /dev/null && echo "self-host pkg data layer typecheck+compile passed"
 check-run-native-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
 # End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
@@ -288,7 +295,7 @@ NATIVE_TRANSLATE_FILES = ir_emit codegen
 # the `fmt-selfhost` gate stage). Full byte-faithful self-host output is pending
 # backend gaps surfaced by the parity script (emit-js UTF-8 string rep + float
 # formatting; native top-level closure capture) — see test-fmt-selfhost-parity.
-TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter
+TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter semver sumfile manifest deps
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml
