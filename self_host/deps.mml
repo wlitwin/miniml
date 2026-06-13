@@ -1,0 +1,19 @@
+module Deps =
+  pub let mvs (root : Manifest.t) (load : string -> Semver.t -> Manifest.t) : (string * Semver.t) list =
+    let selected = Hashtbl.create 16 in
+    let visited = Hashtbl.create 16 in
+    let rec visit (m : Manifest.t) = List.iter (fn (r : Manifest.require) -> do
+      match Hashtbl.get selected r.module_path with
+      | Some v -> Hashtbl.set selected r.module_path (Semver.max v r.version)
+      | None -> Hashtbl.set selected r.module_path r.version
+
+    end;
+    let key = r.module_path ^ ("@" ^ (Semver.to_string r.version)) in
+    if not (Hashtbl.has visited key) do
+      Hashtbl.set visited key ();
+      visit (load r.module_path r.version)
+    end) m.requires in
+    visit root;
+    (Hashtbl.fold (fn k v acc -> (k, v) :: acc) selected []) |> (List.sort (fn (a, _) (b, _) -> String.compare a b))
+
+end

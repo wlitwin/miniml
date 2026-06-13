@@ -1,0 +1,30 @@
+module Sumfile =
+  pub type entry = {
+    module_path: string;
+    version: string;
+    hash: string
+  }
+
+  pub let parse (text : string) : entry list = (String.split "\n" text) |> (List.filter_map (fn line ->
+    do
+      match (String.split " " (String.trim line)) |> (List.filter ((<>) "")) with
+      | m :: v :: h :: [] -> Some {module_path = m; version = v; hash = h}
+      | _ -> None
+
+    end))
+
+  pub let to_string (entries : entry list) : string = ((entries |> (List.sort (fn a b ->
+    do
+      match String.compare a.module_path b.module_path with
+      | 0 -> String.compare a.version b.version
+      | c -> c
+
+    end))) |> (List.map (fn e -> $"{e.module_path} {e.version} {e.hash}
+"))) |> (String.concat "")
+
+  pub let lookup (entries : entry list) (m : string) (v : string) : string option = List.find_map (fn e -> if (e.module_path = m) && (e.version = v) do
+    Some (e.hash)
+  else
+    None) entries
+
+end

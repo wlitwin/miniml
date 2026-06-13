@@ -553,6 +553,11 @@ and emit_expr e (expr : expression) =
   | Pexp_ident lid ->
       let name =
         match lid.txt with
+        (* A built-in operator in VALUE position (partial application like
+           [(<>) ""], or first-class [List.map (+) ...]) — emit the parenthesized
+           operator form. (The 2-arg infix case is handled in emit_apply before
+           we get here; custom operators are mangled to names by translate_ident.) *)
+        | Longident.Lident s when is_miniml_op s -> "(" ^ translate_op s ^ ")"
         | Longident.Lident s -> translate_ident s
         | Longident.Ldot ({txt = Longident.Lident "Fun"; _}, {txt = "id"; _}) -> "(fn x -> x)"
         | Longident.Ldot ({txt = Longident.Lident m; _}, {txt = s; _}) ->
