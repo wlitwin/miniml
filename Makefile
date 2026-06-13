@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -315,6 +315,32 @@ check-run-diag-selfhost:
 	@nat=$$(/tmp/mml_diag_check_bin); \
 	  if [ "$$nat" = "OK" ]; then echo "self-host diagnostic library passed (emit-js compile + VM/native round-trip)"; \
 	  else echo "FAIL diag (native): $$nat"; exit 1; fi
+# The compiler-as-a-library analysis surface (self_host/analysis.mml), SYNTACTIC
+# layer: declaration-boundary parse recovery, the workspace symbol index
+# (cross-file go-to-def), and cursor↔offset positions — the LSP navigation the
+# Path-B cutover wants over the self-hosted sources (roadmap #16c, the fourth LSP
+# module). A faithful twin of the token/parse-tree half of lib/analysis.ml, with
+# the OCaml per-declaration `exception` recovery rewritten as `handle` around each
+# parse_decl_at (and the module-descent recursion turned into an iterative
+# worklist, since a recursive call under a handler trips effect inference's
+# occurs-check). Reuses the compiler frontend (Lexer/Parser/Typechecker/Ast) +
+# diagnostic.mml. Typechecked+compiled on emit-js, then a behavioral self-check
+# (index_symbols, build_index/index_lookup cross-file, qualified_at, token_at,
+# offset_of_line_col — mirroring test/test_workspace_index.ml) is run on BOTH the
+# OCaml VM and the native binary, asserting "OK".
+ANALYSIS_SELFHOST_FILES = self_host/token.mml self_host/ast.mml self_host/types.mml \
+                          self_host/match_tree_types.mml self_host/lexer.mml \
+                          self_host/parser.mml self_host/typechecker.mml \
+                          self_host/diagnostic.mml self_host/analysis.mml
+check-run-analysis-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js $(ANALYSIS_SELFHOST_FILES) > /dev/null
+	@cat $(ANALYSIS_SELFHOST_FILES) compiler_test/analysis_selfhost_check.mml > /tmp/mml_analysis_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_analysis_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL analysis (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_analysis_concat.mml -o /tmp/mml_analysis_check_bin
+	@nat=$$(/tmp/mml_analysis_check_bin); \
+	  if [ "$$nat" = "OK" ]; then echo "self-host analysis (syntactic) passed (emit-js compile + VM/native round-trip)"; \
+	  else echo "FAIL analysis (native): $$nat"; exit 1; fi
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt

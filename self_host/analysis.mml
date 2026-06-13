@@ -1,0 +1,291 @@
+module Analysis =
+  -- Compiler-as-a-library surface for tooling (roadmap #20), the analysis the
+  -- in-MiniML LSP (#16c) is built on. The MiniML twin of lib/analysis.ml.
+  --
+  -- This file currently holds the SYNTACTIC layer — everything that answers a
+  -- question about a source string from its tokens + parse tree alone, with NO
+  -- typecheck context: declaration-boundary parse recovery, the workspace symbol
+  -- index (cross-file go-to-def), and cursor↔offset positions. The typed-tree
+  -- features (diagnostics, hover, local go-to-def, completions) need a
+  -- Typechecker.ctx built from the driver's stdlib setup and land in a follow-up.
+  --
+  -- The self-host parser/typechecker raise their errors as EFFECTS
+  -- (parse_error / lex_error), not exceptions, so the OCaml per-declaration
+  -- `match ... with exception` recovery becomes a `handle ... with` around each
+  -- parse_decl_at call (the handler discards the continuation, leaving parser
+  -- state advanced exactly as the exception path did).
+
+  -- Token kinds that begin a top-level declaration — recovery resyncs to one of
+  -- these (or `;;` / EOF) after a parse error.
+  pub let is_decl_start (k : Token.token_kind) : bool =
+    match k with
+    | Token.LET -> true
+    | Token.TYPE -> true
+    | Token.NEWTYPE -> true
+    | Token.MODULE -> true
+    | Token.EFFECT -> true
+    | Token.CLASS -> true
+    | Token.INSTANCE -> true
+    | Token.EXTERN -> true
+    | Token.OPEN -> true
+    | _ -> false
+
+  -- The name of a type/newtype decl is the last identifier before `=` (after any
+  -- type params). Split out so decl_name's TYPE/NEWTYPE arms share it.
+  let last_ident_before_eq (rest : Token.token list) =
+    let rec last best ts =
+      match ts with
+      | (t : Token.token) :: r ->
+        (match t.kind with
+         | Token.EQ -> best
+         | Token.IDENT n -> last (Some (n, t.loc)) r
+         | Token.UIDENT n -> last (Some (n, t.loc)) r
+         | _ -> last best r)
+      | [] -> best
+    in
+    last None rest
+
+  -- The name a top-level declaration binds, and the token that names it, read off
+  -- the declaration's leading tokens — so a nested let-binding in the body is not
+  -- mistaken for the declaration's own name.
+  pub let decl_name (toks : Token.token list) =
+    let rec drop_vis ts =
+      match ts with
+      | (t : Token.token) :: r ->
+        if (t.kind = Token.PUB) || (t.kind = Token.OPAQUE) do drop_vis r else ts
+      | [] -> ts
+    in
+    let ident_tok ts =
+      match ts with
+      | (t : Token.token) :: _ ->
+        (match t.kind with
+         | Token.IDENT n -> Some (n, t.loc)
+         | Token.UIDENT n -> Some (n, t.loc)
+         | _ -> None)
+      | [] -> None
+    in
+    match drop_vis toks with
+    | (t : Token.token) :: rest ->
+      (match t.kind with
+       | Token.LET ->
+         let rec drop_rm ts =
+           match ts with
+           | (t2 : Token.token) :: r ->
+             if (t2.kind = Token.REC) || (t2.kind = Token.MUT) do drop_rm r else ts
+           | [] -> ts
+         in
+         ident_tok (drop_rm rest)
+       | Token.TYPE -> last_ident_before_eq rest
+       | Token.NEWTYPE -> last_ident_before_eq rest
+       | Token.MODULE -> ident_tok rest
+       | Token.EFFECT -> ident_tok rest
+       | Token.CLASS -> ident_tok rest
+       | Token.EXTERN -> ident_tok rest
+       | _ -> None)
+    | [] -> None
+
+  -- Resync the parser to the next `;;` / declaration keyword / EOF after a parse
+  -- error. Always advances at least one token if stuck, so it cannot loop.
+  let resync (p : Parser.t) (before : int) : unit =
+    (if p.pos = before do (Parser.advance p; ()) end);
+    let scanning = Ref.create true in
+    for Ref.get scanning do
+      match Parser.peek_kind p with
+      | Token.EOF -> Ref.set scanning false
+      | Token.DOUBLE_SEMICOLON -> Ref.set scanning false
+      | k -> if is_decl_start k do Ref.set scanning false else (Parser.advance p; ())
+    end
+
+  -- Parse tokens with panic-mode recovery at declaration boundaries (roadmap
+  -- #18): a failed declaration becomes a diagnostic and the parser resyncs to the
+  -- next `;;` / declaration keyword / EOF, so a single syntax error doesn't blank
+  -- the rest of the file. Returns the partial program (the declarations that DID
+  -- parse), every parse diagnostic, and the name token of each top-level
+  -- declaration (for go-to-def — collected here so it tolerates syntax errors).
+  pub let parse_recover (src : string) (tokens : Token.token list)
+      : (Ast.program * Diagnostic.t list * (string * Token.loc) list) =
+    Ref.set Parser.fresh_param_counter 0;
+    let p = Parser.create tokens in
+    let decls = Ref.create [] in
+    let diags = Ref.create [] in
+    let defs = Ref.create [] in
+    for (Parser.peek_kind p) <> Token.EOF do
+      p.suppress_do := false;
+      let before = p.pos in
+      let _ = handle
+        let ds = Parser.parse_decl_at p in
+        (match decl_name (Array.to_list (Array.sub p.tokens before (p.pos - before))) with
+         | Some nl -> Ref.set defs (nl :: Ref.get defs)
+         | None -> ());
+        Ref.set decls (List.rev_append ds (Ref.get decls))
+      with
+      | return _ -> ()
+      | parse_error arg _k ->
+        let (msg, loc) = arg in
+        Ref.set diags (Diagnostic.make "parse" (Diagnostic.span_at src loc) msg :: Ref.get diags);
+        resync p before
+      in
+      if (Parser.peek_kind p) = Token.DOUBLE_SEMICOLON do (Parser.advance p; ()) end
+    end;
+    (List.rev (Ref.get decls), List.rev (Ref.get diags), List.rev (Ref.get defs))
+
+  -- --- Workspace symbol index (cross-file go-to-def) ----------------------
+
+  -- Every definition a file exports, as (qualified-name, name-loc): a top-level
+  -- `bar` is indexed as "bar"; a member `bar` of `module Foo` as "Foo.bar" (and
+  -- nested modules compose, "Foo.Bar.baz"). Built with the real parser + the same
+  -- decl-boundary recovery as parse_recover, so `end`-overloading and nested
+  -- let-ins are handled correctly. Powers cross-file navigation of the
+  -- self-hosted compiler sources (heavily Module.member across ~30 files).
+  -- Process one (prefix, token-list) work item: parse its declarations with
+  -- per-declaration recovery, record each as a qualified name, and push any
+  -- module body onto the worklist (with the module name as the new prefix) to be
+  -- processed in turn. Returns the new module work items discovered. An
+  -- ITERATIVE worklist replaces the OCaml recursion: a self-host recursive
+  -- function whose recursive call sits under a `handle` trips effect inference's
+  -- occurs-check (an infinite effect row), so module descent is queued, not
+  -- recursed.
+  let index_one acc (prefix : string) (toks : Token.token list)
+      : (string * Token.token list) list =
+    Ref.set Parser.fresh_param_counter 0;
+    let p = Parser.create toks in
+    let more = Ref.create [] in
+    for (Parser.peek_kind p) <> Token.EOF do
+      p.suppress_do := false;
+      let before = p.pos in
+      let _ = handle
+        let ds = Parser.parse_decl_at p in
+        let slice = Array.to_list (Array.sub p.tokens before (p.pos - before)) in
+        (match decl_name slice with
+         | Some (n, loc) ->
+           let qual = if prefix = "" do n else prefix ^ ("." ^ n) in
+           Ref.set acc ((qual, loc) :: Ref.get acc);
+           -- a module's members get their own qualified entries
+           (match ds with
+            | (Ast.DModule (mname, _)) :: [] ->
+              let arr = Array.of_list slice in
+              let len = Array.length arr in
+              -- slice = [MODULE; UIDENT; EQ; ...members...; END]; queue the
+              -- inner members with the module name as the new prefix
+              (if len > 4 do
+                 let inner = Array.to_list (Array.sub arr 3 (len - 4)) in
+                 let last_tok = Array.get arr (len - 1) in
+                 let eof = { last_tok with kind = Token.EOF } in
+                 let mprefix = if prefix = "" do mname else prefix ^ ("." ^ mname) in
+                 Ref.set more ((mprefix, List.concat inner (eof :: [])) :: Ref.get more)
+               end)
+            | _ -> ())
+         | None -> ())
+      with
+      | return _ -> ()
+      | parse_error _arg _k -> resync p before
+      in
+      if (Parser.peek_kind p) = Token.DOUBLE_SEMICOLON do (Parser.advance p; ()) end
+    end;
+    List.rev (Ref.get more)
+
+  pub let index_symbols (src : string) : (string * Token.loc) list =
+    let acc = Ref.create [] in
+    let seed = handle Lexer.tokenize src with | return t -> t | lex_error _a _k -> [] in
+    -- worklist of (prefix, tokens); module bodies are pushed on as discovered
+    let queue = Ref.create ((("", seed)) :: []) in
+    for (Ref.get queue) <> [] do
+      match Ref.get queue with
+      | [] -> ()
+      | item :: rest ->
+        Ref.set queue rest;
+        let (prefix, toks) = item in
+        let discovered = index_one acc prefix toks in
+        Ref.set queue (List.concat discovered (Ref.get queue))
+    end;
+    List.rev (Ref.get acc)
+
+  -- A workspace index: qualified-name -> the (file, name-loc) sites that define
+  -- it (a list, so genuine collisions are visible; go-to-def takes the first).
+  pub let build_index (files : (string * string) list) =
+    let idx = Hashtbl.create 512 in
+    List.iter (fn pair ->
+      let (path, src) = pair in
+      List.iter (fn ql ->
+        let (qual, loc) = ql in
+        let prev = (match Hashtbl.get idx qual with Some x -> x | None -> []) in
+        Hashtbl.set idx qual (List.concat prev ((path, loc) :: []))
+      ) (index_symbols src)
+    ) files;
+    idx
+
+  pub let index_lookup idx (qual : string) =
+    match Hashtbl.get idx qual with
+    | Some (x :: _) -> Some x
+    | _ -> None
+
+  -- If the cursor sits on the final identifier of a qualified path
+  -- `Upper.lower` / `Upper.Mid.name`, return that full dotted name. Reads the
+  -- token stream around the cursor: an IDENT/UIDENT immediately preceded by
+  -- `UIDENT .` (one or more times).
+  pub let qualified_at (src : string) (cursor : int) : string option =
+    handle
+      let toks = Lexer.tokenize src in
+      let arr = Array.of_list toks in
+      let n = Array.length arr in
+      let idx = Ref.create (0 - 1) in
+      let i = Ref.create 0 in
+      (for (Ref.get i) < n do
+         let t = Array.get arr (Ref.get i) in
+         (if (t.loc.offset <= cursor) && (cursor < t.end_offset) do Ref.set idx (Ref.get i) end);
+         Ref.set i ((Ref.get i) + 1)
+       end);
+      if (Ref.get idx) < 0 do
+        None
+      else do
+        let name_of k = (match k with Token.IDENT s -> s | Token.UIDENT s -> s | _ -> "") in
+        let is_name k = (match k with Token.IDENT _ -> true | Token.UIDENT _ -> true | _ -> false) in
+        let cur = Array.get arr (Ref.get idx) in
+        if not (is_name cur.kind) do
+          None
+        else do
+          -- walk left collecting `UIDENT .` segments before the cursor token
+          let segs = Ref.create (name_of cur.kind :: []) in
+          let j = Ref.create (Ref.get idx) in
+          let cont = Ref.create true in
+          (for (Ref.get cont) && ((Ref.get j) >= 2) do
+             let dot = Array.get arr ((Ref.get j) - 1) in
+             let up = Array.get arr ((Ref.get j) - 2) in
+             let up_is_uident = (match up.kind with Token.UIDENT _ -> true | _ -> false) in
+             if (dot.kind = Token.DOT) && up_is_uident do
+               Ref.set segs (name_of up.kind :: Ref.get segs);
+               Ref.set j ((Ref.get j) - 2)
+             else
+               Ref.set cont false
+           end);
+          if (List.length (Ref.get segs)) >= 2 do Some (String.concat "." (Ref.get segs)) else None
+        end
+      end
+    with
+    | return x -> x
+    | lex_error _a _k -> None
+
+  -- --- Positions ----------------------------------------------------------
+
+  -- The byte offset of 1-based line/col in src (the compiler's convention; the
+  -- LSP server converts from its 0-based line/character at the boundary).
+  pub let offset_of_line_col (src : string) (line : int) (col : int) : int =
+    let n = String.length src in
+    let off = Ref.create 0 in
+    let ln = Ref.create 1 in
+    for ((Ref.get ln) < line) && ((Ref.get off) < n) do
+      (if (String.get src (Ref.get off)) = #0a do Ref.set ln ((Ref.get ln) + 1) end);
+      Ref.set off ((Ref.get off) + 1)
+    end;
+    let cand = (Ref.get off) + (col - 1) in
+    if cand < n do cand else n
+
+  -- The significant token whose span covers byte cursor, if any.
+  pub let token_at (src : string) (cursor : int) : Token.token option =
+    handle
+      let toks = Lexer.tokenize src in
+      List.find (fn (t : Token.token) -> (t.loc.offset <= cursor) && (cursor < t.end_offset)) toks
+    with
+    | return x -> x
+    | lex_error _a _k -> None
+end
