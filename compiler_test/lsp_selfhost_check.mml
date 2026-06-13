@@ -1,0 +1,43 @@
+-- Behavioral self-check for self_host/lsp.mml's protocol layer (gate stage
+-- `lsp-selfhost`). Concatenated after the full compiler (minus main.mml) + json +
+-- diagnostic + analysis + lsp and run on the OCaml VM + native; must print "OK".
+-- Drives Lsp.handle_message with real JSON-RPC messages and checks the response
+-- JSON structurally. make_analysis_ctx reads stdlib/*.mml (run from repo root).
+let () =
+  let srv = Lsp.create () in
+  let first lst = (match lst with x :: _ -> x | [] -> Json.JNull) in
+  let send s = first (Lsp.handle_message srv (Json.parse s)) in
+  -- initialize → capabilities
+  let initr = send "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}" in
+  let caps = Json.member "capabilities" (Json.member "result" initr) in
+  -- didOpen a doc with a type error → publishDiagnostics with a "type" diagnostic
+  let openerr = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.mml\",\"text\":\"let x = 1 + true\"}}}" in
+  let errdiags = Json.as_list (Json.member "diagnostics" (Json.member "params" openerr)) in
+  -- didOpen a clean doc → empty diagnostics
+  let openclean = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.mml\",\"text\":\"let n = 42\"}}}" in
+  let cleandiags = Json.as_list (Json.member "diagnostics" (Json.member "params" openclean)) in
+  -- hover on the 42 literal (line 0, char 8) → int
+  let hov = send "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.mml\"},\"position\":{\"line\":0,\"character\":8}}}" in
+  let hovval = Json.to_str (Json.member "value" (Json.member "contents" (Json.member "result" hov))) in
+  -- completion → a non-empty item list including a stdlib name
+  let comp = send "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.mml\"}}}" in
+  let items = Json.as_list (Json.member "result" comp) in
+  let has_label lst q = List.exists (fn it -> (Json.to_str (Json.member "label" it)) = q) lst in
+  -- shutdown → null result; unknown method with an id → null result
+  let shut = send "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"shutdown\"}" in
+  let checks = [
+    ("init-hoverProvider", (match Json.member "hoverProvider" caps with Json.JBool true -> true | _ -> false));
+    ("init-has-id", Json.as_int (Json.member "id" initr) = 1);
+    ("open-type-error", List.length errdiags >= 1);
+    ("open-type-code", (match errdiags with d :: _ -> Json.to_str (Json.member "code" d) = "type" | [] -> false));
+    ("open-clean-empty", List.length cleandiags = 0);
+    ("hover-int", hovval = "int");
+    ("completion-nonempty", List.length items >= 1);
+    ("completion-has-stdlib", has_label items "print");
+    ("completion-has-local", has_label items "n");
+    ("shutdown-null", (match Json.member "result" shut with Json.JNull -> true | _ -> false));
+    ("is-exit", Lsp.is_exit (Json.parse "{\"method\":\"exit\"}"))
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)

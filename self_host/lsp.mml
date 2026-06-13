@@ -1,0 +1,296 @@
+module Lsp =
+  -- Language Server Protocol server (roadmap #22 / #16c), built on the analysis
+  -- library — the MiniML twin of lib/lsp.ml. `handle` is the PURE protocol layer:
+  -- it takes one decoded JSON-RPC message + the server state and returns the
+  -- messages to send back. `serve` is the stdio Content-Length framing loop around
+  -- it. JSON is the in-MiniML Json library; the analysis ctx comes from the
+  -- driver's stdlib setup (Driver.make_analysis_ctx).
+
+  -- --- Server state -------------------------------------------------------
+
+  pub type t = {
+    docs: (string, string) Hashtbl.t;                       -- open doc uri -> text
+    analysis: Typechecker.ctx;                              -- stdlib-loaded ctx
+    mut root: string option;                                -- workspace root path
+    mut index: (string, (string * Token.loc) list) Hashtbl.t option  -- lazy symbol index
+  }
+
+  -- Build a server. Loads the standard library once (expensive).
+  pub let create () : t =
+    { docs = Hashtbl.create 16; analysis = Driver.make_analysis_ctx (); root = None; index = None }
+
+  -- file://… URI <-> path. Minimal: strip the scheme; no percent-decoding.
+  let path_of_uri (uri : string) : string =
+    if (String.length uri >= 7) && ((String.sub uri 0 7) = "file://") do
+      String.sub uri 7 ((String.length uri) - 7)
+    else uri
+
+  let uri_of_path (p : string) : string = "file://" ^ p
+
+  let has_suffix (s : string) (suf : string) : bool =
+    let ls = String.length s in
+    let lf = String.length suf in
+    (ls >= lf) && ((String.sub s (ls - lf) lf) = suf)
+
+  -- Build (once, lazily) the workspace symbol index by scanning the MiniML sources
+  -- under the root: self_host/ and stdlib/ and the root's own *.mml. Cheap to skip
+  -- when there is no root.
+  pub let workspace_index (srv : t) =
+    match srv.index with
+    | Some idx -> Some idx
+    | None ->
+      (match srv.root with
+       | None -> None
+       | Some root ->
+         let mml_in dir =
+           let d = Path.join root dir in
+           let names = if Fs.is_directory d do Fs.read_dir d else [] in
+           List.filter_map (fn f ->
+             if has_suffix f ".mml" do
+               let path = Path.join d f in
+               if IO.file_exists path do Some (path, IO.read_file path) else None
+             else None
+           ) names
+         in
+         let files = List.concat (mml_in "self_host") (List.concat (mml_in "stdlib") (mml_in ".")) in
+         let idx = Analysis.build_index files in
+         srv.index := Some idx;
+         Some idx)
+
+  -- --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ----------------
+
+  -- LSP positions are 0-based (line, character), `character` counting UTF-16 CODE
+  -- UNITS; the compiler works in 0-based lines and 1-based BYTE columns. They
+  -- coincide for ASCII but diverge on a multibyte character, so map through text.
+
+  let nth_line (text : string) (n : int) : string =
+    match List.nth_opt (String.split "\n" text) n with Some l -> l | None -> ""
+
+  let utf8_len (b : int) : int = if b < 128 do 1 else if b < 224 do 2 else if b < 240 do 3 else 4
+  -- A code point above the BMP (4-byte UTF-8) is a UTF-16 surrogate pair = 2 units.
+  let utf16_units (b : int) : int = if b < 240 do 1 else 2
+
+  -- Byte column (1-based) in line of UTF-16 code unit u16 (0-based).
+  let utf16_to_byte_col (line : string) (u16 : int) : int =
+    let n = String.length line in
+    let i = Ref.create 0 in
+    let units = Ref.create 0 in
+    for ((Ref.get i) < n) && ((Ref.get units) < u16) do
+      let b = Byte.to_int (String.get line (Ref.get i)) in
+      Ref.set units ((Ref.get units) + (utf16_units b));
+      Ref.set i ((Ref.get i) + (utf8_len b))
+    end;
+    (Ref.get i) + 1
+
+  -- UTF-16 code unit (0-based) in line at byte column col (1-based).
+  let byte_col_to_utf16 (line : string) (col : int) : int =
+    let target = col - 1 in
+    let n = String.length line in
+    let i = Ref.create 0 in
+    let units = Ref.create 0 in
+    for ((Ref.get i) < target) && ((Ref.get i) < n) do
+      let b = Byte.to_int (String.get line (Ref.get i)) in
+      Ref.set units ((Ref.get units) + (utf16_units b));
+      Ref.set i ((Ref.get i) + (utf8_len b))
+    end;
+    Ref.get units
+
+  let lsp_pos (text : string) (p : Diagnostic.pos) : Json.json =
+    Json.JObject (
+      ("line", Json.JInt (p.line - 1)) ::
+      ("character", Json.JInt (byte_col_to_utf16 (nth_line text (p.line - 1)) p.col)) :: [])
+
+  let lsp_range (text : string) (s : Diagnostic.span) : Json.json =
+    Json.JObject (("start", lsp_pos text s.lo) :: ("end", lsp_pos text s.hi) :: [])
+
+  let lsp_severity (s : Diagnostic.severity) : int =
+    match s with
+    | Diagnostic.Error -> 1
+    | Diagnostic.Warning -> 2
+    | Diagnostic.Information -> 3
+    | Diagnostic.Hint -> 4
+
+  let lsp_diagnostic (text : string) (d : Diagnostic.t) : Json.json =
+    Json.JObject (
+      ("range", lsp_range text d.span) ::
+      ("severity", Json.JInt (lsp_severity d.severity)) ::
+      ("code", Json.JString d.code) ::
+      ("source", Json.JString "miniml") ::
+      ("message", Json.JString d.message) :: [])
+
+  -- --- Messages -----------------------------------------------------------
+
+  let notification (m : string) (params : Json.json) : Json.json =
+    Json.JObject (("jsonrpc", Json.JString "2.0") :: ("method", Json.JString m) :: ("params", params) :: [])
+
+  let publish (srv : t) (uri : string) : Json.json =
+    let text = (match Hashtbl.get srv.docs uri with Some t -> t | None -> "") in
+    let diags = Analysis.diagnostics srv.analysis text in
+    notification "textDocument/publishDiagnostics"
+      (Json.JObject (
+        ("uri", Json.JString uri) ::
+        ("diagnostics", Json.JArray (List.map (fn d -> lsp_diagnostic text d) diags)) :: []))
+
+  let capabilities () : Json.json =
+    Json.JObject (
+      ("capabilities", Json.JObject (
+        ("textDocumentSync", Json.JInt 1) ::
+        ("hoverProvider", Json.JBool true) ::
+        ("definitionProvider", Json.JBool true) ::
+        ("completionProvider", Json.JObject []) :: [])) ::
+      ("serverInfo", Json.JObject (("name", Json.JString "miniml-lsp") :: [])) :: [])
+
+  -- Handle one decoded JSON-RPC message; return the messages to send back. A
+  -- request (has an id) always gets exactly one response; notifications may
+  -- produce notifications (e.g. publishDiagnostics) or nothing.
+  pub let handle_message (srv : t) (msg : Json.json) : Json.json list =
+    let meth = Json.to_str (Json.member "method" msg) in
+    let id = Json.member "id" msg in
+    let params = Json.member "params" msg in
+    let response result = Json.JObject (("jsonrpc", Json.JString "2.0") :: ("id", id) :: ("result", result) :: []) in
+    let doc_uri () = Json.to_str (Json.member "uri" (Json.member "textDocument" params)) in
+    match meth with
+    | "initialize" ->
+      -- capture the workspace root for cross-file go-to-def (rootUri preferred,
+      -- rootPath as a fallback; either may be absent)
+      (match Json.to_str (Json.member "rootUri" params) with
+       | "" -> (match Json.to_str (Json.member "rootPath" params) with "" -> () | p -> srv.root := Some p)
+       | u -> srv.root := Some (path_of_uri u));
+      (response (capabilities ())) :: []
+    | "initialized" -> []
+    | "exit" -> []
+    | "shutdown" -> (response Json.JNull) :: []
+    | "textDocument/didOpen" ->
+      let uri = doc_uri () in
+      Hashtbl.set srv.docs uri (Json.to_str (Json.member "text" (Json.member "textDocument" params)));
+      (publish srv uri) :: []
+    | "textDocument/didChange" ->
+      let uri = doc_uri () in
+      -- full sync: the last content change carries the whole new text
+      let text = (match List.rev (Json.as_list (Json.member "contentChanges" params)) with
+        | last :: _ -> Json.to_str (Json.member "text" last)
+        | [] -> (match Hashtbl.get srv.docs uri with Some t -> t | None -> "")) in
+      Hashtbl.set srv.docs uri text;
+      (publish srv uri) :: []
+    | "textDocument/didClose" ->
+      let uri = doc_uri () in
+      Hashtbl.remove srv.docs uri;
+      (notification "textDocument/publishDiagnostics"
+        (Json.JObject (("uri", Json.JString uri) :: ("diagnostics", Json.JArray []) :: []))) :: []
+    | "textDocument/hover" ->
+      let uri = doc_uri () in
+      let pos = Json.member "position" params in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          (match Analysis.hover srv.analysis text (line0 + 1) col with
+           | Some ty -> Json.JObject (("contents", Json.JObject (("kind", Json.JString "plaintext") :: ("value", Json.JString ty) :: [])) :: [])
+           | None -> Json.JNull)
+        | None -> Json.JNull) in
+      (response result) :: []
+    | "textDocument/definition" ->
+      let uri = doc_uri () in
+      let pos = Json.member "position" params in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          -- a Location response from (target-file-text, target-uri, 1-based loc)
+          let location tgt_text tgt_uri l c =
+            let ch = byte_col_to_utf16 (nth_line tgt_text (l - 1)) c in
+            let p = Json.JObject (("line", Json.JInt (l - 1)) :: ("character", Json.JInt ch) :: []) in
+            Json.JObject (("uri", Json.JString tgt_uri) :: ("range", Json.JObject (("start", p) :: ("end", p) :: [])) :: [])
+          in
+          -- Cross-file qualified go-to-def first: if the cursor is on a
+          -- Module.member path the workspace index has, jump there (possibly
+          -- another file). Otherwise the same-file resolver.
+          let cursor = Analysis.offset_of_line_col text (line0 + 1) col in
+          let xfile = (match Analysis.qualified_at text cursor with
+            | Some qual -> (match workspace_index srv with Some idx -> Analysis.index_lookup idx qual | None -> None)
+            | None -> None) in
+          (match xfile with
+           | Some (path, loc) ->
+             let tgt_text = if (path_of_uri uri) = path do text else (if IO.file_exists path do IO.read_file path else "") in
+             location tgt_text (uri_of_path path) loc.line loc.col
+           | None ->
+             (match Analysis.definition srv.analysis text (line0 + 1) col with
+              | Some (l, c) -> location text uri l c
+              | None -> Json.JNull))
+        | None -> Json.JNull) in
+      (response result) :: []
+    | "textDocument/completion" ->
+      let uri = doc_uri () in
+      let items = (match Hashtbl.get srv.docs uri with
+        | Some text -> List.map (fn pair ->
+            let (label, kind) = pair in
+            Json.JObject (("label", Json.JString label) :: ("kind", Json.JInt kind) :: []))
+            (Analysis.completions srv.analysis text)
+        | None -> []) in
+      (response (Json.JArray items)) :: []
+    | _ ->
+      -- Unknown request -> null result; unknown notification -> ignore.
+      if id = Json.JNull do [] else (response Json.JNull) :: []
+
+  -- Whether msg is the request/notification that ends the session.
+  pub let is_exit (msg : Json.json) : bool = (Json.to_str (Json.member "method" msg)) = "exit"
+
+  -- --- stdio transport ----------------------------------------------------
+
+  -- One header line without its trailing CR. IO.read_line drops the LF; a CRLF
+  -- leaves a trailing CR to strip. "" at a blank line or EOF.
+  let read_header_line () : string =
+    let l = IO.read_line () in
+    let n = String.length l in
+    if (n > 0) && ((String.get l (n - 1)) = #0d) do String.sub l 0 (n - 1) else l
+
+  -- One Content-Length-framed message body, or None at EOF / no length. (EOF: the
+  -- first header line reads "" — the blank-line case — leaving content_length
+  -- unset (-1), so the loop returns None and serve stops.)
+  let read_message () : string option =
+    let content_length = Ref.create (0 - 1) in
+    let reading = Ref.create true in
+    for Ref.get reading do
+      let line = read_header_line () in
+      if line = "" do
+        Ref.set reading false
+      else do
+        (match String.index_opt line #3a with
+         | Some i ->
+           let key = String.lowercase (String.trim (String.sub line 0 i)) in
+           let v = String.trim (String.sub line (i + 1) (((String.length line) - i) - 1)) in
+           (if key = "content-length" do
+              (match String.to_int v with Some k -> Ref.set content_length k | None -> ())
+            end)
+         | None -> ())
+      end
+    end;
+    if (Ref.get content_length) < 0 do None
+    else Some (IO.read_bytes (Ref.get content_length))
+
+  -- Run the language server over stdin/stdout until EOF or `exit`. Builds the
+  -- server (loads the stdlib once), then loops: read a framed message, dispatch
+  -- through handle, write each reply framed.
+  pub let serve () : unit =
+    let srv = create () in
+    -- CRLF CRLF (the header/body separator). MiniML string literals have no \r
+    -- escape, so build it from the CR byte.
+    let crlf = (String.of_byte #0d) ^ "\n" in
+    let sep = crlf ^ crlf in
+    let send j =
+      let s = Json.to_string j in
+      IO.write ("Content-Length: " ^ ((string_of_int (String.length s)) ^ (sep ^ s)));
+      IO.flush ()
+    in
+    let looping = Ref.create true in
+    for Ref.get looping do
+      match read_message () with
+      | None -> Ref.set looping false
+      | Some body ->
+        (match Json.parse_opt body with
+         | None -> ()
+         | Some msg ->
+           List.iter send (handle_message srv msg);
+           (if is_exit msg do Sys.exit 0 end))
+    end
+end
