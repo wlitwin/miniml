@@ -5216,7 +5216,7 @@ let open_module_into_ctx ctx mod_name names_opt =
       let type_env =
         List.fold_left
           (fun te qname ->
-            if List.mem qname te.Types.newtypes then te
+            if Types.type_is_newtype te qname then te
             else { te with Types.newtypes = qname :: te.Types.newtypes })
           type_env minfo.Types.mod_newtypes
       in

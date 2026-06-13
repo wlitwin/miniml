@@ -209,10 +209,7 @@ let tag_for_constructor type_env name =
       Types.nominal_ctor_tag type_env info.ctor_type_name
         (Types.short_unqual name)
 
-let is_newtype_ctor type_env name =
-  match List.assoc_opt name type_env.Types.constructors with
-  | Some info -> List.mem info.Types.ctor_type_name type_env.Types.newtypes
-  | None -> false
+let is_newtype_ctor type_env name = Types.is_newtype_ctor type_env name
 
 (* ---- Type class method resolution ---- *)
 

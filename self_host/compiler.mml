@@ -200,11 +200,7 @@ module Compiler =
     | Some info -> Types.nominal_ctor_tag type_env info.ctor_type_name (Types.short_unqual name)
 
 
-  pub let is_newtype_ctor type_env name =
-    match List.assoc_opt name type_env.constructors with
-    | Some info -> List.mem info.ctor_type_name type_env.newtypes
-    | None -> false
-
+  pub let is_newtype_ctor type_env name = Types.is_newtype_ctor type_env name
 
   pub let extract_class_ty_args num_params schema_ty resolved_ty =
     let found = Hashtbl.create num_params in

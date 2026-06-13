@@ -662,11 +662,7 @@ let rec rec_placeholder env (te : Typechecker.texpr) : value =
         List.assoc_opt name env.globals.type_env.Types.constructors
       in
       let is_newtype =
-        match ctor_info with
-        | Some info ->
-            List.mem info.Types.ctor_type_name
-              env.globals.type_env.Types.newtypes
-        | None -> false
+        Types.is_newtype_ctor env.globals.type_env name
       in
       if is_newtype then
         (* Newtype constructors are erased: the placeholder is the payload's. *)
@@ -924,11 +920,7 @@ let rec eval (env : env) (te : Typechecker.texpr) : outcome =
         List.assoc_opt name env.globals.type_env.Types.constructors
       in
       let is_newtype =
-        match ctor_info with
-        | Some info ->
-            List.mem info.Types.ctor_type_name
-              env.globals.type_env.Types.newtypes
-        | None -> false
+        Types.is_newtype_ctor env.globals.type_env name
       in
       (* Constructor tag = declaration index within its variant type (matches
          the VM's tag assignment; used by tag-based hashing). *)

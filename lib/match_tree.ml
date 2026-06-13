@@ -88,7 +88,7 @@ let tag_for_constructor_ty type_env occ_ty name =
 
 let is_newtype_ctor_ty type_env occ_ty name =
   match resolve_ctor_info type_env occ_ty name with
-  | Some info -> List.mem info.Types.ctor_type_name type_env.Types.newtypes
+  | Some info -> Types.type_is_newtype type_env info.Types.ctor_type_name
   | None -> false
 
 let all_constructors_for_ty type_env occ_ty name =

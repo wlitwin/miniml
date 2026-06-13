@@ -4277,7 +4277,7 @@ module Typechecker =
         te
       else
         te) type_env minfo.mod_pub_types in
-      let type_env = List.fold (fn te qname -> if List.mem qname te.newtypes do
+      let type_env = List.fold (fn te qname -> if Types.type_is_newtype te qname do
         te
       else
         {te with newtypes = qname :: te.newtypes}) type_env minfo.mod_newtypes in
