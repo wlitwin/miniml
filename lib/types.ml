@@ -346,6 +346,20 @@ let nominal_ctor_tag type_env type_name short_name =
       in
       find_tag 0 variant_def
 
+(* Is [type_name] a newtype — a single-constructor type whose constructor is
+   erased at runtime? THE one definition of newtype-ness; the per-backend
+   predicates (and match_tree / native) all funnel through it. *)
+let type_is_newtype type_env type_name = List.mem type_name type_env.newtypes
+
+(* Is constructor [name] a newtype constructor? Name-keyed — the qualified name
+   the typechecker stamps is unambiguous. The type-directed match-tree path
+   resolves the constructor by occurrence type instead, then asks
+   type_is_newtype; native resolves via its ctx table; all share that atom. *)
+let is_newtype_ctor type_env name =
+  match List.assoc_opt name type_env.constructors with
+  | Some info -> type_is_newtype type_env info.ctor_type_name
+  | None -> false
+
 let rec ty_to_str = function
   | TInt -> "int"
   | TFloat -> "float"

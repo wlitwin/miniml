@@ -603,10 +603,7 @@ let short_constructor_name name =
   | Some i -> String.sub name (i + 1) (String.length name - i - 1)
   | None -> name
 
-let is_newtype_ctor type_env name =
-  match List.assoc_opt name type_env.Types.constructors with
-  | Some info -> List.mem info.Types.ctor_type_name type_env.Types.newtypes
-  | None -> false
+let is_newtype_ctor type_env name = Types.is_newtype_ctor type_env name
 
 (* ---- Type-directed float display (BUG-3) ----
 
@@ -679,7 +676,7 @@ let rec float_shape_of_ty (type_env : Types.type_env) (visited : string list)
               String.equal info.Types.ctor_type_name type_name)
             type_env.Types.constructors
         in
-        if List.mem type_name type_env.Types.newtypes then
+        if Types.type_is_newtype type_env type_name then
           (* Newtype: the constructor is erased — the runtime value IS the
              underlying value, so the shape is the underlying type's shape. *)
           match ctors with
@@ -3588,7 +3585,7 @@ and compile_forloop_cps ctx te fold_app cont =
         | Types.TList _ -> Some "list"
         | Types.TArray _ -> Some "array"
         | Types.TVariant (name, _)
-          when List.mem name ctx.type_env.Types.newtypes -> (
+          when Types.type_is_newtype ctx.type_env name -> (
             let ctors =
               List.filter
                 (fun (_, info) ->

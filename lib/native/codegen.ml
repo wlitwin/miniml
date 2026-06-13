@@ -288,7 +288,7 @@ let tag_for_constructor ctx name =
 
 let is_newtype_ctor ctx name =
   match lookup_ctor ctx name with
-  | Some (type_name, _tag) -> List.mem type_name ctx.type_env.Types.newtypes
+  | Some (type_name, _tag) -> Types.type_is_newtype ctx.type_env type_name
   | None -> false
 
 (* ---- Type substitution for class instance types ---- *)
@@ -6687,7 +6687,7 @@ and emit_format_value ctx val_reg ty =
         sorted;
       emit_format_str ctx " }"
   | Types.TVariant (type_name, ty_args) ->
-      if List.mem type_name ctx.type_env.Types.newtypes then begin
+      if Types.type_is_newtype ctx.type_env type_name then begin
         (* Newtype: erased at runtime, format using underlying type *)
         match List.assoc_opt type_name ctx.variant_defs with
         | Some [ (_, Some underlying_ty) ] ->

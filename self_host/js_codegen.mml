@@ -239,11 +239,7 @@ module Js_codegen =
     | None -> name
 
 
-  pub let is_newtype_ctor type_env name =
-    match List.assoc_opt name type_env.constructors with
-    | Some info -> List.mem info.ctor_type_name type_env.newtypes
-    | None -> false
-
+  pub let is_newtype_ctor type_env name = Types.is_newtype_ctor type_env name
 
   pub let rec float_shape_of_ty (type_env : Types.type_env) (visited : string list) (ty : Types.ty) : string option =
     let go = float_shape_of_ty type_env visited in
@@ -308,7 +304,7 @@ module Js_codegen =
           | _ -> t
          in
         let ctors = List.filter (fn (_, info) -> info.ctor_type_name = type_name) type_env.constructors in
-        if List.mem type_name type_env.newtypes do
+        if Types.type_is_newtype type_env type_name do
           do
             match ctors with
             | (_, {ctor_arg_ty = Some underlying; _}) :: [] -> float_shape_of_ty type_env visited (instantiate underlying)
@@ -2382,7 +2378,7 @@ module Js_codegen =
           match Types.repr coll.ty with
           | Types.TList _ -> Some "list"
           | Types.TArray _ -> Some "array"
-          | Types.TVariant ((name, _)) when List.mem name ctx.type_env.newtypes -> 
+          | Types.TVariant ((name, _)) when Types.type_is_newtype ctx.type_env name -> 
             do
               let ctors = List.filter (fn (_, info) -> info.ctor_type_name = name) ctx.type_env.constructors in
               match ctors with

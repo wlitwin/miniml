@@ -58,7 +58,7 @@ module Match_tree =
 
   pub let is_newtype_ctor_ty type_env occ_ty name =
     match resolve_ctor_info type_env occ_ty name with
-    | Some info -> List.mem info.ctor_type_name type_env.newtypes
+    | Some info -> Types.type_is_newtype type_env info.ctor_type_name
     | None -> false
 
 

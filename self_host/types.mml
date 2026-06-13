@@ -283,6 +283,14 @@ module Types =
       find_tag 0 variant_def
 
 
+  pub let type_is_newtype type_env type_name = List.mem type_name type_env.newtypes
+
+  pub let is_newtype_ctor type_env name =
+    match List.assoc_opt name type_env.constructors with
+    | Some info -> type_is_newtype type_env info.ctor_type_name
+    | None -> false
+
+
   pub let rec ty_to_str =
     fn
       | TInt -> "int"
