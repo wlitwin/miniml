@@ -1,0 +1,285 @@
+module Json =
+  -- A small, general JSON library for the MiniML toolchain (the JSON-RPC layer
+  -- of `mml lsp`, roadmap #16c). A faithful MiniML twin of the generic JSON core
+  -- embedded in lib/{deserialize,serialize}.ml: the `json` value tree, a
+  -- recursive-descent parser over a byte cursor, a string emitter with escaping,
+  -- and the field accessors. Pure: no backend hazards beyond ordinary
+  -- string/byte/Buffer use, so it compiles + runs on every backend.
+
+  effect Json_errorExn =
+    json_error : string -> 'a
+  end
+
+  pub type json =
+    | JNull
+    | JBool of bool
+    | JInt of int
+    | JFloat of float
+    | JString of string
+    | JArray of json list
+    | JObject of (string * json) list
+
+  -- ---- Parser state (a byte cursor over the source) ----
+
+  type st = {
+    src: string;
+    len: int;
+    mut pos: int
+  }
+
+  let mk (src : string) : st = {src; len = String.length src; pos = 0}
+
+  let at_end (s : st) : bool = s.pos >= s.len
+
+  let peek (s : st) : byte =
+    if s.pos >= s.len do #00 else String.get s.src s.pos
+
+  let advance (s : st) : byte =
+    let c = String.get s.src s.pos in
+    s.pos := s.pos + 1;
+    c
+
+  let bump (s : st) : unit = (advance s; ())
+
+  let is_digit (c : byte) : bool = (c >= #30) && (c <= #39)
+
+  let skip_ws (s : st) : unit =
+    for (not (at_end s)) && (((peek s) = #20) || (((peek s) = #09) || (((peek s) = #0a) || ((peek s) = #0d)))) do
+      bump s
+    end
+
+  -- ---- Emit (json -> string) ----
+
+  let hex_digit (n : int) : string =
+    String.of_byte (if n < 10 do Byte.of_int (n + 48) else Byte.of_int ((n - 10) + 97))
+
+  -- Four-digit lowercase hex of a codepoint, for \uXXXX escapes.
+  let hex4 (cp : int) : string =
+    (hex_digit ((cp lsr 12) land 15)) ^ ((hex_digit ((cp lsr 8) land 15)) ^
+    ((hex_digit ((cp lsr 4) land 15)) ^ (hex_digit (cp land 15))))
+
+  let escape_into (buf : Buffer.t) (s : string) : unit =
+    Buffer.add_byte buf #22;
+    String.iter (fn c ->
+      if c = #22 do Buffer.add_string buf "\\\""
+      else if c = #5c do Buffer.add_string buf "\\\\"
+      else if c = #0a do Buffer.add_string buf "\\n"
+      else if c = #0d do Buffer.add_string buf "\\r"
+      else if c = #09 do Buffer.add_string buf "\\t"
+      else if (Byte.to_int c) < 32 do Buffer.add_string buf ("\\u" ^ (hex4 (Byte.to_int c)))
+      else Buffer.add_byte buf c
+    ) s;
+    Buffer.add_byte buf #22
+
+  let rec emit (buf : Buffer.t) (j : json) : unit =
+    match j with
+    | JNull -> Buffer.add_string buf "null"
+    | JBool b -> Buffer.add_string buf (if b do "true" else "false")
+    | JInt n -> Buffer.add_string buf (string_of_int n)
+    | JFloat f -> Buffer.add_string buf (string_of_float f)
+    | JString s -> escape_into buf s
+    | JArray items ->
+      Buffer.add_byte buf #5b;
+      List.iteri (fn i item ->
+        (if i > 0 do Buffer.add_byte buf #2c end);
+        emit buf item
+      ) items;
+      Buffer.add_byte buf #5d
+    | JObject fields ->
+      Buffer.add_byte buf #7b;
+      List.iteri (fn i kv ->
+        let (k, v) = kv in
+        (if i > 0 do Buffer.add_byte buf #2c end);
+        escape_into buf k;
+        Buffer.add_byte buf #3a;
+        emit buf v
+      ) fields;
+      Buffer.add_byte buf #7d
+
+  pub let to_string (j : json) : string =
+    let buf = Buffer.create 256 in
+    emit buf j;
+    Buffer.contents buf
+
+  -- ---- Parse (string -> json) ----
+
+  let hex_val (c : byte) : int =
+    if (c >= #30) && (c <= #39) do (Byte.to_int c) - 48
+    else if (c >= #61) && (c <= #66) do ((Byte.to_int c) - 97) + 10
+    else if (c >= #41) && (c <= #46) do ((Byte.to_int c) - 65) + 10
+    else perform json_error "invalid hex digit in \\u escape"
+
+  -- Append the UTF-8 encoding of a codepoint (matching lib/deserialize.ml: up to
+  -- 3 bytes, covering the BMP that bare \uXXXX can express).
+  let utf8_encode (buf : Buffer.t) (cp : int) : unit =
+    if cp < 128 do
+      Buffer.add_byte buf (Byte.of_int cp)
+    else if cp < 2048 do
+      Buffer.add_byte buf (Byte.of_int (192 lor (cp lsr 6)));
+      Buffer.add_byte buf (Byte.of_int (128 lor (cp land 63)))
+    else do
+      Buffer.add_byte buf (Byte.of_int (224 lor (cp lsr 12)));
+      Buffer.add_byte buf (Byte.of_int (128 lor ((cp lsr 6) land 63)));
+      Buffer.add_byte buf (Byte.of_int (128 lor (cp land 63)))
+    end
+
+  let parse_string (s : st) : string =
+    bump s;
+    let buf = Buffer.create 32 in
+    for (not (at_end s)) && ((peek s) <> #22) do
+      let c = advance s in
+      if c = #5c do
+        (if at_end s do perform json_error "unterminated escape" end);
+        let e = advance s in
+        if e = #22 do Buffer.add_byte buf #22
+        else if e = #5c do Buffer.add_byte buf #5c
+        else if e = #2f do Buffer.add_byte buf #2f
+        else if e = #6e do Buffer.add_byte buf #0a
+        else if e = #72 do Buffer.add_byte buf #0d
+        else if e = #74 do Buffer.add_byte buf #09
+        else if e = #62 do Buffer.add_byte buf #08
+        else if e = #66 do Buffer.add_byte buf #0c
+        else if e = #75 do
+          (if (s.pos + 4) > s.len do perform json_error "truncated \\u escape" end);
+          let h1 = hex_val (advance s) in
+          let h2 = hex_val (advance s) in
+          let h3 = hex_val (advance s) in
+          let h4 = hex_val (advance s) in
+          utf8_encode buf (((h1 lsl 12) lor (h2 lsl 8)) lor ((h3 lsl 4) lor h4))
+        else perform json_error "invalid escape"
+      else
+        Buffer.add_byte buf c
+    end;
+    (if at_end s do perform json_error "unterminated string" end);
+    bump s;
+    Buffer.contents buf
+
+  let parse_number (s : st) : json =
+    let start = s.pos in
+    (if (peek s) = #2d do bump s end);
+    for (not (at_end s)) && (is_digit (peek s)) do bump s end;
+    let is_float = Ref.create false in
+    (if (not (at_end s)) && ((peek s) = #2e) do
+      Ref.set is_float true;
+      bump s;
+      for (not (at_end s)) && (is_digit (peek s)) do bump s end
+    end);
+    (if (not (at_end s)) && (((peek s) = #65) || ((peek s) = #45)) do
+      Ref.set is_float true;
+      bump s;
+      (if (not (at_end s)) && (((peek s) = #2b) || ((peek s) = #2d)) do bump s end);
+      for (not (at_end s)) && (is_digit (peek s)) do bump s end
+    end);
+    let text = String.sub s.src start (s.pos - start) in
+    if Ref.get is_float do
+      match String.to_float text with
+      | Some f -> JFloat f
+      | None -> perform json_error ("invalid number: " ^ text)
+    else
+      match String.to_int text with
+      | Some n -> JInt n
+      | None -> perform json_error ("invalid number: " ^ text)
+
+  let expect_lit (s : st) (lit : string) : unit =
+    let n = String.length lit in
+    if ((s.pos + n) <= s.len) && ((String.sub s.src s.pos n) = lit) do
+      s.pos := s.pos + n
+    else
+      perform json_error ("expected " ^ lit)
+
+  let rec parse_value (s : st) : json =
+    skip_ws s;
+    (if at_end s do perform json_error "unexpected end of input" end);
+    let c = peek s in
+    if c = #7b do parse_object s
+    else if c = #5b do parse_array s
+    else if c = #22 do JString (parse_string s)
+    else if c = #74 do (expect_lit s "true"; JBool true)
+    else if c = #66 do (expect_lit s "false"; JBool false)
+    else if c = #6e do (expect_lit s "null"; JNull)
+    else if (c = #2d) || (is_digit c) do parse_number s
+    else perform json_error ("unexpected character: " ^ (String.of_byte c))
+
+  and parse_array (s : st) : json =
+    bump s;
+    skip_ws s;
+    if (peek s) = #5d do
+      (bump s; JArray [])
+    else do
+      let items = Ref.create [] in
+      Ref.set items ((parse_value s) :: (Ref.get items));
+      skip_ws s;
+      for (peek s) = #2c do
+        bump s;
+        Ref.set items ((parse_value s) :: (Ref.get items));
+        skip_ws s
+      end;
+      (if (peek s) = #5d do bump s else perform json_error "expected ]");
+      JArray (List.rev (Ref.get items))
+    end
+
+  and parse_object (s : st) : json =
+    bump s;
+    skip_ws s;
+    if (peek s) = #7d do
+      (bump s; JObject [])
+    else do
+      let fields = Ref.create [] in
+      let parse_field () =
+        skip_ws s;
+        let key = (if (peek s) = #22 do parse_string s else perform json_error "expected string key") in
+        skip_ws s;
+        (if (peek s) = #3a do bump s else perform json_error "expected :");
+        let value = parse_value s in
+        Ref.set fields ((key, value) :: (Ref.get fields))
+      in
+      parse_field ();
+      skip_ws s;
+      for (peek s) = #2c do
+        bump s;
+        parse_field ();
+        skip_ws s
+      end;
+      (if (peek s) = #7d do bump s else perform json_error "expected }");
+      JObject (List.rev (Ref.get fields))
+    end
+
+  -- Parse a full JSON document; raises the json_error effect on malformed input.
+  pub let parse (text : string) : json =
+    let s = mk text in
+    let v = parse_value s in
+    (skip_ws s; v)
+
+  -- Total wrapper: None on any parse error.
+  pub let parse_opt (text : string) : json option =
+    handle
+      Some (parse text)
+    with
+    | return x -> x
+    | json_error _msg _k -> None
+
+  -- ---- Accessors (mirroring lib/deserialize.ml's json_* helpers) ----
+
+  pub let member (key : string) (j : json) : json =
+    match j with
+    | JObject fields ->
+      (match List.assoc_opt key fields with
+       | Some v -> v
+       | None -> JNull)
+    | _ -> JNull
+
+  pub let to_str (j : json) : string =
+    match j with JString s -> s | _ -> ""
+
+  pub let as_int (j : json) : int =
+    match j with JInt n -> n | JFloat f -> int_of_float f | _ -> 0
+
+  pub let as_float (j : json) : float =
+    match j with JFloat f -> f | JInt n -> float_of_int n | _ -> 0.0
+
+  pub let as_bool (j : json) : bool =
+    match j with JBool b -> b | _ -> false
+
+  pub let as_list (j : json) : json list =
+    match j with JArray l -> l | _ -> []
+end
