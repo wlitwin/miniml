@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -264,6 +264,15 @@ check-run-pkg-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js \
 	  self_host/semver.mml self_host/sumfile.mml self_host/manifest.mml self_host/deps.mml \
 	  > /dev/null && echo "self-host pkg data layer typecheck+compile passed"
+# The package-manager git/filesystem layer (fetch), the FIRST translated tooling
+# that drives the system-access surface (Process/Fs/Path/IO/Digest) — the OCaml
+# twins of those builtins live in lib/{path,fs,process,iO,digest}.ml so fetch.ml
+# is compiler-agnostic and translates faithfully (Path B #16). Compiled on BOTH
+# emit-js and native (the system-access effects/externs differ per backend).
+check-run-fetch-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js self_host/semver.mml self_host/fetch.mml > /dev/null
+	@cat self_host/semver.mml self_host/fetch.mml > /tmp/mml_fetch_concat.mml
+	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_fetch_concat.mml > /dev/null && echo "self-host fetch git/fs layer compile passed (emit-js + native)"
 check-run-native-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(NATIVE_SELF_HOST_FILES) > /dev/null && echo "native self-host backend typecheck+compile passed"
 # End-to-end: the self-hosted compiler (js/compiler.json, run on the OCaml VM) drives
@@ -309,7 +318,7 @@ NATIVE_TRANSLATE_FILES = ir_emit codegen
 # the `fmt-selfhost` gate stage) AND produces byte-identical output to the OCaml
 # reference over the corpus (guarded by `fmt-selfhost-parity`, 58/58). The only
 # residual gap is emit-js's UTF-8 string rep on non-ASCII byte ops (tracked).
-TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter semver sumfile manifest deps
+TOOLING_TRANSLATE_FILES = utf8 cst cst_build formatter semver sumfile manifest deps fetch
 TRANSLATOR = dune exec tools/ocaml_to_mml/main.exe --
 
 translate: build  ## Translate a single file: make translate FILE=lib/ast.ml

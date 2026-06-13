@@ -241,6 +241,9 @@ let translate_qualified modname funcname =
   | "List", "concat" -> ("List", "flatten")
   (* Option *)
   | "Option", "get" -> ("Option", "unwrap")
+  (* Sys.getenv_opt → Sys.getenv (the MiniML Sys.getenv returns an option;
+     OCaml's bare Sys.getenv raises, so the reference uses getenv_opt). *)
+  | "Sys", "getenv_opt" -> ("Sys", "getenv")
   | _ -> (translate_module_name modname, translate_ident funcname)
 
 (* Map OCaml operators to MiniML *)
