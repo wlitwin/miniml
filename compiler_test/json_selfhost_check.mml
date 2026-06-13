@@ -1,0 +1,32 @@
+-- Behavioral self-check for self_host/json.mml (gate stage `json-selfhost`).
+-- Concatenated after json.mml and run on the OCaml VM + native; must print "OK".
+-- ASCII-only so every backend agrees (non-ASCII byte output diverges on emit-js,
+-- the tracked UTF-16 string bug #33 — irrelevant to the ASCII-framed JSON-RPC use).
+let () =
+  let doc = "{\"name\":\"miniml\",\"ver\":3,\"pi\":3.5,\"ok\":true,\"nil\":null,\"tags\":[\"a\",\"b\\nc\"],\"nested\":{\"x\":-12,\"y\":[1,2,3]}}" in
+  let j = Json.parse doc in
+  let s1 = Json.to_string j in
+  let checks = [
+    ("emit-exact", s1 = doc);
+    ("roundtrip-fixpoint", s1 = Json.to_string (Json.parse s1));
+    ("member-string", Json.to_str (Json.member "name" j) = "miniml");
+    ("member-int", Json.as_int (Json.member "ver" j) = 3);
+    ("member-float", Json.as_float (Json.member "pi" j) = 3.5);
+    ("nested-neg-int", Json.as_int (Json.member "x" (Json.member "nested" j)) = (0 - 12));
+    ("bool-true", Json.as_bool (Json.member "ok" j) = true);
+    ("missing-is-null", (match Json.member "absent" j with Json.JNull -> true | _ -> false));
+    ("array-length", List.length (Json.as_list (Json.member "y" (Json.member "nested" j))) = 3);
+    ("escape-newline", Json.to_str (Json.parse "\"a\\nb\"") = "a\nb");
+    ("escape-tab", Json.to_str (Json.parse "\"a\\tb\"") = "a\tb");
+    ("escape-quote", Json.to_str (Json.parse "\"q\\\"q\"") = "q\"q");
+    ("escape-backslash", Json.to_str (Json.parse "\"a\\\\b\"") = "a\\b");
+    ("unicode-ascii", Json.to_str (Json.parse "\"\\u0041\"") = "A");
+    ("empty-array", Json.to_string (Json.parse "[]") = "[]");
+    ("empty-object", Json.to_string (Json.parse "{}") = "{}");
+    ("whitespace", Json.as_int (Json.member "a" (Json.parse " {  \"a\" : 7 } ")) = 7);
+    ("parse-opt-none", (match Json.parse_opt "{bad" with None -> true | Some _ -> false));
+    ("parse-opt-some", (match Json.parse_opt "[1,2]" with Some _ -> true | None -> false))
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)

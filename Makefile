@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -283,6 +283,22 @@ check-run-project-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(PROJECT_SELFHOST_FILES) > /dev/null
 	@cat $(PROJECT_SELFHOST_FILES) > /tmp/mml_project_concat.mml
 	$(CHECK_BIN)/bin_native/main.exe --emit-ir /tmp/mml_project_concat.mml > /dev/null && echo "self-host project build system compile passed (emit-js + native)"
+# The JSON library (self_host/json.mml): a general value tree + recursive-descent
+# parser + escaping emitter — the JSON-RPC foundation for `mml lsp` (roadmap #16c,
+# the first new MiniML LSP component). A faithful twin of the generic JSON core in
+# lib/{deserialize,serialize}.ml. Pure string/byte/Buffer code, so it compiles AND
+# behaves identically on every backend. Typechecked+compiled on emit-js, then a
+# behavioral self-check (parse∘emit fixpoint, accessors, escapes, parse_opt) is run
+# on BOTH the OCaml VM and the native binary, asserting "OK".
+check-run-json-selfhost:
+	$(CHECK_BIN)/bin/main.exe --emit-js self_host/json.mml > /dev/null
+	@cat self_host/json.mml compiler_test/json_selfhost_check.mml > /tmp/mml_json_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_json_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL json (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_json_concat.mml -o /tmp/mml_json_check_bin
+	@nat=$$(/tmp/mml_json_check_bin); \
+	  if [ "$$nat" = "OK" ]; then echo "self-host json library passed (emit-js compile + VM/native round-trip)"; \
+	  else echo "FAIL json (native): $$nat"; exit 1; fi
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt
