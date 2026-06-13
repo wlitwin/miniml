@@ -1,0 +1,14 @@
+[package]
+name = "zed_miniml"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pin this to the version your Zed release expects. If `zed: install dev
+# extension` fails to build, bump/lower this to match (see the Zed extension
+# docs: https://zed.dev/docs/extensions/languages).
+zed_extension_api = "0.2.0"

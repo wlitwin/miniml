@@ -5,3 +5,6 @@ js/stdlib_sources.js
 **/*.mmlb
 .claude/
 fuzz_failures/
+
+# Built `mml` toolchain binary (make mml)
+/mml
