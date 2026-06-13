@@ -24,6 +24,30 @@ let run_command cmd =
   let output = Buffer.contents buf in
   match status with Unix.WEXITED code -> (code, output) | _ -> (1, output)
 
+(* Self-host mode (Path-B cutover, the independent native test net): when MMLC_BIN
+   points at the self-host native compiler binary, compile each test THROUGH IT
+   (the production native path) instead of the in-process OCaml reference Driver.
+   Verifies the self-host's OWN native codegen produces correct runtime behavior,
+   without diffing against the reference. Default (unset) = the reference Driver,
+   exactly as before. *)
+let mmlc_bin = Sys.getenv_opt "MMLC_BIN"
+
+(* Compile [tmp_src] to the native binary [tmp_bin], raising on failure (same
+   contract as Driver.compile_to_native so the existing handlers apply). Routes
+   through mmlc in self-host mode, the reference Driver otherwise. *)
+let native_compile ~tmp_src ~tmp_bin =
+  match mmlc_bin with
+  | None ->
+      Interpreter_native.Driver.compile_to_native ~source_file:tmp_src
+        ~output:tmp_bin ()
+  | Some mmlc ->
+      let cmd =
+        Printf.sprintf "%s --emit-native %s -o %s" mmlc
+          (Filename.quote tmp_src) (Filename.quote tmp_bin)
+      in
+      let code, out = run_command cmd in
+      if code <> 0 then failwith ("mmlc native compile failed: " ^ out)
+
 (* --- Running tests --- *)
 
 (* Outcome of a single test, computed without any printing so workers can run in
@@ -47,8 +71,7 @@ let run_one ~tmp_src ~tmp_bin tc : result =
           output_string oc tc.source;
           close_out oc;
           try
-            Interpreter_native.Driver.compile_to_native ~source_file:tmp_src
-              ~output:tmp_bin ();
+            native_compile ~tmp_src ~tmp_bin;
             let exit_code, output = run_command tmp_bin in
             (* Strip trailing newline only (not all whitespace — format tests need padding) *)
             let actual =
@@ -71,6 +94,10 @@ let run_one ~tmp_src ~tmp_bin tc : result =
           | Interpreter_native.Driver.Driver_error msg ->
               RFail (Printf.sprintf "driver error: %s" msg)
           | exn -> RFail (Printf.sprintf "exception: %s" (Printexc.to_string exn)))
+      | TypeError when mmlc_bin <> None ->
+          RSkip "type-error (frontend; self-host mode tests native codegen)"
+      | TypeErrorMsg _ when mmlc_bin <> None ->
+          RSkip "type-error (frontend; self-host mode tests native codegen)"
       | TypeError -> (
           let oc = open_out tmp_src in
           output_string oc tc.source;
@@ -113,8 +140,7 @@ let run_one ~tmp_src ~tmp_bin tc : result =
           output_string oc tc.source;
           close_out oc;
           try
-            Interpreter_native.Driver.compile_to_native ~source_file:tmp_src
-              ~output:tmp_bin ();
+            native_compile ~tmp_src ~tmp_bin;
             let exit_code, output = run_command tmp_bin in
             if exit_code <> 0 && contains_substring output substr then RPass
             else if exit_code = 0 then
