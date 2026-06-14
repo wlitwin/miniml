@@ -64,7 +64,18 @@ let () =
   -- references on the same local are single-file scoped (no root → open doc only)
   let rf = send "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///occ.mml\"},\"position\":{\"line\":2,\"character\":2}}}" in
   let rfranges = Json.as_list (Json.member "result" rf) in
+  -- type-directed record fields: `point` and `box` both have field `x`. Highlight
+  -- on a `point` access's `.x` (line 2 char 23) returns the two point `.x` uses
+  -- (lines 2 and 4) and EXCLUDES the `box` access on line 3.
+  let recsrc = "type point = { x: int; y: int }\ntype box = { x: int; w: int }\nlet px (p : point) = p.x\nlet bx (b : box) = b.x\nlet qx (p : point) = p.x + 1" in
+  let _ = send ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///rec.mml\",\"text\":" ^ ((Json.to_string (Json.JString recsrc)) ^ "}}}")) in
+  let fh = send "{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"textDocument/documentHighlight\",\"params\":{\"textDocument\":{\"uri\":\"file:///rec.mml\"},\"position\":{\"line\":2,\"character\":23}}}" in
+  let franges = Json.as_list (Json.member "result" fh) in
+  let f_line r = Json.as_int (Json.member "line" (Json.member "start" (Json.member "range" r))) in
   let checks = [
+    ("field-scoped-count", List.length franges = 2);
+    ("field-includes-other-point-use", List.exists (fn r -> (f_line r) = 4) franges);
+    ("field-excludes-other-record", not (List.exists (fn r -> (f_line r) = 3) franges));
     ("highlight-local-scoped-count", List.length hlranges = 3);
     ("highlight-decl-on-let-line", (List.length (List.filter (fn r -> (hl_line r) = 1) hlranges)) = 1);
     ("highlight-uses-on-body-line", (List.length (List.filter (fn r -> (hl_line r) = 2) hlranges)) = 2);

@@ -1160,4 +1160,92 @@ module Analysis =
         let pick pairs = List.filter_map (fn p -> let (l, i) = p in if i = id do Some l else None) pairs in
         Some (List.concat (pick decl_locs) (pick (Ref.get uses)))
       end
+
+  -- --- Type-directed record fields ----------------------------------------
+
+  -- The structural identity of a value's record type: the sorted field-name set
+  -- of its row when CLOSED (e.g. `Some "x|y"`), which uniquely names the record
+  -- shape without needing the declared type in scope. None for an open /
+  -- row-polymorphic record (no canonical owner, by design — `let f r = r.x` works
+  -- over every record with `x`) or a non-record. Using the field set (not a
+  -- nominal name) sidesteps the base type_env lacking the buffer's own records.
+  let closed_record_key (ty : Types.ty) : string option =
+    match Types.repr ty with
+    | Types.TRecord row ->
+      let fields = Ref.create [] in
+      let closed = Ref.create false in
+      let cur = Ref.create row in
+      let go = Ref.create true in
+      (for Ref.get go do
+         match Types.rrow_repr (Ref.get cur) with
+         | Types.RRow (f, _, tail) -> Ref.set fields (f :: Ref.get fields); Ref.set cur tail
+         | Types.REmpty -> Ref.set closed true; Ref.set go false
+         | _ -> Ref.set go false
+       end);
+      if Ref.get closed do Some (String.concat "|" (List.sort String.compare (Ref.get fields))) else None
+    | _ -> None
+
+  -- Occurrences of the record FIELD under the cursor, restricted to accesses on
+  -- the SAME nominal record type (so `point.x` and `box.x` no longer collide).
+  -- Returns None when the cursor is not on a `.field` access, when the owning type
+  -- is an open row (genuinely polymorphic — fall back to by-name), or when the
+  -- syntactic accesses can't be safely correlated to the typed tree. Field-name
+  -- tokens carry no precise loc in the typed AST, so the `.field` access tokens
+  -- (an IDENT adjacent after a DOT) are paired with the TEField/TEFieldAssign
+  -- owner types in source order; a count mismatch means bail (stay correct).
+  pub let field_occurrences (state : Typechecker.ctx) (src : string) (cursor : int) =
+    match token_at src cursor with
+    | None -> None
+    | Some ctok ->
+      (match ctok.kind with
+       | Token.IDENT fname ->
+         let arr = Array.of_list (tokenize_opt src) in
+         let n = Array.length arr in
+         let access = Ref.create [] in
+         (let i = Ref.create 1 in
+          for (Ref.get i) < n do
+            let prev = Array.get arr ((Ref.get i) - 1) in
+            let t = Array.get arr (Ref.get i) in
+            (if (prev.kind = Token.DOT) && ((prev.end_offset = t.loc.offset)
+                && (match t.kind with Token.IDENT s -> s = fname | _ -> false)) do
+               Ref.set access (t.loc :: Ref.get access) end);
+            Ref.set i ((Ref.get i) + 1)
+          end);
+         let access_locs = List.rev (Ref.get access) in
+         if not (List.exists (fn (l : Token.loc) -> l.offset = ctok.loc.offset) access_locs) do None
+         else do
+           let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
+           let owners = Ref.create [] in
+           let rec walk (te : Typechecker.texpr) : unit =
+             (match te.expr with
+              | Typechecker.TEField (recv, f) ->
+                (if f = fname do Ref.set owners ((recv.loc.offset, closed_record_key recv.ty) :: Ref.get owners) end)
+              | Typechecker.TEFieldAssign (recv, f, _) ->
+                (if f = fname do Ref.set owners ((recv.loc.offset, closed_record_key recv.ty) :: Ref.get owners) end)
+              | _ -> ());
+             Typechecker.iter_texpr_children walk te
+           in
+           let rec walk_td (td : Typechecker.tdecl) : unit =
+             match td with
+             | Typechecker.TDLet (_, te) -> walk te
+             | Typechecker.TDLetMut (_, te) -> walk te
+             | Typechecker.TDLetRec (_, te) -> walk te
+             | Typechecker.TDExpr te -> walk te
+             | Typechecker.TDLetRecAnd binds -> List.iter (fn pair -> let (_, te) = pair in walk te) binds
+             | Typechecker.TDModule (_, ds, _) -> List.iter walk_td ds
+             | _ -> ()
+           in
+           List.iter walk_td (typed_recover state program);
+           let sorted = List.sort (fn a b -> (let (x, _) = a in x) - (let (y, _) = b in y)) (Ref.get owners) in
+           let owner_list = List.map (fn p -> let (_, o) = p in o) sorted in
+           if (List.length owner_list) <> (List.length access_locs) do None
+           else do
+             let zipped = List.map2 (fn loc owner -> (loc, owner)) access_locs owner_list in
+             let cursor_owner = List.fold (fn acc pair -> let ((l : Token.loc), o) = pair in if l.offset = ctok.loc.offset do o else acc) None zipped in
+             (match cursor_owner with
+              | Some t -> Some (List.filter_map (fn pair -> let (l, o) = pair in (match o with Some t2 -> (if t2 = t do Some l else None) | None -> None)) zipped)
+              | None -> None)
+           end
+         end
+       | _ -> None)
 end
