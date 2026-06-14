@@ -440,27 +440,26 @@ module Analysis =
   let is_ident_byte (c : byte) : bool =
     ((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || (((c >= #30) && (c <= #39)) || (c = #5f)))
 
-  let pretty_ty (ty : Types.ty) : string =
-    let s = Types.pp_ty ty in
+  -- Rewrite the `'…` variable tokens in `s` through `remap` (a raw→display
+  -- assoc), interning new vars in appearance order with `counter`; copy other
+  -- characters verbatim.
+  let scan_tvars remap counter (s : string) : string =
     let n = String.length s in
     let buf = Buffer.create n in
-    let names = Ref.create [] in
-    let counter = Ref.create 0 in
     let i = Ref.create 0 in
     for (Ref.get i) < n do
       let c = String.get s (Ref.get i) in
       if c = #27 do
-        -- a `'…` variable token; read its identifier run and remap it
         let start = Ref.get i in
         Ref.set i ((Ref.get i) + 1);
         (for ((Ref.get i) < n) && (is_ident_byte (String.get s (Ref.get i))) do Ref.set i ((Ref.get i) + 1) end);
         let raw = String.sub s start ((Ref.get i) - start) in
-        let norm = (match List.assoc_opt raw (Ref.get names) with
+        let norm = (match List.assoc_opt raw (Ref.get remap) with
           | Some v -> v
           | None ->
             let v = tvar_letter (Ref.get counter) in
             Ref.set counter ((Ref.get counter) + 1);
-            Ref.set names (List.concat (Ref.get names) ((raw, v) :: []));
+            Ref.set remap (List.concat (Ref.get remap) ((raw, v) :: []));
             v) in
         Buffer.add_string buf norm
       else do
@@ -469,6 +468,18 @@ module Analysis =
       end
     end;
     Buffer.contents buf
+
+  -- Render `ty`'s variables as 'a 'b 'c…, lettering `ctx`'s variables FIRST — so a
+  -- sub-expression's type shares the enclosing declaration's numbering (hovering
+  -- `b` in `snd : 'a * 'b -> 'b` shows 'b, not 'a). With ctx = ty this is plain
+  -- in-order normalization.
+  let render_tvars (ctx : Types.ty) (ty : Types.ty) : string =
+    let remap = Ref.create [] in
+    let counter = Ref.create 0 in
+    let _ = scan_tvars remap counter (Types.pp_ty ctx) in
+    scan_tvars remap counter (Types.pp_ty ty)
+
+  let pretty_ty (ty : Types.ty) : string = render_tvars ty ty
 
   -- --- Hover --------------------------------------------------------------
 
@@ -537,14 +548,29 @@ module Analysis =
       let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
       let tdecls = typed_recover state program in
       let best = Ref.create None in
-      List.iter (fn td -> visit_tdecl (fn te -> if te.loc.offset = target do Ref.set best (Some te.ty) end) td)
-        tdecls;
+      -- also track the ENCLOSING binding's type, so the hovered node's variables
+      -- are lettered to match its declaration's signature (not renumbered alone).
+      let best_ctx = Ref.create None in
+      let rec walk_node ctx_ty (te : Typechecker.texpr) : unit =
+        (if te.loc.offset = target do Ref.set best (Some te.ty); Ref.set best_ctx ctx_ty end);
+        Typechecker.iter_texpr_children (fn c -> walk_node ctx_ty c) te
+      in
+      let rec walk_decl (td : Typechecker.tdecl) : unit =
+        match td with
+        | Typechecker.TDLet (_, dte) -> walk_node (Some dte.ty) dte
+        | Typechecker.TDLetRec (_, dte) -> walk_node (Some dte.ty) dte
+        | Typechecker.TDLetMut (_, dte) -> walk_node (Some dte.ty) dte
+        | Typechecker.TDExpr te -> walk_node None te
+        | Typechecker.TDModule (_, decls, _) -> List.iter walk_decl decls
+        | _ -> ()
+      in
+      List.iter walk_decl tdecls;
       -- on a hover-miss: if the cursor is on a binding NAME, fall back to that
       -- binding's inferred type. The typed tree qualifies module members
       -- (`Buffer.seal_threshold`), so match the bare name against an exact key OR
       -- a `….name` suffix.
       (match Ref.get best with
-       | Some ty -> Some (pretty_ty ty)
+       | Some ty -> Some (render_tvars (match Ref.get best_ctx with Some c -> c | None -> ty) ty)
        | None ->
          (match tok.kind with
           | Token.IDENT name ->

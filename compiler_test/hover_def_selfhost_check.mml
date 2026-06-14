@@ -18,6 +18,10 @@ let () =
     ("hover-member-binder", (match Analysis.hover st "module M =\n  let secret = \"x\"\nend" 2 7 with Some "string" -> true | _ -> false));
     -- type variables are normalized to 'a 'b … (not raw internal ids)
     ("hover-tvars-normalized", (match Analysis.hover st "let swap p = let (a, b) = p in (b, a)" 1 5 with Some "'a * 'b -> 'b * 'a" -> true | _ -> false));
+    -- a hovered sub-expression's tvars match the enclosing signature's lettering
+    -- (`b` in `snd : 'a * 'b -> 'b` is 'b, not renumbered to 'a in isolation)
+    ("hover-tvars-ctx-sig", (match Analysis.hover st "let snd (_, b) = b" 1 5 with Some "'a * 'b -> 'b" -> true | _ -> false));
+    ("hover-tvars-ctx-sub", (match Analysis.hover st "let snd (_, b) = b" 1 18 with Some "'b" -> true | _ -> false));
     -- hover off any token → None
     ("hover-miss", (match Analysis.hover st src 1 4 with None -> true | _ -> false));
     -- go-to-def of the first 'foo' use (line 2, col 11) → its top-level binder line 1
