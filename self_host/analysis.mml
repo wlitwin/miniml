@@ -899,4 +899,78 @@ module Analysis =
     ) state.vars;
     List.iter (fn kw -> add kind_keyword kw) keywords;
     List.rev (Ref.get out)
+
+  -- Resolve a dotted module path (`Map` / `Foo.Bar`) to its module_info.
+  let resolve_module (env : Types.type_env) (path : string) =
+    match String.split "." path with
+    | [] -> None
+    | first :: rest ->
+      (match List.assoc_opt first env.modules with
+       | None -> None
+       | Some info ->
+         let cur = Ref.create (Some info) in
+         List.iter (fn seg ->
+           match Ref.get cur with
+           | Some (mi : Types.module_info) -> Ref.set cur (List.assoc_opt seg mi.mod_submodules)
+           | None -> ()
+         ) rest;
+         Ref.get cur)
+
+  -- The public members of a module as completions (values/functions +
+  -- constructors), de-duplicated. Unions two sources because neither is complete
+  -- alone: module_info.mod_pub_vars (source-defined modules like List, + the
+  -- constructors), and ctx.vars `Module.member` entries (native-registered modules
+  -- like String/Array/IO, whose mod_pub_vars is sparse).
+  let module_member_completions (state : Typechecker.ctx) (modpath : string) : (string * int) list =
+    let prefix = modpath ^ "." in
+    let plen = String.length prefix in
+    let from_info = (match resolve_module state.type_env modpath with
+      | None -> []
+      | Some (info : Types.module_info) ->
+        List.concat
+          (List.map (fn pair -> let (n, sch) = pair in
+            (n, (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable))) info.mod_pub_vars)
+          (List.map (fn pair -> let (n, _) = pair in (n, 4)) info.mod_pub_constructors)) in
+    let from_vars = List.filter_map (fn pair ->
+      let (name, sch) = pair in
+      if (String.length name > plen) && ((String.sub name 0 plen) = prefix) do
+        let mem = String.sub name plen ((String.length name) - plen) in
+        if String.contains "." mem do None
+        else Some (mem, (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable))
+      else None
+    ) state.vars in
+    let seen = Hashtbl.create 64 in
+    let out = Ref.create [] in
+    List.iter (fn pair -> let (n, k) = pair in
+      if not (Hashtbl.has seen n) do Hashtbl.set seen n true; Ref.set out ((n, k) :: Ref.get out) end
+    ) (List.concat from_info from_vars);
+    List.rev (Ref.get out)
+
+  -- If the cursor sits right after `Module[.Sub].` (optionally mid-member-name),
+  -- the module path; else None. A char scan: skip the partial member ident, then
+  -- require a `.`, then read the qualified uppercase path before it.
+  let module_prefix_at (src : string) (cursor : int) : string option =
+    let n = String.length src in
+    if cursor > n do None else do
+      let i = Ref.create cursor in
+      (for ((Ref.get i) > 0) && (is_ident_byte (String.get src ((Ref.get i) - 1))) do Ref.set i ((Ref.get i) - 1) end);
+      if ((Ref.get i) > 0) && ((String.get src ((Ref.get i) - 1)) = #2e) do
+        let dot = (Ref.get i) - 1 in
+        let s = Ref.create dot in
+        (for ((Ref.get s) > 0) && (let c = String.get src ((Ref.get s) - 1) in (is_ident_byte c) || (c = #2e)) do Ref.set s ((Ref.get s) - 1) end);
+        let path = String.sub src (Ref.get s) (dot - (Ref.get s)) in
+        if (String.length path > 0) && (let c0 = String.get path 0 in (c0 >= #41) && (c0 <= #5a)) do Some path else None
+      else None
+    end
+
+  -- Completions at a position: a `Module.` prefix → that module's members
+  -- (precise, from the typecheck ctx); otherwise the in-scope names (completions).
+  pub let completions_at (state : Typechecker.ctx) (src : string) (line : int) (col : int) : (string * int) list =
+    let cursor = offset_of_line_col src line col in
+    match module_prefix_at src cursor with
+    | Some modpath ->
+      (match module_member_completions state modpath with
+       | [] -> completions state src
+       | members -> members)
+    | None -> completions state src
 end

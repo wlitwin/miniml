@@ -387,11 +387,15 @@ end"
       (response result) :: []
     | "textDocument/completion" ->
       let uri = doc_uri () in
+      let pos = Json.member "position" params in
       let items = (match Hashtbl.get srv.docs uri with
-        | Some text -> List.map (fn pair ->
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          List.map (fn pair ->
             let (label, kind) = pair in
             Json.JObject (("label", Json.JString label) :: ("kind", Json.JInt kind) :: []))
-            (Analysis.completions (project_ctx_for srv uri) text)
+            (Analysis.completions_at (project_ctx_for srv uri) text (line0 + 1) col)
         | None -> []) in
       (response (Json.JArray items)) :: []
     | "textDocument/inlayHint" ->
