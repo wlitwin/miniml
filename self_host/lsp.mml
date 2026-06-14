@@ -137,7 +137,8 @@ module Lsp =
         ("textDocumentSync", Json.JInt 1) ::
         ("hoverProvider", Json.JBool true) ::
         ("definitionProvider", Json.JBool true) ::
-        ("completionProvider", Json.JObject []) :: [])) ::
+        ("completionProvider", Json.JObject []) ::
+        ("inlayHintProvider", Json.JBool true) :: [])) ::
       ("serverInfo", Json.JObject (("name", Json.JString "miniml-lsp") :: [])) :: [])
 
   -- Handle one decoded JSON-RPC message; return the messages to send back. A
@@ -228,6 +229,20 @@ module Lsp =
             (Analysis.completions srv.analysis text)
         | None -> []) in
       (response (Json.JArray items)) :: []
+    | "textDocument/inlayHint" ->
+      let uri = doc_uri () in
+      let hints = (match Hashtbl.get srv.docs uri with
+        | Some text -> List.map (fn h ->
+            let (line, col, label) = h in
+            let ch = byte_col_to_utf16 (nth_line text (line - 1)) col in
+            Json.JObject (
+              ("position", Json.JObject (("line", Json.JInt (line - 1)) :: ("character", Json.JInt ch) :: [])) ::
+              ("label", Json.JString label) ::
+              ("kind", Json.JInt 1) ::                         -- 1 = Type
+              ("paddingLeft", Json.JBool false) :: []))
+            (Analysis.inlay_hints srv.analysis text)
+        | None -> []) in
+      (response (Json.JArray hints)) :: []
     | _ ->
       -- Unknown request -> null result; unknown notification -> ignore.
       if id = Json.JNull do [] else (response Json.JNull) :: []

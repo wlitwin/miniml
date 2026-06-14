@@ -23,10 +23,16 @@ let () =
   let comp = send "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.mml\"}}}" in
   let items = Json.as_list (Json.member "result" comp) in
   let has_label lst q = List.exists (fn it -> (Json.to_str (Json.member "label" it)) = q) lst in
+  -- inlay hints on the clean doc (b.mml = "let n = 42") → one ": int" hint
+  let inlay = send "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/inlayHint\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.mml\"},\"range\":{}}}" in
+  let inlays = Json.as_list (Json.member "result" inlay) in
   -- shutdown → null result; unknown method with an id → null result
   let shut = send "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"shutdown\"}" in
   let checks = [
     ("init-hoverProvider", (match Json.member "hoverProvider" caps with Json.JBool true -> true | _ -> false));
+    ("init-inlayHintProvider", (match Json.member "inlayHintProvider" caps with Json.JBool true -> true | _ -> false));
+    ("inlay-one-hint", List.length inlays = 1);
+    ("inlay-label-int", (match inlays with h :: _ -> Json.to_str (Json.member "label" h) = ": int" | [] -> false));
     ("init-has-id", Json.as_int (Json.member "id" initr) = 1);
     ("open-type-error", List.length errdiags >= 1);
     ("open-type-code", (match errdiags with d :: _ -> Json.to_str (Json.member "code" d) = "type" | [] -> false));
