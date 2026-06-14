@@ -13,7 +13,8 @@ let () =
     | Some (_, l) -> l.line | None -> 0 - 1) in
   let idx = Analysis.build_index
     (("types.mml", "module Types =\n  pub let repr = 1\nend")
-     :: ("lexer.mml", "module Lexer =\n  pub let tokenize = 2\nend") :: []) in
+     :: ("lexer.mml", "module Lexer =\n  pub let tokenize = 2\nend")
+     :: ("ast.mml", "module Ast =\n  pub type kind = SourceFile | Decl | Tok of int\nend") :: []) in
   let lookup_file q = (match Analysis.index_lookup idx q with Some (f, _) -> f | None -> "?") in
   let lookup_line q = (match Analysis.index_lookup idx q with Some (_, l) -> l.line | None -> 0 - 1) in
   -- qualified_at on the 'bar' segment of 'Foo.bar' (line 6, col ~14)
@@ -29,6 +30,13 @@ let () =
     ("xfile-types-file", lookup_file "Types.repr" = "types.mml");
     ("xfile-types-line", lookup_line "Types.repr" = 2);
     ("xfile-lexer", lookup_file "Lexer.tokenize" = "lexer.mml");
+    -- variant constructors are indexed (Module.Ctor), so go-to-def jumps to them
+    ("ctor-indexed", lookup_file "Ast.SourceFile" = "ast.mml");
+    ("ctor-indexed-2", lookup_file "Ast.Decl" = "ast.mml");
+    ("ctor-with-payload", lookup_file "Ast.Tok" = "ast.mml");
+    -- the type name itself is still indexed; the payload type `int` is NOT a ctor
+    ("type-name-indexed", lookup_file "Ast.kind" = "ast.mml");
+    ("payload-not-ctor", (match Analysis.index_lookup idx "Ast.int" with None -> true | _ -> false));
     ("qualified-at", (match Analysis.qualified_at src qcur with Some "Foo.bar" -> true | _ -> false));
     ("bare-not-qualified", (match Analysis.qualified_at "let foo = bar" 11 with None -> true | _ -> false));
     ("token-at", (match Analysis.token_at "let xyz = 1" 5 with Some t -> t.loc.offset = 4 | None -> false));
