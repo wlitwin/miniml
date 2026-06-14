@@ -661,22 +661,26 @@ module Analysis =
   -- TDLetMut nodes (te.ty is the binding's type — a function shows its full arrow
   -- type). Bindings that don't typecheck contribute nothing. The editor toggles
   -- and range-filters these; we return the whole file.
+  -- the unqualified last segment of a (possibly `Mod.sub.name`) name
+  let last_segment (s : string) : string =
+    match String.rindex_opt s #2e with
+    | Some i -> String.sub s (i + 1) (((String.length s) - i) - 1)
+    | None -> s
+
   pub let inlay_hints (state : Typechecker.ctx) (src : string) : (int * int * string) list =
-    let (program, _d, defs) = parse_recover src (tokenize_opt src) in
-    let types = Ref.create [] in
-    List.iter (fn td ->
-      match td with
-      | Typechecker.TDLet (n, te) -> Ref.set types ((n, te.ty) :: Ref.get types)
-      | Typechecker.TDLetRec (n, te) -> Ref.set types ((n, te.ty) :: Ref.get types)
-      | Typechecker.TDLetMut (n, te) -> Ref.set types ((n, te.ty) :: Ref.get types)
-      | _ -> ()
-    ) (typed_recover state program);
+    let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
+    -- types of every let-binding, keyed by the SAME qualified name the symbol
+    -- index uses (top-level `foo`, module member `Mod.foo`) so the two line up.
+    let types = collect_binding_types (typed_recover state program) in
+    -- index_symbols gives each binding's name token location (including module
+    -- members, which the typed tree doesn't carry a loc for) — place the hint
+    -- just after the (unqualified) name.
     List.filter_map (fn pair ->
-      let (name, loc) = pair in
-      match List.assoc_opt name (Ref.get types) with
-      | Some ty -> Some (loc.line, loc.col + (String.length name), ": " ^ (pretty_ty ty))
+      let (qual, loc) = pair in
+      match List.assoc_opt qual types with
+      | Some ty -> Some (loc.line, loc.col + (String.length (last_segment qual)), ": " ^ (pretty_ty ty))
       | None -> None
-    ) defs
+    ) (index_symbols src)
 
   -- --- Completion ---------------------------------------------------------
 

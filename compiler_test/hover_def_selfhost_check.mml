@@ -31,6 +31,14 @@ let () =
     -- go-to-def off a non-identifier → None
     ("def-miss", (match Analysis.definition st src2 1 1 with None -> true | _ -> false))
   ] in
+  -- inlay hints descend into modules (module members, not just top-level lets)
+  let mod_inlays = Analysis.inlay_hints st "module M =\n  pub let v = 1\n  pub let f x = x + 1\nend" in
+  let toplevel_inlays = Analysis.inlay_hints st "let v = 1\nlet f x = x + 1" in
+  let checks = List.concat checks
+    (("inlay-module-members", List.length mod_inlays = 2)
+     :: ("inlay-toplevel", List.length toplevel_inlays = 2)
+     :: ("inlay-member-label", (match mod_inlays with (_, _, lbl) :: _ -> lbl = ": int" | [] -> false))
+     :: []) in
   match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
   | None -> print "OK"
   | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)
