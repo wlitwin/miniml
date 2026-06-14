@@ -723,6 +723,86 @@ module Analysis =
       | None -> None
     ) (index_symbols src)
 
+  -- --- Semantic tokens ----------------------------------------------------
+
+  -- Token type indices — the LSP `semantic_legend` (built from the names below)
+  -- maps these to the client. The tree-sitter grammar already colours keywords/
+  -- strings/numbers/comments/operators structurally, so the semantic layer only
+  -- refines IDENTIFIERS, where the type environment knows things syntax cannot:
+  -- a lowercase name is a `function` when its type is an arrow (else a
+  -- `variable`); an uppercase name is an `enumMember` (data constructor), a
+  -- `namespace` (module) or a `type`; a `'a` is a `typeParameter`.
+  pub let st_function = 0
+  pub let st_variable = 1
+  pub let st_enum_member = 2
+  pub let st_namespace = 3
+  pub let st_type = 4
+  pub let st_type_parameter = 5
+
+  -- Token type names in index order; the LSP capability legend is built from this
+  -- so the indices above stay in lockstep with what the client is told.
+  pub let semantic_legend : string list =
+    "function" :: "variable" :: "enumMember" :: "namespace" :: "type" :: "typeParameter" :: []
+
+  -- Inference-aware token classification, returned as (1-based line, 1-based byte
+  -- col, byte length, type index, modifier bits). The LSP server delta-encodes
+  -- and converts the column/length to UTF-16. Best-effort and degrading: tokens
+  -- we can't classify are simply omitted (the client keeps the grammar's colour).
+  pub let semantic_tokens (state : Typechecker.ctx) (src : string) : (int * int * int * int * int) list =
+    let toks = tokenize_opt src in
+    -- Classification sets. fn_names: names (unqualified + `Mod.member`) whose type
+    -- is an arrow. ctor_names / module_names: data constructors / modules in scope.
+    let fn_names = Hashtbl.create 256 in
+    let ctor_names = Hashtbl.create 256 in
+    let module_names = Hashtbl.create 64 in
+    let note_fn n (sch : Types.scheme) = (match sch.body with Types.TArrow _ -> Hashtbl.set fn_names n true | _ -> ()) in
+    List.iter (fn pair -> let (n, sch) = pair in note_fn n sch) state.vars;
+    List.iter (fn v -> let (_tn, _ar, vdef, _b) = v in
+      List.iter (fn c -> let (cn, _payload) = c in Hashtbl.set ctor_names cn true) vdef
+    ) state.type_env.variants;
+    List.iter (fn m ->
+      let (mn, mi) = m in
+      Hashtbl.set module_names mn true;
+      List.iter (fn pair -> let (vn, sch) = pair in note_fn vn sch; note_fn (mn ^ ("." ^ vn)) sch) mi.mod_pub_vars;
+      List.iter (fn cc -> let (cn, _ci) = cc in Hashtbl.set ctor_names cn true) mi.mod_pub_constructors
+    ) state.type_env.modules;
+    -- buffer-local bindings (function vs value) and freshly-declared ctors/modules
+    let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
+    List.iter (fn pair -> let (n, ty) = pair in
+      (match ty with Types.TArrow _ -> Hashtbl.set fn_names n true | _ -> ()))
+      (collect_binding_types (typed_recover state program));
+    List.iter (fn t -> let (qual, kind, _loc) = t in
+      let nm = last_segment qual in
+      (if kind = 22 do Hashtbl.set ctor_names nm true end);
+      (if kind = 2 do Hashtbl.set module_names nm true end)
+    ) (index_all src);
+    -- classify; array form so an IDENT can look back for a `UIDENT .` qualifier
+    let arr = Array.of_list toks in
+    let n = Array.length arr in
+    let out = Ref.create [] in
+    let i = Ref.create 0 in
+    for (Ref.get i) < n do
+      let t = Array.get arr (Ref.get i) in
+      let len = t.end_offset - t.loc.offset in
+      let emit ty = Ref.set out ((t.loc.line, t.loc.col, len, ty, 0) :: Ref.get out) in
+      (match t.kind with
+       | Token.TYVAR _ -> emit st_type_parameter
+       | Token.UIDENT nm ->
+         if Hashtbl.has ctor_names nm do emit st_enum_member
+         else if Hashtbl.has module_names nm do emit st_namespace
+         else emit st_type
+       | Token.IDENT nm ->
+         let qual = if ((Ref.get i) >= 2) && ((Array.get arr ((Ref.get i) - 1)).kind = Token.DOT) do
+             (match (Array.get arr ((Ref.get i) - 2)).kind with Token.UIDENT m -> Some (m ^ ("." ^ nm)) | _ -> None)
+           else None in
+         let is_fn = (Hashtbl.has fn_names nm) || (match qual with Some q -> Hashtbl.has fn_names q | None -> false) in
+         if is_fn do emit st_function else emit st_variable
+       | _ -> ())
+      ;
+      Ref.set i ((Ref.get i) + 1)
+    end;
+    List.rev (Ref.get out)
+
   -- --- Completion ---------------------------------------------------------
 
   -- LSP CompletionItemKind values used here.

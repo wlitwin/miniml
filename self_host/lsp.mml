@@ -264,6 +264,51 @@ end"
       ("source", Json.JString "miniml") ::
       ("message", Json.JString d.message) :: [])
 
+  -- Byte offset in text of an LSP position {line, character} (character = 0-based
+  -- UTF-16 code unit).
+  let pos_to_offset (text : string) (p : Json.json) : int =
+    let line0 = Json.as_int (Json.member "line" p) in
+    let bytecol = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" p)) in
+    Analysis.offset_of_line_col text (line0 + 1) bytecol
+
+  -- Apply one LSP contentChange to text: a ranged edit splices `text` into the
+  -- byte span [start, end); a change with NO range (full sync) replaces the whole
+  -- document. Handling both keeps the server correct whether the client uses
+  -- incremental or full sync.
+  let apply_change (text : string) (change : Json.json) : string =
+    let new_text = Json.to_str (Json.member "text" change) in
+    match Json.member "range" change with
+    | Json.JNull -> new_text
+    | r ->
+      let a = pos_to_offset text (Json.member "start" r) in
+      let b = pos_to_offset text (Json.member "end" r) in
+      let lo = if a < b do a else b in
+      let hi = if a < b do b else a in
+      (String.sub text 0 lo) ^ (new_text ^ (String.sub text hi ((String.length text) - hi)))
+
+  -- Delta-encode absolute (1-based line, 1-based byte col, byte length, type,
+  -- modifier-bits) semantic tokens into the LSP flat int array, 5 per token:
+  -- [deltaLine, deltaStartChar, length, tokenType, tokenModifiers], each position
+  -- relative to the previous token, with columns/length in UTF-16 code units.
+  let semantic_tokens_data (text : string) (toks : (int * int * int * int * int) list) : Json.json =
+    let prev_line = Ref.create 0 in
+    let prev_char = Ref.create 0 in
+    let out = Ref.create [] in
+    List.iter (fn tok ->
+      let (line1, col1, blen, ty, mods) = tok in
+      let line0 = line1 - 1 in
+      let lstr = nth_line text line0 in
+      let ch = byte_col_to_utf16 lstr col1 in
+      let len16 = (byte_col_to_utf16 lstr (col1 + blen)) - ch in
+      let dline = line0 - (Ref.get prev_line) in
+      let dchar = if dline = 0 do ch - (Ref.get prev_char) else ch in
+      -- prepend in reverse field order; one List.rev at the end restores it
+      Ref.set out ((Json.JInt mods) :: (Json.JInt ty) :: (Json.JInt len16) :: (Json.JInt dchar) :: (Json.JInt dline) :: (Ref.get out));
+      Ref.set prev_line line0;
+      Ref.set prev_char ch
+    ) toks;
+    Json.JArray (List.rev (Ref.get out))
+
   -- --- Messages -----------------------------------------------------------
 
   let notification (m : string) (params : Json.json) : Json.json =
@@ -294,7 +339,7 @@ end"
   let capabilities () : Json.json =
     Json.JObject (
       ("capabilities", Json.JObject (
-        ("textDocumentSync", Json.JInt 1) ::
+        ("textDocumentSync", Json.JInt 2) ::                    -- 2 = incremental
         ("hoverProvider", Json.JBool true) ::
         ("definitionProvider", Json.JBool true) ::
         ("completionProvider", Json.JObject []) ::
@@ -303,7 +348,12 @@ end"
         ("documentFormattingProvider", Json.JBool true) ::
         ("workspaceSymbolProvider", Json.JBool true) ::
         ("documentHighlightProvider", Json.JBool true) ::
-        ("referencesProvider", Json.JBool true) :: [])) ::
+        ("referencesProvider", Json.JBool true) ::
+        ("semanticTokensProvider", Json.JObject (
+          ("legend", Json.JObject (
+            ("tokenTypes", Json.JArray (List.map (fn s -> Json.JString s) Analysis.semantic_legend)) ::
+            ("tokenModifiers", Json.JArray []) :: [])) ::
+          ("full", Json.JBool true) :: [])) :: [])) ::
       ("serverInfo", Json.JObject (("name", Json.JString "miniml-lsp") :: [])) :: [])
 
   -- Handle one decoded JSON-RPC message; return the messages to send back. A
@@ -332,10 +382,12 @@ end"
       (publish srv uri) :: []
     | "textDocument/didChange" ->
       let uri = doc_uri () in
-      -- full sync: the last content change carries the whole new text
-      let text = (match List.rev (Json.as_list (Json.member "contentChanges" params)) with
-        | last :: _ -> Json.to_str (Json.member "text" last)
-        | [] -> (match Hashtbl.get srv.docs uri with Some t -> t | None -> "")) in
+      -- incremental sync: fold each contentChange onto the stored text in order
+      -- (a change carrying a range splices; a range-less change replaces). Works
+      -- for full-sync clients too (a single range-less change = whole new text).
+      let cur = (match Hashtbl.get srv.docs uri with Some t -> t | None -> "") in
+      let text = List.fold (fn acc change -> apply_change acc change) cur
+        (Json.as_list (Json.member "contentChanges" params)) in
       Hashtbl.set srv.docs uri text;
       (publish srv uri) :: []
     | "textDocument/didClose" ->
@@ -413,6 +465,12 @@ end"
             (Analysis.inlay_hints (project_ctx_for srv uri) text)
         | None -> []) in
       (response (Json.JArray hints)) :: []
+    | "textDocument/semanticTokens/full" ->
+      let uri = doc_uri () in
+      let data = (match Hashtbl.get srv.docs uri with
+        | Some text -> semantic_tokens_data text (Analysis.semantic_tokens (project_ctx_for srv uri) text)
+        | None -> Json.JArray []) in
+      (response (Json.JObject (("data", data) :: []))) :: []
     | "textDocument/documentSymbol" ->
       let uri = doc_uri () in
       let syms = (match Hashtbl.get srv.docs uri with

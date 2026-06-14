@@ -35,7 +35,36 @@ let () =
   let _ = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///fmt.mml\",\"text\":\"let   x=1\"}}}" in
   let fmt = send "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"textDocument/formatting\",\"params\":{\"textDocument\":{\"uri\":\"file:///fmt.mml\"}}}" in
   let fmts = Json.as_list (Json.member "result" fmt) in
+  -- semantic tokens: a doc exercising every inference-aware class — `g`/`length`
+  -- are functions, `x`/`z` variables, `Some` an enumMember, `List` a namespace,
+  -- `'a` a typeParameter. semanticTokens/full returns the delta-encoded flat int
+  -- array (5 ints/token); the token-type code is every 5th int starting at idx 3.
+  let semsrc = "let g (x : 'a) = Some x\nlet z = List.length [1]" in
+  let _ = send ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///sem.mml\",\"text\":" ^ ((Json.to_string (Json.JString semsrc)) ^ "}}}")) in
+  let semr = send "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"textDocument/semanticTokens/full\",\"params\":{\"textDocument\":{\"uri\":\"file:///sem.mml\"}}}" in
+  let semdata = Json.as_list (Json.member "data" (Json.member "result" semr)) in
+  let typecodes =
+    let (_, rev) = List.fold (fn acc v -> let (i, cs) = acc in (i + 1, (if (i mod 5) = 3 do (Json.as_int v) :: cs else cs))) (0, []) semdata in
+    List.rev rev in
+  let hascode c = List.exists (fn x -> x = c) typecodes in
+  -- incremental sync: open an erroring doc, then a RANGE edit splices it clean
+  -- ("let x = 1 + true" → replace `true` at chars 12..16 with "2" → "let x = 1 + 2")
+  let openinc = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///inc.mml\",\"text\":\"let x = 1 + true\"}}}" in
+  let inc_err = Json.as_list (Json.member "diagnostics" (Json.member "params" openinc)) in
+  let chg = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///inc.mml\"},\"contentChanges\":[{\"range\":{\"start\":{\"line\":0,\"character\":12},\"end\":{\"line\":0,\"character\":16}},\"text\":\"2\"}]}}" in
+  let inc_diags = Json.as_list (Json.member "diagnostics" (Json.member "params" chg)) in
   let checks = [
+    ("init-semanticTokensProvider", (match Json.member "semanticTokensProvider" caps with Json.JNull -> false | _ -> true));
+    ("init-sync-incremental", Json.as_int (Json.member "textDocumentSync" caps) = 2);
+    ("semtok-multiple-of-5", ((List.length semdata) mod 5) = 0);
+    ("semtok-nonempty", List.length semdata >= 5);
+    ("semtok-has-function", hascode Analysis.st_function);
+    ("semtok-has-variable", hascode Analysis.st_variable);
+    ("semtok-has-enummember", hascode Analysis.st_enum_member);
+    ("semtok-has-namespace", hascode Analysis.st_namespace);
+    ("semtok-has-typeparam", hascode Analysis.st_type_parameter);
+    ("incsync-open-has-error", List.length inc_err >= 1);
+    ("incsync-range-edit-fixes", List.length inc_diags = 0);
     ("init-hoverProvider", (match Json.member "hoverProvider" caps with Json.JBool true -> true | _ -> false));
     ("init-inlayHintProvider", (match Json.member "inlayHintProvider" caps with Json.JBool true -> true | _ -> false));
     ("init-documentSymbolProvider", (match Json.member "documentSymbolProvider" caps with Json.JBool true -> true | _ -> false));
