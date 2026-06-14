@@ -981,6 +981,10 @@
           {
             "type": "lower_identifier",
             "named": true
+          },
+          {
+            "type": "parenthesized_operator",
+            "named": true
           }
         ]
       }
