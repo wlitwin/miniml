@@ -392,9 +392,10 @@ end"
         | Some text ->
           let line0 = Json.as_int (Json.member "line" pos) in
           let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
-          List.map (fn pair ->
-            let (label, kind) = pair in
-            Json.JObject (("label", Json.JString label) :: ("kind", Json.JInt kind) :: []))
+          List.map (fn item ->
+            let (label, kind, detail) = item in
+            let base = ("label", Json.JString label) :: ("kind", Json.JInt kind) :: [] in
+            Json.JObject (if detail = "" do base else List.concat base (("detail", Json.JString detail) :: [])))
             (Analysis.completions_at (project_ctx_for srv uri) text (line0 + 1) col)
         | None -> []) in
       (response (Json.JArray items)) :: []
