@@ -12,11 +12,15 @@ name = "mml lsp"
 languages = ["MiniML"]
 
 # Tree-sitter grammar for syntax highlighting. Zed clones the grammar from a git
-# repo at `rev` and builds it; the grammar lives in a subdirectory of THIS repo,
-# so point `repository` at your fork and `rev` at a pushed commit.
-#   1. push your commits:            git push origin main
-#   2. set rev to that commit's sha: git rev-parse HEAD
+# repo at `rev`, then builds `<path>/src/parser.c`. The grammar lives in a
+# subdirectory of THIS repo, so we point `repository` at the LOCAL checkout —
+# this works without pushing anywhere. `rev` must be a commit that contains
+# editors/tree-sitter-miniml/src/parser.c; bump it (git rev-parse HEAD) after you
+# regenerate the grammar.
+#
+# To share with others, swap `repository` for the GitHub URL
+# (https://github.com/wlitwin/miniml) and `rev` for a PUSHED commit.
 [grammars.miniml]
-repository = "https://github.com/wlitwin/miniml"
-rev = "REPLACE_WITH_A_PUSHED_COMMIT_SHA"
+repository = "file:///Users/walter/data/code/ocaml/interpreter"
+rev = "2bdd6c850c03dcd5cb96309ea50e15afcde8179b"
 path = "editors/tree-sitter-miniml"

@@ -27,15 +27,19 @@ Zed launches language servers through extensions, not a raw command in
 
 A tree-sitter grammar lives at [`../tree-sitter-miniml/`](../tree-sitter-miniml/),
 and the highlight queries at `languages/mml/highlights.scm`. Zed builds the
-grammar by **cloning it from git**, so wire `extension.toml`'s `[grammars.miniml]`
-to a pushed commit:
+grammar by **cloning it from a git repo at a commit `rev`**, then compiling
+`src/parser.c`. `extension.toml`'s `[grammars.miniml]` points at the **local
+checkout** (`repository = "file:///…/interpreter"`), so it works without pushing
+anywhere — `rev` just has to be a commit that contains the grammar.
 
-1. `git push origin main`
-2. `git rev-parse HEAD` → put that sha in `extension.toml` as `rev`.
-3. Reinstall the dev extension (`zed: install dev extension`).
+After you regenerate the grammar (below), bump `rev` and reinstall:
 
-(`repository` defaults to `github.com/wlitwin/miniml` and `path` to the grammar's
-subdirectory — change `repository` if you use a different remote.)
+```sh
+git add -A && git commit -m "grammar tweak"   # parser.c must be committed
+git rev-parse HEAD                            # → paste into extension.toml `rev`
+```
+then `zed: install dev extension` again. (To share with others, swap `repository`
+for `https://github.com/wlitwin/miniml` and `rev` for a *pushed* commit.)
 
 To iterate on the grammar locally: `cd ../tree-sitter-miniml && npm install &&
 node_modules/.bin/tree-sitter generate && node_modules/.bin/tree-sitter parse <file.mml>`.
