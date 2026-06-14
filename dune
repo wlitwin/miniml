@@ -1,0 +1,5 @@
+; editors/ is editor tooling (tree-sitter grammar, Zed extension) — not part of
+; the OCaml build. Exclude it so dune never descends into it, in particular the
+; full-repo clone Zed drops at editors/zed/grammars/<name>/ when building the
+; dev extension's grammar (its dune-project would otherwise collide with ours).
+(dirs :standard \ editors)
