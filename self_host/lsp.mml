@@ -544,10 +544,14 @@ end"
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
                 -- a local binding → its scope-resolved occurrences (shadowing-
-                -- correct); otherwise the syntactic by-name occurrences in the file
+                -- correct); a record field → the same-nominal-type accesses;
+                -- otherwise the syntactic by-name occurrences in the file
                 let locs = (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
                   | Some ls -> ls
-                  | None -> Analysis.name_occurrences text name) in
+                  | None ->
+                    (match Analysis.field_occurrences (project_ctx_for srv uri) text cursor with
+                     | Some ls -> ls
+                     | None -> Analysis.name_occurrences text name)) in
                 Json.JArray (List.map (fn (loc : Token.loc) ->
                   Json.JObject (("range", name_range text loc (String.length name)) :: [])) locs)
               | None -> Json.JArray [])
@@ -566,9 +570,12 @@ end"
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
-                (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
+                (match (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
+                        | Some ls -> Some ls
+                        | None -> Analysis.field_occurrences (project_ctx_for srv uri) text cursor) with
                  | Some locs ->
-                   -- a local binding: its occurrences live in THIS file only
+                   -- a local binding or a record field: occurrences in THIS file
+                   -- (cross-file field refs await the whole-program index)
                    Json.JArray (List.map (fn (loc : Token.loc) ->
                      Json.JObject (("uri", Json.JString uri) :: ("range", name_range text loc (String.length name)) :: [])) locs)
                  | None ->
