@@ -221,9 +221,23 @@ end"
   let notification (m : string) (params : Json.json) : Json.json =
     Json.JObject (("jsonrpc", Json.JString "2.0") :: ("method", Json.JString m) :: ("params", params) :: [])
 
+  -- Is uri a file under the workspace root's stdlib/? Those files are ALREADY in
+  -- the base analysis ctx (make_analysis_ctx loads all of stdlib), so re-checking
+  -- the buffer self-collides — re-declaring an instance there reports a spurious
+  -- "duplicate instance …". We drop those redefinition diagnostics for stdlib
+  -- files (a genuine duplicate you'd add while editing stdlib is caught by the
+  -- build/gate, not the LSP).
+  let is_stdlib_doc (srv : t) (uri : string) : bool =
+    match srv.root with
+    | Some root -> String.starts_with (root ^ "/stdlib/") (path_of_uri uri)
+    | None -> false
+
   let publish (srv : t) (uri : string) : Json.json =
     let text = (match Hashtbl.get srv.docs uri with Some t -> t | None -> "") in
-    let diags = Analysis.diagnostics (project_ctx_for srv uri) text in
+    let diags0 = Analysis.diagnostics (project_ctx_for srv uri) text in
+    let diags = if is_stdlib_doc srv uri do
+        List.filter (fn (d : Diagnostic.t) -> not (String.starts_with "duplicate " d.message)) diags0
+      else diags0 in
     notification "textDocument/publishDiagnostics"
       (Json.JObject (
         ("uri", Json.JString uri) ::
