@@ -10,3 +10,13 @@ description = "MiniML language support — diagnostics, hover, go-to-definition 
 [language_servers.mml]
 name = "mml lsp"
 languages = ["MiniML"]
+
+# Tree-sitter grammar for syntax highlighting. Zed clones the grammar from a git
+# repo at `rev` and builds it; the grammar lives in a subdirectory of THIS repo,
+# so point `repository` at your fork and `rev` at a pushed commit.
+#   1. push your commits:            git push origin main
+#   2. set rev to that commit's sha: git rev-parse HEAD
+[grammars.miniml]
+repository = "https://github.com/wlitwin/miniml"
+rev = "REPLACE_WITH_A_PUSHED_COMMIT_SHA"
+path = "editors/tree-sitter-miniml"

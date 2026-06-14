@@ -1,0 +1,12 @@
+node_modules/
+/build/
+/prebuilds/
+*.wasm
+package-lock.json
+bindings/
+binding.gyp
+Cargo.toml
+Package.swift
+pyproject.toml
+setup.py
+Makefile
