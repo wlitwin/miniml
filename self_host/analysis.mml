@@ -513,6 +513,32 @@ module Analysis =
           | Some (l : Token.loc) -> if l.line > 0 do Some (l.line, l.col) else None
           | None -> None))
 
+  -- --- Inlay hints --------------------------------------------------------
+
+  -- Inferred-type hints for each TOP-LEVEL binding, as (line, col, label) with a
+  -- 1-based (line, col) pointing just AFTER the binding name (where ": T" reads
+  -- naturally). The name positions come from parse_recover's decl list (the typed
+  -- tree doesn't carry binder locs); the types from typed_recover's TDLet/TDLetRec/
+  -- TDLetMut nodes (te.ty is the binding's type — a function shows its full arrow
+  -- type). Bindings that don't typecheck contribute nothing. The editor toggles
+  -- and range-filters these; we return the whole file.
+  pub let inlay_hints (state : Typechecker.ctx) (src : string) : (int * int * string) list =
+    let (program, _d, defs) = parse_recover src (tokenize_opt src) in
+    let types = Ref.create [] in
+    List.iter (fn td ->
+      match td with
+      | Typechecker.TDLet (n, te) -> Ref.set types ((n, te.ty) :: Ref.get types)
+      | Typechecker.TDLetRec (n, te) -> Ref.set types ((n, te.ty) :: Ref.get types)
+      | Typechecker.TDLetMut (n, te) -> Ref.set types ((n, te.ty) :: Ref.get types)
+      | _ -> ()
+    ) (typed_recover state program);
+    List.filter_map (fn pair ->
+      let (name, loc) = pair in
+      match List.assoc_opt name (Ref.get types) with
+      | Some ty -> Some (loc.line, loc.col + (String.length name), ": " ^ (Types.pp_ty ty))
+      | None -> None
+    ) defs
+
   -- --- Completion ---------------------------------------------------------
 
   -- LSP CompletionItemKind values used here.
