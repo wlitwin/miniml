@@ -16,13 +16,14 @@ module Lsp =
     -- per-file sibling-ctx cache, as two single-option fields (a `(string * ctx)
     -- option` annotation misparses — the tuple-option quirk)
     mut proj_path: string option;
-    mut proj_ctx: Typechecker.ctx option
+    mut proj_ctx: Typechecker.ctx option;
+    mut wfiles: (string * string) list option   -- lazy (path, source) of workspace *.mml
   }
 
   -- Build a server. Loads the standard library once (expensive).
   pub let create () : t =
     { docs = Hashtbl.create 16; analysis = Driver.make_analysis_ctx (); root = None;
-      index = None; proj_path = None; proj_ctx = None }
+      index = None; proj_path = None; proj_ctx = None; wfiles = None }
 
   -- file://… URI <-> path. Minimal: strip the scheme; no percent-decoding.
   let path_of_uri (uri : string) : string =
@@ -72,6 +73,33 @@ module Lsp =
          let idx = Analysis.build_index files in
          srv.index := Some idx;
          Some idx)
+
+  -- The workspace's (path, source) *.mml files (self_host/ + stdlib/ + the root),
+  -- preferring an open buffer's live text over disk. Cached; powers workspace
+  -- symbol search and find-references. [] when there is no root.
+  pub let workspace_files (srv : t) : (string * string) list =
+    match srv.wfiles with
+    | Some fs -> fs
+    | None ->
+      (match srv.root with
+       | None -> []
+       | Some root ->
+         let mml_in dir =
+           let d = Path.join root dir in
+           let names = if Fs.is_directory d do Fs.read_dir d else [] in
+           List.filter_map (fn f ->
+             if has_suffix f ".mml" do
+               let path = Path.join d f in
+               let src = (match Hashtbl.get srv.docs (uri_of_path path) with
+                 | Some t -> t
+                 | None -> if IO.file_exists path do IO.read_file path else "") in
+               Some (path, src)
+             else None
+           ) names
+         in
+         let fs = List.concat (mml_in "self_host") (List.concat (mml_in "stdlib") (mml_in ".")) in
+         srv.wfiles := Some fs;
+         fs)
 
   -- The source to load a unit as a module: an already-`module X = …` file
   -- (self_host convention) as-is; a flat project file wrapped `module Name = … end`
@@ -212,6 +240,15 @@ end"
   let lsp_range (text : string) (s : Diagnostic.span) : Json.json =
     Json.JObject (("start", lsp_pos text s.lo) :: ("end", lsp_pos text s.hi) :: [])
 
+  -- A 0-based UTF-16 LSP range covering the `namelen`-byte name token at `loc`.
+  let name_range (text : string) (loc : Token.loc) (namelen : int) : Json.json =
+    let l0 = loc.line - 1 in
+    let c0 = byte_col_to_utf16 (nth_line text l0) loc.col in
+    let c1 = byte_col_to_utf16 (nth_line text l0) (loc.col + namelen) in
+    Json.JObject (
+      ("start", Json.JObject (("line", Json.JInt l0) :: ("character", Json.JInt c0) :: [])) ::
+      ("end", Json.JObject (("line", Json.JInt l0) :: ("character", Json.JInt c1) :: [])) :: [])
+
   let lsp_severity (s : Diagnostic.severity) : int =
     match s with
     | Diagnostic.Error -> 1
@@ -263,7 +300,10 @@ end"
         ("completionProvider", Json.JObject []) ::
         ("inlayHintProvider", Json.JBool true) ::
         ("documentSymbolProvider", Json.JBool true) ::
-        ("documentFormattingProvider", Json.JBool true) :: [])) ::
+        ("documentFormattingProvider", Json.JBool true) ::
+        ("workspaceSymbolProvider", Json.JBool true) ::
+        ("documentHighlightProvider", Json.JBool true) ::
+        ("referencesProvider", Json.JBool true) :: [])) ::
       ("serverInfo", Json.JObject (("name", Json.JString "miniml-lsp") :: [])) :: [])
 
   -- Handle one decoded JSON-RPC message; return the messages to send back. A
@@ -408,6 +448,68 @@ end"
           | reanchor_bail _a _k -> Json.JArray []
           | lex_error _a _k -> Json.JArray []
           | parse_error _a _k -> Json.JArray [])
+        | None -> Json.JArray []) in
+      (response result) :: []
+    | "workspace/symbol" ->
+      let ql = String.lowercase (Json.to_str (Json.member "query" params)) in
+      let results = List.concat_map (fn pf ->
+        let (path, src) = pf in
+        let puri = uri_of_path path in
+        List.filter_map (fn s ->
+          let (qual, kind, loc) = s in
+          let nm = last_segment qual in
+          if String.contains ql (String.lowercase qual) do
+            Some (Json.JObject (
+              ("name", Json.JString nm) ::
+              ("kind", Json.JInt kind) ::
+              ("location", Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length nm)) :: [])) ::
+              ("containerName", Json.JString (container_of qual)) :: []))
+          else None
+        ) (Analysis.document_symbols src)
+      ) (workspace_files srv) in
+      (response (Json.JArray results)) :: []
+    | "textDocument/documentHighlight" ->
+      let uri = doc_uri () in
+      let pos = Json.member "position" params in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          let cursor = Analysis.offset_of_line_col text (line0 + 1) col in
+          (match Analysis.token_at text cursor with
+           | Some tok ->
+             (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
+              | Some name ->
+                Json.JArray (List.map (fn (loc : Token.loc) ->
+                  Json.JObject (("range", name_range text loc (String.length name)) :: []))
+                  (Analysis.name_occurrences text name))
+              | None -> Json.JArray [])
+           | None -> Json.JArray [])
+        | None -> Json.JArray []) in
+      (response result) :: []
+    | "textDocument/references" ->
+      let uri = doc_uri () in
+      let pos = Json.member "position" params in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          let cursor = Analysis.offset_of_line_col text (line0 + 1) col in
+          (match Analysis.token_at text cursor with
+           | Some tok ->
+             (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
+              | Some name ->
+                -- workspace-wide (by name); fall back to just the open doc if no root
+                let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
+                Json.JArray (List.concat_map (fn pf ->
+                  let (path, src) = pf in
+                  let puri = uri_of_path path in
+                  List.map (fn (loc : Token.loc) ->
+                    Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length name)) :: []))
+                    (Analysis.name_occurrences src name)
+                ) files)
+              | None -> Json.JArray [])
+           | None -> Json.JArray [])
         | None -> Json.JArray []) in
       (response result) :: []
     | _ ->
