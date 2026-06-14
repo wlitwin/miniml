@@ -137,6 +137,29 @@ module Analysis =
   -- decl-boundary recovery as parse_recover, so `end`-overloading and nested
   -- let-ins are handled correctly. Powers cross-file navigation of the
   -- self-hosted compiler sources (heavily Module.member across ~30 files).
+  -- Index the VARIANT CONSTRUCTORS of a type declaration (so go-to-def jumps to
+  -- e.g. `Parser.CstSourceFile`, not just the type name). Constructors are
+  -- accessed as `Module.Ctor`, so they belong in the qualified-name index. A
+  -- constructor is a UIDENT immediately after `=` or `|` in the type decl's
+  -- tokens (type-position UIDENTs — `B` in `A of B.t` — follow `of`/`*`/`(`, not
+  -- `=`/`|`, so they're correctly skipped). Covers `type a = … and b = …` chains.
+  let index_constructors acc (prefix : string) (slice : Token.token list) : unit =
+    let arr = Array.of_list slice in
+    let n = Array.length arr in
+    let i = Ref.create 1 in
+    for (Ref.get i) < n do
+      let prev = Array.get arr ((Ref.get i) - 1) in
+      let cur = Array.get arr (Ref.get i) in
+      (match cur.kind with
+       | Token.UIDENT name ->
+         (if (prev.kind = Token.EQ) || (prev.kind = Token.PIPE) do
+            let qual = if prefix = "" do name else prefix ^ ("." ^ name) in
+            Ref.set acc ((qual, cur.loc) :: Ref.get acc)
+          end)
+       | _ -> ());
+      Ref.set i ((Ref.get i) + 1)
+    end
+
   -- Process one (prefix, token-list) work item: parse its declarations with
   -- per-declaration recovery, record each as a qualified name, and push any
   -- module body onto the worklist (with the module name as the new prefix) to be
@@ -174,6 +197,8 @@ module Analysis =
                  let mprefix = if prefix = "" do mname else prefix ^ ("." ^ mname) in
                  Ref.set more ((mprefix, List.concat inner (eof :: [])) :: Ref.get more)
                end)
+            | (Ast.DType _) :: _ -> index_constructors acc prefix slice
+            | (Ast.DTypeAnd _) :: _ -> index_constructors acc prefix slice
             | _ -> ())
          | None -> ())
       with
