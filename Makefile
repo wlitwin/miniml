@@ -149,7 +149,7 @@ test-all-backends: test-ocaml test-emit-js test-native  ## Run cross-tests on al
 # Suites are listed slowest-first so the long poles start immediately.
 
 CHECK_LOG_DIR := /tmp/mml-check-logs
-CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost hover-def-selfhost completions-selfhost lsp-selfhost mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
+CHECK_SUITES := parity emit-js native playground oracle fuzz unit translate diff ir-parity cst fmt fmt-selfhost fmt-selfhost-parity fmt-selfhost-native pkg-selfhost fetch-selfhost project-selfhost json-selfhost diag-selfhost analysis-selfhost diagnostics-selfhost hover-def-selfhost completions-selfhost lsp-selfhost lsp-project mml-selfhost native-selfhost native-selfhost-build native-selfhost-emit-ir
 CHECK_JOBS ?= 4
 CHECK_BIN := ./_build/default
 
@@ -410,7 +410,9 @@ check-run-completions-selfhost:
 # binary fed a Content-Length-framed initialize/hover/exit session, checking the
 # framed replies (lsp_serve_e2e.py).
 LSP_SELFHOST_FILES = $(DIAGNOSTICS_SELFHOST_FILES:self_host/diagnostic.mml=self_host/json.mml self_host/diagnostic.mml)
-LSP_SELFHOST_FILES := $(LSP_SELFHOST_FILES) self_host/lsp.mml
+LSP_SELFHOST_FILES := $(LSP_SELFHOST_FILES) self_host/semver.mml self_host/sumfile.mml \
+                      self_host/manifest.mml self_host/deps.mml self_host/fetch.mml \
+                      self_host/project.mml self_host/lsp.mml
 check-run-lsp-selfhost:
 	$(CHECK_BIN)/bin/main.exe --emit-js $(LSP_SELFHOST_FILES) > /dev/null
 	@cat $(LSP_SELFHOST_FILES) compiler_test/lsp_selfhost_check.mml > /tmp/mml_lsp_concat.mml
@@ -423,6 +425,22 @@ check-run-lsp-selfhost:
 	@cat $(LSP_SELFHOST_FILES) /tmp/mml_lsp_serve_main.mml > /tmp/mml_lsp_serve_concat.mml
 	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_lsp_serve_concat.mml -o /tmp/mml_lsp_serve_bin
 	@python3 compiler_test/lsp_serve_e2e.py /tmp/mml_lsp_serve_bin
+# PROJECT-AWARE analysis (roadmap #16c dev-ex): self_host/lsp.mml's project_ctx_for
+# + Driver.load_modules_into load a file's SIBLING modules (the other *.mml in its
+# directory, dependency-ordered via Project) onto the stdlib ctx, so cross-module
+# `Module.member` references resolve — diagnostics/hover/completion stop reporting
+# them "unknown". Pulls the pkg layer (semver…project) into the LSP file set. The
+# self-check writes two sibling modules to /tmp, opens one through the server, and
+# asserts the cross-module refs resolve (no spurious diags; hover + cross-file
+# go-to-def incl. constructors), run on BOTH the OCaml VM and native.
+check-run-lsp-project:
+	@cat $(LSP_SELFHOST_FILES) compiler_test/lsp_project_check.mml > /tmp/mml_lsp_project_concat.mml
+	@vm=$$($(CHECK_BIN)/bin/main.exe /tmp/mml_lsp_project_concat.mml); \
+	  if [ "$$vm" != "OK" ]; then echo "FAIL lsp-project (OCaml VM): $$vm"; exit 1; fi
+	$(CHECK_BIN)/bin_native/main.exe /tmp/mml_lsp_project_concat.mml -o /tmp/mml_lsp_project_bin
+	@nat=$$(/tmp/mml_lsp_project_bin); \
+	  if [ "$$nat" = "OK" ]; then echo "self-host LSP project-aware analysis passed (VM/native, cross-module resolution)"; \
+	  else echo "FAIL lsp-project (native): $$nat"; exit 1; fi
 # The all-in-one `mml` tool entry (self_host/mml.mml): Go-style subcommand
 # dispatch over the migrated tooling + the reusable compiler Driver —
 # run/build/check (Driver native compile + Project combined source), fmt

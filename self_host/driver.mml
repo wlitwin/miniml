@@ -425,6 +425,31 @@ module Driver =
     let (ctx, _) = setup_modules ctx global_names mutable_globals in
     ctx
 
+  -- Load each module source (already dependency-ordered) onto a base ctx,
+  -- threading the ctx and SKIPPING any source that doesn't lex/parse/typecheck —
+  -- so one broken sibling doesn't sink the rest. The base is not mutated
+  -- (check_program_in_ctx is functional), so a caller can keep reusing a pristine
+  -- stdlib ctx. This is what the LSP uses to give a file's analysis the SIBLING
+  -- MODULES of its project (cross-module `Module.member` resolution), on top of
+  -- make_analysis_ctx's stdlib.
+  pub let load_modules_into (base : Typechecker.ctx) (sources : string list) : Typechecker.ctx =
+    let ctx = Ref.create base in
+    list_iter (fn src ->
+      let _ = handle
+        let toks = Lexer.tokenize src in
+        let program = Parser.parse_program toks in
+        let (ctx2, _typed) = Typechecker.check_program_in_ctx (Ref.get ctx) program in
+        Ref.set ctx ctx2
+      with
+      | return _ -> ()
+      | lex_error _a _k -> ()
+      | parse_error _a _k -> ()
+      | type_error _a _k -> ()
+      | unify_error _m _k -> ()
+      in ()
+    ) sources;
+    Ref.get ctx
+
   -- ---- Batch compilation ----
 
   let run_batch manifest_file =

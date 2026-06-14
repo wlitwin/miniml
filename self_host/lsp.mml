@@ -12,12 +12,17 @@ module Lsp =
     docs: (string, string) Hashtbl.t;                       -- open doc uri -> text
     analysis: Typechecker.ctx;                              -- stdlib-loaded ctx
     mut root: string option;                                -- workspace root path
-    mut index: (string, (string * Token.loc) list) Hashtbl.t option  -- lazy symbol index
+    mut index: (string, (string * Token.loc) list) Hashtbl.t option;  -- lazy symbol index
+    -- per-file sibling-ctx cache, as two single-option fields (a `(string * ctx)
+    -- option` annotation misparses — the tuple-option quirk)
+    mut proj_path: string option;
+    mut proj_ctx: Typechecker.ctx option
   }
 
   -- Build a server. Loads the standard library once (expensive).
   pub let create () : t =
-    { docs = Hashtbl.create 16; analysis = Driver.make_analysis_ctx (); root = None; index = None }
+    { docs = Hashtbl.create 16; analysis = Driver.make_analysis_ctx (); root = None;
+      index = None; proj_path = None; proj_ctx = None }
 
   -- file://… URI <-> path. Minimal: strip the scheme; no percent-decoding.
   let path_of_uri (uri : string) : string =
@@ -56,6 +61,55 @@ module Lsp =
          let idx = Analysis.build_index files in
          srv.index := Some idx;
          Some idx)
+
+  -- The source to load a unit as a module: an already-`module X = …` file
+  -- (self_host convention) as-is; a flat project file wrapped `module Name = … end`
+  -- (the foo.mml → module Foo convention).
+  let module_source (name : string) (raw : string) : string =
+    let headed = handle
+      (match Lexer.tokenize raw with
+       | t :: _ -> t.kind = Token.MODULE
+       | [] -> false)
+      with
+      | return b -> b
+      | lex_error _a _k -> false
+    in
+    if headed do raw else $"module {name} =
+{raw}
+end"
+
+  -- The analysis ctx for a document: stdlib + the file's SIBLING modules (the
+  -- other *.mml in its directory), so cross-module `Module.member` references
+  -- resolve, hover/go-to-def/completion see the project's names, and the spurious
+  -- "unknown" diagnostics go away. Dependency-ordered (Project.topo_order),
+  -- buffer-aware (an open sibling's live text beats its on-disk copy), and the
+  -- file ITSELF is excluded (its edited buffer is what diagnostics/hover analyze,
+  -- so loading a stale copy would collide). Cached by path: editing the same file
+  -- reuses the sibling ctx and only re-typechecks this buffer; opening a different
+  -- file rebuilds. Falls back to the stdlib ctx for a lone file / unreadable dir.
+  pub let project_ctx_for (srv : t) (uri : string) : Typechecker.ctx =
+    let path = path_of_uri uri in
+    let cached = (match (srv.proj_path, srv.proj_ctx) with
+      | (Some p, Some c) -> if p = path do Some c else None
+      | _ -> None) in
+    match cached with
+    | Some c -> c
+    | None ->
+      let dir = Path.dirname path in
+      let me = Path.basename path in
+      let units = if Fs.is_directory dir do Project.dir_units dir else [] in
+      let sibs = List.filter (fn (u : Project.unit_) -> (Path.basename u.path) <> me) units in
+      let ctx = if sibs = [] do srv.analysis else do
+        let ordered = handle Project.topo_order sibs with | return o -> o | build_error _m _k -> sibs in
+        let srcs = List.map (fn (u : Project.unit_) ->
+          let raw = (match Hashtbl.get srv.docs (uri_of_path u.path) with Some t -> t | None -> u.source) in
+          module_source u.name raw
+        ) ordered in
+        Driver.load_modules_into srv.analysis srcs
+      end in
+      srv.proj_path := Some path;
+      srv.proj_ctx := Some ctx;
+      ctx
 
   -- --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ----------------
 
@@ -125,7 +179,7 @@ module Lsp =
 
   let publish (srv : t) (uri : string) : Json.json =
     let text = (match Hashtbl.get srv.docs uri with Some t -> t | None -> "") in
-    let diags = Analysis.diagnostics srv.analysis text in
+    let diags = Analysis.diagnostics (project_ctx_for srv uri) text in
     notification "textDocument/publishDiagnostics"
       (Json.JObject (
         ("uri", Json.JString uri) ::
@@ -185,7 +239,7 @@ module Lsp =
         | Some text ->
           let line0 = Json.as_int (Json.member "line" pos) in
           let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
-          (match Analysis.hover srv.analysis text (line0 + 1) col with
+          (match Analysis.hover (project_ctx_for srv uri) text (line0 + 1) col with
            | Some ty -> Json.JObject (("contents", Json.JObject (("kind", Json.JString "plaintext") :: ("value", Json.JString ty) :: [])) :: [])
            | None -> Json.JNull)
         | None -> Json.JNull) in
@@ -215,7 +269,7 @@ module Lsp =
              let tgt_text = if (path_of_uri uri) = path do text else (if IO.file_exists path do IO.read_file path else "") in
              location tgt_text (uri_of_path path) loc.line loc.col
            | None ->
-             (match Analysis.definition srv.analysis text (line0 + 1) col with
+             (match Analysis.definition (project_ctx_for srv uri) text (line0 + 1) col with
               | Some (l, c) -> location text uri l c
               | None -> Json.JNull))
         | None -> Json.JNull) in
@@ -226,7 +280,7 @@ module Lsp =
         | Some text -> List.map (fn pair ->
             let (label, kind) = pair in
             Json.JObject (("label", Json.JString label) :: ("kind", Json.JInt kind) :: []))
-            (Analysis.completions srv.analysis text)
+            (Analysis.completions (project_ctx_for srv uri) text)
         | None -> []) in
       (response (Json.JArray items)) :: []
     | "textDocument/inlayHint" ->
@@ -240,7 +294,7 @@ module Lsp =
               ("label", Json.JString label) ::
               ("kind", Json.JInt 1) ::                         -- 1 = Type
               ("paddingLeft", Json.JBool false) :: []))
-            (Analysis.inlay_hints srv.analysis text)
+            (Analysis.inlay_hints (project_ctx_for srv uri) text)
         | None -> []) in
       (response (Json.JArray hints)) :: []
     | _ ->

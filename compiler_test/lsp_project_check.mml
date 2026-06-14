@@ -1,0 +1,47 @@
+-- Behavioral self-check for project-aware analysis (gate stage `lsp-project`):
+-- self_host/lsp.mml's project_ctx_for + Driver.load_modules_into. Concatenated
+-- after the full compiler + json/diagnostic/analysis + the pkg chain
+-- (semver…project) + lsp, and run on the OCaml VM + native; must print "OK".
+-- Writes two sibling modules to /tmp, opens one through the LSP, and checks that
+-- references to the other resolve (no "unknown" diagnostics; hover/go-to-def work).
+let () =
+  let dir = "/tmp/mml_lspproj_check" in
+  let _ = if Fs.is_directory dir do () else Fs.make_dir dir in
+  IO.write_file (dir ^ "/foo.mml")
+    "module Foo =\n  pub type t = A | B of int\n  pub let mk = A\n  pub let label = \"hi\"\nend\n";
+  IO.write_file (dir ^ "/bar.mml")
+    "module Bar =\n  pub let x = Foo.mk\n  pub let y = Foo.B 3\n  pub let z = Foo.label\nend\n";
+  let bar_uri = "file://" ^ dir ^ "/bar.mml" in
+  let foo_path = dir ^ "/foo.mml" in
+  let srv = Lsp.create () in
+  let first lst = (match lst with x :: _ -> x | [] -> Json.JNull) in
+  let send s = first (Lsp.handle_message srv (Json.parse s)) in
+  -- initialize with the temp dir as the root (for cross-file go-to-def)
+  let _ = send ("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file://" ^ dir ^ "\"}}") in
+  let bar = IO.read_file (dir ^ "/bar.mml") in
+  let open_msg =
+    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\",\"text\":"
+    ^ (Json.to_string (Json.JString bar)) ^ "}}}" in
+  let published = send open_msg in
+  let diags = Json.as_list (Json.member "diagnostics" (Json.member "params" published)) in
+  -- hover on Foo.label use (line 3, char 14 = on 'label') → string
+  let hov = send ("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":3,\"character\":14}}}") in
+  let hov_ty = Json.to_str (Json.member "value" (Json.member "contents" (Json.member "result" hov))) in
+  -- go-to-def of Foo.mk (line 1, char 18) and the constructor Foo.B (line 2, char 18)
+  let def_uri q = (match q with Json.JNull -> "" | _ -> Json.to_str (Json.member "uri" q)) in
+  let defmk = def_uri (Json.member "result" (send ("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}"))) in
+  let defB = def_uri (Json.member "result" (send ("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":2,\"character\":18}}}"))) in
+  -- a lone file with no siblings still analyzes (stdlib ctx) — clean source → []
+  let lone = Lsp.handle_message srv (Json.parse "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/mml_lspproj_check_lone/solo.mml\",\"text\":\"let a = 1 + 2\"}}}") in
+  let lone_diags = (match lone with d :: _ -> Json.as_list (Json.member "diagnostics" (Json.member "params" d)) | [] -> Json.JString "x" :: []) in
+  let ends_with s suf = let ls = String.length s in let lf = String.length suf in (ls >= lf) && ((String.sub s (ls - lf) lf) = suf) in
+  let checks = [
+    ("xmodule-no-unknown-diags", List.length diags = 0);
+    ("xmodule-hover", hov_ty = "string");
+    ("xfile-def-fn", ends_with defmk "foo.mml");
+    ("xfile-def-ctor", ends_with defB "foo.mml");
+    ("lone-file-clean", List.length lone_diags = 0)
+  ] in
+  match List.find (fn pair -> let (_, ok) = pair in not ok) checks with
+  | None -> print "OK"
+  | Some pair -> let (label, _) = pair in print ("FAIL: " ^ label)
