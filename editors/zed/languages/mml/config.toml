@@ -1,7 +1,5 @@
 name = "MiniML"
-# No tree-sitter grammar is bundled, so there's no syntax highlighting yet — the
-# language still registers and the LSP attaches, giving diagnostics/hover/
-# go-to-def/completion. (If a future Zed requires `grammar`, add one here.)
+grammar = "miniml"
 path_suffixes = ["mml"]
 line_comments = ["-- "]
 autoclose_before = ";:.,=}])>"

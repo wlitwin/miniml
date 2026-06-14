@@ -23,6 +23,23 @@ Zed launches language servers through extensions, not a raw command in
    then select this `editors/zed/` directory. Zed compiles the extension.
 4. Open a `.mml` file. The server starts automatically.
 
+## Syntax highlighting (tree-sitter)
+
+A tree-sitter grammar lives at [`../tree-sitter-miniml/`](../tree-sitter-miniml/),
+and the highlight queries at `languages/mml/highlights.scm`. Zed builds the
+grammar by **cloning it from git**, so wire `extension.toml`'s `[grammars.miniml]`
+to a pushed commit:
+
+1. `git push origin main`
+2. `git rev-parse HEAD` → put that sha in `extension.toml` as `rev`.
+3. Reinstall the dev extension (`zed: install dev extension`).
+
+(`repository` defaults to `github.com/wlitwin/miniml` and `path` to the grammar's
+subdirectory — change `repository` if you use a different remote.)
+
+To iterate on the grammar locally: `cd ../tree-sitter-miniml && npm install &&
+node_modules/.bin/tree-sitter generate && node_modules/.bin/tree-sitter parse <file.mml>`.
+
 ## Caveats (this is a starting scaffold)
 
 - **`zed_extension_api` version** (`Cargo.toml`) pins to your Zed release. If the
@@ -30,10 +47,11 @@ Zed launches language servers through extensions, not a raw command in
   <https://zed.dev/docs/extensions/languages>. The `language_servers` table key
   in `extension.toml` and the `Worktree`/`Command` API in `src/lib.rs` can also
   drift between Zed versions; adjust to the version the docs show.
-- **No syntax highlighting.** No tree-sitter grammar is bundled, so MiniML
-  registers without highlighting; the LSP features still work. Add a grammar to
-  `languages/mml/config.toml` later if you want highlighting (or if a future Zed
-  makes `grammar` mandatory).
+- **Highlighting on the big machine-translated compiler files** (e.g.
+  `self_host/typechecker.mml`) is imperfect — their extreme expression nesting
+  hits tree-sitter parse errors in places — but token highlighting (keywords,
+  strings, comments, types, constructors, modules) still works there, and
+  hand-written MiniML highlights cleanly. The grammar is a solid v1 to refine.
 - **Root detection.** The server scans the workspace root for `*.mml` (plus
   `self_host/` and `stdlib/`) to build its cross-file symbol index; open the
   project folder, not a single loose file, for cross-file go-to-def.
