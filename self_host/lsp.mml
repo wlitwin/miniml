@@ -78,6 +78,47 @@ module Lsp =
 {raw}
 end"
 
+  -- A sibling already covered by the base (stdlib) ctx: make_analysis_ctx loads
+  -- ALL of stdlib, so when the open file IS a stdlib file its siblings are already
+  -- present — and reloading one is not just redundant but HARMFUL for a flat
+  -- type-defining file like option_type.mml (`type 'a option = None | Some of 'a`):
+  -- redefining `option` clobbers the base's Some/None, breaking every `match … with
+  -- Some/None` in the file. Skip a sibling whose module (filename → Name) is a base
+  -- module, or which declares a type the base already has. (self_host/ and user
+  -- project files are NOT in the base, so they still load.)
+  let sibling_redundant (env : Types.type_env) (u : Project.unit_) : bool =
+    if List.mem_assoc u.name env.modules do
+      true
+    else
+      handle
+        let toks = Array.of_list (Lexer.tokenize u.source) in
+        let n = Array.length toks in
+        -- only a FLAT file (not `module …`-headed) declares GLOBAL types that can
+        -- collide with the base; a module-headed file's types are module-local
+        -- (e.g. `module Parser = … type t …` must NOT be treated as redundant).
+        let is_module_headed = (n > 0) && ((Array.get toks 0).kind = Token.MODULE) in
+        let redundant = Ref.create false in
+        let i = Ref.create 0 in
+        (if is_module_headed do () else
+        for (Ref.get i) < n do
+           let t = Array.get toks (Ref.get i) in
+           (if (t.kind = Token.TYPE) || (t.kind = Token.NEWTYPE) do
+              -- the type name is the last IDENT before the next `=`
+              let j = Ref.create ((Ref.get i) + 1) in
+              let nm = Ref.create "" in
+              (for ((Ref.get j) < n) && ((Array.get toks (Ref.get j)).kind <> Token.EQ) do
+                 (match (Array.get toks (Ref.get j)).kind with Token.IDENT name -> Ref.set nm name | _ -> ());
+                 Ref.set j ((Ref.get j) + 1)
+               end);
+              (if ((Ref.get nm) <> "") && (List.exists (fn v -> let (vn, _, _, _) = v in vn = (Ref.get nm)) env.variants) do Ref.set redundant true end)
+            end);
+           Ref.set i ((Ref.get i) + 1)
+         end);
+        Ref.get redundant
+      with
+      | return b -> b
+      | lex_error _a _k -> false
+
   -- The analysis ctx for a document: stdlib + the file's SIBLING modules (the
   -- other *.mml in its directory), so cross-module `Module.member` references
   -- resolve, hover/go-to-def/completion see the project's names, and the spurious
@@ -98,7 +139,10 @@ end"
       let dir = Path.dirname path in
       let me = Path.basename path in
       let units = if Fs.is_directory dir do Project.dir_units dir else [] in
-      let sibs = List.filter (fn (u : Project.unit_) -> (Path.basename u.path) <> me) units in
+      let base_env = srv.analysis.type_env in
+      let sibs = List.filter (fn (u : Project.unit_) ->
+        ((Path.basename u.path) <> me) && (not (sibling_redundant base_env u))
+      ) units in
       let ctx = if sibs = [] do srv.analysis else do
         let ordered = handle Project.topo_order sibs with | return o -> o | build_error _m _k -> sibs in
         let srcs = List.map (fn (u : Project.unit_) ->

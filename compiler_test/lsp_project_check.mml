@@ -11,6 +11,12 @@ let () =
     "module Foo =\n  pub type t = A | B of int\n  pub let mk = A\n  pub let label = \"hi\"\nend\n";
   IO.write_file (dir ^ "/bar.mml")
     "module Bar =\n  pub let x = Foo.mk\n  pub let y = Foo.B 3\n  pub let z = Foo.label\nend\n";
+  -- a FLAT sibling that redefines a base type (`option`). It must be SKIPPED when
+  -- building a file's project ctx — loading it would clobber the base Some/None
+  -- (the stdlib/option_type.mml bug). user.mml uses Some/None and must stay clean.
+  IO.write_file (dir ^ "/redef.mml") "type 'a option = None | Some of 'a\n";
+  IO.write_file (dir ^ "/user.mml")
+    "module User =\n  pub let f xs = match List.find (fn _ -> true) xs with Some v -> v | None -> 0\nend\n";
   let bar_uri = "file://" ^ dir ^ "/bar.mml" in
   let foo_path = dir ^ "/foo.mml" in
   let srv = Lsp.create () in
@@ -35,8 +41,18 @@ let () =
   let lone = Lsp.handle_message srv (Json.parse "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///tmp/mml_lspproj_check_lone/solo.mml\",\"text\":\"let a = 1 + 2\"}}}") in
   let lone_diags = (match lone with d :: _ -> Json.as_list (Json.member "diagnostics" (Json.member "params" d)) | [] -> Json.JString "x" :: []) in
   let ends_with s suf = let ls = String.length s in let lf = String.length suf in (ls >= lf) && ((String.sub s (ls - lf) lf) = suf) in
+  -- open user.mml: a flat sibling redefines `option`, but it must be skipped, so
+  -- the Some/None match stays clean (the option_type clobber regression).
+  let user_uri = "file://" ^ dir ^ "/user.mml" in
+  let user = IO.read_file (dir ^ "/user.mml") in
+  let user_open =
+    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" ^ user_uri ^ "\",\"text\":"
+    ^ (Json.to_string (Json.JString user)) ^ "}}}" in
+  let user_pub = send user_open in
+  let user_diags = Json.as_list (Json.member "diagnostics" (Json.member "params" user_pub)) in
   let checks = [
     ("xmodule-no-unknown-diags", List.length diags = 0);
+    ("redef-sibling-skipped-some-none-ok", List.length user_diags = 0);
     ("xmodule-hover", hov_ty = "string");
     ("xfile-def-fn", ends_with defmk "foo.mml");
     ("xfile-def-ctor", ends_with defB "foo.mml");
