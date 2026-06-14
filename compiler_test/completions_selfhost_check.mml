@@ -25,7 +25,7 @@ let () =
     -- a keyword is kind_keyword (14)
     ("match-is-keyword-kind", kind_of "match" = Analysis.kind_keyword);
     -- qualified / dotted names are NOT offered (is_ident_like rejects '.')
-    ("no-dotted-names", not (List.exists (fn pair -> let (n, _) = pair in String.contains n ".") comps));
+    ("no-dotted-names", not (List.exists (fn pair -> let (n, _) = pair in String.contains "." n) comps));
     -- de-duplicated: 'add' appears exactly once
     ("dedup-add", List.length (List.filter (fn pair -> let (n, _) = pair in n = "add") comps) = 1)
   ] in

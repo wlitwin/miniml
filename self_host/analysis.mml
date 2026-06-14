@@ -330,6 +330,22 @@ module Analysis =
     let cand = (Ref.get off) + (col - 1) in
     if cand < n do cand else n
 
+  -- All occurrences of the identifier `name` (IDENT or UIDENT) in src, as their
+  -- name-token locations. Syntactic — by name, not scope-resolved — which powers
+  -- document highlight and (approximate) find-references.
+  pub let name_occurrences (src : string) (name : string) : Token.loc list =
+    handle
+      let toks = Lexer.tokenize src in
+      List.filter_map (fn (t : Token.token) ->
+        match t.kind with
+        | Token.IDENT n -> if n = name do Some t.loc else None
+        | Token.UIDENT n -> if n = name do Some t.loc else None
+        | _ -> None
+      ) toks
+    with
+    | return x -> x
+    | lex_error _a _k -> []
+
   -- The significant token whose span covers byte cursor, if any.
   pub let token_at (src : string) (cursor : int) : Token.token option =
     handle
@@ -730,7 +746,7 @@ module Analysis =
       let ok_first = ((c0 >= #61) && (c0 <= #7a)) || (((c0 >= #41) && (c0 <= #5a)) || (c0 = #5f)) in
       if not ok_first do
         false
-      else if String.contains s "." do
+      else if String.contains "." s do
         false
       else do
         let n = String.length s in
