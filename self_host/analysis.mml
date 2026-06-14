@@ -428,11 +428,62 @@ module Analysis =
 
   -- --- Hover --------------------------------------------------------------
 
-  -- The inferred type at 1-based line/col, rendered, or None if the position
-  -- isn't on a typed sub-expression. Finds the token under the cursor, then the
-  -- DEEPEST typed node starting at that token (pre-order visits parent before
-  -- child, so the last match at the token's offset is the innermost). Works
-  -- declaration-by-declaration, so a type error elsewhere doesn't suppress hover.
+  -- Every let-binding's (name, type) in a typed declaration list — top-level,
+  -- module members, and nested let/let-rec/let-mut. For hovering a binding NAME
+  -- (which is not a TEVar node, so the typed-node-at-offset search misses it; e.g.
+  -- the `seal_threshold` in `let seal_threshold = 1024`). A function shows its
+  -- arrow type (the desugared TEFun's type).
+  let collect_binding_types (tdecls : Typechecker.tdecl list) : (string * Types.ty) list =
+    let acc = Ref.create [] in
+    let rec walk_te (te : Typechecker.texpr) : unit =
+      match te.expr with
+      | Typechecker.TELet (n, _, v, body) -> Ref.set acc ((n, v.ty) :: Ref.get acc); walk_te v; walk_te body
+      | Typechecker.TELetRec (n, _, v, body) -> Ref.set acc ((n, v.ty) :: Ref.get acc); walk_te v; walk_te body
+      | Typechecker.TELetMut (n, v, body) -> Ref.set acc ((n, v.ty) :: Ref.get acc); walk_te v; walk_te body
+      | _ -> Typechecker.iter_texpr_children walk_te te
+    in
+    let rec walk_td (td : Typechecker.tdecl) : unit =
+      match td with
+      | Typechecker.TDLet (n, te) -> Ref.set acc ((n, te.ty) :: Ref.get acc); walk_te te
+      | Typechecker.TDLetRec (n, te) -> Ref.set acc ((n, te.ty) :: Ref.get acc); walk_te te
+      | Typechecker.TDLetMut (n, te) -> Ref.set acc ((n, te.ty) :: Ref.get acc); walk_te te
+      | Typechecker.TDExpr te -> walk_te te
+      | Typechecker.TDModule (_, decls, _) -> List.iter walk_td decls
+      | _ -> ()
+    in
+    List.iter walk_td tdecls;
+    Ref.get acc
+
+  -- Is byte `cursor` on a token that introduces a binding (its immediately
+  -- preceding significant token is `let` / `rec` / `mut`)? Used to decide whether
+  -- a hover-miss on an identifier should fall back to that binding's type.
+  let is_binding_site (src : string) (cursor : int) : bool =
+    handle
+      let arr = Array.of_list (Lexer.tokenize src) in
+      let n = Array.length arr in
+      let idx = Ref.create (0 - 1) in
+      let i = Ref.create 0 in
+      (for (Ref.get i) < n do
+         let t = Array.get arr (Ref.get i) in
+         (if (t.loc.offset <= cursor) && (cursor < t.end_offset) do Ref.set idx (Ref.get i) end);
+         Ref.set i ((Ref.get i) + 1)
+       end);
+      if (Ref.get idx) >= 1 do
+        let prev = (Array.get arr ((Ref.get idx) - 1)).kind in
+        (prev = Token.LET) || (prev = Token.REC) || (prev = Token.MUT)
+      else
+        false
+    with
+    | return b -> b
+    | lex_error _a _k -> false
+
+  -- The inferred type at 1-based line/col, rendered, or None. Finds the token
+  -- under the cursor, then the DEEPEST typed node starting at that token
+  -- (pre-order visits parent before child, so the last match at the token's
+  -- offset is the innermost). If that misses AND the cursor is on a binding NAME
+  -- (a let/rec/mut site, which carries no typed node), falls back to that
+  -- binding's type. Works declaration-by-declaration, so a type error elsewhere
+  -- doesn't suppress hover.
   pub let hover (state : Typechecker.ctx) (src : string) (line : int) (col : int) : string option =
     let cursor = offset_of_line_col src line col in
     match token_at src cursor with
@@ -440,12 +491,30 @@ module Analysis =
     | Some tok ->
       let target = tok.loc.offset in
       let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
+      let tdecls = typed_recover state program in
       let best = Ref.create None in
       List.iter (fn td -> visit_tdecl (fn te -> if te.loc.offset = target do Ref.set best (Some te.ty) end) td)
-        (typed_recover state program);
+        tdecls;
+      -- on a hover-miss: if the cursor is on a binding NAME, fall back to that
+      -- binding's inferred type. The typed tree qualifies module members
+      -- (`Buffer.seal_threshold`), so match the bare name against an exact key OR
+      -- a `….name` suffix.
       (match Ref.get best with
        | Some ty -> Some (Types.pp_ty ty)
-       | None -> None)
+       | None ->
+         (match tok.kind with
+          | Token.IDENT name ->
+            (if is_binding_site src cursor do
+               let suffix = "." ^ name in
+               let nlen = String.length name in
+               (match List.find (fn pair ->
+                  let (k, _) = pair in
+                  (k = name) || (let kl = String.length k in (kl > nlen) && ((String.sub k (kl - (nlen + 1)) (nlen + 1)) = suffix))
+                ) (collect_binding_types tdecls) with
+                | Some (_, ty) -> Some (Types.pp_ty ty)
+                | None -> None)
+             else None)
+          | _ -> None))
 
   -- --- Go to definition ---------------------------------------------------
 
