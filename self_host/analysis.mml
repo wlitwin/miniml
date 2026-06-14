@@ -426,6 +426,50 @@ module Analysis =
   let tokenize_opt (src : string) : Token.token list =
     handle Lexer.tokenize src with | return t -> t | lex_error _a _k -> []
 
+  -- --- Pretty types (normalize type-variable names) -----------------------
+
+  -- `Types.pp_ty` renders a tvar from its raw global id (`'r103803`); for display
+  -- we renumber the vars appearing in ONE type to 'a, 'b, 'c… in order of first
+  -- appearance (so `'r103 * 't103 -> 'r103` reads `'a * 'b -> 'a`). Done as a
+  -- single-pass string rewrite over pp_ty's output — NOT a change to pp_ty itself,
+  -- which feeds the parity-checked type-error messages.
+  let tvar_letter (k : int) : string =
+    let c = String.of_byte (Byte.of_int (97 + (k mod 26))) in
+    if k < 26 do "'" ^ c else "'" ^ (c ^ (string_of_int (k / 26)))
+
+  let is_ident_byte (c : byte) : bool =
+    ((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || (((c >= #30) && (c <= #39)) || (c = #5f)))
+
+  let pretty_ty (ty : Types.ty) : string =
+    let s = Types.pp_ty ty in
+    let n = String.length s in
+    let buf = Buffer.create n in
+    let names = Ref.create [] in
+    let counter = Ref.create 0 in
+    let i = Ref.create 0 in
+    for (Ref.get i) < n do
+      let c = String.get s (Ref.get i) in
+      if c = #27 do
+        -- a `'…` variable token; read its identifier run and remap it
+        let start = Ref.get i in
+        Ref.set i ((Ref.get i) + 1);
+        (for ((Ref.get i) < n) && (is_ident_byte (String.get s (Ref.get i))) do Ref.set i ((Ref.get i) + 1) end);
+        let raw = String.sub s start ((Ref.get i) - start) in
+        let norm = (match List.assoc_opt raw (Ref.get names) with
+          | Some v -> v
+          | None ->
+            let v = tvar_letter (Ref.get counter) in
+            Ref.set counter ((Ref.get counter) + 1);
+            Ref.set names (List.concat (Ref.get names) ((raw, v) :: []));
+            v) in
+        Buffer.add_string buf norm
+      else do
+        Buffer.add_byte buf c;
+        Ref.set i ((Ref.get i) + 1)
+      end
+    end;
+    Buffer.contents buf
+
   -- --- Hover --------------------------------------------------------------
 
   -- Every let-binding's (name, type) in a typed declaration list — top-level,
@@ -500,7 +544,7 @@ module Analysis =
       -- (`Buffer.seal_threshold`), so match the bare name against an exact key OR
       -- a `….name` suffix.
       (match Ref.get best with
-       | Some ty -> Some (Types.pp_ty ty)
+       | Some ty -> Some (pretty_ty ty)
        | None ->
          (match tok.kind with
           | Token.IDENT name ->
@@ -511,7 +555,7 @@ module Analysis =
                   let (k, _) = pair in
                   (k = name) || (let kl = String.length k in (kl > nlen) && ((String.sub k (kl - (nlen + 1)) (nlen + 1)) = suffix))
                 ) (collect_binding_types tdecls) with
-                | Some (_, ty) -> Some (Types.pp_ty ty)
+                | Some (_, ty) -> Some (pretty_ty ty)
                 | None -> None)
              else None)
           | _ -> None))
@@ -604,7 +648,7 @@ module Analysis =
     List.filter_map (fn pair ->
       let (name, loc) = pair in
       match List.assoc_opt name (Ref.get types) with
-      | Some ty -> Some (loc.line, loc.col + (String.length name), ": " ^ (Types.pp_ty ty))
+      | Some ty -> Some (loc.line, loc.col + (String.length name), ": " ^ (pretty_ty ty))
       | None -> None
     ) defs
 
