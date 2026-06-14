@@ -53,7 +53,23 @@ let () =
   let inc_err = Json.as_list (Json.member "diagnostics" (Json.member "params" openinc)) in
   let chg = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///inc.mml\"},\"contentChanges\":[{\"range\":{\"start\":{\"line\":0,\"character\":12},\"end\":{\"line\":0,\"character\":16}},\"text\":\"2\"}]}}" in
   let inc_diags = Json.as_list (Json.member "diagnostics" (Json.member "params" chg)) in
+  -- scope-resolved document highlight: a LOCAL `total` (let-bound in f, decl +
+  -- two uses) shadowing an unrelated TOP-LEVEL `total`. Highlighting a use must
+  -- return exactly the 3 local occurrences and EXCLUDE the line-3 top-level one.
+  let occsrc = "let f n =\n  let total = n + n in\n  total + total\nlet total = 5" in
+  let _ = send ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///occ.mml\",\"text\":" ^ ((Json.to_string (Json.JString occsrc)) ^ "}}}")) in
+  let hl = send "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"textDocument/documentHighlight\",\"params\":{\"textDocument\":{\"uri\":\"file:///occ.mml\"},\"position\":{\"line\":2,\"character\":2}}}" in
+  let hlranges = Json.as_list (Json.member "result" hl) in
+  let hl_line r = Json.as_int (Json.member "line" (Json.member "start" (Json.member "range" r))) in
+  -- references on the same local are single-file scoped (no root → open doc only)
+  let rf = send "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///occ.mml\"},\"position\":{\"line\":2,\"character\":2}}}" in
+  let rfranges = Json.as_list (Json.member "result" rf) in
   let checks = [
+    ("highlight-local-scoped-count", List.length hlranges = 3);
+    ("highlight-decl-on-let-line", (List.length (List.filter (fn r -> (hl_line r) = 1) hlranges)) = 1);
+    ("highlight-uses-on-body-line", (List.length (List.filter (fn r -> (hl_line r) = 2) hlranges)) = 2);
+    ("highlight-excludes-toplevel", not (List.exists (fn r -> (hl_line r) = 3) hlranges));
+    ("references-local-scoped-count", List.length rfranges = 3);
     ("init-semanticTokensProvider", (match Json.member "semanticTokensProvider" caps with Json.JNull -> false | _ -> true));
     ("init-sync-incremental", Json.as_int (Json.member "textDocumentSync" caps) = 2);
     ("semtok-multiple-of-5", ((List.length semdata) mod 5) = 0);
