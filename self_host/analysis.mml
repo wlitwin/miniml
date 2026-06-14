@@ -869,13 +869,14 @@ module Analysis =
   -- handlers), plus the language keywords. Returned as (label, CompletionItemKind)
   -- pairs, de-duplicated; the editor filters by the typed prefix. Local names are
   -- over-inclusive (whole file, not scope-filtered).
-  pub let completions (state : Typechecker.ctx) (src : string) : (string * int) list =
+  pub let completions (state : Typechecker.ctx) (src : string) : (string * int * string) list =
     let seen = Hashtbl.create 512 in
     let out = Ref.create [] in
-    let add kind name =
+    -- (kind, detail-type-or-"", name); detail shows the inferred type in the menu
+    let add kind detail name =
       if (is_ident_like name) && (not (Hashtbl.has seen name)) do
         Hashtbl.set seen name true;
-        Ref.set out ((name, kind) :: Ref.get out)
+        Ref.set out ((name, kind, detail) :: Ref.get out)
       end
     in
     -- the file's own names first (most relevant): top-level decls, then every
@@ -883,21 +884,21 @@ module Analysis =
     let _ = handle
       let tokens = Lexer.tokenize src in
       let (program, _d, defs) = parse_recover src tokens in
-      List.iter (fn pair -> let (name, _) = pair in add kind_variable name) defs;
+      List.iter (fn pair -> let (name, _) = pair in add kind_variable "" name) defs;
       let locals = Ref.create [] in
       List.iter (fn d -> decl_binders locals d) program;
-      List.iter (fn n -> add kind_variable n) (Ref.get locals)
+      List.iter (fn n -> add kind_variable "" n) (Ref.get locals)
     with
     | return _ -> ()
     | lex_error _a _k -> ()
     in
-    -- everything in scope: stdlib + builtins
+    -- everything in scope: stdlib + builtins (with their types as detail)
     List.iter (fn pair ->
       let (name, sch) = pair in
       let kind = (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable) in
-      add kind name
+      add kind (pretty_ty sch.body) name
     ) state.vars;
-    List.iter (fn kw -> add kind_keyword kw) keywords;
+    List.iter (fn kw -> add kind_keyword "" kw) keywords;
     List.rev (Ref.get out)
 
   -- Resolve a dotted module path (`Map` / `Foo.Bar`) to its module_info.
@@ -921,28 +922,27 @@ module Analysis =
   -- alone: module_info.mod_pub_vars (source-defined modules like List, + the
   -- constructors), and ctx.vars `Module.member` entries (native-registered modules
   -- like String/Array/IO, whose mod_pub_vars is sparse).
-  let module_member_completions (state : Typechecker.ctx) (modpath : string) : (string * int) list =
+  let module_member_completions (state : Typechecker.ctx) (modpath : string) : (string * int * string) list =
     let prefix = modpath ^ "." in
     let plen = String.length prefix in
+    let var_entry n sch = (n, (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable), pretty_ty sch.body) in
     let from_info = (match resolve_module state.type_env modpath with
       | None -> []
       | Some (info : Types.module_info) ->
         List.concat
-          (List.map (fn pair -> let (n, sch) = pair in
-            (n, (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable))) info.mod_pub_vars)
-          (List.map (fn pair -> let (n, _) = pair in (n, 4)) info.mod_pub_constructors)) in
+          (List.map (fn pair -> let (n, sch) = pair in var_entry n sch) info.mod_pub_vars)
+          (List.map (fn pair -> let (n, _) = pair in (n, 4, "")) info.mod_pub_constructors)) in
     let from_vars = List.filter_map (fn pair ->
       let (name, sch) = pair in
       if (String.length name > plen) && ((String.sub name 0 plen) = prefix) do
         let mem = String.sub name plen ((String.length name) - plen) in
-        if String.contains "." mem do None
-        else Some (mem, (match sch.body with Types.TArrow _ -> kind_function | _ -> kind_variable))
+        if String.contains "." mem do None else Some (var_entry mem sch)
       else None
     ) state.vars in
     let seen = Hashtbl.create 64 in
     let out = Ref.create [] in
-    List.iter (fn pair -> let (n, k) = pair in
-      if not (Hashtbl.has seen n) do Hashtbl.set seen n true; Ref.set out ((n, k) :: Ref.get out) end
+    List.iter (fn t -> let (n, k, d) = t in
+      if not (Hashtbl.has seen n) do Hashtbl.set seen n true; Ref.set out ((n, k, d) :: Ref.get out) end
     ) (List.concat from_info from_vars);
     List.rev (Ref.get out)
 
@@ -965,7 +965,7 @@ module Analysis =
 
   -- Completions at a position: a `Module.` prefix → that module's members
   -- (precise, from the typecheck ctx); otherwise the in-scope names (completions).
-  pub let completions_at (state : Typechecker.ctx) (src : string) (line : int) (col : int) : (string * int) list =
+  pub let completions_at (state : Typechecker.ctx) (src : string) (line : int) (col : int) : (string * int * string) list =
     let cursor = offset_of_line_col src line col in
     match module_prefix_at src cursor with
     | Some modpath ->
