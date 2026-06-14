@@ -12,8 +12,10 @@ let () =
     ("hover-literal", (match Analysis.hover st src 1 9 with Some "int" -> true | _ -> false));
     -- hover on the USE of n (line 2, col 9) → int
     ("hover-use", (match Analysis.hover st src 2 9 with Some "int" -> true | _ -> false));
-    -- hover on a binding site has no typed node → None
-    ("hover-binder-none", (match Analysis.hover st src 1 5 with None -> true | _ -> false));
+    -- hover on a binding NAME falls back to that binding's inferred type
+    ("hover-binder-type", (match Analysis.hover st src 1 5 with Some "int" -> true | _ -> false));
+    -- a module member binding name resolves through the qualified-suffix match
+    ("hover-member-binder", (match Analysis.hover st "module M =\n  let secret = \"x\"\nend" 2 7 with Some "string" -> true | _ -> false));
     -- hover off any token → None
     ("hover-miss", (match Analysis.hover st src 1 4 with None -> true | _ -> false));
     -- go-to-def of the first 'foo' use (line 2, col 11) → its top-level binder line 1
