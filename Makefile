@@ -410,7 +410,9 @@ check-run-completions-selfhost:
 # binary fed a Content-Length-framed initialize/hover/exit session, checking the
 # framed replies (lsp_serve_e2e.py).
 LSP_SELFHOST_FILES = $(DIAGNOSTICS_SELFHOST_FILES:self_host/diagnostic.mml=self_host/json.mml self_host/diagnostic.mml)
-LSP_SELFHOST_FILES := $(LSP_SELFHOST_FILES) self_host/semver.mml self_host/sumfile.mml \
+LSP_SELFHOST_FILES := $(LSP_SELFHOST_FILES) self_host/utf8.mml self_host/cst.mml \
+                      self_host/cst_build.mml self_host/formatter.mml \
+                      self_host/semver.mml self_host/sumfile.mml \
                       self_host/manifest.mml self_host/deps.mml self_host/fetch.mml \
                       self_host/project.mml self_host/lsp.mml
 check-run-lsp-selfhost:
