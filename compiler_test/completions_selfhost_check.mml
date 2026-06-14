@@ -9,7 +9,16 @@ let () =
   let comps = Analysis.completions st src in
   let has q = List.exists (fn pair -> let (n, _) = pair in n = q) comps in
   let kind_of q = List.fold (fn acc pair -> let (n, k) = pair in if n = q do k else acc) (0 - 1) comps in
+  -- module-member completion: cursor after `List.` (col 14) / `String.` (col 16)
+  let listm = Analysis.completions_at st "let x = List." 1 14 in
+  let strm = Analysis.completions_at st "let x = String." 1 16 in
+  let hasm lst q = List.exists (fn pair -> let (n, _) = pair in n = q) lst in
   let checks = [
+    ("member-list-source", hasm listm "map");
+    ("member-list-not-general", not (hasm listm "greeting2"));   -- scoped, not the whole world
+    ("member-string-native", hasm strm "length");
+    ("member-string-native2", hasm strm "sub");
+    ("member-no-dot-fallthrough", has "print");   -- general path unaffected
     ("toplevel-greeting", has "greeting");
     ("toplevel-fn-add", has "add");
     ("fn-param", has "a");
