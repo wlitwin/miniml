@@ -50,9 +50,27 @@ let () =
     ^ (Json.to_string (Json.JString user)) ^ "}}}" in
   let user_pub = send user_open in
   let user_diags = Json.as_list (Json.member "diagnostics" (Json.member "params" user_pub)) in
+  -- stdlib-file duplicate suppression: a file under <root>/stdlib whose
+  -- instances are already in the base ctx must NOT report "duplicate instance"
+  -- (it's a self-collision); the SAME content elsewhere must still report it.
+  let sroot = "/tmp/mml_lspstd_check" in
+  let _ = if Fs.is_directory (sroot ^ "/stdlib") do () else (if Fs.is_directory sroot do () else Fs.make_dir sroot; Fs.make_dir (sroot ^ "/stdlib")) in
+  let _ = if Fs.is_directory (sroot ^ "/other") do () else Fs.make_dir (sroot ^ "/other") in
+  let showsrc = IO.read_file "stdlib/show.mml" in   -- declares instances the base already has
+  IO.write_file (sroot ^ "/stdlib/dup.mml") showsrc;
+  IO.write_file (sroot ^ "/other/dup.mml") showsrc;
+  let srv2 = Lsp.create () in
+  let send2 s = first (Lsp.handle_message srv2 (Json.parse s)) in
+  let _ = send2 ("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file://" ^ sroot ^ "\"}}") in
+  let open_at uri = send2 ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" ^ uri ^ "\",\"text\":" ^ (Json.to_string (Json.JString showsrc)) ^ "}}}") in
+  let dupcount r = List.length (List.filter (fn d -> String.starts_with "duplicate " (Json.to_str (Json.member "message" d))) (Json.as_list (Json.member "diagnostics" (Json.member "params" r)))) in
+  let in_stdlib_dups = dupcount (open_at ("file://" ^ sroot ^ "/stdlib/dup.mml")) in
+  let elsewhere_dups = dupcount (open_at ("file://" ^ sroot ^ "/other/dup.mml")) in
   let checks = [
     ("xmodule-no-unknown-diags", List.length diags = 0);
     ("redef-sibling-skipped-some-none-ok", List.length user_diags = 0);
+    ("stdlib-dup-suppressed", in_stdlib_dups = 0);
+    ("nonstdlib-dup-reported", elsewhere_dups >= 1);
     ("xmodule-hover", hov_ty = "string");
     ("xfile-def-fn", ends_with defmk "foo.mml");
     ("xfile-def-ctor", ends_with defB "foo.mml");
