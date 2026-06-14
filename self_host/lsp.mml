@@ -37,6 +37,17 @@ module Lsp =
     let lf = String.length suf in
     (ls >= lf) && ((String.sub s (ls - lf) lf) = suf)
 
+  -- split a qualified name `Mod.sub.name`: last_segment → "name", container_of → "Mod.sub"
+  let last_segment (q : string) : string =
+    match String.rindex_opt q #2e with
+    | Some i -> String.sub q (i + 1) (((String.length q) - i) - 1)
+    | None -> q
+
+  let container_of (q : string) : string =
+    match String.rindex_opt q #2e with
+    | Some i -> String.sub q 0 i
+    | None -> ""
+
   -- Build (once, lazily) the workspace symbol index by scanning the MiniML sources
   -- under the root: self_host/ and stdlib/ and the root's own *.mml. Cheap to skip
   -- when there is no root.
@@ -250,7 +261,9 @@ end"
         ("hoverProvider", Json.JBool true) ::
         ("definitionProvider", Json.JBool true) ::
         ("completionProvider", Json.JObject []) ::
-        ("inlayHintProvider", Json.JBool true) :: [])) ::
+        ("inlayHintProvider", Json.JBool true) ::
+        ("documentSymbolProvider", Json.JBool true) ::
+        ("documentFormattingProvider", Json.JBool true) :: [])) ::
       ("serverInfo", Json.JObject (("name", Json.JString "miniml-lsp") :: [])) :: [])
 
   -- Handle one decoded JSON-RPC message; return the messages to send back. A
@@ -355,6 +368,48 @@ end"
             (Analysis.inlay_hints (project_ctx_for srv uri) text)
         | None -> []) in
       (response (Json.JArray hints)) :: []
+    | "textDocument/documentSymbol" ->
+      let uri = doc_uri () in
+      let syms = (match Hashtbl.get srv.docs uri with
+        | Some text -> List.map (fn s ->
+            let (qual, kind, loc) = s in
+            let nm = last_segment qual in
+            let l0 = loc.line - 1 in
+            let c0 = byte_col_to_utf16 (nth_line text l0) loc.col in
+            let c1 = byte_col_to_utf16 (nth_line text l0) (loc.col + (String.length nm)) in
+            let range = Json.JObject (
+              ("start", Json.JObject (("line", Json.JInt l0) :: ("character", Json.JInt c0) :: [])) ::
+              ("end", Json.JObject (("line", Json.JInt l0) :: ("character", Json.JInt c1) :: [])) :: []) in
+            Json.JObject (
+              ("name", Json.JString nm) ::
+              ("kind", Json.JInt kind) ::
+              ("location", Json.JObject (("uri", Json.JString uri) :: ("range", range) :: [])) ::
+              ("containerName", Json.JString (container_of qual)) :: []))
+            (Analysis.document_symbols text)
+        | None -> []) in
+      (response (Json.JArray syms)) :: []
+    | "textDocument/formatting" ->
+      let uri = doc_uri () in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          (handle
+            let formatted = Formatter.format_source text in
+            -- one edit replacing the whole document ([0,0]..[nlines,0] covers it)
+            let nlines = List.length (String.split "\n" text) in
+            let edit = Json.JObject (
+              ("range", Json.JObject (
+                ("start", Json.JObject (("line", Json.JInt 0) :: ("character", Json.JInt 0) :: [])) ::
+                ("end", Json.JObject (("line", Json.JInt nlines) :: ("character", Json.JInt 0) :: [])) :: [])) ::
+              ("newText", Json.JString formatted) :: []) in
+            Json.JArray (edit :: [])
+          with
+          | return r -> r
+          | unsupported _a _k -> Json.JArray []
+          | reanchor_bail _a _k -> Json.JArray []
+          | lex_error _a _k -> Json.JArray []
+          | parse_error _a _k -> Json.JArray [])
+        | None -> Json.JArray []) in
+      (response result) :: []
     | _ ->
       -- Unknown request -> null result; unknown notification -> ignore.
       if id = Json.JNull do [] else (response Json.JNull) :: []

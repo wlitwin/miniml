@@ -28,9 +28,23 @@ let () =
   let inlays = Json.as_list (Json.member "result" inlay) in
   -- shutdown → null result; unknown method with an id → null result
   let shut = send "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"shutdown\"}" in
+  -- document symbols on b.mml ("let n = 42") → one symbol "n"
+  let dsym = send "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.mml\"}}}" in
+  let dsyms = Json.as_list (Json.member "result" dsym) in
+  -- formatting a messy buffer → one whole-document edit with formatted text
+  let _ = send "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///fmt.mml\",\"text\":\"let   x=1\"}}}" in
+  let fmt = send "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"textDocument/formatting\",\"params\":{\"textDocument\":{\"uri\":\"file:///fmt.mml\"}}}" in
+  let fmts = Json.as_list (Json.member "result" fmt) in
   let checks = [
     ("init-hoverProvider", (match Json.member "hoverProvider" caps with Json.JBool true -> true | _ -> false));
     ("init-inlayHintProvider", (match Json.member "inlayHintProvider" caps with Json.JBool true -> true | _ -> false));
+    ("init-documentSymbolProvider", (match Json.member "documentSymbolProvider" caps with Json.JBool true -> true | _ -> false));
+    ("init-formattingProvider", (match Json.member "documentFormattingProvider" caps with Json.JBool true -> true | _ -> false));
+    ("docsym-one", List.length dsyms = 1);
+    ("docsym-name", (match dsyms with d :: _ -> Json.to_str (Json.member "name" d) = "n" | [] -> false));
+    ("docsym-kind-variable", (match dsyms with d :: _ -> Json.as_int (Json.member "kind" d) = 13 | [] -> false));
+    ("format-one-edit", List.length fmts = 1);
+    ("format-newtext", (match fmts with e :: _ -> Json.to_str (Json.member "newText" e) <> "" | [] -> false));
     ("inlay-one-hint", List.length inlays = 1);
     ("inlay-label-int", (match inlays with h :: _ -> Json.to_str (Json.member "label" h) = ": int" | [] -> false));
     ("init-has-id", Json.as_int (Json.member "id" initr) = 1);

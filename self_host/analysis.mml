@@ -154,7 +154,7 @@ module Analysis =
        | Token.UIDENT name ->
          (if (prev.kind = Token.EQ) || (prev.kind = Token.PIPE) do
             let qual = if prefix = "" do name else prefix ^ ("." ^ name) in
-            Ref.set acc ((qual, cur.loc) :: Ref.get acc)
+            Ref.set acc ((qual, 22, cur.loc) :: Ref.get acc)
           end)
        | _ -> ());
       Ref.set i ((Ref.get i) + 1)
@@ -168,6 +168,21 @@ module Analysis =
   -- function whose recursive call sits under a `handle` trips effect inference's
   -- occurs-check (an infinite effect row), so module descent is queued, not
   -- recursed.
+  -- The LSP SymbolKind for a declaration (Module 2 / Constructor 9 / Enum 10 /
+  -- Interface 11 / Function 12 / Variable 13).
+  let kind_of_ds ds =
+    match ds with
+    | (Ast.DModule (_, _)) :: _ -> 2
+    | (Ast.DType _) :: _ -> 10
+    | (Ast.DTypeAnd _) :: _ -> 10
+    | (Ast.DLet {params; _}) :: _ -> if params = [] do 13 else 12
+    | (Ast.DLetRec _) :: _ -> 12
+    | (Ast.DLetRecAnd _) :: _ -> 12
+    | (Ast.DEffect _) :: _ -> 11
+    | (Ast.DClass _) :: _ -> 11
+    | (Ast.DExtern _) :: _ -> 12
+    | _ -> 13
+
   let index_one acc (prefix : string) (toks : Token.token list)
       : (string * Token.token list) list =
     Ref.set Parser.fresh_param_counter 0;
@@ -182,7 +197,7 @@ module Analysis =
         (match decl_name slice with
          | Some (n, loc) ->
            let qual = if prefix = "" do n else prefix ^ ("." ^ n) in
-           Ref.set acc ((qual, loc) :: Ref.get acc);
+           Ref.set acc ((qual, kind_of_ds ds, loc) :: Ref.get acc);
            -- a module's members get their own qualified entries
            (match ds with
             | (Ast.DModule (mname, _)) :: [] ->
@@ -209,7 +224,10 @@ module Analysis =
     end;
     List.rev (Ref.get more)
 
-  pub let index_symbols (src : string) : (string * Token.loc) list =
+  -- Every definition as (qualified-name, SymbolKind, name-loc) — the shared
+  -- worklist behind both the go-to-def index (names+locs) and document symbols
+  -- (which also need the kind).
+  let index_all (src : string) : (string * int * Token.loc) list =
     let acc = Ref.create [] in
     let seed = handle Lexer.tokenize src with | return t -> t | lex_error _a _k -> [] in
     -- worklist of (prefix, tokens); module bodies are pushed on as discovered
@@ -224,6 +242,13 @@ module Analysis =
         Ref.set queue (List.concat discovered (Ref.get queue))
     end;
     List.rev (Ref.get acc)
+
+  pub let index_symbols (src : string) : (string * Token.loc) list =
+    List.map (fn t -> let (q, _, l) = t in (q, l)) (index_all src)
+
+  -- Document outline: (qualified-name, LSP SymbolKind, name-loc) for every
+  -- top-level and module-member definition. Powers textDocument/documentSymbol.
+  pub let document_symbols (src : string) : (string * int * Token.loc) list = index_all src
 
   -- A workspace index: qualified-name -> the (file, name-loc) sites that define
   -- it (a list, so genuine collisions are visible; go-to-def takes the first).
