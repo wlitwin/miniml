@@ -543,9 +543,13 @@ end"
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
+                -- a local binding → its scope-resolved occurrences (shadowing-
+                -- correct); otherwise the syntactic by-name occurrences in the file
+                let locs = (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
+                  | Some ls -> ls
+                  | None -> Analysis.name_occurrences text name) in
                 Json.JArray (List.map (fn (loc : Token.loc) ->
-                  Json.JObject (("range", name_range text loc (String.length name)) :: []))
-                  (Analysis.name_occurrences text name))
+                  Json.JObject (("range", name_range text loc (String.length name)) :: [])) locs)
               | None -> Json.JArray [])
            | None -> Json.JArray [])
         | None -> Json.JArray []) in
@@ -562,15 +566,22 @@ end"
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
-                -- workspace-wide (by name); fall back to just the open doc if no root
-                let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
-                Json.JArray (List.concat_map (fn pf ->
-                  let (path, src) = pf in
-                  let puri = uri_of_path path in
-                  List.map (fn (loc : Token.loc) ->
-                    Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length name)) :: []))
-                    (Analysis.name_occurrences src name)
-                ) files)
+                (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
+                 | Some locs ->
+                   -- a local binding: its occurrences live in THIS file only
+                   Json.JArray (List.map (fn (loc : Token.loc) ->
+                     Json.JObject (("uri", Json.JString uri) :: ("range", name_range text loc (String.length name)) :: [])) locs)
+                 | None ->
+                   -- a top-level / module name: workspace-wide by name (fall back
+                   -- to just the open doc when there is no root)
+                   let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
+                   Json.JArray (List.concat_map (fn pf ->
+                     let (path, src) = pf in
+                     let puri = uri_of_path path in
+                     List.map (fn (loc : Token.loc) ->
+                       Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length name)) :: []))
+                       (Analysis.name_occurrences src name)
+                   ) files))
               | None -> Json.JArray [])
            | None -> Json.JArray [])
         | None -> Json.JArray []) in
