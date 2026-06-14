@@ -62,8 +62,14 @@ module.exports = grammar({
 
     // ---- Comments ----
     line_comment: $ => token(seq('--', /[^\n]*/)),
-    // Non-nested (* ... *) — a good approximation for highlighting.
-    block_comment: $ => token(seq('(*', /[^*]*\*+([^)*][^*]*\*+)*/, ')')),
+    // Non-nested (* ... *) — a good approximation for highlighting. The body
+    // alternatives forbid `(*` immediately followed by `)`, so the `(*)`
+    // multiplication operator (e.g. `let (*) = ...` in stdlib/classes.mml) is
+    // NOT swallowed as a comment start — mirrors the lexer's `peek3 <> )` guard
+    // (self_host/lexer.mml). Tree-sitter's regex engine has no lookahead, hence
+    // the explicit cases: star-run close `(**)`, star-run + content, or a first
+    // char that is neither `)` nor `*`.
+    block_comment: $ => token(seq('(*', /\*+\)|\*+[^*)]([^*]|\*+[^*)])*\*+\)|[^)*]([^*]|\*+[^*)])*\*+\)/)),
 
     // ---- Declarations ----
     _declaration: $ => choice(
@@ -196,7 +202,7 @@ module.exports = grammar({
     where_clause: $ => seq('where', /[^=]*/),
 
     class_method: $ => seq(
-      field('name', $.lower_identifier),
+      field('name', $._binding_name),   // operator methods too: `(*) : 'a -> 'a -> 'a`
       ':',
       $._type,
     ),

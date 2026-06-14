@@ -49,11 +49,7 @@
           },
           {
             "type": "PATTERN",
-            "value": "[^*]*\\*+([^)*][^*]*\\*+)*"
-          },
-          {
-            "type": "STRING",
-            "value": ")"
+            "value": "\\*+\\)|\\*+[^*)]([^*]|\\*+[^*)])*\\*+\\)|[^)*]([^*]|\\*+[^*)])*\\*+\\)"
           }
         ]
       }
@@ -1046,7 +1042,7 @@
           "name": "name",
           "content": {
             "type": "SYMBOL",
-            "name": "lower_identifier"
+            "name": "_binding_name"
           }
         },
         {
