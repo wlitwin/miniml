@@ -1157,6 +1157,85 @@ module Analysis =
         | None -> None
       end
 
+  -- --- Whole-program occurrences ------------------------------------------
+
+  -- Every GLOBAL occurrence in `src`, each tagged with its CANONICAL name: the
+  -- definition sites (a declaration's qualified name + loc, from the symbol
+  -- index) and the global USE sites (a TEVar that is NOT locally bound, tagged
+  -- with its RESOLVED name). resolve_module_name canonicalizes a use to its
+  -- defining module path — a use of `tokenize` INSIDE module Lexer and a use of
+  -- `Lexer.tokenize` elsewhere both become "Lexer.tokenize" — so two occurrences
+  -- denote the same definition iff their canonical names match. Locals are
+  -- excluded (resolved_occurrences owns those). This is one file's contribution
+  -- to the workspace reference index; `state` must be a whole-program ctx (the
+  -- other modules loaded) for cross-module names to resolve.
+  pub let global_occurrences (state : Typechecker.ctx) (src : string) : (string * Token.loc) list =
+    let defs = List.map (fn t -> let (q, _k, l) = t in (q, l)) (index_all src) in
+    let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
+    let tdecls = typed_recover state program in
+    let uses = Ref.create [] in
+    -- A TEVar for `Mod.member` carries its loc at the leading `Mod`; record the
+    -- occurrence at the MEMBER token instead (the last canonical segment, found
+    -- at/after the loc). Keeps each occurrence's loc on the identifier the user
+    -- thinks of — so clicking a module prefix isn't mistaken for a member ref, and
+    -- ranges are exact. A bare use/def is already at its member (no dot → as-is).
+    let find_from (sub : string) (from : int) : int =
+      let nn = String.length src in
+      let m = String.length sub in
+      let i = Ref.create from in
+      let found = Ref.create (0 - 1) in
+      (for ((Ref.get i) <= (nn - m)) && ((Ref.get found) < 0) do
+         (if (String.sub src (Ref.get i) m) = sub do Ref.set found (Ref.get i) end);
+         Ref.set i ((Ref.get i) + 1)
+       end);
+      Ref.get found in
+    let member_loc (n : string) (loc : Token.loc) : Token.loc =
+      match String.rindex_opt n #2e with
+      | None -> loc
+      | Some i ->
+        let seg = String.sub n (i + 1) (((String.length n) - i) - 1) in
+        let off = find_from seg loc.offset in
+        if off < 0 do loc else {line = loc.line; col = loc.col + (off - loc.offset); offset = off} in
+    let rec walk scope (te : Typechecker.texpr) : unit =
+      match te.expr with
+      | Typechecker.TEVar n -> (if not (List.mem n scope) do Ref.set uses ((n, member_loc n te.loc) :: Ref.get uses) end)
+      | Typechecker.TELet (n, _, v, body) -> walk scope v; walk (n :: scope) body
+      | Typechecker.TELetMut (n, v, body) -> walk scope v; walk (n :: scope) body
+      | Typechecker.TELetRec (n, _, v, body) -> let s2 = n :: scope in walk s2 v; walk s2 body
+      | Typechecker.TELetRecAnd (binds, body) ->
+        let s2 = List.concat (List.map (fn pair -> let (n, _) = pair in n) binds) scope in
+        List.iter (fn pair -> let (_, e) = pair in walk s2 e) binds; walk s2 body
+      | Typechecker.TEFun (param, body, _) -> walk (param :: scope) body
+      | Typechecker.TEMatch (scrut, arms, _) ->
+        walk scope scrut;
+        List.iter (fn arm ->
+          let (pat, guard, body) = arm in
+          let pb = Ref.create [] in
+          pat_binders pb pat;
+          let s2 = List.concat (Ref.get pb) scope in
+          (match guard with Some g -> walk s2 g | None -> ());
+          walk s2 body) arms
+      | Typechecker.TEHandle (body, arms) ->
+        walk scope body;
+        List.iter (fn arm ->
+          match arm with
+          | Typechecker.THReturn (x, e) -> walk (x :: scope) e
+          | Typechecker.THOp r -> walk (r.arg :: (r.k :: scope)) r.body
+          | Typechecker.THOpProvide (_op, p, e) -> walk (p :: scope) e
+          | Typechecker.THOpTry (_op, p, e) -> walk (p :: scope) e) arms
+      | _ -> Typechecker.iter_texpr_children (fn c -> walk scope c) te in
+    let rec walk_td (td : Typechecker.tdecl) : unit =
+      match td with
+      | Typechecker.TDLet (_, te) -> walk [] te
+      | Typechecker.TDLetMut (_, te) -> walk [] te
+      | Typechecker.TDLetRec (_, te) -> walk [] te
+      | Typechecker.TDExpr te -> walk [] te
+      | Typechecker.TDLetRecAnd binds -> List.iter (fn pair -> let (_, te) = pair in walk [] te) binds
+      | Typechecker.TDModule (_, ds, _) -> List.iter walk_td ds
+      | _ -> () in
+    List.iter walk_td tdecls;
+    List.concat defs (Ref.get uses)
+
   -- --- Type-directed record fields ----------------------------------------
 
   -- The structural identity of a value's record type: the sorted field-name set

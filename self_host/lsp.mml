@@ -17,13 +17,19 @@ module Lsp =
     -- option` annotation misparses — the tuple-option quirk)
     mut proj_path: string option;
     mut proj_ctx: Typechecker.ctx option;
-    mut wfiles: (string * string) list option   -- lazy (path, source) of workspace *.mml
+    mut wfiles: (string * string) list option;  -- lazy (path, source) of workspace *.mml
+    -- whole-program reference index (roadmap #16c Gap 1): the workspace ctx (all
+    -- modules loaded, for canonical cross-module name resolution) and a per-file
+    -- cache of global occurrences keyed by source — only a changed file recomputes
+    mut wp_ctx: Typechecker.ctx option;
+    occ_files: (string, string * (string * Token.loc) list) Hashtbl.t
   }
 
   -- Build a server. Loads the standard library once (expensive).
   pub let create () : t =
     { docs = Hashtbl.create 16; analysis = Driver.make_analysis_ctx (); root = None;
-      index = None; proj_path = None; proj_ctx = None; wfiles = None }
+      index = None; proj_path = None; proj_ctx = None; wfiles = None;
+      wp_ctx = None; occ_files = Hashtbl.create 64 }
 
   -- file://… URI <-> path. Minimal: strip the scheme; no percent-decoding.
   let path_of_uri (uri : string) : string =
@@ -193,6 +199,45 @@ end"
       srv.proj_path := Some path;
       srv.proj_ctx := Some ctx;
       ctx
+
+  -- The WHOLE-PROGRAM ctx: stdlib + every workspace module loaded (dep-ordered),
+  -- so a use's RESOLVED name canonicalizes to its defining module path. Built once
+  -- and cached; not auto-invalidated on edits (a keystroke rarely changes another
+  -- file's exports — only a changed file's own occurrences recompute). Powers the
+  -- canonical-name reference index.
+  pub let workspace_ctx (srv : t) : Typechecker.ctx =
+    match srv.wp_ctx with
+    | Some c -> c
+    | None ->
+      let units = (match srv.root with
+        | Some root -> List.concat_map (fn dir ->
+            let d = Path.join root dir in if Fs.is_directory d do Project.dir_units d else []) ("self_host" :: ("stdlib" :: (("."))  :: []))
+        | None -> []) in
+      let base_env = srv.analysis.type_env in
+      let keep = List.filter (fn (u : Project.unit_) -> not (sibling_redundant base_env u)) units in
+      let ordered = handle Project.topo_order keep with | return o -> o | build_error _m _k -> keep in
+      let srcs = List.map (fn (u : Project.unit_) ->
+        let raw = (match Hashtbl.get srv.docs (uri_of_path u.path) with Some t -> t | None -> u.source) in
+        module_source u.name raw) ordered in
+      let ctx = Driver.load_modules_into srv.analysis srcs in
+      srv.wp_ctx := Some ctx;
+      ctx
+
+  -- The workspace's global occurrences as (canonical-name, path, loc), per-file
+  -- cached by source: only a file whose text changed re-runs the (expensive)
+  -- typecheck; the rest reuse their cached occurrences. Two entries denote the
+  -- same definition iff their canonical names match — the basis for precise
+  -- cross-file references.
+  pub let workspace_occurrences (srv : t) : (string * string * Token.loc) list =
+    let wp = workspace_ctx srv in
+    List.concat_map (fn pf ->
+      let (path, src) = pf in
+      let occ = (match Hashtbl.get srv.occ_files path with
+        | Some (csrc, cocc) -> if csrc = src do cocc else do
+            let o = Analysis.global_occurrences wp src in Hashtbl.set srv.occ_files path (src, o); o end
+        | None -> let o = Analysis.global_occurrences wp src in Hashtbl.set srv.occ_files path (src, o); o) in
+      List.map (fn pair -> let (nm, loc) = pair in (nm, path, loc)) occ
+    ) (workspace_files srv)
 
   -- --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ----------------
 
@@ -387,6 +432,26 @@ end"
       (match t with Cst.Node (_, cs) -> List.iter walk cs | Cst.Leaf _ -> ()) in
     walk (Cst_build.cst_of_source src);
     Ref.get acc
+
+  -- An LSP range over a global occurrence: its loc is already the MEMBER token
+  -- (global_occurrences records it there), so just span the canonical last segment.
+  let global_ref_range (src : string) (loc : Token.loc) (canonical : string) : Json.json =
+    name_range src loc (String.length (last_segment canonical))
+
+  -- The canonical (defining) name of the symbol at byte `cursor` in `text`: a
+  -- `Mod.member` path directly, else the global occurrence (use or def) sitting at
+  -- the cursor token. None when the cursor isn't on a resolvable global symbol.
+  let canonical_name_at (srv : t) (text : string) (cursor : int) : string option =
+    match Analysis.qualified_at text cursor with
+    | Some q -> Some q
+    | None ->
+      (match Analysis.token_at text cursor with
+       | None -> None
+       | Some tok ->
+         let coff = tok.loc.offset in
+         List.fold (fn acc pair -> let (nm, (l : Token.loc)) = pair in
+           match acc with Some _ -> acc | None -> if l.offset = coff do Some nm else None)
+           None (Analysis.global_occurrences (workspace_ctx srv) text))
 
   -- --- Messages -----------------------------------------------------------
 
@@ -622,17 +687,24 @@ end"
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
-                -- a local binding → its scope-resolved occurrences (shadowing-
-                -- correct); a record field → the same-nominal-type accesses;
-                -- otherwise the syntactic by-name occurrences in the file
-                let locs = (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
-                  | Some ls -> ls
-                  | None ->
-                    (match Analysis.field_occurrences (project_ctx_for srv uri) text cursor with
-                     | Some ls -> ls
-                     | None -> Analysis.name_occurrences text name)) in
-                Json.JArray (List.map (fn (loc : Token.loc) ->
-                  Json.JObject (("range", name_range text loc (String.length name)) :: [])) locs)
+                (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
+                 | Some ls -> Json.JArray (List.map (fn (loc : Token.loc) ->
+                     Json.JObject (("range", name_range text loc (String.length name)) :: [])) ls)
+                 | None ->
+                   (match Analysis.field_occurrences (project_ctx_for srv uri) text cursor with
+                    | Some ls -> Json.JArray (List.map (fn (loc : Token.loc) ->
+                        Json.JObject (("range", name_range text loc (String.length name)) :: [])) ls)
+                    | None ->
+                      let occ = Analysis.global_occurrences (workspace_ctx srv) text in
+                      let c = (match Analysis.qualified_at text cursor with
+                        | Some q -> Some q
+                        | None -> List.fold (fn acc pr -> let (nm, (l : Token.loc)) = pr in
+                            match acc with Some _ -> acc | None -> if l.offset = tok.loc.offset do Some nm else None) None occ) in
+                      (match c with
+                       | Some cc -> Json.JArray (List.filter_map (fn pr -> let (nm, (loc : Token.loc)) = pr in
+                           if nm = cc do Some (Json.JObject (("range", global_ref_range text loc cc) :: [])) else None) occ)
+                       | None -> Json.JArray (List.map (fn (loc : Token.loc) ->
+                           Json.JObject (("range", name_range text loc (String.length name)) :: [])) (Analysis.name_occurrences text name)))))
               | None -> Json.JArray [])
            | None -> Json.JArray [])
         | None -> Json.JArray []) in
@@ -649,25 +721,34 @@ end"
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
+                let by_name () =
+                  let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
+                  Json.JArray (List.concat_map (fn pf ->
+                    let (path, src) = pf in
+                    let puri = uri_of_path path in
+                    List.map (fn (loc : Token.loc) ->
+                      Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length name)) :: []))
+                      (Analysis.name_occurrences src name)
+                  ) files) in
                 (match (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
                         | Some ls -> Some ls
                         | None -> Analysis.field_occurrences (project_ctx_for srv uri) text cursor) with
                  | Some locs ->
                    -- a local binding or a record field: occurrences in THIS file
-                   -- (cross-file field refs await the whole-program index)
+                   -- (cross-file field refs await type-directed whole-program work)
                    Json.JArray (List.map (fn (loc : Token.loc) ->
                      Json.JObject (("uri", Json.JString uri) :: ("range", name_range text loc (String.length name)) :: [])) locs)
                  | None ->
-                   -- a top-level / module name: workspace-wide by name (fall back
-                   -- to just the open doc when there is no root)
-                   let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
-                   Json.JArray (List.concat_map (fn pf ->
-                     let (path, src) = pf in
-                     let puri = uri_of_path path in
-                     List.map (fn (loc : Token.loc) ->
-                       Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length name)) :: []))
-                       (Analysis.name_occurrences src name)
-                   ) files))
+                   (match canonical_name_at srv text cursor with
+                    | None -> by_name ()
+                    | Some c ->
+                      (match List.filter (fn t -> let (nm, _, _) = t in nm = c) (workspace_occurrences srv) with
+                       | [] -> by_name ()
+                       | hits ->
+                         let wf = workspace_files srv in
+                         let src_of p = (match List.assoc_opt p wf with Some s -> s | None -> "") in
+                         Json.JArray (List.map (fn t -> let (_, path, (loc : Token.loc)) = t in
+                           Json.JObject (("uri", Json.JString (uri_of_path path)) :: ("range", global_ref_range (src_of path) loc c) :: [])) hits))))
               | None -> Json.JArray [])
            | None -> Json.JArray [])
         | None -> Json.JArray []) in
