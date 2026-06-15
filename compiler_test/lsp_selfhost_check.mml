@@ -72,7 +72,17 @@ let () =
   let fh = send "{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"textDocument/documentHighlight\",\"params\":{\"textDocument\":{\"uri\":\"file:///rec.mml\"},\"position\":{\"line\":2,\"character\":23}}}" in
   let franges = Json.as_list (Json.member "result" fh) in
   let f_line r = Json.as_int (Json.member "line" (Json.member "start" (Json.member "range" r))) in
+  -- CST-backed binders: a PARAMETER's declaration token is now part of its
+  -- occurrence set (the typed tree can't position params). `let twice x = x + x`:
+  -- highlighting a use of `x` returns the param declaration (char 10) + 2 uses.
+  let parsrc = "let twice x = x + x" in
+  let _ = send ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///par.mml\",\"text\":" ^ ((Json.to_string (Json.JString parsrc)) ^ "}}}")) in
+  let ph = send "{\"jsonrpc\":\"2.0\",\"id\":16,\"method\":\"textDocument/documentHighlight\",\"params\":{\"textDocument\":{\"uri\":\"file:///par.mml\"},\"position\":{\"line\":0,\"character\":14}}}" in
+  let pranges = Json.as_list (Json.member "result" ph) in
+  let p_char r = Json.as_int (Json.member "character" (Json.member "start" (Json.member "range" r))) in
   let checks = [
+    ("param-binder-count", List.length pranges = 3);
+    ("param-binder-includes-decl", List.exists (fn r -> (p_char r) = 10) pranges);
     ("field-scoped-count", List.length franges = 2);
     ("field-includes-other-point-use", List.exists (fn r -> (f_line r) = 4) franges);
     ("field-excludes-other-record", not (List.exists (fn r -> (f_line r) = 3) franges));
