@@ -99,11 +99,18 @@ let cst_marker p = p.cst_events
 
 let cst_complete p marker kind =
   if p.record_cst then begin
-    let rec splice lst =
-      if lst == marker then CstStart kind :: marker
-      else match lst with x :: xs -> x :: splice xs | [] -> CstStart kind :: []
+    (* Splice CstStart in by COUNT, not phys_equal: the event list only ever
+       grows by prepending, so [marker] is a tail and the events added since are
+       the leading (len now - len marker) cells. Physical identity of list cells
+       diverges across backends (the reference VM's [==] misses a shared list
+       tail that native finds), giving different CST tree shapes per backend; the
+       count is the real invariant and is backend-stable. *)
+    let added = List.length p.cst_events - List.length marker in
+    let rec splice k lst =
+      if k <= 0 then CstStart kind :: lst
+      else match lst with x :: xs -> x :: splice (k - 1) xs | [] -> CstStart kind :: []
     in
-    p.cst_events <- CstFinish :: splice p.cst_events
+    p.cst_events <- CstFinish :: splice added p.cst_events
   end
 
 let error p msg =
