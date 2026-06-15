@@ -17,6 +17,11 @@ let () =
   IO.write_file (dir ^ "/redef.mml") "type 'a option = None | Some of 'a\n";
   IO.write_file (dir ^ "/user.mml")
     "module User =\n  pub let f xs = match List.find (fn _ -> true) xs with Some v -> v | None -> 0\nend\n";
+  -- an UNRELATED module with a member ALSO spelled `mk` (+ a use of it). Precise
+  -- references for Foo.mk must EXCLUDE these (canonical name "Baz.mk" ≠ "Foo.mk");
+  -- a by-name search would wrongly count all 4 `mk` tokens.
+  IO.write_file (dir ^ "/baz.mml")
+    "module Baz =\n  pub let mk = 0\n  pub let use_mk = mk + 1\nend\n";
   let bar_uri = "file://" ^ dir ^ "/bar.mml" in
   let foo_path = dir ^ "/foo.mml" in
   let srv = Lsp.create () in
@@ -72,7 +77,9 @@ let () =
   let ws = nres (send "{\"jsonrpc\":\"2.0\",\"id\":20,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"mk\"}}") in
   -- documentHighlight on `Foo` in bar.mml (line 1 `pub let x = Foo.mk`, char 14) → Foo occurs 3× in bar
   let dh = nres (send ("{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"textDocument/documentHighlight\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":14}}}")) in
-  -- references of `mk` (cursor on Foo.mk, char 18) workspace-wide → foo.mml def + bar.mml use = 2
+  -- references of `mk` (cursor on Foo.mk, char 18): PRECISE by canonical name —
+  -- foo.mml def + bar.mml use = 2, EXCLUDING baz.mml's unrelated `mk` (def + use);
+  -- a by-name search would have returned 4.
   let rf = nres (send ("{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}")) in
   let checks = [
     ("workspace-symbol-finds", ws >= 1);
