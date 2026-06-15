@@ -78,15 +78,22 @@ module Parser =
 
   pub let cst_complete p marker kind =
     if p.record_cst do
-      let rec splice lst =
-        if phys_equal lst marker do
-          CstStart kind :: marker
+      -- Splice CstStart in by COUNT, not phys_equal: the event list only ever
+      -- grows by prepending, so `marker` is a tail and the events added since are
+      -- the leading (len now - len marker) cells. Physical identity of list cells
+      -- DIVERGES across backends (the reference VM's `==` misses a shared list
+      -- tail that native finds), which produced different CST tree shapes per
+      -- backend. The count is the real invariant and is backend-stable.
+      let added = (List.length p.cst_events) - (List.length marker) in
+      let rec splice k lst =
+        if k <= 0 do
+          CstStart kind :: lst
         else
           match lst with
-          | x :: xs -> x :: splice xs
+          | x :: xs -> x :: splice (k - 1) xs
           | [] -> CstStart kind :: []
        in
-      p.cst_events := CstFinish :: splice p.cst_events
+      p.cst_events := CstFinish :: splice added p.cst_events
     end
 
   pub let error p msg =

@@ -309,6 +309,85 @@ end"
     ) toks;
     Json.JArray (List.rev (Ref.get out))
 
+  -- Local value-binder declaration tokens recovered from the lossless CST, as
+  -- (name, precise name-token loc, scope-lo, scope-hi). The scope is the binder's
+  -- BODY region (so a non-rec `let x = E in B` does not put E in x's scope).
+  -- Covers fn/decl params, let-in names, and match-arm pattern vars — the local
+  -- binders the typed tree can't position — and feeds Analysis.resolved_occurrences
+  -- so parameters and pattern bindings get precise highlight/references. The CST
+  -- (cst.mml/cst_build.mml) is the lossless syntax tree: every leaf carries its
+  -- token's exact span and nodes are typed by kind (Param/Pattern/Decl/...).
+  let cst_binders (src : string) : (string * Token.loc * int * int) list =
+    let acc = Ref.create [] in
+    let add nm (loc : Token.loc) lo hi = Ref.set acc ((nm, loc, lo, hi) :: Ref.get acc) in
+    -- (min start-offset, max end-offset) over the leaves of a list of CST trees
+    let list_extent (ts : Cst.tree list) =
+      let lo = Ref.create (0 - 1) in
+      let hi = Ref.create 0 in
+      List.iter (fn t -> List.iter (fn (p : Cst.piece) ->
+        (if ((Ref.get lo) < 0) || (p.token.loc.offset < (Ref.get lo)) do Ref.set lo p.token.loc.offset end);
+        (if p.token.end_offset > (Ref.get hi) do Ref.set hi p.token.end_offset end)) (Cst.leaves t)) ts;
+      ((if (Ref.get lo) < 0 do 0 else Ref.get lo), Ref.get hi) in
+    -- pattern variable binders (lowercase IDENT leaves), skipping record-field labels
+    let rec pat_binders_of (t : Cst.tree) : (string * Token.loc) list =
+      match t with
+      | Cst.Leaf p -> (match p.token.kind with Token.IDENT nm -> (nm, p.token.loc) :: [] | _ -> [])
+      | Cst.Node (Cst.RecordField, cs) ->
+        (match cs with
+         | (Cst.Leaf lp) :: rest -> (match lp.token.kind with Token.IDENT _ -> List.concat_map pat_binders_of rest | _ -> List.concat_map pat_binders_of cs)
+         | _ -> List.concat_map pat_binders_of cs)
+      | Cst.Node (_, cs) -> List.concat_map pat_binders_of cs in
+    -- index of the first direct Leaf child with token kind `k`, else -1
+    let idx_of cs k =
+      let i = Ref.create (0 - 1) in
+      let j = Ref.create 0 in
+      List.iter (fn c -> (match c with Cst.Leaf p -> (if (p.token.kind = k) && ((Ref.get i) < 0) do Ref.set i (Ref.get j) end) | _ -> ()); Ref.set j ((Ref.get j) + 1)) cs;
+      Ref.get i in
+    let rec drop k xs = if k <= 0 do xs else (match xs with [] -> [] | _ :: t -> drop (k - 1) t) in
+    -- first direct Leaf IDENT (the binder name after let/rec/mut), as (name, loc)
+    let first_ident cs = List.fold (fn acc c -> match acc with Some _ -> acc | None ->
+      (match c with Cst.Leaf p -> (match p.token.kind with Token.IDENT nm -> Some (nm, p.token.loc) | _ -> None) | _ -> None)) None cs in
+    let params_of cs blo bhi =
+      List.iter (fn c -> match c with
+        | Cst.Node (Cst.Param, _) -> List.iter (fn nb -> let (nm, l) = nb in add nm l blo bhi) (pat_binders_of c)
+        | _ -> ()) cs in
+    let rec walk (t : Cst.tree) : unit =
+      (match t with
+       -- `let NAME params = body` (top-level decl): params scope over the body
+       | Cst.Node (Cst.Decl, cs) ->
+         let ei = idx_of cs Token.EQ in
+         (if ei >= 0 do let (blo, bhi) = list_extent (drop (ei + 1) cs) in params_of cs blo bhi end)
+       | Cst.Node (Cst.Expr, cs) ->
+         (match cs with
+          | (Cst.Leaf p) :: _ ->
+            -- `let NAME = value in body`: a nested Expr with IN inside; NAME scopes
+            -- over the body (after IN), NOT its own value
+            (if p.token.kind = Token.LET do
+               let ini = idx_of cs Token.IN in
+               (if ini >= 0 do
+                  (match first_ident cs with
+                   | Some (nm, l) -> let (blo, bhi) = list_extent (drop (ini + 1) cs) in add nm l blo bhi
+                   | None -> ())
+                end)
+             -- `fn params -> body`: params scope over the body (after ARROW)
+             else if p.token.kind = Token.FN do
+               let ai = idx_of cs Token.ARROW in
+               (if ai >= 0 do let (blo, bhi) = list_extent (drop (ai + 1) cs) in params_of cs blo bhi end)
+             end)
+          | _ -> ())
+       -- `pat -> body`: the arm pattern's vars scope over the guard + body
+       | Cst.Node (Cst.MatchArm, cs) ->
+         (match cs with
+          | (Cst.Node (Cst.Pattern, _) as pat) :: rest ->
+            let (_plo, phi) = list_extent (pat :: []) in
+            let (_rlo, rhi) = list_extent rest in
+            List.iter (fn nb -> let (nm, l) = nb in add nm l phi rhi) (pat_binders_of pat)
+          | _ -> ())
+       | _ -> ());
+      (match t with Cst.Node (_, cs) -> List.iter walk cs | Cst.Leaf _ -> ()) in
+    walk (Cst_build.cst_of_source src);
+    Ref.get acc
+
   -- --- Messages -----------------------------------------------------------
 
   let notification (m : string) (params : Json.json) : Json.json =
@@ -546,7 +625,7 @@ end"
                 -- a local binding → its scope-resolved occurrences (shadowing-
                 -- correct); a record field → the same-nominal-type accesses;
                 -- otherwise the syntactic by-name occurrences in the file
-                let locs = (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
+                let locs = (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
                   | Some ls -> ls
                   | None ->
                     (match Analysis.field_occurrences (project_ctx_for srv uri) text cursor with
@@ -570,7 +649,7 @@ end"
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
               | Some name ->
-                (match (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor with
+                (match (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
                         | Some ls -> Some ls
                         | None -> Analysis.field_occurrences (project_ctx_for srv uri) text cursor) with
                  | Some locs ->

@@ -1057,42 +1057,34 @@ module Analysis =
   -- --- Scope-resolved occurrences -----------------------------------------
 
   -- The scope-resolved occurrences of the LOCAL binding under the cursor: the use
-  -- sites that actually bind to it (shadowing-correct), plus the let-family
-  -- declaration token. Returns None when the cursor is NOT on a local binding (a
-  -- top-level / module / global name, or an unresolved position) — the caller
-  -- then falls back to the syntactic by-name search. Locals never cross files, so
-  -- the result lives entirely within `src`. The shared primitive behind precise
-  -- document-highlight and find-references (and, later, safe local rename).
+  -- sites that bind to it (shadowing-correct, from the typed tree) plus the
+  -- binder's own declaration token. Returns None when the cursor is NOT on a
+  -- local binding (a top-level / module / global name, or an unresolved
+  -- position) — the caller then falls back to the by-name search. Locals never
+  -- cross files, so the result lives within `src`. The shared primitive behind
+  -- precise document-highlight, find-references (and, later, local rename).
   --
-  -- Identity is a fresh integer id per binder (0 = global/unresolved); a use
-  -- resolves to the innermost in-scope binder of its name (so shadowing is
-  -- respected). Declaration tokens for let / letrec / letmut are recovered
-  -- syntactically (the first `name` token at or after the binding's `let`);
-  -- fn-params and match/handler binders contribute their uses only (their name
-  -- token carries no precise loc in the typed tree).
-  pub let resolved_occurrences (state : Typechecker.ctx) (src : string) (cursor : int) =
+  -- Scoping/identity come from the typed tree: a fresh int id per binder, each
+  -- use resolving to its innermost in-scope binder (0 = global). Binder
+  -- DECLARATION tokens carry no precise loc in the typed tree, so the caller
+  -- supplies `binders` = (name, precise-name-loc, scope-lo, scope-hi) recovered
+  -- from the lossless CST (cst_build); this primitive correlates them to the
+  -- typed binding by scope containment. A binder kind the CST table doesn't cover
+  -- simply yields uses-only (graceful degradation, never a wrong token).
+  pub let resolved_occurrences (state : Typechecker.ctx) (src : string) (cursor : int)
+      (binders : (string * Token.loc * int * int) list) =
     let (program, _d, _defs) = parse_recover src (tokenize_opt src) in
     let tdecls = typed_recover state program in
     let counter = Ref.create 0 in
     let fresh () = (Ref.set counter ((Ref.get counter) + 1); Ref.get counter) in
-    let uses = Ref.create [] in                       -- (Token.loc, id) for every TEVar
-    let decls = Ref.create [] in                      -- (intro-offset, name, id) for let-family
+    let uses = Ref.create [] in                       -- (Token.loc, id, name) for every TEVar
     let lookup scope n = (match List.assoc_opt n scope with Some i -> i | None -> 0) in
     let rec walk scope (te : Typechecker.texpr) : unit =
       match te.expr with
-      | Typechecker.TEVar n -> Ref.set uses ((te.loc, lookup scope n) :: Ref.get uses)
-      | Typechecker.TELet (n, _, v, body) ->
-        let id = fresh () in
-        Ref.set decls ((te.loc.offset, n, id) :: Ref.get decls);
-        walk scope v; walk ((n, id) :: scope) body
-      | Typechecker.TELetMut (n, v, body) ->
-        let id = fresh () in
-        Ref.set decls ((te.loc.offset, n, id) :: Ref.get decls);
-        walk scope v; walk ((n, id) :: scope) body
-      | Typechecker.TELetRec (n, _, v, body) ->
-        let id = fresh () in
-        Ref.set decls ((te.loc.offset, n, id) :: Ref.get decls);
-        let s2 = (n, id) :: scope in walk s2 v; walk s2 body
+      | Typechecker.TEVar n -> Ref.set uses ((te.loc, lookup scope n, n) :: Ref.get uses)
+      | Typechecker.TELet (n, _, v, body) -> let id = fresh () in walk scope v; walk ((n, id) :: scope) body
+      | Typechecker.TELetMut (n, v, body) -> let id = fresh () in walk scope v; walk ((n, id) :: scope) body
+      | Typechecker.TELetRec (n, _, v, body) -> let id = fresh () in let s2 = (n, id) :: scope in walk s2 v; walk s2 body
       | Typechecker.TELetRecAnd (binds, body) ->
         let s2 = List.concat (List.map (fn pair -> let (n, _) = pair in (n, fresh ())) binds) scope in
         List.iter (fn pair -> let (_, e) = pair in walk s2 e) binds; walk s2 body
@@ -1129,36 +1121,40 @@ module Analysis =
       | _ -> ()
     in
     List.iter walk_td tdecls;
-    -- recover let-family declaration name tokens: the first `name` token at/after
-    -- the binding's `let` keyword (intro offset)
-    let toks = tokenize_opt src in
-    let decl_loc_of intro name =
-      let found = Ref.create None in
-      List.iter (fn (t : Token.token) ->
-        (if ((Ref.get found) = None) && ((t.loc.offset >= intro)
-            && (match t.kind with Token.IDENT s -> s = name | Token.UIDENT s -> s = name | _ -> false)) do
-           Ref.set found (Some t.loc) end)) toks;
-      Ref.get found
-    in
-    let decl_locs = List.filter_map (fn d ->
-      let (intro, name, id) = d in
-      match decl_loc_of intro name with Some l -> Some (l, id) | None -> None) (Ref.get decls) in
-    -- resolve the binding id at the cursor (a use, else a let-family declaration)
-    let id_at pairs off =
-      let r = Ref.create 0 in
-      List.iter (fn p -> let ((l : Token.loc), id) = p in (if (l.offset = off) && ((Ref.get r) = 0) do Ref.set r id end)) pairs;
-      Ref.get r
-    in
+    let use_list = Ref.get uses in
+    let use_id_at off = List.fold (fn acc u -> let ((l : Token.loc), i, _n) = u in if (l.offset = off) && (acc = 0) do i else acc) 0 use_list in
+    let uses_of id = List.filter_map (fn u -> let (l, i, _n) = u in if i = id do Some l else None) use_list in
+    -- innermost CST binder named `nm` whose body scope brackets `off` (the binder
+    -- declaration token for a use of `nm` at `off`)
+    let binder_for nm off =
+      match List.filter (fn b -> let (bn, _, lo, hi) = b in (bn = nm) && ((lo <= off) && (off < hi))) binders with
+      | [] -> None
+      | first :: rest ->
+        let best = List.fold (fn acc b -> let (_, _, blo, bhi) = b in let (_, _, alo, ahi) = acc in
+          if (bhi - blo) < (ahi - alo) do b else acc) first rest in
+        let (_, (bl : Token.loc), _, _) = best in Some bl in
+    -- a CST binder whose declaration token sits exactly at `off`
+    let binder_at off = List.fold (fn acc b -> match acc with Some _ -> acc | None ->
+      let (_, (l : Token.loc), _, _) = b in if l.offset = off do Some b else None) None binders in
     match token_at src cursor with
     | None -> None
     | Some ctok ->
       let coff = ctok.loc.offset in
-      let id0 = id_at (Ref.get uses) coff in
-      let id = if id0 <> 0 do id0 else id_at decl_locs coff in
-      if id = 0 do None
+      let cname = (match ctok.kind with Token.IDENT n -> n | Token.UIDENT n -> n | _ -> "") in
+      let uid = use_id_at coff in
+      if uid <> 0 do
+        -- cursor on a local use → its uses + (if covered) the binder token
+        let bl = (match binder_for cname coff with Some l -> l :: [] | None -> []) in
+        Some (List.concat bl (uses_of uid))
       else do
-        let pick pairs = List.filter_map (fn p -> let (l, i) = p in if i = id do Some l else None) pairs in
-        Some (List.concat (pick decl_locs) (pick (Ref.get uses)))
+        -- cursor maybe on a binder declaration token
+        match binder_at coff with
+        | Some b ->
+          let (bn, (bloc : Token.loc), blo, bhi) = b in
+          let bid = List.fold (fn acc u -> let ((l : Token.loc), i, n) = u in
+            if (n = bn) && ((blo <= l.offset) && ((l.offset < bhi) && (acc = 0))) do i else acc) 0 use_list in
+          if bid <> 0 do Some (bloc :: (uses_of bid)) else Some (bloc :: [])
+        | None -> None
       end
 
   -- --- Type-directed record fields ----------------------------------------
