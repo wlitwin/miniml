@@ -969,7 +969,7 @@ let rec doc_decl (d : Ast.decl) : doc =
       text ("extern type " ^ td_name)
   | Ast.DType b -> text (type_kw b) ^^ doc_type_def_binding b
   | Ast.DFfiStruct (name, fields) ->
-      text (Printf.sprintf "extern struct %s { " name)
+      text (Printf.sprintf "extern type %s { " name)
       ^^ text
            (String.concat "; "
               (List.map (fun (n, c) -> Printf.sprintf "%s: %s" n (cty_str c)) fields))
