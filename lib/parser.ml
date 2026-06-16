@@ -38,6 +38,9 @@ type t = {
      the self-hosted compiler pay only a per-advance boolean test. *)
   mutable record_cst : bool;
   mutable cst_events : cst_event list;
+  (* declared C structs ([extern struct]): name -> ordered fields, so a later FFI
+     signature mentioning the struct name expands to its cty layout *)
+  struct_defs : (string, (string * Ast.cty) list) Hashtbl.t;
 }
 
 let create tokens =
@@ -47,6 +50,7 @@ let create tokens =
     suppress_do = false;
     record_cst = false;
     cst_events = [];
+    struct_defs = Hashtbl.create 8;
   }
 
 let peek p = p.tokens.(p.pos)
@@ -2741,9 +2745,12 @@ let parse_effect_decl p =
    referring to a declared opaque foreign type ([extern type Window]). *)
 let parse_cty p : Ast.cty =
   match peek_kind p with
-  | Token.UIDENT name ->
+  | Token.UIDENT name -> (
       ignore (advance p);
-      Ast.CNamed name
+      (* a declared struct expands to its cty layout; else an opaque foreign type *)
+      match Hashtbl.find_opt p.struct_defs name with
+      | Some fields -> Ast.CStruct (name, fields)
+      | None -> Ast.CNamed name)
   | _ -> (
       match expect_ident p with
       | "i8" -> Ast.CI8 | "i16" -> Ast.CI16 | "i32" -> Ast.CI32 | "i64" -> Ast.CI64
@@ -2757,6 +2764,20 @@ let parse_cty p : Ast.cty =
                 i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit, or a declared `extern \
                 type`)"
                nm))
+
+(* C struct fields: [{ name: cty; name: cty; … }] (trailing [;] allowed). *)
+let parse_struct_fields p : (string * Ast.cty) list =
+  expect p Token.LBRACE;
+  let acc = ref [] in
+  while peek_kind p <> Token.RBRACE do
+    let fname = expect_ident p in
+    expect p Token.COLON;
+    let fty = parse_cty p in
+    acc := (fname, fty) :: !acc;
+    if peek_kind p = Token.SEMICOLON then ignore (advance p)
+  done;
+  expect p Token.RBRACE;
+  List.rev !acc
 
 (* An FFI signature [cty -> cty -> … -> cty]: all but the last are parameters. *)
 let parse_cty_sig p : Ast.cty list * Ast.cty =
@@ -2798,10 +2819,25 @@ let parse_extern_decl p =
     | _ -> None
   in
   expect p Token.EXTERN;
+  (* [extern struct FRect { x: f32; … }] — declare a C struct: register its fields
+     so later signatures can reference it, and emit a DFfiStruct. *)
+  if c_sym_opt = None && (match peek_kind p with Token.IDENT "struct" -> true | _ -> false)
+  then (
+    ignore (advance p);
+    let sname =
+      match peek_kind p with
+      | Token.UIDENT n ->
+          ignore (advance p);
+          n
+      | _ -> error p "expected a struct name (e.g. `extern struct FRect { … }`)"
+    in
+    let fields = parse_struct_fields p in
+    Hashtbl.replace p.struct_defs sname fields;
+    Ast.DFfiStruct (sname, fields))
   (* [extern type Window] — declare an opaque foreign type, represented as an empty
      (constructor-less) nominal variant so it is distinct from int / other handles.
      Reuses the ordinary type-declaration machinery. *)
-  if c_sym_opt = None && peek_kind p = Token.TYPE then (
+  else if c_sym_opt = None && peek_kind p = Token.TYPE then (
     ignore (advance p);
     let tname =
       match peek_kind p with

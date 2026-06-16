@@ -14,6 +14,10 @@ type cty =
   (* A declared opaque foreign type ([extern type Window]): a distinct nominal type
      carrying a raw C pointer, marshalled exactly like CPtr. *)
   | CNamed of string
+  (* A declared C struct ([extern struct FRect { x: f32; … }]): the ordered fields
+     are carried inline so the backend can lay out and marshal it by-pointer. The
+     MiniML surface value is a record with the same fields. *)
+  | CStruct of string * (string * cty) list
 
 type ty_annot =
   | TyName of string
@@ -228,6 +232,10 @@ type decl =
      backend marshals MiniML values <-> the C ABI. (mml_name, c_symbol, c_params,
      c_return). Produced from [@symbol("name") extern Mod.f : <ctys>]. *)
   | DFfi of string * string * cty list * cty
+  (* A C struct declaration ([extern struct FRect { x: f32; … }]): (name, ordered
+     fields). Registers a MiniML record type with the same fields; the C layout
+     rides on the cty so the backend can marshal it. *)
+  | DFfiStruct of string * (string * cty) list
   | DModule of string * module_decl list
   | DOpen of string * string list option
 (* module_name, None = open all, Some = selective *)
