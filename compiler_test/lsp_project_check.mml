@@ -100,7 +100,38 @@ let () =
   let bar2 = "module Bar =\n  pub let x = Foo.mk\n  pub let y = Foo.B 3\n  pub let z = Foo.label\n  pub let w = Foo.mk\nend\n" in
   let _ = send ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"contentChanges\":[{\"text\":" ^ (Json.to_string (Json.JString bar2)) ^ "}]}}") in
   let rf2 = nres (send ("{\"jsonrpc\":\"2.0\",\"id\":25,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}")) in
+  -- CROSS-FILE DIAGNOSTIC PROPAGATION: editing a file's declaration surface
+  -- re-publishes its open DEPENDENTS, but a body-only edit does not. Fresh server.
+  let pdir = "/tmp/mml_lsppropagate" in
+  let _ = if Fs.is_directory pdir do () else Fs.make_dir pdir in
+  IO.write_file (pdir ^ "/pfoo.mml") "module Pfoo =\n  pub let mk = 0\nend\n";
+  IO.write_file (pdir ^ "/pbar.mml") "module Pbar =\n  pub let x = Pfoo.mk\nend\n";
+  let pbar_uri = "file://" ^ pdir ^ "/pbar.mml" in
+  let pfoo_uri = "file://" ^ pdir ^ "/pfoo.mml" in
+  let srv3 = Lsp.create () in
+  let all3 s = Lsp.handle_message srv3 (Json.parse s) in
+  let _ = all3 ("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file://" ^ pdir ^ "\"}}") in
+  let opn u t = all3 ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" ^ u ^ "\",\"text\":" ^ (Json.to_string (Json.JString t)) ^ "}}}") in
+  let _ = opn pfoo_uri "module Pfoo =\n  pub let mk = 0\nend\n" in
+  let _ = opn pbar_uri "module Pbar =\n  pub let x = Pfoo.mk\nend\n" in
+  let chg u t = all3 ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" ^ u ^ "\"},\"contentChanges\":[{\"text\":" ^ (Json.to_string (Json.JString t)) ^ "}]}}") in
+  -- find pbar's published diagnostic count in a returned message list (-1 = absent)
+  let bar_diags msgs = List.fold (fn acc m ->
+    if (Json.to_str (Json.member "uri" (Json.member "params" m))) = pbar_uri
+    do List.length (Json.as_list (Json.member "diagnostics" (Json.member "params" m))) else acc) (0 - 1) msgs in
+  -- surface change: remove mk → pbar must be re-published WITH an unbound diag
+  let break_msgs = chg pfoo_uri "module Pfoo =\n  pub let other = 0\nend\n" in
+  let propagated = bar_diags break_msgs in
+  -- body-only edit: pbar must NOT be re-published (stays absent from the list)
+  let body_msgs = chg pfoo_uri "module Pfoo =\n  pub let other = 9\nend\n" in
+  let body_touched_bar = bar_diags body_msgs <> (0 - 1) in
+  -- restore mk → pbar re-published CLEAN (error clears)
+  let fix_msgs = chg pfoo_uri "module Pfoo =\n  pub let mk = 7\nend\n" in
+  let cleared = bar_diags fix_msgs in
   let checks = [
+    ("xfile-propagate-error", propagated = 1);
+    ("xfile-body-edit-skips-dependents", not body_touched_bar);
+    ("xfile-propagate-clear", cleared = 0);
     ("references-fresh-after-edit", rf2 = 3);
     ("rename-foo-mk-def", edits_in foo_uri = 1);
     ("rename-foo-mk-use", edits_in bar_uri = 1);

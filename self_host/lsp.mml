@@ -260,6 +260,16 @@ end"
     srv.wfiles := None;
     Hashtbl.clear srv.occ_files
 
+  -- Drop the single-slot per-file sibling ctx (proj_ctx) so the next diagnostics /
+  -- hover for ANY file rebuilds its sibling set from current buffers. Needed when a
+  -- file's EXPORTS change: every dependent's cached sibling ctx embeds this file's
+  -- OLD text, so re-publishing them would re-use stale siblings. Called ONLY on the
+  -- rare surface-change path — NOT per keystroke (a body edit doesn't change what
+  -- siblings see, so the cache stays valid and typing stays fast).
+  let invalidate_proj_ctx (srv : t) : unit =
+    srv.proj_path := None;
+    srv.proj_ctx := None
+
   -- --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ----------------
 
   -- LSP positions are 0-based (line, character), `character` counting UTF-16 CODE
@@ -545,6 +555,29 @@ end"
         ("uri", Json.JString uri) ::
         ("diagnostics", Json.JArray (List.map (fn d -> lsp_diagnostic text d) diags)) :: []))
 
+  -- A file's DECLARATION SURFACE: the names + kinds of its top-level / module-member
+  -- declarations, in document order, WITHOUT source locations. Body edits and line
+  -- shifts leave it unchanged; adding, removing, renaming or reordering a decl
+  -- changes it. Cheap — purely syntactic, no typecheck. Used to gate cross-file
+  -- diagnostic refresh: only a surface change can make a DEPENDENT file's analysis
+  -- differ, so a plain body edit skips the (expensive) re-analysis of other files.
+  -- Limitation: a TYPE-only change to an existing export (`let x = 0` -> `"s"`)
+  -- keeps the same surface, so dependents are not auto-refreshed until touched —
+  -- detecting that would need exported-signature typechecking + caching.
+  let decl_surface (src : string) : string =
+    String.concat ";" (List.map (fn t -> let (q, k, _l) = t in q ^ (":" ^ (string_of_int k)))
+      (Analysis.document_symbols src))
+
+  -- Re-publish diagnostics for every OPEN doc other than `changed`, so a file that
+  -- depends on `changed` (e.g. uses one of its exports) updates its errors without
+  -- the user having to touch it. `changed` is published LAST so the per-file ctx
+  -- cache (proj_ctx) ends keyed to the file being edited — keeping the next
+  -- keystroke on it a cache hit. Only call when `changed`'s decl surface shifted.
+  let republish_all (srv : t) (changed : string) : Json.json list =
+    let others = List.filter_map (fn u -> if u = changed do None else Some (publish srv u))
+      (Hashtbl.keys srv.docs) in
+    List.concat others ((publish srv changed) :: [])
+
   let capabilities () : Json.json =
     Json.JObject (
       ("capabilities", Json.JObject (
@@ -604,7 +637,13 @@ end"
       -- the edit may change this file's exported surface, so other files' canonical
       -- resolution can shift — drop the whole-program index (rebuilt on next query)
       invalidate_workspace_index srv;
-      (publish srv uri) :: []
+      -- if the edit changed THIS file's declaration surface, a dependent open file's
+      -- analysis may now differ — drop the stale sibling ctxs and re-publish all open
+      -- docs so their errors stay live; otherwise (a body-only edit) just re-publish
+      -- this one against its still-valid cached siblings (the common, cheap path).
+      if (decl_surface cur) <> (decl_surface text) do
+        (invalidate_proj_ctx srv; republish_all srv uri)
+      else (publish srv uri) :: []
     | "textDocument/didClose" ->
       let uri = doc_uri () in
       Hashtbl.remove srv.docs uri;
