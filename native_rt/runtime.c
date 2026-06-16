@@ -1819,6 +1819,21 @@ void *mml_ffi_array_to_c(mml_value arr, int64_t elem_kind) {
     return buf;
 }
 
+/* FFI: marshal a nullable pointer (`nullable ptr` / `nullable Window`). The MiniML
+ * value is an `option`: `None` is a tagged immediate -> NULL; `Some x` is a heap cell
+ * { tag@0, payload@1 } whose payload is the raw C pointer carried as i64. */
+void *mml_ffi_opt_ptr(mml_value v) {
+    if (MML_IS_INT(v)) return NULL;                       /* None */
+    return (void *)(intptr_t)((int64_t *)(intptr_t)v)[1];  /* Some payload */
+}
+
+/* FFI: marshal a nullable string (`nullable cstr`). `None` -> NULL; `Some s` -> the
+ * char data of the boxed string payload (its value points at the length header). */
+const char *mml_ffi_opt_cstr(mml_value v) {
+    if (MML_IS_INT(v)) return NULL;                       /* None */
+    return MML_STR_DATA(((int64_t *)(intptr_t)v)[1]);      /* Some payload */
+}
+
 /* FFI: marshal a MiniML array of RECORDS into a C array of structs (scratch arena;
  * caller restores). `desc` is a compile-time layout: [n_leaves, struct_size] then,
  * per leaf scalar, [path_len, slot_0 … slot_{path_len-1}, c_offset, elem_kind]. The

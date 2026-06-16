@@ -2292,6 +2292,7 @@ module Codegen =
     | Ast.CStruct _ -> "ptr"   -- a C struct is passed by pointer
     | Ast.COut _ -> "ptr"      -- an OUT param is a pointer to a C scalar
     | Ast.CArray _ -> "ptr"    -- an array is passed as a pointer to its buffer
+    | Ast.CNullable _ -> "ptr" -- a nullable pointer (None = NULL, Some x = &x)
   -- elem_kind for mml_ffi_array_to_c: 0=i8 1=i16 2=i32 3=i64 4=f32 5=f64 6=ptr 7=cstr
   and cty_kind (c : Ast.cty) : int =
     match c with
@@ -2385,6 +2386,18 @@ module Codegen =
         let buf = Ir_emit.emit_alloca_array ctx.ir "i8" total in
         emit_struct_into ctx v buf 0 fields;
         Some ("ptr", buf)
+      -- A nullable pointer: the MiniML value is an `option`. A runtime helper does
+      -- the None/Some dispatch (None = tagged immediate -> NULL; Some = heap cell,
+      -- payload at slot 1 -> the marshalled inner pointer) and returns the C pointer.
+      | Ast.CNullable inner ->
+        let helper =
+          match inner with
+          | Ast.CStr -> "mml_ffi_opt_cstr"
+          | Ast.CPtr -> "mml_ffi_opt_ptr"
+          | Ast.CNamed _ -> "mml_ffi_opt_ptr"
+          | _ -> failwith "`nullable` applies only to a pointer-like C type (cstr / ptr / a declared `extern type` handle)" in
+        add_extern ctx helper "ptr" ("i64" :: []);
+        Some ("ptr", Ir_emit.emit_call ctx.ir "ptr" helper (("i64", v) :: []))
       | _ -> None
     end
   -- Marshal a MiniML record value into a C struct laid out in `buf` at byte
@@ -2424,6 +2437,7 @@ module Codegen =
       | Ast.CPtr -> Ir_emit.emit_ptrtoint ctx.ir raw
       | Ast.CNamed _ -> Ir_emit.emit_ptrtoint ctx.ir raw
       | Ast.CStruct _ -> failwith "returning a C struct by value is not supported"
+      | Ast.CNullable _ -> failwith "`nullable` is only supported in parameter position (a nullable RETURN is not yet supported — use a plain `ptr` and test it against 0)"
       | _ -> "1"
     end
   -- Read a C struct the callee filled (in `buf` at byte `base`) into a fresh MiniML

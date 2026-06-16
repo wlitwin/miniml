@@ -2580,7 +2580,8 @@ module Parser =
       | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
       | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
       | "out" -> Ast.COut (parse_cty p)
-      | _ -> error p ($"unknown FFI C type '{nm}' (expected i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit/out, or a declared `extern type`)")
+      | "nullable" -> Ast.CNullable (parse_cty p)
+      | _ -> error p ($"unknown FFI C type '{nm}' (expected i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit/out/nullable, or a declared `extern type`)")
 
   -- C struct fields: `{ name: cty; name: cty; … }` (trailing `;` allowed).
   let parse_struct_fields p : (string * Ast.cty) list =

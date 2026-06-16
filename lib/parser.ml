@@ -2763,6 +2763,7 @@ let rec parse_cty p : Ast.cty =
       | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
       | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
       | "out" -> Ast.COut (parse_cty p)
+      | "nullable" -> Ast.CNullable (parse_cty p)
       | nm ->
           error p
             (Printf.sprintf
