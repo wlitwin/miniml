@@ -1819,25 +1819,35 @@ void *mml_ffi_array_to_c(mml_value arr, int64_t elem_kind) {
     return buf;
 }
 
-/* FFI: marshal a MiniML array of RECORDS into a malloc'd C array of structs.
- * `desc` is a compile-time layout: [nfields, struct_size, (record_slot, c_offset,
- * elem_kind) * nfields]. record_slot is the field's index in the record's
- * sorted-by-name layout; c_offset/elem_kind place it in the C struct. Caller frees
- * the buffer after the call. Returns NULL for an empty array. */
+/* FFI: marshal a MiniML array of RECORDS into a C array of structs (scratch arena;
+ * caller restores). `desc` is a compile-time layout: [n_leaves, struct_size] then,
+ * per leaf scalar, [path_len, slot_0 … slot_{path_len-1}, c_offset, elem_kind]. The
+ * slot path walks the record's sorted-by-name slots — one slot per nesting level —
+ * descending through nested-struct fields to the leaf scalar. Returns NULL for an
+ * empty array. */
 void *mml_ffi_struct_array_to_c(mml_value arr, const int64_t *desc) {
-    int64_t nf = desc[0];
+    int64_t nleaves = desc[0];
     int64_t tsize = desc[1];
     int64_t n = MML_IS_INT(arr) ? 0 : MML_ARR_LEN(arr);
     if (n <= 0) return NULL;
     mml_value *data = MML_ARR_DATA(arr);
     char *buf = mml_ffi_scratch((size_t)n * (size_t)tsize);
     for (int64_t i = 0; i < n; i++) {
-        int64_t *rec = (int64_t *)(intptr_t)data[i]; /* record fields */
-        for (int64_t f = 0; f < nf; f++) {
-            int64_t slot = desc[2 + f * 3];
-            int64_t off = desc[3 + f * 3];
-            int64_t kind = desc[4 + f * 3];
-            mml_value fv = (mml_value)rec[slot];
+        int64_t *elem = (int64_t *)(intptr_t)data[i]; /* element record */
+        const int64_t *p = desc + 2;                  /* walk leaf entries */
+        for (int64_t leaf = 0; leaf < nleaves; leaf++) {
+            int64_t plen = *p++;
+            int64_t *rec = elem;
+            mml_value fv = 0;
+            for (int64_t d = 0; d < plen; d++) {
+                int64_t slot = *p++;
+                if (d + 1 < plen)
+                    rec = (int64_t *)(intptr_t)rec[slot]; /* descend nested record */
+                else
+                    fv = (mml_value)rec[slot]; /* leaf scalar */
+            }
+            int64_t off = *p++;
+            int64_t kind = *p++;
             char *slotp = buf + i * tsize + off;
             switch (kind) {
             case 0: *(int8_t *)slotp = (int8_t)MML_INT_VAL(fv); break;
