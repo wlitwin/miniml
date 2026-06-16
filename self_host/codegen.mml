@@ -2397,6 +2397,22 @@ module Codegen =
       | Ast.CStruct _ -> failwith "returning a C struct by value is not supported"
       | _ -> "1"
     end
+  -- Read a C struct the callee filled (in `buf`) back into a fresh MiniML record:
+  -- load each field at its C offset, marshal it to a MiniML value, and store it at
+  -- the field's sorted record slot. Returns the record value (an i64).
+  and emit_struct_readback ctx buf fields =
+    let (placed, _total) = struct_layout fields in
+    let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
+    let n = List.length fields in
+    let rec_ptr = emit_alloc ctx (n * 8) (make_header n mml_hdr_record) in
+    List.iter (fn t ->
+      let (fname, fcty, o) = t in
+      (match fcty with Ast.CStruct _ -> failwith "nested struct fields are not supported" | _ -> ());
+      let cv = Ir_emit.emit_load ctx.ir (cty_llvm fcty) (Ir_emit.emit_gep ctx.ir "i8" buf o) in
+      let mml = marshal_ffi_ret ctx fcty cv in
+      Ir_emit.emit_store ctx.ir "i64" mml (Ir_emit.emit_gep ctx.ir "i64" rec_ptr (field_pos sorted_names fname))
+    ) placed;
+    Ir_emit.emit_ptrtoint ctx.ir rec_ptr
   -- A saturated typed-FFI call: marshal each MiniML arg to its C type, declare the
   -- C symbol with the marshalled signature, call it, and marshal the result back.
   and emit_ffi_call ctx c_symbol c_params c_ret arg_vals =
@@ -2411,7 +2427,10 @@ module Codegen =
       let (c, v) = pair in
       match c with
       | Ast.COut inner ->
-        let cell = Ir_emit.emit_alloca ctx.ir (cty_llvm inner) in
+        -- a scalar OUT cell, or (for `out <struct>`) a struct buffer the callee fills
+        let cell = (match inner with
+          | Ast.CStruct ((_, fields)) -> let (_, total) = struct_layout fields in Ir_emit.emit_alloca_array ctx.ir "i8" total
+          | _ -> Ir_emit.emit_alloca ctx.ir (cty_llvm inner)) in
         Ref.set writebacks ((v, cell, inner) :: Ref.get writebacks);
         Some ("ptr", cell)
       | Ast.CArray elem ->
@@ -2451,8 +2470,9 @@ module Codegen =
       | _ -> marshal_ffi_ret ctx c_ret (Ir_emit.emit_call ctx.ir (cty_llvm c_ret) c_symbol cargs)) in
     List.iter (fn wb ->
       let (refv, cell, ic) = wb in
-      let cv = Ir_emit.emit_load ctx.ir (cty_llvm ic) cell in
-      let mml = marshal_ffi_ret ctx ic cv in
+      let mml = (match ic with
+        | Ast.CStruct ((_, fields)) -> emit_struct_readback ctx cell fields
+        | _ -> marshal_ffi_ret ctx ic (Ir_emit.emit_load ctx.ir (cty_llvm ic) cell)) in
       Ir_emit.emit_store ctx.ir "i64" mml (Ir_emit.emit_inttoptr ctx.ir refv)
     ) (List.rev (Ref.get writebacks));
     (match Ref.get frees with
