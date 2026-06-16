@@ -824,7 +824,7 @@ module Formatter =
       __op_5e5e (text ($"@symbol(\"{c_symbol}\") extern ")) (__op_5e5e (doc_var name) (text (" : " ^ sig_str)))
     | Ast.DFfiStruct ((name, fields)) ->
       let fstr = String.concat "; " (List.map (fn pair -> let (n, c) = pair in ($"{n}: {cty_str c}")) fields) in
-      text ($"extern struct {name} \{ {fstr} \}")
+      text ($"extern type {name} \{ {fstr} \}")
     | Ast.DOpen ((m, None)) -> text ("open " ^ m)
     | Ast.DOpen ((m, Some names)) -> text ($"open {m} ({String.concat ", " names})")
     | Ast.DClass {class_name; tyvars; fundeps; methods} -> 

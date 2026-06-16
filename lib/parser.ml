@@ -2819,25 +2819,11 @@ let parse_extern_decl p =
     | _ -> None
   in
   expect p Token.EXTERN;
-  (* [extern struct FRect { x: f32; … }] — declare a C struct: register its fields
-     so later signatures can reference it, and emit a DFfiStruct. *)
-  if c_sym_opt = None && (match peek_kind p with Token.IDENT "struct" -> true | _ -> false)
-  then (
-    ignore (advance p);
-    let sname =
-      match peek_kind p with
-      | Token.UIDENT n ->
-          ignore (advance p);
-          n
-      | _ -> error p "expected a struct name (e.g. `extern struct FRect { … }`)"
-    in
-    let fields = parse_struct_fields p in
-    Hashtbl.replace p.struct_defs sname fields;
-    Ast.DFfiStruct (sname, fields))
-  (* [extern type Window] — declare an opaque foreign type, represented as an empty
-     (constructor-less) nominal variant so it is distinct from int / other handles.
-     Reuses the ordinary type-declaration machinery. *)
-  else if c_sym_opt = None && peek_kind p = Token.TYPE then (
+  (* [extern type Name] declares a foreign type. With NO body it is an OPAQUE handle
+     — an empty (constructor-less) nominal variant, distinct from int and from other
+     handles. With a [{ field: cty; … }] body it is a C STRUCT — the fields are
+     registered so later signatures expand the name to its cty layout. *)
+  if c_sym_opt = None && peek_kind p = Token.TYPE then (
     ignore (advance p);
     let tname =
       match peek_kind p with
@@ -2846,8 +2832,13 @@ let parse_extern_decl p =
           n
       | _ -> error p "expected a type name (e.g. `extern type Window`)"
     in
-    Ast.DType
-      { td_params = []; td_name = tname; td_def = Ast.TDVariant []; td_deriving = [] })
+    if peek_kind p = Token.LBRACE then (
+      let fields = parse_struct_fields p in
+      Hashtbl.replace p.struct_defs tname fields;
+      Ast.DFfiStruct (tname, fields))
+    else
+      Ast.DType
+        { td_params = []; td_name = tname; td_def = Ast.TDVariant []; td_deriving = [] })
   else
     let name = parse_extern_name p in
     expect p Token.COLON;
