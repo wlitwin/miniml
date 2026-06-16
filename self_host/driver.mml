@@ -693,6 +693,17 @@ module Driver =
     | unify_error msg _k -> failwith msg
     | codegen_error msg _k -> failwith ("native codegen error: " ^ msg)
 
+  -- Extra clang/linker arguments from the MML_LDFLAGS env var (space-separated),
+  -- appended to the native link command. This is the FFI escape hatch: a program
+  -- that uses `extern` to call a C library (e.g. SDL3) sets MML_LDFLAGS to its C
+  -- shim source/object plus the usual `-I… -L… -lFoo`, so `mml build`/`run` link
+  -- against it. Unset/empty → no extra args, so ordinary builds and the gate are
+  -- unaffected. (Whitespace-separated, so paths containing spaces are unsupported.)
+  let extra_link_args () =
+    match Sys.getenv "MML_LDFLAGS" with
+    | Some s -> List.filter (fn a -> a <> "") (String.split " " s)
+    | None -> []
+
   -- Compile a source file to a native executable: build the .ll, then drive clang
   -- with the C runtime, the arch context-switch asm, and the MPS garbage collector
   -- (mml_gc.c + the mps.c amalgamation). This is the hand-written native driver
@@ -711,7 +722,7 @@ module Driver =
       let clang_args =
         List.concat ["-O2"; "-I" ^ mps_dir]
           (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
-            ["-o"; out_path]) in
+            (List.concat ["-o"; out_path] (extra_link_args ()))) in
       let (code, _out, cerr) = Process.run "clang" clang_args in
       if code <> 0 do
         failwith ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr)
@@ -742,7 +753,7 @@ module Driver =
       let clang_args =
         List.concat ["-O2"; "-I" ^ mps_dir]
           (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
-            ["-o"; out_path]) in
+            (List.concat ["-o"; out_path] (extra_link_args ()))) in
       let (code, _out, cerr) = Process.run "clang" clang_args in
       if code <> 0 do
         IO.write_err ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr ^ "\n"); false
