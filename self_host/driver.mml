@@ -187,6 +187,36 @@ module Driver =
   let arr_io a b = TArrow (a, io_eff, b)
   let arr2_io a b c = arr a (arr_io b c)
 
+  -- ---- Installation-root discovery (GOROOT-style) ----
+  -- The directory that holds stdlib/, native_rt/ and third_party/mps/. Lets `mml`
+  -- be run from ANY directory (e.g. an external project that calls a C library via
+  -- `extern`) and still find its own standard library and native runtime. Resolved
+  -- in order:
+  --   1. $MML_ROOT                  — explicit override (like GOROOT)
+  --   2. relative to the `mml` binary (argv[0]) — checks <exedir>, <exedir>/..,
+  --      and the conventional <exedir>/../{share,lib}/mml install layouts, so an
+  --      installed or relocated compiler finds its own files with no configuration
+  --   3. the current directory       — repo-dev / `make check` default
+  -- Returns a prefix to prepend to "stdlib/…" etc.; "" means the current directory
+  -- (so when CWD already has stdlib/, behaviour is byte-identical to before).
+  -- Package DEPENDENCIES are separate — they live in the cache (see fetch.mml).
+  let mml_root () : string =
+    let has dir = IO.file_exists (Path.join dir "stdlib/builtins.mml") in
+    match Sys.getenv "MML_ROOT" with
+    | Some r -> r
+    | None ->
+      if has "" do "" else do
+        let exe = match Sys.args () with a :: _ -> a | [] -> "" in
+        if String.contains "/" exe do
+          let d = Path.dirname exe in
+          let candidates = d :: ((Path.join d "..") :: ((Path.join d "../share/mml") :: ((Path.join d "../lib/mml") :: []))) in
+          (match List.find (fn c -> has c) candidates with Some c -> c | None -> "")
+        else ""
+      end
+
+  -- Path to a stdlib source file, honouring the install root.
+  let stdlib_file name = Path.join (mml_root ()) ("stdlib/" ^ (name ^ ".mml"))
+
   -- ---- Setup builtins ----
   -- Core builtin signatures live in stdlib/builtins.mml — the single source of
   -- truth shared with the OCaml reference compiler (lib/interp.ml). They are
@@ -207,7 +237,7 @@ module Driver =
 
     let load name =
       let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals
-        (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
+        (IO.read_file (stdlib_file name)) in
       ctx := ctx2; setup_protos := proto :: setup_protos
     in
 
@@ -216,7 +246,7 @@ module Driver =
     -- native ext for each extern by name; here we collect the schemes for the
     -- Stdlib module and bind Stdlib.-qualified aliases.
     let (ctx2, builtins_proto, builtins_program) = compile_setup ctx global_names mutable_globals
-      (IO.read_file "stdlib/builtins.mml") in
+      (IO.read_file (stdlib_file "builtins")) in
     ctx := ctx2; setup_protos := builtins_proto :: setup_protos;
     let stdlib_pub_vars = List.filter_map (fn decl ->
       match decl with
@@ -272,7 +302,7 @@ module Driver =
 
     let load name =
       let (ctx2, proto, _) = compile_setup ctx global_names mutable_globals
-        (IO.read_file ("stdlib/" ^ name ^ ".mml")) in
+        (IO.read_file (stdlib_file name)) in
       ctx := ctx2; setup_protos := proto :: setup_protos
     in
 
@@ -661,9 +691,9 @@ module Driver =
   -- ---- Native runtime / toolchain discovery (host glue) ----
 
   let find_runtime_file name =
-    let p = "native_rt/" ^ name in
+    let p = Path.join (mml_root ()) ("native_rt/" ^ name) in
     if IO.file_exists p do p
-    else failwith ("cannot find " ^ p ^ " (run --emit-native from the project root)")
+    else failwith ("cannot find " ^ p ^ " (set MML_ROOT or run from the project root)")
 
   let detect_context_asm () =
     let (_, arch_raw, _) = Process.run "uname" ["-m"] in
@@ -673,8 +703,9 @@ module Driver =
 
   -- Locate the vendored MPS source (the sole garbage collector). Boehm is gone.
   let find_mps_dir () =
-    if IO.file_exists "third_party/mps/code/mps.c" do "third_party/mps/code"
-    else failwith "cannot find third_party/mps/code (native GC needs the project root)"
+    let d = Path.join (mml_root ()) "third_party/mps/code" in
+    if IO.file_exists (Path.join d "mps.c") do d
+    else failwith "cannot find third_party/mps/code (set MML_ROOT or run from the project root)"
 
   -- Print the combined LLVM IR for a source file (mirrors `make emit-ir`).
   let run_emit_llvm args =
