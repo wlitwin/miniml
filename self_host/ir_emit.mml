@@ -133,6 +133,31 @@ module Ir_emit =
 ";
     reg
 
+  -- Integer narrowing/extension and float width conversions, for FFI marshalling.
+  pub let emit_trunc t src_ty value dst_ty =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = trunc {src_ty} {value} to {dst_ty}
+";
+    reg
+
+  pub let emit_sext t src_ty value dst_ty =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = sext {src_ty} {value} to {dst_ty}
+";
+    reg
+
+  pub let emit_fptrunc t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = fptrunc double {value} to float
+";
+    reg
+
+  pub let emit_fpext t value =
+    let reg = fresh_reg t in
+    Buffer.add_string (t.buf) $"  {reg} = fpext float {value} to double
+";
+    reg
+
   pub let emit_unreachable t = Buffer.add_string t.buf "  unreachable\n"
 
   pub let emit_fcmp t cmp lhs rhs =

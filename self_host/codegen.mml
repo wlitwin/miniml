@@ -27,6 +27,9 @@ module Codegen =
     mut label_counter: int;
     mut fn_counter: int;
     mut module_externs: (string, int) Hashtbl.t;
+    -- typed-FFI externs (TDFfi): name -> (c_symbol, c_param_types, c_return_type),
+    -- driving marshalled direct C calls (see emit_ffi_call).
+    mut ffi_externs: (string, string * Ast.cty list * Ast.cty) Hashtbl.t;
     mut unit_prefix: string;
     mut str_counter: int;
     mut float_counter: int;
@@ -61,7 +64,7 @@ module Codegen =
       else
         0 in
     (name, (info.ctor_type_name, tag))) type_env.constructors in
-    {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple; current_fn_void = false}
+    {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; ffi_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple; current_fn_void = false}
 
   pub let push_scope ctx = ctx.scopes := Hashtbl.create 8 :: ctx.scopes
 
@@ -2266,6 +2269,78 @@ module Codegen =
   and emit_box_float ctx d =
     add_extern ctx "mml_box_float" "i64" ("double" :: []);
     Ir_emit.emit_call ctx.ir "i64" "mml_box_float" (("double", d) :: [])
+
+  -- ---- Typed-FFI marshalling (cty <-> the MiniML i64 ABI) ----
+  -- The LLVM type for a C type: integer widths are signless in LLVM; CStr/CPtr are
+  -- pointers; CBool is i1; CVoid is void (only valid as a return type).
+  and cty_llvm (c : Ast.cty) : string =
+    match c with
+    | Ast.CI8 -> "i8" | Ast.CU8 -> "i8"
+    | Ast.CI16 -> "i16" | Ast.CU16 -> "i16"
+    | Ast.CI32 -> "i32" | Ast.CU32 -> "i32"
+    | Ast.CI64 -> "i64" | Ast.CU64 -> "i64"
+    | Ast.CF32 -> "float" | Ast.CF64 -> "double"
+    | Ast.CStr -> "ptr" | Ast.CPtr -> "ptr"
+    | Ast.CBool -> "i1" | Ast.CVoid -> "void"
+  and cty_is_int (c : Ast.cty) : bool =
+    match c with
+    | Ast.CI8 -> true | Ast.CI16 -> true | Ast.CI32 -> true | Ast.CI64 -> true
+    | Ast.CU8 -> true | Ast.CU16 -> true | Ast.CU32 -> true | Ast.CU64 -> true
+    | _ -> false
+  and cty_is_unsigned (c : Ast.cty) : bool =
+    match c with
+    | Ast.CU8 -> true | Ast.CU16 -> true | Ast.CU32 -> true | Ast.CU64 -> true | _ -> false
+  -- Marshal one MiniML i64 value into a C argument. Some (llvm_ty, value), or None
+  -- to DROP it (a CVoid parameter passes no C argument — e.g. `unit -> …`).
+  and marshal_ffi_arg ctx (c : Ast.cty) (v : string) =
+    if cty_is_int c do
+      let untagged = Ir_emit.emit_binop ctx.ir "ashr" "i64" v "1" in
+      let lty = cty_llvm c in
+      Some (lty, if lty = "i64" do untagged else Ir_emit.emit_trunc ctx.ir "i64" untagged lty)
+    else do
+      match c with
+      | Ast.CVoid -> None
+      | Ast.CBool ->
+        let untagged = Ir_emit.emit_binop ctx.ir "ashr" "i64" v "1" in
+        Some ("i1", Ir_emit.emit_trunc ctx.ir "i64" untagged "i1")
+      | Ast.CF64 -> Some ("double", emit_unbox_float ctx v)
+      | Ast.CF32 -> Some ("float", Ir_emit.emit_fptrunc ctx.ir (emit_unbox_float ctx v))
+      -- string value points AT the 8-byte length header; the C char* is v + 8
+      | Ast.CStr -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir (Ir_emit.emit_binop ctx.ir "add" "i64" v "8"))
+      | Ast.CPtr -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
+      | _ -> None
+    end
+  -- Marshal a C return value back into a MiniML i64.
+  and marshal_ffi_ret ctx (c : Ast.cty) (raw : string) : string =
+    if cty_is_int c do
+      let lty = cty_llvm c in
+      let widened = if lty = "i64" do raw
+        else if cty_is_unsigned c do Ir_emit.emit_zext ctx.ir lty raw "i64"
+        else Ir_emit.emit_sext ctx.ir lty raw "i64" in
+      Ir_emit.emit_binop ctx.ir "or" "i64" (Ir_emit.emit_binop ctx.ir "shl" "i64" widened "1") "1"
+    else do
+      match c with
+      | Ast.CVoid -> "1"
+      | Ast.CBool ->
+        Ir_emit.emit_binop ctx.ir "or" "i64" (Ir_emit.emit_binop ctx.ir "shl" "i64" (Ir_emit.emit_zext ctx.ir "i1" raw "i64") "1") "1"
+      | Ast.CF64 -> emit_box_float ctx raw
+      | Ast.CF32 -> emit_box_float ctx (Ir_emit.emit_fpext ctx.ir raw)
+      | Ast.CStr ->
+        add_extern ctx "mml_string_from_cstr" "i64" ("ptr" :: []);
+        Ir_emit.emit_call ctx.ir "i64" "mml_string_from_cstr" (("ptr", raw) :: [])
+      | Ast.CPtr -> Ir_emit.emit_ptrtoint ctx.ir raw
+      | _ -> "1"
+    end
+  -- A saturated typed-FFI call: marshal each MiniML arg to its C type, declare the
+  -- C symbol with the marshalled signature, call it, and marshal the result back.
+  and emit_ffi_call ctx c_symbol c_params c_ret arg_vals =
+    let pairs = List.map2 (fn c v -> (c, v)) c_params arg_vals in
+    let marshalled = List.filter_map (fn pair -> let (c, v) = pair in marshal_ffi_arg ctx c v) pairs in
+    let param_tys = List.map (fn pair -> let (ty, _) = pair in ty) marshalled in
+    add_extern ctx c_symbol (cty_llvm c_ret) param_tys;
+    match c_ret with
+    | Ast.CVoid -> (Ir_emit.emit_call_void ctx.ir c_symbol marshalled; "1")
+    | _ -> marshal_ffi_ret ctx c_ret (Ir_emit.emit_call ctx.ir (cty_llvm c_ret) c_symbol marshalled)
   and emit_fold_with_break_check ctx fold_expr =
     let result = emit_expr ctx fold_expr in
     add_extern ctx "mml_check_fold_broken" "i64" [];
@@ -2835,7 +2910,12 @@ module Codegen =
       let len = emit_expr ctx (List.nth args 2) in
       add_extern ctx "mml_array_sub" "i64" ("i64" :: "i64" :: "i64" :: []);
       Ir_emit.emit_call ctx.ir "i64" "mml_array_sub" (("i64", arr) :: ("i64", start) :: ("i64", len) :: [])
-    | _ when Hashtbl.has ctx.module_externs name -> 
+    -- a saturated typed-FFI call: marshal MiniML args/return per the cty signature
+    | _ when Hashtbl.has ctx.ffi_externs name ->
+      let (c_symbol, c_params, c_ret) = Hashtbl.find ctx.ffi_externs name in
+      let arg_vals = List.map (fn a -> emit_expr ctx a) args in
+      emit_ffi_call ctx c_symbol c_params c_ret arg_vals
+    | _ when Hashtbl.has ctx.module_externs name ->
       let c_name = c_name_of_module_extern name in
       let arg_vals = List.map (emit_expr ctx) args in
       add_extern ctx c_name "i64" (List.map (fn _ -> "i64") arg_vals);
@@ -5029,9 +5109,23 @@ else
     List.iter scan programs;
     tbl
 
+  -- Collect typed-FFI externs (TDFfi) into name -> (c_symbol, params, ret).
+  pub let collect_ffi_externs (programs : Typechecker.tprogram list) =
+    let tbl = Hashtbl.create 16 in
+    let rec scan decls = List.iter (fn d ->
+      do
+        match d with
+        | Typechecker.TDFfi ((name, _scheme, c_symbol, c_params, c_ret)) -> Hashtbl.set tbl name (c_symbol, c_params, c_ret)
+        | Typechecker.TDModule ((_, inner, _)) -> scan inner
+        | _ -> ()
+      end) decls in
+    List.iter scan programs;
+    tbl
+
   pub let compile_program_with_stdlib target_triple (type_env : Types.type_env) (stdlib_programs : (Types.type_env * Typechecker.tprogram) list) (user_program : Typechecker.tprogram) : string =
     let ctx = create_ctx target_triple type_env in
     ctx.module_externs := collect_module_externs (user_program :: List.map snd stdlib_programs);
+    ctx.ffi_externs := collect_ffi_externs (user_program :: List.map snd stdlib_programs);
     let stdlib_decls = List.concat_map (fn (_te, prog) -> prog) stdlib_programs in
     emit_unit_init ctx "mml_init_std" stdlib_decls;
     Ir_emit.emit_define_start ctx.ir "i64" "mml_main" [];
