@@ -1760,17 +1760,47 @@ mml_value mml_array_length(mml_value arr) {
     return MML_TAG_INT(MML_ARR_LEN(arr));
 }
 
-/* FFI: marshal a MiniML array of SCALARS into a freshly malloc'd C buffer, for
- * passing as a `const T*` argument. The caller (generated code) frees it after the
- * call. elem_kind: 0=i8 1=i16 2=i32 3=i64 4=f32 5=f64 6=ptr 7=cstr. Returns NULL
- * for an empty array (n=0). */
+/* FFI argument scratch arena: array args are marshalled into here instead of a
+ * malloc/free per call. A FIXED buffer (never moves, so multiple array args in one
+ * call don't invalidate each other) with bump allocation; the generated code saves
+ * the offset before a call and restores it after (stack discipline — also correct
+ * for nested calls). An array too big for the arena falls back to malloc, and
+ * mml_ffi_free frees only those. Single-threaded: MiniML effects/fibers are
+ * cooperative, so one static arena is safe (make it _Thread_local if OS threads
+ * are ever added). */
+#define MML_FFI_ARENA_CAP (1 << 20) /* 1 MiB */
+static char mml_ffi_arena[MML_FFI_ARENA_CAP];
+static size_t mml_ffi_arena_off = 0;
+
+int64_t mml_ffi_arena_save(void) { return (int64_t)mml_ffi_arena_off; }
+void mml_ffi_arena_restore(int64_t off) { mml_ffi_arena_off = (size_t)off; }
+
+/* n bytes from the arena (8-aligned), or malloc if it won't fit. */
+static void *mml_ffi_scratch(size_t n) {
+    size_t off = (mml_ffi_arena_off + 7u) & ~(size_t)7u;
+    if (off + n > MML_FFI_ARENA_CAP) return malloc(n);
+    mml_ffi_arena_off = off + n;
+    return mml_ffi_arena + off;
+}
+
+/* Free a scratch buffer after the call: arena buffers are reclaimed by restore, so
+ * only a malloc fallback (outside the arena) is actually freed. */
+void mml_ffi_free(void *p) {
+    if (p != NULL && ((char *)p < mml_ffi_arena || (char *)p >= mml_ffi_arena + MML_FFI_ARENA_CAP))
+        free(p);
+}
+
+/* FFI: marshal a MiniML array of SCALARS into a scratch C buffer, for passing as a
+ * `const T*` argument. The caller restores the arena (and mml_ffi_free's any malloc
+ * fallback) after the call. elem_kind: 0=i8 1=i16 2=i32 3=i64 4=f32 5=f64 6=ptr
+ * 7=cstr. Returns NULL for an empty array (n=0). */
 void *mml_ffi_array_to_c(mml_value arr, int64_t elem_kind) {
     static const int sizes[8] = { 1, 2, 4, 8, 4, 8, 8, 8 };
     int64_t n = MML_IS_INT(arr) ? 0 : MML_ARR_LEN(arr);
     if (n <= 0) return NULL;
     int esz = sizes[elem_kind];
     mml_value *data = MML_ARR_DATA(arr);
-    void *buf = malloc((size_t)n * (size_t)esz);
+    void *buf = mml_ffi_scratch((size_t)n * (size_t)esz);
     for (int64_t i = 0; i < n; i++) {
         mml_value e = data[i];
         char *slot = (char *)buf + i * esz;
@@ -1800,7 +1830,7 @@ void *mml_ffi_struct_array_to_c(mml_value arr, const int64_t *desc) {
     int64_t n = MML_IS_INT(arr) ? 0 : MML_ARR_LEN(arr);
     if (n <= 0) return NULL;
     mml_value *data = MML_ARR_DATA(arr);
-    char *buf = malloc((size_t)n * (size_t)tsize);
+    char *buf = mml_ffi_scratch((size_t)n * (size_t)tsize);
     for (int64_t i = 0; i < n; i++) {
         int64_t *rec = (int64_t *)(intptr_t)data[i]; /* record fields */
         for (int64_t f = 0; f < nf; f++) {
