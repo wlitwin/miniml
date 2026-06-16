@@ -249,8 +249,8 @@ let cmd_test target =
                         I.Interp.run_string_in_state (I.Std.register_all (I.Interp.repl_state_init ())) prog))
             with I.Interp.Error m -> Error m
           with
-          | Ok (I.Bytecode.VBool true) -> Printf.printf "ok   %s\n" label
-          | Ok (I.Bytecode.VBool false) ->
+          | Ok (Some (I.Bytecode.VBool true)) -> Printf.printf "ok   %s\n" label
+          | Ok (Some (I.Bytecode.VBool false)) ->
               incr failed;
               Printf.printf "FAIL %s\n" label
           | Ok _ ->

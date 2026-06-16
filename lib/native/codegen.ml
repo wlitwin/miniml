@@ -108,6 +108,10 @@ type codegen_ctx = {
          return from a top-level `try`/`return`/`for`) must then be `ret void`,
          not `ret i64` — clang rejects an i64 value in a void function. Reset to
          false for every nested function (with_fresh_ir), which are all i64. *)
+  mutable result_present : bool;
+      (* false once the program is known to end in a binding (or any non-
+         expression decl): there is no top-level value to echo, so the
+         @mml_result_type global is emitted as MML_RESULT_NONE. *)
 }
 
 let create_ctx ?(target_triple = "") type_env =
@@ -167,6 +171,7 @@ let create_ctx ?(target_triple = "") type_env =
     result_ptr = "";
     target_triple;
     current_fn_void = false;
+    result_present = true;
   }
 
 let push_scope ctx = ctx.scopes <- Hashtbl.create 8 :: ctx.scopes
@@ -7126,7 +7131,8 @@ let assemble_output ?(imports = Hashtbl.create 1) ?(aliases = [])
     (fun decl -> Buffer.add_string body decl; Buffer.add_char body '\n')
     (List.rev ctx.global_decls);
   if emit_result_type then begin
-    let tag = result_type_tag ctx.result_type in
+    (* a binding-terminated program has no value to echo (8 = MML_RESULT_NONE) *)
+    let tag = if ctx.result_present then result_type_tag ctx.result_type else 8 in
     Printf.bprintf body "@mml_result_type = global i32 %d\n" tag
   end;
   Buffer.add_char body '\n';
@@ -7282,6 +7288,8 @@ let compile_program_with_stdlib ?(target_triple = "")
 
   (* Compile user program *)
   List.iter (emit_decl ctx) user_program;
+  ctx.result_present <-
+    (match List.rev user_program with Typechecker.TDExpr _ :: _ -> true | _ -> false);
 
   (* Load and return result *)
   let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
@@ -7485,6 +7493,8 @@ let compile_units ?(target_triple = "") (type_env : Types.type_env)
           Ir_emit.emit_call_void ctx.ir ~name:init_name ~args:[]
       | d -> emit_decl ctx d)
     user_program;
+  ctx.result_present <-
+    (match List.rev user_program with Typechecker.TDExpr _ :: _ -> true | _ -> false);
 
   let result = Ir_emit.emit_load ctx.ir ~ty:"i64" ~ptr:ctx.result_ptr in
   Ir_emit.emit_ret ctx.ir "i64" result;

@@ -58,12 +58,15 @@ let run_ocaml state source =
   try
     let result = Interpreter.Interp.run_string_in_state state source in
     state.Interpreter.Interp.output_fn := print_endline;
-    let pp = Interpreter.Bytecode.pp_value result in
     let actual =
       let outs = List.rev !outputs in
-      if outs <> [] && pp = "()" then String.concat "\n" outs
-      else if outs <> [] then String.concat "\n" outs ^ "\n" ^ pp
-      else pp
+      match result with
+      | None -> String.concat "\n" outs
+      | Some v ->
+          let pp = Interpreter.Bytecode.pp_value v in
+          if outs <> [] && pp = "()" then String.concat "\n" outs
+          else if outs <> [] then String.concat "\n" outs ^ "\n" ^ pp
+          else pp
     in
     Ok actual
   with
@@ -180,7 +183,7 @@ let batch_selfhost_compile ~output_fn ~argv prepared tests =
   end
 
 (* Run a precompiled test program *)
-let run_selfhost_compiled ~output_fn builtins compile_result =
+let run_selfhost_compiled ~has_value ~output_fn builtins compile_result =
   match compile_result with
   | CompileErr msg ->
       if is_selfhost_type_error msg then TypeErr msg else RuntimeErr msg
@@ -190,12 +193,16 @@ let run_selfhost_compiled ~output_fn builtins compile_result =
         (output_fn := fun s -> outputs := s :: !outputs);
         let result = Interpreter.Deserialize.load_bundle test_json builtins in
         output_fn := print_endline;
-        let pp = Interpreter.Bytecode.pp_value result in
+        (* The bytecode VM hands back a raw value; suppress it when the program
+           ends in a binding (no value to echo) — matches run_ocaml's option. *)
         let actual =
           let outs = List.rev !outputs in
-          if outs <> [] && pp = "()" then String.concat "\n" outs
-          else if outs <> [] then String.concat "\n" outs ^ "\n" ^ pp
-          else pp
+          if not has_value then String.concat "\n" outs
+          else
+            let pp = Interpreter.Bytecode.pp_value result in
+            if outs <> [] && pp = "()" then String.concat "\n" outs
+            else if outs <> [] then String.concat "\n" outs ^ "\n" ^ pp
+            else pp
         in
         Ok actual
       with
@@ -237,8 +244,9 @@ let run_tests ~output_fn _state builtins tests selfhost_compiled =
         Interpreter.Std.register_all (Interpreter.Interp.repl_state_init ())
       in
       let ocaml_result = run_ocaml state tc.source in
+      let has_value = Interpreter.Interp.source_ends_in_value_expr tc.source in
       let selfhost_result =
-        run_selfhost_compiled ~output_fn builtins
+        run_selfhost_compiled ~has_value ~output_fn builtins
           selfhost_compiled.(!current - 1)
       in
       match (tc.expect, ocaml_result, selfhost_result) with

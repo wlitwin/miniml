@@ -79,7 +79,11 @@ let get_stdlib_state () = Lazy.force stdlib_state_lazy
 let get_analysis_ctx () = (Lazy.force stdlib_state_lazy).Interpreter.Interp.ctx
 
 let run_stdlib source =
-  Interpreter.Interp.run_string_in_state (get_stdlib_state ()) source
+  (* helpers evaluate a bare expression, which always has a value; a binding-
+     terminated program (no value) defaults to VUnit *)
+  match Interpreter.Interp.run_string_in_state (get_stdlib_state ()) source with
+  | Some v -> v
+  | None -> Interpreter.Bytecode.VUnit
 
 let expect_stdlib_int source n =
   let result = run_stdlib source in

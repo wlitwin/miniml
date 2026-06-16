@@ -2584,7 +2584,9 @@ int main(int argc, char **argv) {
      * - If result is unit AND no print output: show "()"
      * - If result is not unit: show print output + result
      */
-    if (mml_result_type == MML_RESULT_UNIT && mml_has_output) {
+    if (mml_result_type == MML_RESULT_NONE) {
+        /* program ended in a binding: no value to echo (only any print output) */
+    } else if (mml_result_type == MML_RESULT_UNIT && mml_has_output) {
         /* print functions already output to stdout; nothing more needed */
     } else if (mml_result_type == MML_RESULT_COMPOUND) {
         mml_format_result(result);
