@@ -77,6 +77,22 @@ so `inf`/`nan` never get one. `print [3.0]` is `[3.]` (display) but
 semantics, it is *not* `print (show ...)`. Locked by
 cross_test/tests/float_format.tests on every backend.
 
+**A program's observable output is its `print` output followed by the value of
+its final top-level *expression*.** A program is a sequence of top-level items;
+its *value* is the value of the last item **only when that item is a bare
+expression**. If the program ends in a binding (`let … = …`, including
+`let () = …`) — or any other non-expression declaration — it has **no value to
+echo**: it ran for its effects and exits showing only whatever it `print`ed.
+This matches OCaml, where a source file ending in `let () = main ()` runs and
+exits silently and a bare top-level expression is not even legal. So
+`let x = 5;; ()` outputs `()` (a bare unit expression), but `let x = 5` outputs
+nothing, and an application written as `let () = run ()` echoes nothing on its
+own. When the final expression's value *is* unit (`()`) and the program also
+produced `print` output, the trailing `()` is suppressed (the output already
+shows what happened). Every backend (oracle, VM, native binary, emit-js)
+implements this identically — it is the protocol the differential and cross
+tests compare.
+
 **Integers are exact in [-2⁵³, 2⁵³]; overflow beyond that is undefined
 behavior.** MiniML integers are backed by each backend's native integer
 representation (OCaml 63-bit ints, JS float64 numbers, native 64-bit

@@ -1313,4 +1313,29 @@ let encode n =
   Buffer.contents buf
 ;;
 encode 6
---- expect: 6 0 0 0 0 0 0 0 
+--- expect: "6 0 0 0 0 0 0 0 "
+
+=== Program output model ===
+
+--- test: binding-terminated program echoes nothing
+let x = 5
+--- expect: ""
+
+--- test: let-unit entrypoint echoes nothing (only its print output)
+let () = print "ran"
+--- expect: ran
+
+--- test: binding after an expression suppresses the trailing value
+let _ = 42;;
+let y = 7
+--- expect: ""
+
+--- test: bare unit expression still echoes ()
+let x = 5;;
+()
+--- expect: ()
+
+--- test: bare value expression still echoes its value
+let x = 40;;
+x + 2
+--- expect: 42

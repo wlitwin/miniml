@@ -2923,6 +2923,13 @@ module Js_codegen =
     emit ctx "};\n";
     emit ctx "if (typeof globalThis !== \"undefined\") globalThis._mmlExports = _mml_exports;\n"
 
+  -- The program echoes a trailing value only when its last top-level item is an
+  -- expression; a binding-terminated program ran for effect and has no value.
+  let program_ends_in_expr (program : Typechecker.tprogram) : bool =
+    match List.rev program with
+    | Typechecker.TDExpr _ :: _ -> true
+    | _ -> false
+
   pub let compile_program type_env (program : Typechecker.tprogram) : string =
     let ctx = create_ctx type_env in
     emit ctx js_runtime;
@@ -2933,7 +2940,9 @@ module Js_codegen =
     emit ctx "let _last_shape = null;\n";
     List.iter (compile_decl ctx) program;
     drain_cps_twins ctx;
-    emit ctx "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
+    if program_ends_in_expr program do
+      emit ctx "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n"
+    end;
     emit_exports ctx;
     Buffer.contents ctx.buf
 
@@ -2961,7 +2970,9 @@ module Js_codegen =
     ctx.top_level_exports := [];
     List.iter (compile_decl ctx) user_program;
     drain_cps_twins ctx;
-    emit ctx "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n";
+    if program_ends_in_expr user_program do
+      emit ctx "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); }\n"
+    end;
     let user_exports = ctx.top_level_exports in
     ctx.top_level_exports := user_exports;
     (stdlib_exports; ());

@@ -79,6 +79,9 @@ typedef int64_t mml_value;
 #define MML_RESULT_COMPOUND 5
 #define MML_RESULT_BYTE   6
 #define MML_RESULT_RUNE   7
+/* The program ended in a binding (or any non-expression decl): it has no value
+   to echo. main() prints nothing for it (matches the VM/oracle/emit-js). */
+#define MML_RESULT_NONE   8
 
 /* Runtime functions callable from generated LLVM IR */
 mml_value mml_print_int(mml_value v);

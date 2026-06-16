@@ -4912,6 +4912,11 @@ let emit_exports ctx =
     "if (typeof globalThis !== \"undefined\") globalThis._mmlExports = \
      _mml_exports;\n"
 
+(* The program echoes a trailing value only when its last top-level item is an
+   expression; a binding-terminated program ran for effect and has no value. *)
+let program_ends_in_expr (program : Typechecker.tprogram) : bool =
+  match List.rev program with Typechecker.TDExpr _ :: _ -> true | _ -> false
+
 let compile_program type_env (program : Typechecker.tprogram) : string =
   let ctx = create_ctx type_env in
   (* Emit runtime *)
@@ -4925,12 +4930,14 @@ let compile_program type_env (program : Typechecker.tprogram) : string =
   List.iter (compile_decl ctx) program;
   (* Emit any requested CPS twins (on demand, §12.6) *)
   drain_cps_twins ctx;
-  (* Print last value — suppress unit only when there was explicit output *)
-  emit ctx
-    "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
-     _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, \
-     _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); \
-     }\n";
+  (* Print last value — only if the program ends in an expression; suppress unit
+     when there was explicit output *)
+  if program_ends_in_expr program then
+    emit ctx
+      "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
+       _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, \
+       _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); \
+       }\n";
   emit_exports ctx;
   Buffer.contents ctx.buf
 
@@ -4966,11 +4973,12 @@ let compile_program_with_stdlib type_env
   ctx.top_level_exports <- [];
   List.iter (compile_decl ctx) user_program;
   drain_cps_twins ctx;
-  emit ctx
-    "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
-     _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, \
-     _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); \
-     }\n";
+  if program_ends_in_expr user_program then
+    emit ctx
+      "{ const _r = _last_ty === \"float\" ? __display_float(_last_val) : \
+       _last_ty === \"byte\" ? __show_byte(_last_val) : _pp(_last_val, \
+       _last_shape); if (!(_output_count > 0 && _r === \"()\")) println(_r); \
+       }\n";
   (* Only export user-program bindings, not stdlib internals *)
   let user_exports = ctx.top_level_exports in
   ctx.top_level_exports <- user_exports;

@@ -142,12 +142,16 @@ let make_state () =
    string — the same rule as cross_test/runner.ml, which the emit-js and
    native backends' generated code also follows (the cross-test suite locks
    this protocol across all backends). *)
-let observable outputs value_pp =
-  match outputs with
-  | [] -> value_pp
-  | outs ->
-      if String.equal value_pp "()" then String.concat "\n" outs
-      else String.concat "\n" outs ^ "\n" ^ value_pp
+let observable outputs value =
+  match value with
+  | None -> String.concat "\n" outputs (* program ended in a binding: no value *)
+  | Some v -> (
+      let value_pp = Interpreter.Bytecode.pp_value v in
+      match outputs with
+      | [] -> value_pp
+      | outs ->
+          if String.equal value_pp "()" then String.concat "\n" outs
+          else String.concat "\n" outs ^ "\n" ^ value_pp)
 
 let strip_trailing_newline s =
   let len = String.length s in
@@ -167,13 +171,12 @@ let categorize_error_message msg =
 
 (* Run [eval] (which returns the program's final value) with print output
    captured, and normalize exceptions into result categories. *)
-let run_in_process state (eval : unit -> Interpreter.Bytecode.value) : result =
+let run_in_process state
+    (eval : unit -> Interpreter.Bytecode.value option) : result =
   let outputs = ref [] in
   (state.Interpreter.Interp.output_fn := fun s -> outputs := s :: !outputs);
   match eval () with
-  | value ->
-      Output
-        (observable (List.rev !outputs) (Interpreter.Bytecode.pp_value value))
+  | value -> Output (observable (List.rev !outputs) value)
   | exception Interpreter.Lexer.Lex_error (msg, _) ->
       Rejected ("Lex error: " ^ msg)
   | exception Interpreter.Parser.Parse_error (msg, _) ->

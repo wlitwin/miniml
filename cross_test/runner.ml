@@ -52,12 +52,15 @@ let run_tests _state tests =
                 raise e
             in
             state.Interpreter.Interp.output_fn := print_endline;
-            let pp = Interpreter.Bytecode.pp_value result in
             let actual =
               let outs = List.rev !outputs in
-              if outs <> [] && pp = "()" then String.concat "\n" outs
-              else if outs <> [] then String.concat "\n" outs ^ "\n" ^ pp
-              else pp
+              match result with
+              | None -> String.concat "\n" outs
+              | Some v ->
+                  let pp = Interpreter.Bytecode.pp_value v in
+                  if outs <> [] && pp = "()" then String.concat "\n" outs
+                  else if outs <> [] then String.concat "\n" outs ^ "\n" ^ pp
+                  else pp
             in
             if actual = expected then begin
               Printf.printf "  PASS: %s\n" tc.name;

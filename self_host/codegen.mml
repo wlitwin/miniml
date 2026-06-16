@@ -52,7 +52,9 @@ module Codegen =
     mut current_dict_name: string option;
     mut result_ptr: string;
     mut target_triple: string;
-    mut current_fn_void: bool
+    mut current_fn_void: bool;
+    -- false once the program is known to end in a binding (no value to echo)
+    mut result_present: bool
   }
 
   pub let create_ctx target_triple type_env =
@@ -64,7 +66,7 @@ module Codegen =
       else
         0 in
     (name, (info.ctor_type_name, tag))) type_env.constructors in
-    {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; ffi_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple; current_fn_void = false}
+    {ir = Ir_emit.create (); fn_buf = Buffer.create 4096; scopes = tbl :: []; current_label = "entry"; label_counter = 0; fn_counter = 0; module_externs = Hashtbl.create 16; ffi_externs = Hashtbl.create 16; unit_prefix = ""; str_counter = 0; float_counter = 0; string_globals = []; float_globals = []; extern_decls = []; global_decls = []; loop_stack = []; result_type = Types.TUnit; has_print_output = false; variant_defs; constructors; type_env; generated_wrappers = Hashtbl.create 16; fold_break_depth = 0; fold_guard_pending = false; in_handler_thunk = false; handler_mark_ptr = None; or_pattern_allocas = []; current_dict_name = None; result_ptr = ""; target_triple; current_fn_void = false; result_present = true}
 
   pub let push_scope ctx = ctx.scopes := Hashtbl.create 8 :: ctx.scopes
 
@@ -5211,7 +5213,8 @@ else
     List.iter (fn decl -> Buffer.add_string body decl;
     Buffer.add_byte body #0a) (List.rev ctx.global_decls);
     if emit_result_type do
-      let tag = result_type_tag ctx.result_type in
+      -- a binding-terminated program has no value to echo (tag 8 = MML_RESULT_NONE)
+      let tag = if ctx.result_present do result_type_tag ctx.result_type else 8 in
       Buffer.add_string (body) $"@mml_result_type = global i32 {tag}
 "
     end;
@@ -5330,6 +5333,7 @@ else
     Ir_emit.emit_store ctx.ir "i64" unit_value ctx.result_ptr;
     Ir_emit.emit_call_void ctx.ir "mml_init_std" [];
     List.iter (emit_decl ctx) user_program;
+    ctx.result_present := (match List.rev user_program with Typechecker.TDExpr _ :: _ -> true | _ -> false);
     let result = Ir_emit.emit_load ctx.ir "i64" ctx.result_ptr in
     Ir_emit.emit_ret ctx.ir "i64" result;
     Ir_emit.emit_define_end ctx.ir;

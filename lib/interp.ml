@@ -1037,6 +1037,23 @@ let eval_source state_ref source =
       state_ref := Some { state with ctx = ctx' };
       result
 
+(* The observable VALUE of a program is the value of its final top-level
+   expression. A program whose last top-level item is a binding (or any other
+   non-expression declaration) has no value to echo: it ran for its effects and
+   is done — matching OCaml, where a source file ending in [let () = main ()]
+   runs and exits silently. The runners below return [None] in that case so every
+   backend's output protocol can suppress the trailing value uniformly. *)
+let ends_in_value_expr (program : Ast.program) =
+  match List.rev program with Ast.DExpr _ :: _ -> true | _ -> false
+
+(* Same rule, computed straight from source — for backends (e.g. the self-host
+   bytecode path in the parity runner) that observe a raw value and so cannot
+   learn it from the runner's [value option]. Parse failures default to [true]
+   (those programs fail to compile and never reach the value comparison). *)
+let source_ends_in_value_expr source =
+  try ends_in_value_expr (Parser.parse_program (Lexer.tokenize source))
+  with _ -> true
+
 let run_string_in_state state source =
   let tokens = Lexer.tokenize source in
   let program = Parser.parse_program tokens in
@@ -1065,7 +1082,7 @@ let run_string_in_state state source =
   | Some es when es.ctx != pre_exec_state.ctx ->
       state.state_ref := Some { state with ctx = es.ctx }
   | _ -> ());
-  result
+  if ends_in_value_expr program then Some result else None
 
 (* ---- Oracle (reference interpreter) entry points ----------------------- *)
 
@@ -1128,7 +1145,7 @@ let oracle_run_string_in_state state source =
       }
   in
   let _, result = Oracle.eval_program env typed_program in
-  Oracle.to_vm result
+  if ends_in_value_expr program then Some (Oracle.to_vm result) else None
 
 let run_string source =
   wrap_errors (fun () ->
@@ -1150,7 +1167,12 @@ let run_string source =
         }
       in
       let state = setup_default_classes state in
-      run_string_in_state state source)
+      (* run_string is the value-returning convenience used by the unit tests
+         (which always evaluate a bare expression); a binding-terminated program
+         has no value, so default to VUnit. *)
+      match run_string_in_state state source with
+      | Some v -> v
+      | None -> Bytecode.VUnit)
 
 let run_file filename =
   let ic = open_in filename in
