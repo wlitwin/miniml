@@ -26,6 +26,10 @@ type cty =
      the element type; the backend marshals it into a C buffer (freed after the
      call). Element type must be a scalar. *)
   | CArray of cty
+  (* A nullable pointer ([nullable cstr] / [nullable ptr] / [nullable Window]): the
+     MiniML side passes an [option]; [None] marshals to a NULL pointer and [Some x]
+     to the marshalled [x]. Inner must be a pointer-like cty (cstr/ptr/handle). *)
+  | CNullable of cty
 
 type ty_annot =
   | TyName of string

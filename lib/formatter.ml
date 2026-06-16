@@ -470,6 +470,7 @@ let rec cty_str : Ast.cty -> string = function
   | Ast.CStruct (name, _) -> name
   | Ast.COut c -> "out " ^ cty_str c
   | Ast.CArray e -> "[" ^ cty_str e ^ "]"
+  | Ast.CNullable c -> "nullable " ^ cty_str c
 
 let doc_var s =
   (* A qualified operator like `Eq.(=)` is stored as the name "Eq.="; it must

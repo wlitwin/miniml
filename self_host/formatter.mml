@@ -431,6 +431,7 @@ module Formatter =
     | Ast.CStruct ((name, _)) -> name
     | Ast.COut c -> "out " ^ (cty_str c)
     | Ast.CArray e -> "[" ^ ((cty_str e) ^ "]")
+    | Ast.CNullable c -> "nullable " ^ (cty_str c)
 
   pub let doc_var s =
     match String.rindex_opt s #2e with

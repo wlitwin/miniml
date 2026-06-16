@@ -5579,6 +5579,8 @@ let rec cty_to_mml_ty : Ast.cty -> Types.ty = function
       Types.TRecord (Types.fields_to_closed_row [ ("contents", cty_to_mml_ty c) ])
   (* a C array param takes a MiniML array of the element type *)
   | Ast.CArray e -> Types.TArray (cty_to_mml_ty e)
+  (* a nullable pointer takes an option of the inner type (None = NULL) *)
+  | Ast.CNullable c -> Types.TVariant ("option", [ cty_to_mml_ty c ])
 
 (* Curried MiniML function type for an FFI signature. The IO effect sits on the
    LAST arrow (applying the final argument performs the C call), matching the
