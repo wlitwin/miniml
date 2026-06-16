@@ -1760,6 +1760,35 @@ mml_value mml_array_length(mml_value arr) {
     return MML_TAG_INT(MML_ARR_LEN(arr));
 }
 
+/* FFI: marshal a MiniML array of SCALARS into a freshly malloc'd C buffer, for
+ * passing as a `const T*` argument. The caller (generated code) frees it after the
+ * call. elem_kind: 0=i8 1=i16 2=i32 3=i64 4=f32 5=f64 6=ptr 7=cstr. Returns NULL
+ * for an empty array (n=0). */
+void *mml_ffi_array_to_c(mml_value arr, int64_t elem_kind) {
+    static const int sizes[8] = { 1, 2, 4, 8, 4, 8, 8, 8 };
+    int64_t n = MML_IS_INT(arr) ? 0 : MML_ARR_LEN(arr);
+    if (n <= 0) return NULL;
+    int esz = sizes[elem_kind];
+    mml_value *data = MML_ARR_DATA(arr);
+    void *buf = malloc((size_t)n * (size_t)esz);
+    for (int64_t i = 0; i < n; i++) {
+        mml_value e = data[i];
+        char *slot = (char *)buf + i * esz;
+        switch (elem_kind) {
+        case 0: *(int8_t *)slot = (int8_t)MML_INT_VAL(e); break;
+        case 1: *(int16_t *)slot = (int16_t)MML_INT_VAL(e); break;
+        case 2: *(int32_t *)slot = (int32_t)MML_INT_VAL(e); break;
+        case 3: *(int64_t *)slot = (int64_t)MML_INT_VAL(e); break;
+        case 4: *(float *)slot = (float)mml_unbox_float(e); break;
+        case 5: *(double *)slot = mml_unbox_float(e); break;
+        case 6: *(void **)slot = (void *)(intptr_t)e; break;
+        case 7: *(const char **)slot = MML_STR_DATA(e); break;
+        default: break;
+        }
+    }
+    return buf;
+}
+
 mml_value mml_array_get(mml_value idx_tagged, mml_value arr) {
     int64_t idx = MML_INT_VAL(idx_tagged);
     if (MML_IS_INT(arr)) mml_panic("array index out of bounds");

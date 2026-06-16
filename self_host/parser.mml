@@ -2564,6 +2564,10 @@ module Parser =
   -- (`extern type … {…}`) or opaque foreign type (`extern type …`).
   let rec parse_cty p : Ast.cty =
     match peek_kind p with
+    | Token.LBRACKET -> (advance p; ());
+      let elem = parse_cty p in
+      expect p Token.RBRACKET;
+      Ast.CArray elem
     | Token.UIDENT name -> (advance p; ());
       (match Hashtbl.get p.struct_defs name with
        | Some fields -> Ast.CStruct (name, fields)

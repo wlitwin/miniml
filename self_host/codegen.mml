@@ -2285,6 +2285,18 @@ module Codegen =
     | Ast.CNamed _ -> "ptr"
     | Ast.CStruct _ -> "ptr"   -- a C struct is passed by pointer
     | Ast.COut _ -> "ptr"      -- an OUT param is a pointer to a C scalar
+    | Ast.CArray _ -> "ptr"    -- an array is passed as a pointer to its buffer
+  -- elem_kind for mml_ffi_array_to_c: 0=i8 1=i16 2=i32 3=i64 4=f32 5=f64 6=ptr 7=cstr
+  and cty_kind (c : Ast.cty) : int =
+    match c with
+    | Ast.CI8 -> 0 | Ast.CU8 -> 0 | Ast.CBool -> 0
+    | Ast.CI16 -> 1 | Ast.CU16 -> 1
+    | Ast.CI32 -> 2 | Ast.CU32 -> 2
+    | Ast.CI64 -> 3 | Ast.CU64 -> 3
+    | Ast.CF32 -> 4 | Ast.CF64 -> 5
+    | Ast.CPtr -> 6 | Ast.CNamed _ -> 6
+    | Ast.CStr -> 7
+    | _ -> failwith "FFI array element must be a scalar C type (no struct/array/out elements)"
   and cty_is_int (c : Ast.cty) : bool =
     match c with
     | Ast.CI8 -> true | Ast.CI16 -> true | Ast.CI32 -> true | Ast.CI64 -> true
@@ -2389,6 +2401,8 @@ module Codegen =
     -- pass its pointer, and remember (ref_value, cell_ptr, inner_cty) so the value
     -- the callee wrote can be boxed back into the Ref AFTER the call.
     let writebacks = Ref.create [] in
+    -- C buffers (from array marshalling) to free AFTER the call
+    let frees = Ref.create [] in
     let cargs = List.filter_map (fn pair ->
       let (c, v) = pair in
       match c with
@@ -2396,6 +2410,12 @@ module Codegen =
         let cell = Ir_emit.emit_alloca ctx.ir (cty_llvm inner) in
         Ref.set writebacks ((v, cell, inner) :: Ref.get writebacks);
         Some ("ptr", cell)
+      | Ast.CArray elem ->
+        -- marshal the MiniML array into a malloc'd C buffer (freed after the call)
+        add_extern ctx "mml_ffi_array_to_c" "ptr" ("i64" :: ("i64" :: []));
+        let buf = Ir_emit.emit_call ctx.ir "ptr" "mml_ffi_array_to_c" (("i64", v) :: (("i64", string_of_int (cty_kind elem)) :: [])) in
+        Ref.set frees (buf :: Ref.get frees);
+        Some ("ptr", buf)
       | _ -> marshal_ffi_arg ctx c v
     ) pairs in
     let param_tys = List.map (fn pair -> let (ty, _) = pair in ty) cargs in
@@ -2409,6 +2429,10 @@ module Codegen =
       let mml = marshal_ffi_ret ctx ic cv in
       Ir_emit.emit_store ctx.ir "i64" mml (Ir_emit.emit_inttoptr ctx.ir refv)
     ) (List.rev (Ref.get writebacks));
+    (match Ref.get frees with
+     | [] -> ()
+     | fs -> add_extern ctx "free" "void" ("ptr" :: []);
+       List.iter (fn buf -> Ir_emit.emit_call_void ctx.ir "free" (("ptr", buf) :: [])) fs);
     result
   and emit_fold_with_break_check ctx fold_expr =
     let result = emit_expr ctx fold_expr in

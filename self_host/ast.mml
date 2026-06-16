@@ -31,6 +31,10 @@ module Ast =
     -- writes. The MiniML side passes a `Ref`; the backend allocates the scalar,
     -- passes its pointer, and writes the result back into the Ref after the call.
     | COut of cty
+    -- A C array (`[f32]`) passed as `const T*` IN: the MiniML side passes an array
+    -- of the element type; the backend marshals it into a C buffer (freed after the
+    -- call). Element type must be a scalar (not a struct/array/out).
+    | CArray of cty
 
 
   pub type ty_annot =

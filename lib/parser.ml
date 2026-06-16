@@ -2745,6 +2745,11 @@ let parse_effect_decl p =
    referring to a declared opaque foreign type ([extern type Window]). *)
 let rec parse_cty p : Ast.cty =
   match peek_kind p with
+  | Token.LBRACKET ->
+      ignore (advance p);
+      let elem = parse_cty p in
+      expect p Token.RBRACKET;
+      Ast.CArray elem
   | Token.UIDENT name -> (
       ignore (advance p);
       (* a declared struct expands to its cty layout; else an opaque foreign type *)

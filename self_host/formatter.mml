@@ -430,6 +430,7 @@ module Formatter =
     | Ast.CNamed name -> name
     | Ast.CStruct ((name, _)) -> name
     | Ast.COut c -> "out " ^ (cty_str c)
+    | Ast.CArray e -> "[" ^ ((cty_str e) ^ "]")
 
   pub let doc_var s =
     match String.rindex_opt s #2e with
