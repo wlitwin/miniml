@@ -1,10 +1,14 @@
 # MiniML Language Server
 
 A language server for MiniML (`.mml`), speaking the [Language Server
-Protocol](https://microsoft.github.io/language-server-protocol/) over stdio. It
-is built on the reference compiler's analysis library
-(`lib/analysis.ml`); the server itself is a thin JSON-RPC layer
-(`lib/lsp.ml` + `bin/lsp_main.ml`).
+Protocol](https://microsoft.github.io/language-server-protocol/) over stdio.
+The production server is written **in MiniML**: a thin JSON-RPC layer
+(`self_host/lsp.mml`) on the in-MiniML JSON library (`self_host/json.mml`),
+built on the in-MiniML analysis library (`self_host/analysis.mml`), and shipped
+as the `lsp` subcommand of the self-hosted `mml` binary (roadmap #16c — part of
+the Path-B cutover where MiniML, not OCaml, is the source of truth). An OCaml
+reference implementation (`lib/{analysis,lsp}.ml` + `bin/lsp_main.ml`) is kept
+as a differential cross-check; it covers a subset of the capabilities below.
 
 ## Features
 
@@ -12,8 +16,13 @@ is built on the reference compiler's analysis library
 |---|---|
 | **Diagnostics** (live) | Published on open/change. Recovers from errors — one broken declaration doesn't blank the file, and every syntax error plus every declaration's first type error is reported, along with warnings. |
 | **Hover** | The inferred type at the cursor (e.g. `compose` → `(int -> int) -> (int -> int) -> int -> int`). |
-| **Go to definition** | Top-level definitions and local bindings (let-ins, recursion). Shadowing resolves to the innermost binder. |
+| **Go to definition** | Top-level definitions and local bindings (let-ins, recursion), and qualified `Module.member` targets cross-file via a workspace symbol index. Shadowing resolves to the innermost binder. |
 | **Completion** | Names in scope: the standard library, the file's own top-level and local bindings, and keywords. The editor filters by the typed prefix. |
+| **Find references** / **document highlight** | All uses of the symbol under the cursor, in the file (highlight) or across the document (references). |
+| **Rename** | Rename a binding and all its references, with a prepare step that validates the cursor is on a renameable identifier. |
+| **Document & workspace symbols** | Outline of a file's definitions, and a workspace-wide symbol search. |
+| **Formatting** | Whole-document formatting via the same canonical formatter as `mml fmt` (byte-faithful with the CLI). |
+| **Inlay hints** & **semantic tokens** | Inferred-type inlay hints and semantic-token classification for richer highlighting. |
 
 ## Build
 
