@@ -18,6 +18,10 @@ type cty =
      are carried inline so the backend can lay out and marshal it by-pointer. The
      MiniML surface value is a record with the same fields. *)
   | CStruct of string * (string * cty) list
+  (* An OUT scalar parameter ([out f32]): a pointer to a C scalar the callee writes.
+     The MiniML side passes a [Ref]; the backend allocates the scalar, passes its
+     pointer, and writes the result back into the Ref after the call. *)
+  | COut of cty
 
 type ty_annot =
   | TyName of string

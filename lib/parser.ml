@@ -2743,7 +2743,7 @@ let parse_effect_decl p =
 
 (* One C type in an FFI signature: a lowercase cty keyword, or an UPPERCASE name
    referring to a declared opaque foreign type ([extern type Window]). *)
-let parse_cty p : Ast.cty =
+let rec parse_cty p : Ast.cty =
   match peek_kind p with
   | Token.UIDENT name -> (
       ignore (advance p);
@@ -2757,6 +2757,7 @@ let parse_cty p : Ast.cty =
       | "u8" -> Ast.CU8 | "u16" -> Ast.CU16 | "u32" -> Ast.CU32 | "u64" -> Ast.CU64
       | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
       | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
+      | "out" -> Ast.COut (parse_cty p)
       | nm ->
           error p
             (Printf.sprintf

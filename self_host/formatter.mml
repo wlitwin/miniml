@@ -421,7 +421,7 @@ module Formatter =
   (not (((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || (c = #5f)))) || (is_keyword_operator s))
 
   -- Surface name of a C type (cty), round-tripping through the FFI parser.
-  let cty_str (c : Ast.cty) : string =
+  let rec cty_str (c : Ast.cty) : string =
     match c with
     | Ast.CI8 -> "i8" | Ast.CI16 -> "i16" | Ast.CI32 -> "i32" | Ast.CI64 -> "i64"
     | Ast.CU8 -> "u8" | Ast.CU16 -> "u16" | Ast.CU32 -> "u32" | Ast.CU64 -> "u64"
@@ -429,6 +429,7 @@ module Formatter =
     | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
     | Ast.CNamed name -> name
     | Ast.CStruct ((name, _)) -> name
+    | Ast.COut c -> "out " ^ (cty_str c)
 
   pub let doc_var s =
     match String.rindex_opt s #2e with

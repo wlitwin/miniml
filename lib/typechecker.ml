@@ -5574,6 +5574,9 @@ let rec cty_to_mml_ty : Ast.cty -> Types.ty = function
       Types.TRecord
         (Types.fields_to_closed_row
            (List.map (fun (n, c) -> (n, cty_to_mml_ty c)) fields))
+  (* an OUT scalar param takes a Ref (= { contents : t }) the callee writes *)
+  | Ast.COut c ->
+      Types.TRecord (Types.fields_to_closed_row [ ("contents", cty_to_mml_ty c) ])
 
 (* Curried MiniML function type for an FFI signature. The IO effect sits on the
    LAST arrow (applying the final argument performs the C call), matching the

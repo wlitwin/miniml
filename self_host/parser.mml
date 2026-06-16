@@ -2559,10 +2559,10 @@ module Parser =
     end;
     Ast.DEffect (name, type_params, List.rev (Ref.get ops))
 
-  -- One C type in an FFI signature: a lowercase cty keyword, or an UPPERCASE name
-  -- referring to a declared C struct (`extern struct`) or opaque foreign type
-  -- (`extern type`). A struct name expands to its full cty layout.
-  let parse_cty p : Ast.cty =
+  -- One C type in an FFI signature: a lowercase cty keyword, `out <cty>` for an OUT
+  -- scalar parameter, or an UPPERCASE name referring to a declared C struct
+  -- (`extern type … {…}`) or opaque foreign type (`extern type …`).
+  let rec parse_cty p : Ast.cty =
     match peek_kind p with
     | Token.UIDENT name -> (advance p; ());
       (match Hashtbl.get p.struct_defs name with
@@ -2575,7 +2575,8 @@ module Parser =
       | "u8" -> Ast.CU8 | "u16" -> Ast.CU16 | "u32" -> Ast.CU32 | "u64" -> Ast.CU64
       | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
       | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
-      | _ -> error p ($"unknown FFI C type '{nm}' (expected i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit, or a declared `extern type`)")
+      | "out" -> Ast.COut (parse_cty p)
+      | _ -> error p ($"unknown FFI C type '{nm}' (expected i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit/out, or a declared `extern type`)")
 
   -- C struct fields: `{ name: cty; name: cty; … }` (trailing `;` allowed).
   let parse_struct_fields p : (string * Ast.cty) list =
