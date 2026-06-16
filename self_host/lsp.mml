@@ -245,6 +245,21 @@ end"
       List.map (fn pair -> let (nm, loc) = pair in (nm, path, loc)) occ
     ) (workspace_files srv)
 
+  -- Drop the whole-program reference-index caches so the next references / rename /
+  -- global highlight rebuilds them from CURRENT buffer text. Called on every doc
+  -- mutation (didOpen/didChange/didClose). It is CHEAP — only nulls fields — and
+  -- the ~0.2s rebuild is deferred to the next (rare, explicit) cross-file query, so
+  -- there is no per-keystroke cost. wfiles holds a (path, source) snapshot, so it
+  -- must be dropped too or the index would re-run on the edited file's STALE text.
+  -- Deliberately does NOT touch proj_path/proj_ctx: that sibling cache feeds the
+  -- PER-KEYSTROKE diagnostics path, which reuses it so each edit only re-typechecks
+  -- the open buffer — invalidating it here would rebuild every sibling on every
+  -- keystroke. (Those consumers are frequent; the index's are not — hence the split.)
+  let invalidate_workspace_index (srv : t) : unit =
+    srv.wp_ctx := None;
+    srv.wfiles := None;
+    Hashtbl.clear srv.occ_files
+
   -- --- Position mapping (UTF-8 bytes <-> UTF-16 code units) ----------------
 
   -- LSP positions are 0-based (line, character), `character` counting UTF-16 CODE
@@ -574,6 +589,8 @@ end"
     | "textDocument/didOpen" ->
       let uri = doc_uri () in
       Hashtbl.set srv.docs uri (Json.to_str (Json.member "text" (Json.member "textDocument" params)));
+      -- the buffer now overrides this file's on-disk copy in the index
+      invalidate_workspace_index srv;
       (publish srv uri) :: []
     | "textDocument/didChange" ->
       let uri = doc_uri () in
@@ -584,10 +601,15 @@ end"
       let text = List.fold (fn acc change -> apply_change acc change) cur
         (Json.as_list (Json.member "contentChanges" params)) in
       Hashtbl.set srv.docs uri text;
+      -- the edit may change this file's exported surface, so other files' canonical
+      -- resolution can shift — drop the whole-program index (rebuilt on next query)
+      invalidate_workspace_index srv;
       (publish srv uri) :: []
     | "textDocument/didClose" ->
       let uri = doc_uri () in
       Hashtbl.remove srv.docs uri;
+      -- the index must revert from this buffer to the file's on-disk copy
+      invalidate_workspace_index srv;
       (notification "textDocument/publishDiagnostics"
         (Json.JObject (("uri", Json.JString uri) :: ("diagnostics", Json.JArray []) :: []))) :: []
     | "textDocument/hover" ->

@@ -93,7 +93,15 @@ let () =
   -- prepareRename on the Foo.mk member token → placeholder = current name "mk"
   let pr = send ("{\"jsonrpc\":\"2.0\",\"id\":24,\"method\":\"textDocument/prepareRename\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}") in
   let pr_placeholder = Json.to_str (Json.member "placeholder" (Json.member "result" pr)) in
+  -- FRESHNESS: the whole-program index must not be frozen at first use. Edit
+  -- bar.mml (via didChange) to add a SECOND Foo.mk use, then re-query references.
+  -- A stale index (wfiles/wp_ctx cached from the open) would still report 2; with
+  -- per-edit invalidation the new use is picked up → 3 (foo def + 2 bar uses).
+  let bar2 = "module Bar =\n  pub let x = Foo.mk\n  pub let y = Foo.B 3\n  pub let z = Foo.label\n  pub let w = Foo.mk\nend\n" in
+  let _ = send ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"contentChanges\":[{\"text\":" ^ (Json.to_string (Json.JString bar2)) ^ "}]}}") in
+  let rf2 = nres (send ("{\"jsonrpc\":\"2.0\",\"id\":25,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}")) in
   let checks = [
+    ("references-fresh-after-edit", rf2 = 3);
     ("rename-foo-mk-def", edits_in foo_uri = 1);
     ("rename-foo-mk-use", edits_in bar_uri = 1);
     ("rename-foo-mk-excludes-baz", edits_in baz_uri = 0);
