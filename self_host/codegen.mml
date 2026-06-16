@@ -2439,6 +2439,12 @@ module Codegen =
     let writebacks = Ref.create [] in
     -- C buffers (from array marshalling) to free AFTER the call
     let frees = Ref.create [] in
+    -- array args marshal into a reusable scratch arena; save its offset before
+    -- marshalling and restore it after the call (instead of malloc/free per call)
+    let arena_saved = (if List.exists (fn c -> match c with Ast.CArray _ -> true | _ -> false) c_params do
+        add_extern ctx "mml_ffi_arena_save" "i64" [];
+        Some (Ir_emit.emit_call ctx.ir "i64" "mml_ffi_arena_save" [])
+      else None) in
     let cargs = List.filter_map (fn pair ->
       let (c, v) = pair in
       match c with
@@ -2493,8 +2499,12 @@ module Codegen =
     ) (List.rev (Ref.get writebacks));
     (match Ref.get frees with
      | [] -> ()
-     | fs -> add_extern ctx "free" "void" ("ptr" :: []);
-       List.iter (fn buf -> Ir_emit.emit_call_void ctx.ir "free" (("ptr", buf) :: [])) fs);
+     | fs -> add_extern ctx "mml_ffi_free" "void" ("ptr" :: []);
+       List.iter (fn buf -> Ir_emit.emit_call_void ctx.ir "mml_ffi_free" (("ptr", buf) :: [])) fs);
+    (match arena_saved with
+     | None -> ()
+     | Some s -> add_extern ctx "mml_ffi_arena_restore" "void" ("i64" :: []);
+       Ir_emit.emit_call_void ctx.ir "mml_ffi_arena_restore" (("i64", s) :: []));
     result
   and emit_fold_with_break_check ctx fold_expr =
     let result = emit_expr ctx fold_expr in
