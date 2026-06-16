@@ -81,7 +81,24 @@ let () =
   -- foo.mml def + bar.mml use = 2, EXCLUDING baz.mml's unrelated `mk` (def + use);
   -- a by-name search would have returned 4.
   let rf = nres (send ("{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}")) in
+  -- cross-module RENAME of Foo.mk → "renamed": a WorkspaceEdit touching foo.mml
+  -- (the def) and bar.mml (the use), and EXCLUDING baz.mml (canonical "Baz.mk" ≠
+  -- "Foo.mk"). Per-file edit counts + baz exclusion + newText prove precision.
+  let rn = send ("{\"jsonrpc\":\"2.0\",\"id\":23,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18},\"newName\":\"renamed\"}}") in
+  let changes = Json.member "changes" (Json.member "result" rn) in
+  let foo_uri = "file://" ^ dir ^ "/foo.mml" in
+  let baz_uri = "file://" ^ dir ^ "/baz.mml" in
+  let edits_in u = List.length (Json.as_list (Json.member u changes)) in
+  let first_newtext u = (match Json.as_list (Json.member u changes) with e :: _ -> Json.to_str (Json.member "newText" e) | [] -> "") in
+  -- prepareRename on the Foo.mk member token → placeholder = current name "mk"
+  let pr = send ("{\"jsonrpc\":\"2.0\",\"id\":24,\"method\":\"textDocument/prepareRename\",\"params\":{\"textDocument\":{\"uri\":\"" ^ bar_uri ^ "\"},\"position\":{\"line\":1,\"character\":18}}}") in
+  let pr_placeholder = Json.to_str (Json.member "placeholder" (Json.member "result" pr)) in
   let checks = [
+    ("rename-foo-mk-def", edits_in foo_uri = 1);
+    ("rename-foo-mk-use", edits_in bar_uri = 1);
+    ("rename-foo-mk-excludes-baz", edits_in baz_uri = 0);
+    ("rename-newtext", first_newtext bar_uri = "renamed");
+    ("prepare-rename-placeholder", pr_placeholder = "mk");
     ("workspace-symbol-finds", ws >= 1);
     ("document-highlight-foo", dh = 3);
     ("references-mk-workspace", rf = 2);

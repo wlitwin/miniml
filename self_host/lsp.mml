@@ -65,8 +65,11 @@ module Lsp =
       (match srv.root with
        | None -> None
        | Some root ->
+         -- "." denotes the root itself; join'ing it would leak a `/./` segment into
+         -- every path, so client-facing URIs would differ from the open-doc URI (the
+         -- live-buffer override would miss) and read awkwardly. Scan `root` directly.
          let mml_in dir =
-           let d = Path.join root dir in
+           let d = if dir = "." do root else Path.join root dir in
            let names = if Fs.is_directory d do Fs.read_dir d else [] in
            List.filter_map (fn f ->
              if has_suffix f ".mml" do
@@ -90,8 +93,11 @@ module Lsp =
       (match srv.root with
        | None -> []
        | Some root ->
+         -- "." denotes the root itself; join'ing it would leak a `/./` segment into
+         -- every path, so client-facing URIs would differ from the open-doc URI (the
+         -- live-buffer override would miss) and read awkwardly. Scan `root` directly.
          let mml_in dir =
-           let d = Path.join root dir in
+           let d = if dir = "." do root else Path.join root dir in
            let names = if Fs.is_directory d do Fs.read_dir d else [] in
            List.filter_map (fn f ->
              if has_suffix f ".mml" do
@@ -453,6 +459,50 @@ end"
            match acc with Some _ -> acc | None -> if l.offset = coff do Some nm else None)
            None (Analysis.global_occurrences (workspace_ctx srv) text))
 
+  -- Every occurrence of the symbol under `cursor`, as (uri, src, name-token loc,
+  -- byte length to replace). None when the cursor is not on an identifier. This is
+  -- the SHARED basis for find-references AND rename, so the two can never drift:
+  --   * a local binding or record field resolves WITHIN this file (the edited
+  --     buffer is authoritative);
+  --   * a global / module-member name resolves by CANONICAL name across the whole
+  --     workspace (precise — an unrelated same-spelled name elsewhere is excluded);
+  --   * anything the canonical index can't resolve falls back to a by-name match
+  --     over the workspace files (imprecise, but never silently empty).
+  -- The replace length is the canonical last segment for a global (so `Mod.member`
+  -- edits touch only `member`) and the token text for a local/field/by-name hit.
+  let symbol_sites (srv : t) (uri : string) (text : string) (cursor : int)
+      : (string * string * Token.loc * int) list option =
+    match Analysis.token_at text cursor with
+    | None -> None
+    | Some tok ->
+      (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
+       | None -> None
+       | Some name ->
+         let namelen = String.length name in
+         let by_name () =
+           let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
+           List.concat_map (fn pf -> let (path, src) = pf in
+             List.map (fn (loc : Token.loc) -> (uri_of_path path, src, loc, namelen))
+               (Analysis.name_occurrences src name)) files in
+         (match (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
+                 | Some ls -> Some ls
+                 | None -> Analysis.field_occurrences (project_ctx_for srv uri) text cursor) with
+          | Some locs ->
+            -- a local binding or a record field: occurrences in THIS file only
+            Some (List.map (fn (loc : Token.loc) -> (uri, text, loc, namelen)) locs)
+          | None ->
+            (match canonical_name_at srv text cursor with
+             | None -> Some (by_name ())
+             | Some c ->
+               (match List.filter (fn t -> let (nm, _, _) = t in nm = c) (workspace_occurrences srv) with
+                | [] -> Some (by_name ())
+                | hits ->
+                  let wf = workspace_files srv in
+                  let src_of p = (match List.assoc_opt p wf with Some s -> s | None -> "") in
+                  let span = String.length (last_segment c) in
+                  Some (List.map (fn t -> let (_, path, (loc : Token.loc)) = t in
+                    (uri_of_path path, src_of path, loc, span)) hits)))))
+
   -- --- Messages -----------------------------------------------------------
 
   let notification (m : string) (params : Json.json) : Json.json =
@@ -493,6 +543,7 @@ end"
         ("workspaceSymbolProvider", Json.JBool true) ::
         ("documentHighlightProvider", Json.JBool true) ::
         ("referencesProvider", Json.JBool true) ::
+        ("renameProvider", Json.JObject (("prepareProvider", Json.JBool true) :: [])) ::
         ("semanticTokensProvider", Json.JObject (
           ("legend", Json.JObject (
             ("tokenTypes", Json.JArray (List.map (fn s -> Json.JString s) Analysis.semantic_legend)) ::
@@ -717,41 +768,60 @@ end"
           let line0 = Json.as_int (Json.member "line" pos) in
           let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
           let cursor = Analysis.offset_of_line_col text (line0 + 1) col in
+          (match symbol_sites srv uri text cursor with
+           | None -> Json.JArray []
+           | Some sites -> Json.JArray (List.map (fn s ->
+               let (suri, src, (loc : Token.loc), span) = s in
+               Json.JObject (("uri", Json.JString suri) :: ("range", name_range src loc span) :: [])) sites))
+        | None -> Json.JArray []) in
+      (response result) :: []
+    | "textDocument/prepareRename" ->
+      -- validate the cursor is on a renameable identifier; return its token range
+      -- and the current name (the editor's placeholder). null = not renameable.
+      let uri = doc_uri () in
+      let pos = Json.member "position" params in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          let cursor = Analysis.offset_of_line_col text (line0 + 1) col in
           (match Analysis.token_at text cursor with
            | Some tok ->
              (match (match tok.kind with Token.IDENT n -> Some n | Token.UIDENT n -> Some n | _ -> None) with
-              | Some name ->
-                let by_name () =
-                  let files = (match workspace_files srv with [] -> ((path_of_uri uri), text) :: [] | fs -> fs) in
-                  Json.JArray (List.concat_map (fn pf ->
-                    let (path, src) = pf in
-                    let puri = uri_of_path path in
-                    List.map (fn (loc : Token.loc) ->
-                      Json.JObject (("uri", Json.JString puri) :: ("range", name_range src loc (String.length name)) :: []))
-                      (Analysis.name_occurrences src name)
-                  ) files) in
-                (match (match Analysis.resolved_occurrences (project_ctx_for srv uri) text cursor (cst_binders text) with
-                        | Some ls -> Some ls
-                        | None -> Analysis.field_occurrences (project_ctx_for srv uri) text cursor) with
-                 | Some locs ->
-                   -- a local binding or a record field: occurrences in THIS file
-                   -- (cross-file field refs await type-directed whole-program work)
-                   Json.JArray (List.map (fn (loc : Token.loc) ->
-                     Json.JObject (("uri", Json.JString uri) :: ("range", name_range text loc (String.length name)) :: [])) locs)
-                 | None ->
-                   (match canonical_name_at srv text cursor with
-                    | None -> by_name ()
-                    | Some c ->
-                      (match List.filter (fn t -> let (nm, _, _) = t in nm = c) (workspace_occurrences srv) with
-                       | [] -> by_name ()
-                       | hits ->
-                         let wf = workspace_files srv in
-                         let src_of p = (match List.assoc_opt p wf with Some s -> s | None -> "") in
-                         Json.JArray (List.map (fn t -> let (_, path, (loc : Token.loc)) = t in
-                           Json.JObject (("uri", Json.JString (uri_of_path path)) :: ("range", global_ref_range (src_of path) loc c) :: [])) hits))))
-              | None -> Json.JArray [])
-           | None -> Json.JArray [])
-        | None -> Json.JArray []) in
+              | Some name -> Json.JObject (
+                  ("range", name_range text tok.loc (String.length name)) ::
+                  ("placeholder", Json.JString name) :: [])
+              | None -> Json.JNull)
+           | None -> Json.JNull)
+        | None -> Json.JNull) in
+      (response result) :: []
+    | "textDocument/rename" ->
+      -- whole-program rename: the SAME occurrence set as find-references, emitted as
+      -- a WorkspaceEdit { changes: { uri -> [{range, newText}] } }. Globals rewrite
+      -- only the canonical last segment, so `Mod.member` uses keep their `Mod.`
+      -- prefix. null when the cursor isn't on a renameable symbol.
+      let uri = doc_uri () in
+      let pos = Json.member "position" params in
+      let new_name = Json.to_str (Json.member "newName" params) in
+      let result = (match Hashtbl.get srv.docs uri with
+        | Some text ->
+          let line0 = Json.as_int (Json.member "line" pos) in
+          let col = utf16_to_byte_col (nth_line text line0) (Json.as_int (Json.member "character" pos)) in
+          let cursor = Analysis.offset_of_line_col text (line0 + 1) col in
+          (match symbol_sites srv uri text cursor with
+           | None -> Json.JNull
+           | Some sites ->
+             -- group edits by uri, preserving first-seen uri order (deterministic)
+             let uris = List.fold (fn acc s -> let (suri, _, _, _) = s in
+               if List.mem suri acc do acc else List.concat acc (suri :: [])) [] sites in
+             Json.JObject (("changes", Json.JObject (List.map (fn u ->
+               (u, Json.JArray (List.filter_map (fn s ->
+                 let (suri, src, (loc : Token.loc), span) = s in
+                 if suri = u do Some (Json.JObject (
+                     ("range", name_range src loc span) ::
+                     ("newText", Json.JString new_name) :: []))
+                 else None) sites))) uris)) :: []))
+        | None -> Json.JNull) in
       (response result) :: []
     | _ ->
       -- Unknown request -> null result; unknown notification -> ignore.
