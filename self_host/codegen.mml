@@ -2305,14 +2305,18 @@ module Codegen =
   and cty_is_unsigned (c : Ast.cty) : bool =
     match c with
     | Ast.CU8 -> true | Ast.CU16 -> true | Ast.CU32 -> true | Ast.CU64 -> true | _ -> false
-  -- C size and alignment (bytes) of a scalar cty, for struct layout. Structs are
-  -- passed by pointer, so a struct/handle field is pointer-sized.
+  -- C size and alignment (bytes) of a cty, for struct layout. A nested struct is
+  -- laid out INLINE (its computed size, aligned to its widest field); pointer-like
+  -- ctys (ptr/handle/cstr/i64/f64) are pointer-sized.
   and cty_size_align (c : Ast.cty) =
     match c with
     | Ast.CI8 -> (1, 1) | Ast.CU8 -> (1, 1) | Ast.CBool -> (1, 1)
     | Ast.CI16 -> (2, 2) | Ast.CU16 -> (2, 2)
     | Ast.CI32 -> (4, 4) | Ast.CU32 -> (4, 4) | Ast.CF32 -> (4, 4)
+    | Ast.CStruct ((_, fields)) -> let (_, total) = struct_layout fields in (total, struct_align fields)
     | _ -> (8, 8)
+  and struct_align fields =
+    List.fold (fn acc pr -> let (_, fc) = pr in let (_, al) = cty_size_align fc in if al > acc do al else acc) 1 fields
   and align_up x a = (((x + a) - 1) / a) * a
   -- index of `nm` in the sorted field-name list (a record's runtime field order)
   and field_pos names nm =
@@ -2354,26 +2358,30 @@ module Codegen =
       | Ast.CNamed _ -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
       -- A C struct, passed by pointer: build it in a fixed-size stack buffer (which
       -- -O2 hoists to the function entry, so it's allocated once even inside a loop)
-      -- by reading each field from the MiniML record and marshalling it to the C
-      -- field at its computed offset. The record stores fields sorted by name; the
-      -- C layout follows declaration order with standard alignment.
+      -- then pass the pointer.
       | Ast.CStruct ((_, fields)) ->
-        let rp = Ir_emit.emit_inttoptr ctx.ir v in
-        let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
-        let (placed, total) = struct_layout fields in
+        let (_placed, total) = struct_layout fields in
         let buf = Ir_emit.emit_alloca_array ctx.ir "i8" total in
-        List.iter (fn t ->
-          let (fname, fcty, o) = t in
-          (match fcty with Ast.CStruct _ -> failwith "nested struct fields are not supported (flatten to scalars)" | _ -> ());
-          let fp = Ir_emit.emit_gep ctx.ir "i64" rp (field_pos sorted_names fname) in
-          let fv = Ir_emit.emit_load ctx.ir "i64" fp in
-          let (clty, cv) = (match marshal_ffi_arg ctx fcty fv with Some pr -> pr | None -> ("i64", "0")) in
-          let dst = Ir_emit.emit_gep ctx.ir "i8" buf o in
-          Ir_emit.emit_store ctx.ir clty cv dst
-        ) placed;
+        emit_struct_into ctx v buf 0 fields;
         Some ("ptr", buf)
       | _ -> None
     end
+  -- Marshal a MiniML record value into a C struct laid out in `buf` at byte
+  -- `base`: read each field from its sorted record slot and write it at the field's
+  -- C offset. A nested-struct field is written INLINE (recurse), not as a pointer.
+  and emit_struct_into ctx rec_val buf base fields =
+    let rp = Ir_emit.emit_inttoptr ctx.ir rec_val in
+    let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
+    let (placed, _total) = struct_layout fields in
+    List.iter (fn t ->
+      let (fname, fcty, o) = t in
+      let fv = Ir_emit.emit_load ctx.ir "i64" (Ir_emit.emit_gep ctx.ir "i64" rp (field_pos sorted_names fname)) in
+      match fcty with
+      | Ast.CStruct ((_, nested)) -> emit_struct_into ctx fv buf (base + o) nested
+      | _ ->
+        let (clty, cv) = (match marshal_ffi_arg ctx fcty fv with Some pr -> pr | None -> ("i64", "0")) in
+        Ir_emit.emit_store ctx.ir clty cv (Ir_emit.emit_gep ctx.ir "i8" buf (base + o))
+    ) placed
   -- Marshal a C return value back into a MiniML i64.
   and marshal_ffi_ret ctx (c : Ast.cty) (raw : string) : string =
     if cty_is_int c do
@@ -2397,19 +2405,21 @@ module Codegen =
       | Ast.CStruct _ -> failwith "returning a C struct by value is not supported"
       | _ -> "1"
     end
-  -- Read a C struct the callee filled (in `buf`) back into a fresh MiniML record:
-  -- load each field at its C offset, marshal it to a MiniML value, and store it at
-  -- the field's sorted record slot. Returns the record value (an i64).
-  and emit_struct_readback ctx buf fields =
+  -- Read a C struct the callee filled (in `buf` at byte `base`) into a fresh MiniML
+  -- record: load each field at its C offset, marshal it to a MiniML value, store it
+  -- at the field's sorted record slot. A nested-struct field becomes a nested
+  -- record (recurse). Returns the record value (an i64).
+  and emit_struct_readback ctx buf fields = emit_struct_readback_at ctx buf 0 fields
+  and emit_struct_readback_at ctx buf base fields =
     let (placed, _total) = struct_layout fields in
     let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
     let n = List.length fields in
     let rec_ptr = emit_alloc ctx (n * 8) (make_header n mml_hdr_record) in
     List.iter (fn t ->
       let (fname, fcty, o) = t in
-      (match fcty with Ast.CStruct _ -> failwith "nested struct fields are not supported" | _ -> ());
-      let cv = Ir_emit.emit_load ctx.ir (cty_llvm fcty) (Ir_emit.emit_gep ctx.ir "i8" buf o) in
-      let mml = marshal_ffi_ret ctx fcty cv in
+      let mml = (match fcty with
+        | Ast.CStruct ((_, nested)) -> emit_struct_readback_at ctx buf (base + o) nested
+        | _ -> marshal_ffi_ret ctx fcty (Ir_emit.emit_load ctx.ir (cty_llvm fcty) (Ir_emit.emit_gep ctx.ir "i8" buf (base + o)))) in
       Ir_emit.emit_store ctx.ir "i64" mml (Ir_emit.emit_gep ctx.ir "i64" rec_ptr (field_pos sorted_names fname))
     ) placed;
     Ir_emit.emit_ptrtoint ctx.ir rec_ptr
