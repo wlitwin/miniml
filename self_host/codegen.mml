@@ -2318,6 +2318,20 @@ module Codegen =
   and field_pos names nm =
     let rec go i lst = (match lst with [] -> 0 | x :: xs -> if x = nm do i else go (i + 1) xs) in
     go 0 names
+  -- C struct layout: place each field (declaration order) at an aligned offset.
+  -- Returns ([(fname, fcty, c_offset)], total_size_padded_to_max_alignment).
+  and struct_layout fields =
+    let off = Ref.create 0 in
+    let maxal = Ref.create 1 in
+    let placed = List.map (fn pr ->
+      let (fname, fcty) = pr in
+      let (sz, al) = cty_size_align fcty in
+      let o = align_up (Ref.get off) al in
+      Ref.set off (o + sz);
+      (if al > (Ref.get maxal) do Ref.set maxal al end);
+      (fname, fcty, o)
+    ) fields in
+    (placed, align_up (Ref.get off) (Ref.get maxal))
   -- Marshal one MiniML i64 value into a C argument. Some (llvm_ty, value), or None
   -- to DROP it (a CVoid parameter passes no C argument — e.g. `unit -> …`).
   and marshal_ffi_arg ctx (c : Ast.cty) (v : string) =
@@ -2346,17 +2360,7 @@ module Codegen =
       | Ast.CStruct ((_, fields)) ->
         let rp = Ir_emit.emit_inttoptr ctx.ir v in
         let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
-        let off = Ref.create 0 in
-        let maxal = Ref.create 1 in
-        let placed = List.map (fn pr ->
-          let (fname, fcty) = pr in
-          let (sz, al) = cty_size_align fcty in
-          let o = align_up (Ref.get off) al in
-          Ref.set off (o + sz);
-          (if al > (Ref.get maxal) do Ref.set maxal al end);
-          (fname, fcty, o)
-        ) fields in
-        let total = align_up (Ref.get off) (Ref.get maxal) in
+        let (placed, total) = struct_layout fields in
         let buf = Ir_emit.emit_alloca_array ctx.ir "i8" total in
         List.iter (fn t ->
           let (fname, fcty, o) = t in
@@ -2412,8 +2416,30 @@ module Codegen =
         Some ("ptr", cell)
       | Ast.CArray elem ->
         -- marshal the MiniML array into a malloc'd C buffer (freed after the call)
-        add_extern ctx "mml_ffi_array_to_c" "ptr" ("i64" :: ("i64" :: []));
-        let buf = Ir_emit.emit_call ctx.ir "ptr" "mml_ffi_array_to_c" (("i64", v) :: (("i64", string_of_int (cty_kind elem)) :: [])) in
+        -- array of structs: build a compile-time layout descriptor
+        -- [nfields, struct_size, (record_slot, c_offset, kind) * nfields] in a
+        -- (fixed-size, hoisted) stack alloca, then call the struct-array helper.
+        let buf = (match elem with
+          | Ast.CStruct ((_, fields)) ->
+            let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
+            let (placed, total) = struct_layout fields in
+            let nf = List.length fields in
+            let desc = Ir_emit.emit_alloca_array ctx.ir "i64" (2 + (nf * 3)) in
+            let put i n = Ir_emit.emit_store ctx.ir "i64" (string_of_int n) (Ir_emit.emit_gep ctx.ir "i64" desc i) in
+            put 0 nf; put 1 total;
+            List.iteri (fn fi t ->
+              let (fname, fcty, o) = t in
+              (match fcty with Ast.CStruct _ -> failwith "nested struct fields are not supported" | _ -> ());
+              let base = 2 + (fi * 3) in
+              put base (field_pos sorted_names fname);
+              put (base + 1) o;
+              put (base + 2) (cty_kind fcty)
+            ) placed;
+            add_extern ctx "mml_ffi_struct_array_to_c" "ptr" ("i64" :: ("ptr" :: []));
+            Ir_emit.emit_call ctx.ir "ptr" "mml_ffi_struct_array_to_c" (("i64", v) :: (("ptr", desc) :: []))
+          | _ ->
+            add_extern ctx "mml_ffi_array_to_c" "ptr" ("i64" :: ("i64" :: []));
+            Ir_emit.emit_call ctx.ir "ptr" "mml_ffi_array_to_c" (("i64", v) :: (("i64", string_of_int (cty_kind elem)) :: []))) in
         Ref.set frees (buf :: Ref.get frees);
         Some ("ptr", buf)
       | _ -> marshal_ffi_arg ctx c v

@@ -1789,6 +1789,42 @@ void *mml_ffi_array_to_c(mml_value arr, int64_t elem_kind) {
     return buf;
 }
 
+/* FFI: marshal a MiniML array of RECORDS into a malloc'd C array of structs.
+ * `desc` is a compile-time layout: [nfields, struct_size, (record_slot, c_offset,
+ * elem_kind) * nfields]. record_slot is the field's index in the record's
+ * sorted-by-name layout; c_offset/elem_kind place it in the C struct. Caller frees
+ * the buffer after the call. Returns NULL for an empty array. */
+void *mml_ffi_struct_array_to_c(mml_value arr, const int64_t *desc) {
+    int64_t nf = desc[0];
+    int64_t tsize = desc[1];
+    int64_t n = MML_IS_INT(arr) ? 0 : MML_ARR_LEN(arr);
+    if (n <= 0) return NULL;
+    mml_value *data = MML_ARR_DATA(arr);
+    char *buf = malloc((size_t)n * (size_t)tsize);
+    for (int64_t i = 0; i < n; i++) {
+        int64_t *rec = (int64_t *)(intptr_t)data[i]; /* record fields */
+        for (int64_t f = 0; f < nf; f++) {
+            int64_t slot = desc[2 + f * 3];
+            int64_t off = desc[3 + f * 3];
+            int64_t kind = desc[4 + f * 3];
+            mml_value fv = (mml_value)rec[slot];
+            char *slotp = buf + i * tsize + off;
+            switch (kind) {
+            case 0: *(int8_t *)slotp = (int8_t)MML_INT_VAL(fv); break;
+            case 1: *(int16_t *)slotp = (int16_t)MML_INT_VAL(fv); break;
+            case 2: *(int32_t *)slotp = (int32_t)MML_INT_VAL(fv); break;
+            case 3: *(int64_t *)slotp = (int64_t)MML_INT_VAL(fv); break;
+            case 4: *(float *)slotp = (float)mml_unbox_float(fv); break;
+            case 5: *(double *)slotp = mml_unbox_float(fv); break;
+            case 6: *(void **)slotp = (void *)(intptr_t)fv; break;
+            case 7: *(const char **)slotp = MML_STR_DATA(fv); break;
+            default: break;
+            }
+        }
+    }
+    return buf;
+}
+
 mml_value mml_array_get(mml_value idx_tagged, mml_value arr) {
     int64_t idx = MML_INT_VAL(idx_tagged);
     if (MML_IS_INT(arr)) mml_panic("array index out of bounds");
