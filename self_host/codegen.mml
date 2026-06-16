@@ -2342,6 +2342,21 @@ module Codegen =
       (fname, fcty, o)
     ) fields in
     (placed, align_up (Ref.get off) (Ref.get maxal))
+  -- Flatten a struct (recursively through nested-struct fields) to its leaf scalars
+  -- as (record-slot path, absolute C offset, elem-kind). The path is the sequence
+  -- of record slots to reach the leaf from the struct's own record (one slot per
+  -- nesting level). Used to build the descriptor for array-of-struct marshalling.
+  and struct_leaves fields =
+    let (placed, _total) = struct_layout fields in
+    let sorted = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
+    List.concat_map (fn t ->
+      let (fname, fcty, o) = t in
+      let slot = field_pos sorted fname in
+      match fcty with
+      | Ast.CStruct ((_, nested)) ->
+        List.map (fn lf -> let (path, off, k) = lf in (slot :: path, o + off, k)) (struct_leaves nested)
+      | _ -> (slot :: [], o, cty_kind fcty) :: []
+    ) placed
   -- Marshal one MiniML i64 value into a C argument. Some (llvm_ty, value), or None
   -- to DROP it (a CVoid parameter passes no C argument — e.g. `unit -> …`).
   and marshal_ffi_arg ctx (c : Ast.cty) (v : string) =
@@ -2460,22 +2475,23 @@ module Codegen =
         -- array of structs: build a compile-time layout descriptor
         -- [nfields, struct_size, (record_slot, c_offset, kind) * nfields] in a
         -- (fixed-size, hoisted) stack alloca, then call the struct-array helper.
+        -- struct-array descriptor: [n_leaves, struct_size] then per leaf
+        -- [path_len, slot…, c_offset, kind] — slot-path handles nested-struct fields.
         let buf = (match elem with
           | Ast.CStruct ((_, fields)) ->
-            let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
-            let (placed, total) = struct_layout fields in
-            let nf = List.length fields in
-            let desc = Ir_emit.emit_alloca_array ctx.ir "i64" (2 + (nf * 3)) in
-            let put i n = Ir_emit.emit_store ctx.ir "i64" (string_of_int n) (Ir_emit.emit_gep ctx.ir "i64" desc i) in
-            put 0 nf; put 1 total;
-            List.iteri (fn fi t ->
-              let (fname, fcty, o) = t in
-              (match fcty with Ast.CStruct _ -> failwith "nested struct fields are not supported" | _ -> ());
-              let base = 2 + (fi * 3) in
-              put base (field_pos sorted_names fname);
-              put (base + 1) o;
-              put (base + 2) (cty_kind fcty)
-            ) placed;
+            let (_placed, total) = struct_layout fields in
+            let leaves = struct_leaves fields in
+            let desc_len = List.fold (fn acc lf -> let (path, _, _) = lf in (acc + (List.length path)) + 3) 2 leaves in
+            let desc = Ir_emit.emit_alloca_array ctx.ir "i64" desc_len in
+            let idx = Ref.create 0 in
+            let put n = (Ir_emit.emit_store ctx.ir "i64" (string_of_int n) (Ir_emit.emit_gep ctx.ir "i64" desc (Ref.get idx)); Ref.set idx ((Ref.get idx) + 1)) in
+            put (List.length leaves); put total;
+            List.iter (fn lf ->
+              let (path, off, k) = lf in
+              put (List.length path);
+              List.iter (fn s -> put s) path;
+              put off; put k
+            ) leaves;
             add_extern ctx "mml_ffi_struct_array_to_c" "ptr" ("i64" :: ("ptr" :: []));
             Ir_emit.emit_call ctx.ir "ptr" "mml_ffi_struct_array_to_c" (("i64", v) :: (("ptr", desc) :: []))
           | _ ->
