@@ -4235,8 +4235,10 @@ and compile_decl ctx (decl : Typechecker.tdecl) =
         match float_shape ctx.type_env te.ty with Some s -> s | None -> "null"
       in
       emit_line ctx (Printf.sprintf "_last_shape = %s;" shape)
-  | Typechecker.TDExtern (name, _scheme) ->
-      (* External declarations — name is already qualified by typechecker *)
+  | Typechecker.TDExtern (name, _) | Typechecker.TDFfi (name, _, _, _, _) ->
+      (* External declarations — name is already qualified by typechecker. A typed
+         FFI extern (TDFfi) cannot call C from JS; it falls through to the same
+         _mmlExterns lookup, throwing at runtime if unprovided (FFI targets native). *)
       let js_name = mangle_name name in
       (* Emit fallback for user-defined externs: if the function isn't already
        defined by js_builtins, look it up from globalThis._mmlExterns.

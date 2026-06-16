@@ -2737,23 +2737,69 @@ let parse_effect_decl p =
   if !ops = [] then error p "effect must have at least one operation";
   Ast.DEffect (name, type_params, List.rev !ops)
 
+(* One C type in an FFI signature (a lowercase identifier). *)
+let parse_cty p : Ast.cty =
+  match expect_ident p with
+  | "i8" -> Ast.CI8 | "i16" -> Ast.CI16 | "i32" -> Ast.CI32 | "i64" -> Ast.CI64
+  | "u8" -> Ast.CU8 | "u16" -> Ast.CU16 | "u32" -> Ast.CU32 | "u64" -> Ast.CU64
+  | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
+  | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
+  | nm ->
+      error p
+        (Printf.sprintf
+           "unknown FFI C type '%s' (expected \
+            i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit)"
+           nm)
+
+(* An FFI signature [cty -> cty -> … -> cty]: all but the last are parameters. *)
+let parse_cty_sig p : Ast.cty list * Ast.cty =
+  let acc = ref [ parse_cty p ] in
+  while peek_kind p = Token.ARROW do
+    ignore (advance p);
+    acc := parse_cty p :: !acc
+  done;
+  match !acc with ret :: rest -> (List.rev rest, ret) | [] -> ([], Ast.CVoid)
+
+(* The bound name of an extern: [Module.field] or a bare ident/operator. *)
+let parse_extern_name p : string =
+  match peek_kind p with
+  | Token.UIDENT mod_name ->
+      ignore (advance p);
+      expect p Token.DOT;
+      let field = expect_ident p in
+      mod_name ^ "." ^ field
+  | _ -> parse_op_or_ident p
+
+(* [@symbol("C_NAME")] extern Mod.f : <sig>]. With the @symbol prefix this is a
+   typed FFI extern bound to a real C symbol with explicit C types (marshalled by
+   the native backend); without it, an ordinary MiniML-typed extern. *)
 let parse_extern_decl p =
-  expect p Token.EXTERN;
-  let name =
+  let c_sym_opt =
     match peek_kind p with
-    | Token.UIDENT mod_name ->
+    | Token.SYMBOL ->
         ignore (advance p);
-        expect p Token.DOT;
-        let field = expect_ident p in
-        mod_name ^ "." ^ field
-    (* Identifier, or a parenthesized operator like ( ^ ) — same syntax used to
-       reference an operator as a value. Lets stdlib/builtins.mml declare
-       operator builtin signatures. *)
-    | _ -> parse_op_or_ident p
+        expect p Token.LPAREN;
+        let s =
+          match peek_kind p with
+          | Token.STRING s ->
+              ignore (advance p);
+              s
+          | _ -> error p "expected a string C symbol name after @symbol("
+        in
+        expect p Token.RPAREN;
+        Some s
+    | _ -> None
   in
+  expect p Token.EXTERN;
+  let name = parse_extern_name p in
   expect p Token.COLON;
-  let ty = parse_ty p in
-  Ast.DExtern (name, ty)
+  match c_sym_opt with
+  | Some c_symbol ->
+      let params, ret = parse_cty_sig p in
+      Ast.DFfi (name, c_symbol, params, ret)
+  | None ->
+      let ty = parse_ty p in
+      Ast.DExtern (name, ty)
 
 let rec parse_module_body_item p : Ast.module_decl list =
   match peek_kind p with
@@ -2781,7 +2827,7 @@ and parse_inner_decl p =
   | Token.CLASS -> [ parse_class_decl p ]
   | Token.INSTANCE -> [ parse_instance_decl p ]
   | Token.EFFECT -> [ parse_effect_decl p ]
-  | Token.EXTERN -> [ parse_extern_decl p ]
+  | Token.EXTERN | Token.SYMBOL -> [ parse_extern_decl p ]
   | Token.MODULE -> [ parse_module_decl p ]
   | Token.OPEN -> [ parse_open_decl p ]
   | _ -> error p "expected declaration inside module"
@@ -2831,7 +2877,7 @@ and parse_decl p =
   | Token.CLASS -> [ parse_class_decl p ]
   | Token.INSTANCE -> [ parse_instance_decl p ]
   | Token.EFFECT -> [ parse_effect_decl p ]
-  | Token.EXTERN -> [ parse_extern_decl p ]
+  | Token.EXTERN | Token.SYMBOL -> [ parse_extern_decl p ]
   | Token.MODULE -> [ parse_module_decl p ]
   | Token.OPEN -> [ parse_open_decl p ]
   | _ ->

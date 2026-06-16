@@ -864,6 +864,6 @@ let rec lower_program type_env (program : Typechecker.tprogram) :
       | Typechecker.TDModule (name, decls, schemes) ->
           Typechecker.TDModule (name, lower_program type_env decls, schemes)
       | Typechecker.TDEffect _ | Typechecker.TDType _ | Typechecker.TDClass _
-      | Typechecker.TDExtern _ | Typechecker.TDOpen _ ->
+      | Typechecker.TDExtern _ | Typechecker.TDFfi _ | Typechecker.TDOpen _ ->
           decl)
     program

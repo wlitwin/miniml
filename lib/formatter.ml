@@ -460,6 +460,13 @@ let is_operator_name s =
   (not ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'))
   || is_keyword_operator s
 
+(* Surface name of a C type (cty), round-tripping through the FFI parser. *)
+let cty_str : Ast.cty -> string = function
+  | Ast.CI8 -> "i8" | Ast.CI16 -> "i16" | Ast.CI32 -> "i32" | Ast.CI64 -> "i64"
+  | Ast.CU8 -> "u8" | Ast.CU16 -> "u16" | Ast.CU32 -> "u32" | Ast.CU64 -> "u64"
+  | Ast.CF32 -> "f32" | Ast.CF64 -> "f64"
+  | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
+
 let doc_var s =
   (* A qualified operator like `Eq.(=)` is stored as the name "Eq.="; it must
      print with the operator parenthesized: `Eq.(=)`, not `Eq.=`. *)
@@ -964,6 +971,12 @@ let rec doc_decl (d : Ast.decl) : doc =
           ^^ concat (List.map (fun b -> line ^^ text "and " ^^ doc_type_def_binding b) rest))
   | Ast.DExpr e -> doc_expr e
   | Ast.DExtern (name, t) -> text "extern " ^^ doc_var name ^^ text " : " ^^ doc_ty t
+  | Ast.DFfi (name, c_symbol, c_params, c_ret) ->
+      let sig_str =
+        String.concat " -> " (List.map cty_str (c_params @ [ c_ret ]))
+      in
+      text (Printf.sprintf "@symbol(%S) extern " c_symbol)
+      ^^ doc_var name ^^ text (" : " ^ sig_str)
   | Ast.DOpen (m, None) -> text ("open " ^ m)
   | Ast.DOpen (m, Some names) -> text (Printf.sprintf "open %s (%s)" m (String.concat ", " names))
   | Ast.DClass { class_name; tyvars; fundeps; methods } ->
@@ -1503,7 +1516,7 @@ let rec strip_decl (d : Ast.decl) : Ast.decl =
       Ast.DModule
         (n, List.map (fun (md : Ast.module_decl) -> { md with Ast.decl = strip_decl md.decl }) items)
   | (Ast.DType _ | Ast.DTypeAnd _ | Ast.DClass _ | Ast.DEffect _ | Ast.DExtern _
-    | Ast.DOpen _) as d ->
+    | Ast.DFfi _ | Ast.DOpen _) as d ->
       d
 
 let strip_program (p : Ast.program) : Ast.program = List.map strip_decl p

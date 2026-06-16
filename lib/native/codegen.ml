@@ -6578,7 +6578,7 @@ and emit_decl (ctx : codegen_ctx) (decl : Typechecker.tdecl) : unit =
           | Some info -> bind_var ctx short_name info
           | None -> () (* type-only export or unresolvable *))
         alias_pairs
-  | TDType _ | TDClass _ | TDEffect _ | TDExtern _ -> ()
+  | TDType _ | TDClass _ | TDEffect _ | TDExtern _ | TDFfi _ -> ()
 
 and ensure_global ctx name =
   (* Globals (top-level values, mutable globals, typeclass-dictionary slots) carry

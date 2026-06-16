@@ -45,6 +45,7 @@ type token_kind =
   | WHEN
   | WHERE
   | PARTIAL
+  | SYMBOL (* @symbol (FFI extern) *)
   | NOT
   | HASH
   | FATARROW
@@ -141,6 +142,7 @@ let pp_token_kind = function
   | WHEN -> "WHEN"
   | WHERE -> "WHERE"
   | PARTIAL -> "PARTIAL"
+  | SYMBOL -> "SYMBOL"
   | NOT -> "NOT"
   | HASH -> "HASH"
   | FATARROW -> "FATARROW"
@@ -235,6 +237,7 @@ let describe_token_kind = function
   | WHEN -> "'when'"
   | WHERE -> "'where'"
   | PARTIAL -> "'@partial'"
+  | SYMBOL -> "'@symbol'"
   | NOT -> "'not'"
   | HASH -> "'#'"
   | FATARROW -> "'=>'"

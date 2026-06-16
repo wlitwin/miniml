@@ -600,7 +600,7 @@ let rec optimize_decl ~mutables ~pure_fns decl =
   | TDModule (name, decls, schemes) ->
       TDModule
         (name, List.map (optimize_decl ~mutables ~pure_fns) decls, schemes)
-  | (TDType _ | TDClass _ | TDEffect _ | TDExtern _ | TDOpen _) as d -> d
+  | (TDType _ | TDClass _ | TDEffect _ | TDExtern _ | TDFfi _ | TDOpen _) as d -> d
 
 let optimize_program ~stdlib_programs ~type_env (program : tprogram) : tprogram =
   (* Collect all top-level mutable names (including inside modules) *)

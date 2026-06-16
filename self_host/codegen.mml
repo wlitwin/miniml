@@ -4520,7 +4520,7 @@ else
         | None -> ()
 
       end) alias_pairs
-    | (((TDType _ | TDClass _) | TDEffect _) | TDExtern _) -> ()
+    | ((((TDType _ | TDClass _) | TDEffect _) | TDExtern _) | TDFfi _) -> ()
 
   and ensure_global ctx name =
     let gname = $"mml_g_{ctx.unit_prefix}{sanitize_name name}" in

@@ -61,7 +61,7 @@ let rec validate_lowered stage (program : Typechecker.tprogram) : unit =
           List.iter (fun (_, e) -> check_no_tematch stage e) binds
       | Typechecker.TDModule (_, decls, _) -> validate_lowered stage decls
       | Typechecker.TDEffect _ | Typechecker.TDType _ | Typechecker.TDClass _
-      | Typechecker.TDExtern _ | Typechecker.TDOpen _ ->
+      | Typechecker.TDExtern _ | Typechecker.TDFfi _ | Typechecker.TDOpen _ ->
           ())
     program
 

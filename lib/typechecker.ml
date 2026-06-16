@@ -69,6 +69,9 @@ type tdecl =
   | TDClass of string
   | TDEffect of string
   | TDExtern of string * Types.scheme
+  (* typed-FFI extern: (mml_name, derived MiniML scheme, c_symbol, c_params, c_ret).
+     The scheme lets callers typecheck; the cty signature drives native marshalling. *)
+  | TDFfi of string * Types.scheme * string * Ast.cty list * Ast.cty
   | TDModule of
       string
       * tdecl list
@@ -5554,6 +5557,30 @@ let rec default_extern_effects ty =
       Types.TArrow (param, close_eff eff, default_extern_effects ret)
   | _ -> ty
 
+(* The MiniML surface type a C type (cty) presents to callers: integer widths and
+   pointers are [int], f32/f64 are [float], CStr is [string], CBool [bool], CVoid
+   [unit]. The exact C width is kept on the TDFfi for the backend to marshal. *)
+let cty_to_mml_ty : Ast.cty -> Types.ty = function
+  | Ast.CI8 | Ast.CI16 | Ast.CI32 | Ast.CI64
+  | Ast.CU8 | Ast.CU16 | Ast.CU32 | Ast.CU64 | Ast.CPtr -> Types.TInt
+  | Ast.CF32 | Ast.CF64 -> Types.TFloat
+  | Ast.CStr -> Types.TString
+  | Ast.CBool -> Types.TBool
+  | Ast.CVoid -> Types.TUnit
+
+(* Curried MiniML function type for an FFI signature. The IO effect sits on the
+   LAST arrow (applying the final argument performs the C call), matching the
+   register_module_fn convention — and crucially marking the call effectful so the
+   optimizer never eliminates it as a pure dead computation. *)
+let ffi_fun_ty (params : Ast.cty list) (ret : Ast.cty) : Types.ty =
+  let io_eff = Types.EffRow ("IO", [], Types.EffEmpty) in
+  let rec build = function
+    | [] -> cty_to_mml_ty ret
+    | [ p ] -> Types.TArrow (cty_to_mml_ty p, io_eff, cty_to_mml_ty ret)
+    | p :: rest -> Types.TArrow (cty_to_mml_ty p, Types.EffEmpty, build rest)
+  in
+  build params
+
 let rec process_module_def ctx level mod_name (items : Ast.module_decl list) =
   let prefix =
     match ctx.current_module with
@@ -6069,6 +6096,15 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
       | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
       | _ -> ());
       (sub_ctx', TDExtern (qualified_name, scheme))
+  | Ast.DFfi (name, c_symbol, c_params, c_ret) ->
+      let qualified_name = prefix ^ name in
+      let scheme = Types.generalize 0 (ffi_fun_ty c_params c_ret) in
+      let sub_ctx' = extend_var sub_ctx name scheme in
+      let sub_ctx' = extend_var sub_ctx' qualified_name scheme in
+      (match item.vis with
+      | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
+      | _ -> ());
+      (sub_ctx', TDFfi (qualified_name, scheme, c_symbol, c_params, c_ret))
   | Ast.DExpr expr ->
       let eff = Types.new_effvar level in
       let eff_ctx = { sub_ctx with current_eff = eff } in
@@ -6715,6 +6751,10 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let scheme = Types.generalize 0 ty in
       let ctx = extend_var ctx name scheme in
       (ctx, [ TDExtern (name, scheme) ])
+  | Ast.DFfi (name, c_symbol, c_params, c_ret) ->
+      let scheme = Types.generalize 0 (ffi_fun_ty c_params c_ret) in
+      let ctx = extend_var ctx name scheme in
+      (ctx, [ TDFfi (name, scheme, c_symbol, c_params, c_ret) ])
   | Ast.DModule (name, items) ->
       let ctx', td = process_module_def ctx level name items in
       (ctx', [ td ])
@@ -8859,7 +8899,7 @@ let rec classify_handlers_with inline_handlers (program : tprogram) : tprogram =
           TDLetRecAnd (List.map (fun (n, e) -> (n, classify e)) binds)
       | TDModule (name, decls, schemes) ->
           TDModule (name, classify_handlers_with inline_handlers decls, schemes)
-      | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDOpen _ -> decl)
+      | TDEffect _ | TDType _ | TDClass _ | TDExtern _ | TDFfi _ | TDOpen _ -> decl)
     program
 
 (* Bytecode backends: handlers may be inline-lowered, so `return` can escape an

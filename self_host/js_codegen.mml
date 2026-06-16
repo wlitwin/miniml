@@ -2885,7 +2885,13 @@ module Js_codegen =
         | None -> "null"
        in
       emit_line ctx ($"_last_shape = {shape};")
-    | Typechecker.TDExtern ((name, _scheme)) -> 
+    | Typechecker.TDFfi ((name, _, _, _, _)) ->
+      -- typed FFI cannot call C from JS; fall through to the same _mmlExterns
+      -- lookup (throws at runtime if unprovided — FFI targets the native backend)
+      let js_name = mangle_name name in
+      emit_line ctx ($"if (typeof {js_name} === \"undefined\") \{ if (globalThis._mmlExterns && globalThis._mmlExterns[{escape_js_string name}]) var {js_name} = globalThis._mmlExterns[{escape_js_string name}]; else throw new Error(\"extern \" + {escape_js_string name} + \" not provided\"); \}");
+      bind_var ctx name js_name
+    | Typechecker.TDExtern ((name, _scheme)) ->
       let js_name = mangle_name name in
       emit_line ctx ($"if (typeof {js_name} === \"undefined\") \{ if (globalThis._mmlExterns && globalThis._mmlExterns[{escape_js_string name}]) var {js_name} = globalThis._mmlExterns[{escape_js_string name}]; else throw new Error(\"extern \" + {escape_js_string name} + \" not provided\"); \}");
       bind_var ctx name js_name

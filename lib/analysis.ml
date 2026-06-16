@@ -322,7 +322,7 @@ let rec visit_tdecl f (td : Typechecker.tdecl) : unit =
   | Typechecker.TDLetRecAnd binds -> List.iter (fun (_, te) -> visit_texpr f te) binds
   | Typechecker.TDModule (_, decls, _) -> List.iter (visit_tdecl f) decls
   | Typechecker.TDType _ | Typechecker.TDClass _ | Typechecker.TDEffect _
-  | Typechecker.TDExtern _ | Typechecker.TDOpen _ ->
+  | Typechecker.TDExtern _ | Typechecker.TDFfi _ | Typechecker.TDOpen _ ->
       ()
 
 (* Typecheck [program] one declaration at a time against [state]'s context,

@@ -508,6 +508,7 @@ let rec next_token l =
         done;
         let name = Buffer.contents buf in
         if name = "partial" then make_token l PARTIAL loc
+        else if name = "symbol" then make_token l SYMBOL loc
         else error l (Printf.sprintf "unknown annotation @%s" name)
     | '+' ->
         ignore (advance l);

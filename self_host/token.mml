@@ -53,6 +53,7 @@ module Token =
     | WHEN
     | WHERE
     | PARTIAL
+    | SYMBOL                                                 -- @symbol (FFI extern)
     | NOT
     | HASH
     | FATARROW
@@ -155,6 +156,7 @@ module Token =
       | WHEN -> "WHEN"
       | WHERE -> "WHERE"
       | PARTIAL -> "PARTIAL"
+      | SYMBOL -> "SYMBOL"
       | NOT -> "NOT"
       | HASH -> "HASH"
       | FATARROW -> "FATARROW"
@@ -251,6 +253,7 @@ module Token =
       | WHEN -> "'when'"
       | WHERE -> "'where'"
       | PARTIAL -> "'@partial'"
+      | SYMBOL -> "'@symbol'"
       | NOT -> "'not'"
       | HASH -> "'#'"
       | FATARROW -> "'=>'"
