@@ -137,6 +137,8 @@ module Codegen =
 
   pub let mml_hdr_array = 0x05
 
+  pub let mml_hdr_float = 0x07
+
   pub let mml_hdr_pair = 0x09
 
   pub let mml_hdr_ref = 0x0A
@@ -2263,12 +2265,16 @@ module Codegen =
       end
     | _ -> Types.TUnit
 
+  -- A boxed float value IS a pointer to its double (header at [-1]); unbox is a
+  -- plain load and box is alloc+store. Inlined here (rather than calling the
+  -- runtime mml_unbox_float/mml_box_float) so every float op is a load/alloc, not a
+  -- call — and so -O2 can fold a box immediately consumed by an unbox.
   and emit_unbox_float ctx v =
-    add_extern ctx "mml_unbox_float" "double" ("i64" :: []);
-    Ir_emit.emit_call ctx.ir "double" "mml_unbox_float" (("i64", v) :: [])
+    Ir_emit.emit_load ctx.ir "double" (Ir_emit.emit_inttoptr ctx.ir v)
   and emit_box_float ctx d =
-    add_extern ctx "mml_box_float" "i64" ("double" :: []);
-    Ir_emit.emit_call ctx.ir "i64" "mml_box_float" (("double", d) :: [])
+    let p = emit_alloc ctx 8 (make_header 0 mml_hdr_float) in
+    Ir_emit.emit_store ctx.ir "double" d p;
+    Ir_emit.emit_ptrtoint ctx.ir p
 
   -- ---- Typed-FFI marshalling (cty <-> the MiniML i64 ABI) ----
   -- The LLVM type for a C type: integer widths are signless in LLVM; CStr/CPtr are
