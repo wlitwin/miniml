@@ -2292,6 +2292,19 @@ module Codegen =
   and cty_is_unsigned (c : Ast.cty) : bool =
     match c with
     | Ast.CU8 -> true | Ast.CU16 -> true | Ast.CU32 -> true | Ast.CU64 -> true | _ -> false
+  -- C size and alignment (bytes) of a scalar cty, for struct layout. Structs are
+  -- passed by pointer, so a struct/handle field is pointer-sized.
+  and cty_size_align (c : Ast.cty) =
+    match c with
+    | Ast.CI8 -> (1, 1) | Ast.CU8 -> (1, 1) | Ast.CBool -> (1, 1)
+    | Ast.CI16 -> (2, 2) | Ast.CU16 -> (2, 2)
+    | Ast.CI32 -> (4, 4) | Ast.CU32 -> (4, 4) | Ast.CF32 -> (4, 4)
+    | _ -> (8, 8)
+  and align_up x a = (((x + a) - 1) / a) * a
+  -- index of `nm` in the sorted field-name list (a record's runtime field order)
+  and field_pos names nm =
+    let rec go i lst = (match lst with [] -> 0 | x :: xs -> if x = nm do i else go (i + 1) xs) in
+    go 0 names
   -- Marshal one MiniML i64 value into a C argument. Some (llvm_ty, value), or None
   -- to DROP it (a CVoid parameter passes no C argument — e.g. `unit -> …`).
   and marshal_ffi_arg ctx (c : Ast.cty) (v : string) =
@@ -2312,8 +2325,36 @@ module Codegen =
       | Ast.CPtr -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
       -- opaque foreign handle: a raw C pointer carried as i64
       | Ast.CNamed _ -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
-      -- struct-by-pointer marshalling is implemented in the next increment
-      | Ast.CStruct _ -> failwith "FFI struct argument marshalling not yet implemented"
+      -- A C struct, passed by pointer: build it in a fixed-size stack buffer (which
+      -- -O2 hoists to the function entry, so it's allocated once even inside a loop)
+      -- by reading each field from the MiniML record and marshalling it to the C
+      -- field at its computed offset. The record stores fields sorted by name; the
+      -- C layout follows declaration order with standard alignment.
+      | Ast.CStruct ((_, fields)) ->
+        let rp = Ir_emit.emit_inttoptr ctx.ir v in
+        let sorted_names = List.sort String.compare (List.map (fn pr -> let (n, _) = pr in n) fields) in
+        let off = Ref.create 0 in
+        let maxal = Ref.create 1 in
+        let placed = List.map (fn pr ->
+          let (fname, fcty) = pr in
+          let (sz, al) = cty_size_align fcty in
+          let o = align_up (Ref.get off) al in
+          Ref.set off (o + sz);
+          (if al > (Ref.get maxal) do Ref.set maxal al end);
+          (fname, fcty, o)
+        ) fields in
+        let total = align_up (Ref.get off) (Ref.get maxal) in
+        let buf = Ir_emit.emit_alloca_array ctx.ir "i8" total in
+        List.iter (fn t ->
+          let (fname, fcty, o) = t in
+          (match fcty with Ast.CStruct _ -> failwith "nested struct fields are not supported (flatten to scalars)" | _ -> ());
+          let fp = Ir_emit.emit_gep ctx.ir "i64" rp (field_pos sorted_names fname) in
+          let fv = Ir_emit.emit_load ctx.ir "i64" fp in
+          let (clty, cv) = (match marshal_ffi_arg ctx fcty fv with Some pr -> pr | None -> ("i64", "0")) in
+          let dst = Ir_emit.emit_gep ctx.ir "i8" buf o in
+          Ir_emit.emit_store ctx.ir clty cv dst
+        ) placed;
+        Some ("ptr", buf)
       | _ -> None
     end
   -- Marshal a C return value back into a MiniML i64.
