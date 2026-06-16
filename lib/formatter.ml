@@ -466,6 +466,7 @@ let cty_str : Ast.cty -> string = function
   | Ast.CU8 -> "u8" | Ast.CU16 -> "u16" | Ast.CU32 -> "u32" | Ast.CU64 -> "u64"
   | Ast.CF32 -> "f32" | Ast.CF64 -> "f64"
   | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
+  | Ast.CNamed name -> name
 
 let doc_var s =
   (* A qualified operator like `Eq.(=)` is stored as the name "Eq.="; it must
@@ -962,6 +963,9 @@ let rec doc_decl (d : Ast.decl) : doc =
       | first :: rest ->
           one "let rec" first
           ^^ concat (List.map (fun b -> line ^^ one "and" b) rest))
+  (* a 0-param, constructor-less variant is an opaque foreign type (extern type) *)
+  | Ast.DType { td_params = []; td_def = Ast.TDVariant []; td_name; _ } ->
+      text ("extern type " ^ td_name)
   | Ast.DType b -> text (type_kw b) ^^ doc_type_def_binding b
   | Ast.DTypeAnd bs -> (
       match bs with

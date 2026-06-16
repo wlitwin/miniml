@@ -2282,6 +2282,7 @@ module Codegen =
     | Ast.CF32 -> "float" | Ast.CF64 -> "double"
     | Ast.CStr -> "ptr" | Ast.CPtr -> "ptr"
     | Ast.CBool -> "i1" | Ast.CVoid -> "void"
+    | Ast.CNamed _ -> "ptr"
   and cty_is_int (c : Ast.cty) : bool =
     match c with
     | Ast.CI8 -> true | Ast.CI16 -> true | Ast.CI32 -> true | Ast.CI64 -> true
@@ -2308,6 +2309,8 @@ module Codegen =
       -- string value points AT the 8-byte length header; the C char* is v + 8
       | Ast.CStr -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir (Ir_emit.emit_binop ctx.ir "add" "i64" v "8"))
       | Ast.CPtr -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
+      -- opaque foreign handle: a raw C pointer carried as i64
+      | Ast.CNamed _ -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
       | _ -> None
     end
   -- Marshal a C return value back into a MiniML i64.
@@ -2329,6 +2332,7 @@ module Codegen =
         add_extern ctx "mml_string_from_cstr" "i64" ("ptr" :: []);
         Ir_emit.emit_call ctx.ir "i64" "mml_string_from_cstr" (("ptr", raw) :: [])
       | Ast.CPtr -> Ir_emit.emit_ptrtoint ctx.ir raw
+      | Ast.CNamed _ -> Ir_emit.emit_ptrtoint ctx.ir raw
       | _ -> "1"
     end
   -- A saturated typed-FFI call: marshal each MiniML arg to its C type, declare the

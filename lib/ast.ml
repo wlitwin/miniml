@@ -11,6 +11,9 @@ type cty =
   | CU8 | CU16 | CU32 | CU64
   | CF32 | CF64
   | CStr | CPtr | CBool | CVoid
+  (* A declared opaque foreign type ([extern type Window]): a distinct nominal type
+     carrying a raw C pointer, marshalled exactly like CPtr. *)
+  | CNamed of string
 
 type ty_annot =
   | TyName of string

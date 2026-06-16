@@ -427,6 +427,7 @@ module Formatter =
     | Ast.CU8 -> "u8" | Ast.CU16 -> "u16" | Ast.CU32 -> "u32" | Ast.CU64 -> "u64"
     | Ast.CF32 -> "f32" | Ast.CF64 -> "f64"
     | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
+    | Ast.CNamed name -> name
 
   pub let doc_var s =
     match String.rindex_opt s #2e with
@@ -803,7 +804,11 @@ module Formatter =
         | first :: rest -> __op_5e5e (one "let rec" first) (concat (List.map (fn b -> __op_5e5e (line) (one "and" b)) rest))
 
       end
-    | Ast.DType b -> __op_5e5e (text (type_kw b)) (doc_type_def_binding b)
+    -- a 0-param, constructor-less variant is an opaque foreign type (extern type)
+    | Ast.DType b ->
+      (match (b.td_params, b.td_def) with
+       | ([], Ast.TDVariant []) -> text ("extern type " ^ b.td_name)
+       | _ -> __op_5e5e (text (type_kw b)) (doc_type_def_binding b))
     | Ast.DTypeAnd bs -> 
       do
         match bs with
