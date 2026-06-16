@@ -5567,6 +5567,8 @@ let cty_to_mml_ty : Ast.cty -> Types.ty = function
   | Ast.CStr -> Types.TString
   | Ast.CBool -> Types.TBool
   | Ast.CVoid -> Types.TUnit
+  (* opaque foreign type: a distinct 0-ary nominal type *)
+  | Ast.CNamed name -> Types.TVariant (name, [])
 
 (* Curried MiniML function type for an FFI signature. The IO effect sits on the
    LAST arrow (applying the final argument performs the C call), matching the

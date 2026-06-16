@@ -2737,19 +2737,26 @@ let parse_effect_decl p =
   if !ops = [] then error p "effect must have at least one operation";
   Ast.DEffect (name, type_params, List.rev !ops)
 
-(* One C type in an FFI signature (a lowercase identifier). *)
+(* One C type in an FFI signature: a lowercase cty keyword, or an UPPERCASE name
+   referring to a declared opaque foreign type ([extern type Window]). *)
 let parse_cty p : Ast.cty =
-  match expect_ident p with
-  | "i8" -> Ast.CI8 | "i16" -> Ast.CI16 | "i32" -> Ast.CI32 | "i64" -> Ast.CI64
-  | "u8" -> Ast.CU8 | "u16" -> Ast.CU16 | "u32" -> Ast.CU32 | "u64" -> Ast.CU64
-  | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
-  | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
-  | nm ->
-      error p
-        (Printf.sprintf
-           "unknown FFI C type '%s' (expected \
-            i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit)"
-           nm)
+  match peek_kind p with
+  | Token.UIDENT name ->
+      ignore (advance p);
+      Ast.CNamed name
+  | _ -> (
+      match expect_ident p with
+      | "i8" -> Ast.CI8 | "i16" -> Ast.CI16 | "i32" -> Ast.CI32 | "i64" -> Ast.CI64
+      | "u8" -> Ast.CU8 | "u16" -> Ast.CU16 | "u32" -> Ast.CU32 | "u64" -> Ast.CU64
+      | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
+      | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
+      | nm ->
+          error p
+            (Printf.sprintf
+               "unknown FFI C type '%s' (expected \
+                i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit, or a declared `extern \
+                type`)"
+               nm))
 
 (* An FFI signature [cty -> cty -> … -> cty]: all but the last are parameters. *)
 let parse_cty_sig p : Ast.cty list * Ast.cty =
@@ -2791,15 +2798,30 @@ let parse_extern_decl p =
     | _ -> None
   in
   expect p Token.EXTERN;
-  let name = parse_extern_name p in
-  expect p Token.COLON;
-  match c_sym_opt with
-  | Some c_symbol ->
-      let params, ret = parse_cty_sig p in
-      Ast.DFfi (name, c_symbol, params, ret)
-  | None ->
-      let ty = parse_ty p in
-      Ast.DExtern (name, ty)
+  (* [extern type Window] — declare an opaque foreign type, represented as an empty
+     (constructor-less) nominal variant so it is distinct from int / other handles.
+     Reuses the ordinary type-declaration machinery. *)
+  if c_sym_opt = None && peek_kind p = Token.TYPE then (
+    ignore (advance p);
+    let tname =
+      match peek_kind p with
+      | Token.UIDENT n ->
+          ignore (advance p);
+          n
+      | _ -> error p "expected a type name (e.g. `extern type Window`)"
+    in
+    Ast.DType
+      { td_params = []; td_name = tname; td_def = Ast.TDVariant []; td_deriving = [] })
+  else
+    let name = parse_extern_name p in
+    expect p Token.COLON;
+    match c_sym_opt with
+    | Some c_symbol ->
+        let params, ret = parse_cty_sig p in
+        Ast.DFfi (name, c_symbol, params, ret)
+    | None ->
+        let ty = parse_ty p in
+        Ast.DExtern (name, ty)
 
 let rec parse_module_body_item p : Ast.module_decl list =
   match peek_kind p with
