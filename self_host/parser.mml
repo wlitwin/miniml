@@ -2556,20 +2556,57 @@ module Parser =
     end;
     Ast.DEffect (name, type_params, List.rev (Ref.get ops))
 
+  -- One C type in an FFI signature (a lowercase identifier).
+  let parse_cty p : Ast.cty =
+    let nm = expect_ident p in
+    match nm with
+    | "i8" -> Ast.CI8 | "i16" -> Ast.CI16 | "i32" -> Ast.CI32 | "i64" -> Ast.CI64
+    | "u8" -> Ast.CU8 | "u16" -> Ast.CU16 | "u32" -> Ast.CU32 | "u64" -> Ast.CU64
+    | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
+    | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
+    | _ -> error p ($"unknown FFI C type '{nm}' (expected i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit)")
+
+  -- An FFI signature `cty -> cty -> … -> cty`: all but the last are parameters.
+  let parse_cty_sig p : (Ast.cty list * Ast.cty) =
+    let acc = Ref.create (parse_cty p :: []) in
+    (for (peek_kind p) = Token.ARROW do
+       (advance p; ());
+       Ref.set acc (parse_cty p :: Ref.get acc)
+     end);
+    match Ref.get acc with
+    | ret :: rest -> (List.rev rest, ret)
+    | [] -> ([], Ast.CVoid)
+
+  -- The bound name of an extern: `Module.field` or a bare ident/operator.
+  let parse_extern_name p : string =
+    match peek_kind p with
+    | Token.UIDENT mod_name ->
+      (advance p; ());
+      expect p Token.DOT;
+      let field = expect_ident p in
+      mod_name ^ ("." ^ field)
+    | _ -> parse_op_or_ident p
+
+  -- `[@symbol("C_NAME")] extern Mod.f : <sig>`. With the @symbol prefix this is a
+  -- typed FFI extern bound to a real C symbol with explicit C types (marshalled by
+  -- the native backend); without it, an ordinary MiniML-typed extern.
   pub let parse_extern_decl p =
-    expect p Token.EXTERN;
-    let name =
-      match peek_kind p with
-      | Token.UIDENT mod_name -> 
+    let c_sym_opt = (match peek_kind p with
+      | Token.SYMBOL ->
         (advance p; ());
-        expect p Token.DOT;
-        let field = expect_ident p in
-        mod_name ^ ("." ^ field)
-      | _ -> parse_op_or_ident p
-     in
+        expect p Token.LPAREN;
+        let s = (match peek_kind p with
+          | Token.STRING s -> let _ = advance p in s
+          | _ -> error p "expected a string C symbol name after @symbol(") in
+        expect p Token.RPAREN;
+        Some s
+      | _ -> None) in
+    expect p Token.EXTERN;
+    let name = parse_extern_name p in
     expect p Token.COLON;
-    let ty = parse_ty p in
-    Ast.DExtern (name, ty)
+    match c_sym_opt with
+    | Some c_symbol -> let (params, ret) = parse_cty_sig p in Ast.DFfi (name, c_symbol, params, ret)
+    | None -> let ty = parse_ty p in Ast.DExtern (name, ty)
 
   pub let rec parse_module_body_item p : Ast.module_decl list =
     match peek_kind p with
@@ -2598,6 +2635,7 @@ module Parser =
     | Token.INSTANCE -> parse_instance_decl p :: []
     | Token.EFFECT -> parse_effect_decl p :: []
     | Token.EXTERN -> parse_extern_decl p :: []
+    | Token.SYMBOL -> parse_extern_decl p :: []
     | Token.MODULE -> parse_module_decl p :: []
     | Token.OPEN -> parse_open_decl p :: []
     | _ -> error p "expected declaration inside module"
@@ -2644,6 +2682,7 @@ module Parser =
     | Token.INSTANCE -> parse_instance_decl p :: []
     | Token.EFFECT -> parse_effect_decl p :: []
     | Token.EXTERN -> parse_extern_decl p :: []
+    | Token.SYMBOL -> parse_extern_decl p :: []
     | Token.MODULE -> parse_module_decl p :: []
     | Token.OPEN -> parse_open_decl p :: []
     | _ -> 

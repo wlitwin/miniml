@@ -1870,7 +1870,8 @@ and compile_op_handler s arg_name k_name handler_body =
 let rec compile_decl s (decl : Typechecker.tdecl) =
   match decl with
   | Typechecker.TDType _ | Typechecker.TDClass _ | Typechecker.TDEffect _ -> ()
-  | Typechecker.TDExtern (name, _) -> ignore (find_or_add_global s name)
+  | Typechecker.TDExtern (name, _) | Typechecker.TDFfi (name, _, _, _, _) ->
+      ignore (find_or_add_global s name)
   | Typechecker.TDLet (name, te) ->
       compile_expr false s te;
       Hashtbl.remove s.mutable_globals name;

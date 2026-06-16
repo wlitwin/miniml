@@ -717,7 +717,7 @@ module Match_tree =
       | Typechecker.TDExpr e -> Typechecker.TDExpr (lower_texpr type_env e)
       | Typechecker.TDLetRecAnd binds -> Typechecker.TDLetRecAnd (List.map (fn (n, e) -> (n, lower_texpr type_env e)) binds)
       | Typechecker.TDModule ((name, decls, schemes)) -> Typechecker.TDModule (name, lower_program type_env decls, schemes)
-      | ((((Typechecker.TDEffect _ | Typechecker.TDType _) | Typechecker.TDClass _) | Typechecker.TDExtern _) | Typechecker.TDOpen _) -> decl
+      | (((((Typechecker.TDEffect _ | Typechecker.TDType _) | Typechecker.TDClass _) | Typechecker.TDExtern _) | Typechecker.TDFfi _) | Typechecker.TDOpen _) -> decl
 
     end) program
 

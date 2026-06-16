@@ -284,6 +284,7 @@ module Ir_serialize =
     | TDClass n -> line e ($"(TDClass {q n})")
     | TDEffect n -> line e ($"(TDEffect {q n})")
     | TDExtern ((n, sc)) -> line e ($"(TDExtern {q n} {scheme_atom sc})")
+    | TDFfi ((n, _sc, sym, _ps, _r)) -> line e ($"(TDFfi {q n} {q sym})")
     | TDOpen pairs -> line e ($"(TDOpen {String.concat " " (List.map (fn (a, b) -> q (a ^ ("." ^ b))) pairs)})")
     | TDModule ((n, decls, _schemes)) -> block e ($"TDModule {q n}") (fn () -> List.iter (emit_decl e) decls)
 

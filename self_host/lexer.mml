@@ -522,6 +522,8 @@ module Lexer =
         let name = Buffer.contents buf in
         if name = "partial" do
           make_token l PARTIAL loc
+        else if name = "symbol" do
+          make_token l SYMBOL loc
         else
           error l ($"unknown annotation @{name}")
       | _c when _c = #2b -> 

@@ -252,7 +252,7 @@ let rec analyze_decl stats decl =
       analyze_expr stats e
   | TDLetRecAnd binds -> List.iter (fun (_, e) -> analyze_expr stats e) binds
   | TDModule (_, decls, _) -> List.iter (analyze_decl stats) decls
-  | TDType _ | TDClass _ | TDEffect _ | TDExtern _ | TDOpen _ -> ()
+  | TDType _ | TDClass _ | TDEffect _ | TDExtern _ | TDFfi _ | TDOpen _ -> ()
 
 let analyze_program (program : tprogram) =
   let stats = create_stats () in

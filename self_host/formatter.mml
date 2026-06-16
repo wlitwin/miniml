@@ -420,6 +420,14 @@ module Formatter =
   pub let is_operator_name s = (s <> "") && (let c = String.get s 0 in
   (not (((c >= #61) && (c <= #7a)) || (((c >= #41) && (c <= #5a)) || (c = #5f)))) || (is_keyword_operator s))
 
+  -- Surface name of a C type (cty), round-tripping through the FFI parser.
+  let cty_str (c : Ast.cty) : string =
+    match c with
+    | Ast.CI8 -> "i8" | Ast.CI16 -> "i16" | Ast.CI32 -> "i32" | Ast.CI64 -> "i64"
+    | Ast.CU8 -> "u8" | Ast.CU16 -> "u16" | Ast.CU32 -> "u32" | Ast.CU64 -> "u64"
+    | Ast.CF32 -> "f32" | Ast.CF64 -> "f64"
+    | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
+
   pub let doc_var s =
     match String.rindex_opt s #2e with
     | Some i when (i > 0) && (i < ((String.length s) - 1)) -> 
@@ -805,6 +813,9 @@ module Formatter =
       end
     | Ast.DExpr e -> doc_expr e
     | Ast.DExtern ((name, t)) -> __op_5e5e (text "extern ") (__op_5e5e (doc_var name) (__op_5e5e (text " : ") (doc_ty t)))
+    | Ast.DFfi ((name, c_symbol, c_params, c_ret)) ->
+      let sig_str = String.concat " -> " (List.map cty_str (List.concat c_params (c_ret :: []))) in
+      __op_5e5e (text ($"@symbol(\"{c_symbol}\") extern ")) (__op_5e5e (doc_var name) (text (" : " ^ sig_str)))
     | Ast.DOpen ((m, None)) -> text ("open " ^ m)
     | Ast.DOpen ((m, Some names)) -> text ($"open {m} ({String.concat ", " names})")
     | Ast.DClass {class_name; tyvars; fundeps; methods} -> 
@@ -1209,7 +1220,7 @@ module Formatter =
     | Ast.DExpr e -> Ast.DExpr (strip_e e)
     | Ast.DInstance r -> Ast.DInstance {r with inst_methods = List.map (fn (n, ps, e) -> (n, List.map norm_param ps, strip_e e)) r.inst_methods}
     | Ast.DModule ((n, items)) -> Ast.DModule (n, List.map (fn (md : Ast.module_decl) -> {md with decl = strip_decl md.decl}) items)
-    | (((((Ast.DType _ | Ast.DTypeAnd _) | Ast.DClass _) | Ast.DEffect _) | Ast.DExtern _) | Ast.DOpen _) as d -> d
+    | ((((((Ast.DType _ | Ast.DTypeAnd _) | Ast.DClass _) | Ast.DEffect _) | Ast.DExtern _) | Ast.DFfi _) | Ast.DOpen _) as d -> d
 
 
   pub let strip_program (p : Ast.program) : Ast.program = List.map strip_decl p

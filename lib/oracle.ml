@@ -1473,8 +1473,10 @@ let rec eval_decl (env : env) (decl : Typechecker.tdecl) : env * value =
         List.fold_left (fun e d -> fst (eval_decl e d)) env decls
       in
       (env', VUnit)
-  | Typechecker.TDExtern (name, _) ->
-      (* Externs resolve through the lookup fallback to bridged VM impls. *)
+  | Typechecker.TDExtern (name, _) | Typechecker.TDFfi (name, _, _, _, _) ->
+      (* Externs resolve through the lookup fallback to bridged VM impls. A typed
+         FFI extern has no VM impl (it targets native C); it would fall through to
+         the unbound-extern error if actually called under the oracle. *)
       ignore name;
       (env, VUnit)
   | Typechecker.TDOpen alias_pairs ->

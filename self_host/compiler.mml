@@ -1598,6 +1598,7 @@ module Compiler =
     match decl with
     | ((Typechecker.TDType _ | Typechecker.TDClass _) | Typechecker.TDEffect _) -> ()
     | Typechecker.TDExtern ((name, _)) -> (find_or_add_global s name; ())
+    | Typechecker.TDFfi ((name, _, _, _, _)) -> (find_or_add_global s name; ())
     | Typechecker.TDLet ((name, te)) -> 
       do
         compile_expr false s te;

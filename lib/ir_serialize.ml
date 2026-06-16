@@ -413,6 +413,7 @@ let rec emit_decl e (d : tdecl) =
   | TDClass n -> line e (Printf.sprintf "(TDClass %s)" (q n))
   | TDEffect n -> line e (Printf.sprintf "(TDEffect %s)" (q n))
   | TDExtern (n, sc) -> line e (Printf.sprintf "(TDExtern %s %s)" (q n) (scheme_atom sc))
+  | TDFfi (n, _sc, sym, _ps, _r) -> line e (Printf.sprintf "(TDFfi %s %s)" (q n) (q sym))
   | TDOpen pairs ->
       line e
         (Printf.sprintf "(TDOpen %s)"

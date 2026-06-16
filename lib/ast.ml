@@ -1,6 +1,17 @@
 type visibility = Public | Private | Opaque
 type pv_annot_kind = PVExact | PVLower | PVUpper
 
+(* C types for typed-FFI externs (see DFfi). A small ADT, deliberately NOT part of
+   ty_annot/Types.ty (no unifier impact): it only describes the C ABI of a foreign
+   function so the native backend can marshal each argument and the result. Integer
+   widths map to MiniML [int], f32/f64 to [float], CStr to [string], CPtr to [int]
+   (opaque handle), CBool to [bool], CVoid to [unit]. *)
+type cty =
+  | CI8 | CI16 | CI32 | CI64
+  | CU8 | CU16 | CU32 | CU64
+  | CF32 | CF64
+  | CStr | CPtr | CBool | CVoid
+
 type ty_annot =
   | TyName of string
   | TyVar of string
@@ -210,6 +221,10 @@ type decl =
   | DEffect of string * string list * (string * ty_annot) list
     (* effect_name, type_params, [(op_name, op_type)] *)
   | DExtern of string * ty_annot
+  (* A typed-FFI extern: bind a real C symbol with explicit C types, so the native
+     backend marshals MiniML values <-> the C ABI. (mml_name, c_symbol, c_params,
+     c_return). Produced from [@symbol("name") extern Mod.f : <ctys>]. *)
+  | DFfi of string * string * cty list * cty
   | DModule of string * module_decl list
   | DOpen of string * string list option
 (* module_name, None = open all, Some = selective *)
