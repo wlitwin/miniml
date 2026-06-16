@@ -5560,7 +5560,7 @@ let rec default_extern_effects ty =
 (* The MiniML surface type a C type (cty) presents to callers: integer widths and
    pointers are [int], f32/f64 are [float], CStr is [string], CBool [bool], CVoid
    [unit]. The exact C width is kept on the TDFfi for the backend to marshal. *)
-let cty_to_mml_ty : Ast.cty -> Types.ty = function
+let rec cty_to_mml_ty : Ast.cty -> Types.ty = function
   | Ast.CI8 | Ast.CI16 | Ast.CI32 | Ast.CI64
   | Ast.CU8 | Ast.CU16 | Ast.CU32 | Ast.CU64 | Ast.CPtr -> Types.TInt
   | Ast.CF32 | Ast.CF64 -> Types.TFloat
@@ -5569,6 +5569,11 @@ let cty_to_mml_ty : Ast.cty -> Types.ty = function
   | Ast.CVoid -> Types.TUnit
   (* opaque foreign type: a distinct 0-ary nominal type *)
   | Ast.CNamed name -> Types.TVariant (name, [])
+  (* a C struct presents to MiniML as a (structural) record of its fields *)
+  | Ast.CStruct (_, fields) ->
+      Types.TRecord
+        (Types.fields_to_closed_row
+           (List.map (fun (n, c) -> (n, cty_to_mml_ty c)) fields))
 
 (* Curried MiniML function type for an FFI signature. The IO effect sits on the
    LAST arrow (applying the final argument performs the C call), matching the
@@ -6107,6 +6112,10 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
       | Ast.Public -> acc.ma_pub_vars := (name, scheme) :: !(acc.ma_pub_vars)
       | _ -> ());
       (sub_ctx', TDFfi (qualified_name, scheme, c_symbol, c_params, c_ret))
+  (* `extern struct` is purely a parse-time layout directive: it expands struct
+     names to CStructs in later FFI signatures (where the backend reads the layout)
+     and presents structurally as a record to callers, so it needs no typed decl. *)
+  | Ast.DFfiStruct (_, _) -> (sub_ctx, TDOpen [])
   | Ast.DExpr expr ->
       let eff = Types.new_effvar level in
       let eff_ctx = { sub_ctx with current_eff = eff } in
@@ -6757,6 +6766,8 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let scheme = Types.generalize 0 (ffi_fun_ty c_params c_ret) in
       let ctx = extend_var ctx name scheme in
       (ctx, [ TDFfi (name, scheme, c_symbol, c_params, c_ret) ])
+  (* parse-time layout directive only (see process_module_def) — no typed decl *)
+  | Ast.DFfiStruct (_, _) -> (ctx, [])
   | Ast.DModule (name, items) ->
       let ctx', td = process_module_def ctx level name items in
       (ctx', [ td ])

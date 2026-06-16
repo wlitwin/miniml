@@ -28,10 +28,13 @@ module Parser =
     mut pos: int;
     mut suppress_do: bool;
     mut record_cst: bool;
-    mut cst_events: cst_event list
+    mut cst_events: cst_event list;
+    -- declared C structs (`extern struct`): name -> ordered fields, so a later FFI
+    -- signature mentioning the struct name expands to its cty layout
+    struct_defs: (string, (string * Ast.cty) list) Hashtbl.t
   }
 
-  pub let create tokens = {tokens = Array.of_list tokens; pos = 0; suppress_do = false; record_cst = false; cst_events = []}
+  pub let create tokens = {tokens = Array.of_list tokens; pos = 0; suppress_do = false; record_cst = false; cst_events = []; struct_defs = Hashtbl.create 8}
 
   pub let peek p = Array.get p.tokens p.pos
 
@@ -2557,10 +2560,14 @@ module Parser =
     Ast.DEffect (name, type_params, List.rev (Ref.get ops))
 
   -- One C type in an FFI signature: a lowercase cty keyword, or an UPPERCASE name
-  -- referring to a declared opaque foreign type (`extern type Window`).
+  -- referring to a declared C struct (`extern struct`) or opaque foreign type
+  -- (`extern type`). A struct name expands to its full cty layout.
   let parse_cty p : Ast.cty =
     match peek_kind p with
-    | Token.UIDENT name -> (advance p; ()); Ast.CNamed name
+    | Token.UIDENT name -> (advance p; ());
+      (match Hashtbl.get p.struct_defs name with
+       | Some fields -> Ast.CStruct (name, fields)
+       | None -> Ast.CNamed name)
     | _ ->
       let nm = expect_ident p in
       match nm with
@@ -2569,6 +2576,20 @@ module Parser =
       | "f32" -> Ast.CF32 | "f64" -> Ast.CF64
       | "cstr" -> Ast.CStr | "ptr" -> Ast.CPtr | "bool" -> Ast.CBool | "unit" -> Ast.CVoid
       | _ -> error p ($"unknown FFI C type '{nm}' (expected i8..i64/u8..u64/f32/f64/cstr/ptr/bool/unit, or a declared `extern type`)")
+
+  -- C struct fields: `{ name: cty; name: cty; … }` (trailing `;` allowed).
+  let parse_struct_fields p : (string * Ast.cty) list =
+    expect p Token.LBRACE;
+    let acc = Ref.create [] in
+    (for (peek_kind p) <> Token.RBRACE do
+       let fname = expect_ident p in
+       expect p Token.COLON;
+       let fty = parse_cty p in
+       Ref.set acc ((fname, fty) :: Ref.get acc);
+       (if (peek_kind p) = Token.SEMICOLON do (advance p; ()) end)
+     end);
+    expect p Token.RBRACE;
+    List.rev (Ref.get acc)
 
   -- An FFI signature `cty -> cty -> … -> cty`: all but the last are parameters.
   let parse_cty_sig p : (Ast.cty list * Ast.cty) =
@@ -2606,6 +2627,17 @@ module Parser =
         Some s
       | _ -> None) in
     expect p Token.EXTERN;
+    -- `extern struct FRect { x: f32; … }` — declare a C struct: register its fields
+    -- so later signatures can reference it, and emit a DFfiStruct.
+    if (c_sym_opt = None) && ((match peek_kind p with Token.IDENT s -> s = "struct" | _ -> false)) do
+      (advance p; ());
+      let sname = (match peek_kind p with
+        | Token.UIDENT n -> let _ = advance p in n
+        | _ -> error p "expected a struct name (e.g. `extern struct FRect { … }`)") in
+      let fields = parse_struct_fields p in
+      Hashtbl.set p.struct_defs sname fields;
+      Ast.DFfiStruct (sname, fields)
+    else
     -- `extern type Window` — declare an opaque foreign type, represented as an
     -- empty (constructor-less) nominal variant so it is distinct from int/other
     -- handles. Reuses the ordinary type-declaration machinery.

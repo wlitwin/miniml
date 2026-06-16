@@ -467,6 +467,7 @@ let cty_str : Ast.cty -> string = function
   | Ast.CF32 -> "f32" | Ast.CF64 -> "f64"
   | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
   | Ast.CNamed name -> name
+  | Ast.CStruct (name, _) -> name
 
 let doc_var s =
   (* A qualified operator like `Eq.(=)` is stored as the name "Eq.="; it must
@@ -967,6 +968,12 @@ let rec doc_decl (d : Ast.decl) : doc =
   | Ast.DType { td_params = []; td_def = Ast.TDVariant []; td_name; _ } ->
       text ("extern type " ^ td_name)
   | Ast.DType b -> text (type_kw b) ^^ doc_type_def_binding b
+  | Ast.DFfiStruct (name, fields) ->
+      text (Printf.sprintf "extern struct %s { " name)
+      ^^ text
+           (String.concat "; "
+              (List.map (fun (n, c) -> Printf.sprintf "%s: %s" n (cty_str c)) fields))
+      ^^ text " }"
   | Ast.DTypeAnd bs -> (
       match bs with
       | [] -> Nil
@@ -1520,7 +1527,7 @@ let rec strip_decl (d : Ast.decl) : Ast.decl =
       Ast.DModule
         (n, List.map (fun (md : Ast.module_decl) -> { md with Ast.decl = strip_decl md.decl }) items)
   | (Ast.DType _ | Ast.DTypeAnd _ | Ast.DClass _ | Ast.DEffect _ | Ast.DExtern _
-    | Ast.DFfi _ | Ast.DOpen _) as d ->
+    | Ast.DFfi _ | Ast.DFfiStruct _ | Ast.DOpen _) as d ->
       d
 
 let strip_program (p : Ast.program) : Ast.program = List.map strip_decl p

@@ -4468,7 +4468,7 @@ module Typechecker =
   -- The MiniML surface type a C type (cty) presents to callers: integer widths and
   -- pointers are `int`, f32/f64 are `float`, CStr is `string`, CBool `bool`, CVoid
   -- `unit`. The exact C width is kept on the TDFfi for the backend to marshal.
-  let cty_to_mml_ty (c : Ast.cty) : Types.ty =
+  let rec cty_to_mml_ty (c : Ast.cty) : Types.ty =
     match c with
     | Ast.CI8 -> Types.TInt | Ast.CI16 -> Types.TInt | Ast.CI32 -> Types.TInt | Ast.CI64 -> Types.TInt
     | Ast.CU8 -> Types.TInt | Ast.CU16 -> Types.TInt | Ast.CU32 -> Types.TInt | Ast.CU64 -> Types.TInt
@@ -4479,6 +4479,9 @@ module Typechecker =
     | Ast.CVoid -> Types.TUnit
     -- opaque foreign type: a distinct 0-ary nominal type
     | Ast.CNamed name -> Types.TVariant (name, [])
+    -- a C struct presents to MiniML as a (structural) record of its fields
+    | Ast.CStruct ((_, fields)) ->
+      Types.TRecord (Types.fields_to_closed_row (List.map (fn pair -> let (n, c) = pair in (n, cty_to_mml_ty c)) fields))
 
   -- Curried MiniML function type for an FFI signature. The IO effect sits on the
   -- LAST arrow (applying the final argument performs the C call), matching the
@@ -4785,7 +4788,10 @@ module Typechecker =
         | _ -> ()
       end;
       (sub_ctx', TDFfi (qualified_name, scheme, c_symbol, c_params, c_ret))
-    | Ast.DExpr expr -> 
+    -- `extern struct` is a parse-time layout directive (expands struct names to
+    -- CStructs in later signatures, presents as a record to callers); no typed decl.
+    | Ast.DFfiStruct ((_, _)) -> (sub_ctx, TDOpen [])
+    | Ast.DExpr expr ->
       let eff = Types.new_effvar level in
       let eff_ctx = {sub_ctx with current_eff = eff} in
       let te = synth eff_ctx level expr in
@@ -5159,7 +5165,9 @@ module Typechecker =
       let scheme = Types.generalize 0 (ffi_fun_ty c_params c_ret) in
       let ctx = extend_var ctx name scheme in
       (ctx, TDFfi (name, scheme, c_symbol, c_params, c_ret) :: [])
-    | Ast.DModule ((name, items)) -> 
+    -- parse-time layout directive only — no typed decl
+    | Ast.DFfiStruct ((_, _)) -> (ctx, [])
+    | Ast.DModule ((name, items)) ->
       let (ctx', td) = process_module_def ctx level name items in
       (ctx', td :: [])
     | Ast.DOpen ((mod_name, names_opt)) -> 

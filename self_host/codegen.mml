@@ -2283,6 +2283,7 @@ module Codegen =
     | Ast.CStr -> "ptr" | Ast.CPtr -> "ptr"
     | Ast.CBool -> "i1" | Ast.CVoid -> "void"
     | Ast.CNamed _ -> "ptr"
+    | Ast.CStruct _ -> "ptr"   -- a C struct is passed by pointer
   and cty_is_int (c : Ast.cty) : bool =
     match c with
     | Ast.CI8 -> true | Ast.CI16 -> true | Ast.CI32 -> true | Ast.CI64 -> true
@@ -2311,6 +2312,8 @@ module Codegen =
       | Ast.CPtr -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
       -- opaque foreign handle: a raw C pointer carried as i64
       | Ast.CNamed _ -> Some ("ptr", Ir_emit.emit_inttoptr ctx.ir v)
+      -- struct-by-pointer marshalling is implemented in the next increment
+      | Ast.CStruct _ -> failwith "FFI struct argument marshalling not yet implemented"
       | _ -> None
     end
   -- Marshal a C return value back into a MiniML i64.
@@ -2333,6 +2336,7 @@ module Codegen =
         Ir_emit.emit_call ctx.ir "i64" "mml_string_from_cstr" (("ptr", raw) :: [])
       | Ast.CPtr -> Ir_emit.emit_ptrtoint ctx.ir raw
       | Ast.CNamed _ -> Ir_emit.emit_ptrtoint ctx.ir raw
+      | Ast.CStruct _ -> failwith "returning a C struct by value is not supported"
       | _ -> "1"
     end
   -- A saturated typed-FFI call: marshal each MiniML arg to its C type, declare the
