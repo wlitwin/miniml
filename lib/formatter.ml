@@ -461,13 +461,14 @@ let is_operator_name s =
   || is_keyword_operator s
 
 (* Surface name of a C type (cty), round-tripping through the FFI parser. *)
-let cty_str : Ast.cty -> string = function
+let rec cty_str : Ast.cty -> string = function
   | Ast.CI8 -> "i8" | Ast.CI16 -> "i16" | Ast.CI32 -> "i32" | Ast.CI64 -> "i64"
   | Ast.CU8 -> "u8" | Ast.CU16 -> "u16" | Ast.CU32 -> "u32" | Ast.CU64 -> "u64"
   | Ast.CF32 -> "f32" | Ast.CF64 -> "f64"
   | Ast.CStr -> "cstr" | Ast.CPtr -> "ptr" | Ast.CBool -> "bool" | Ast.CVoid -> "unit"
   | Ast.CNamed name -> name
   | Ast.CStruct (name, _) -> name
+  | Ast.COut c -> "out " ^ cty_str c
 
 let doc_var s =
   (* A qualified operator like `Eq.(=)` is stored as the name "Eq.="; it must

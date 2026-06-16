@@ -2284,6 +2284,7 @@ module Codegen =
     | Ast.CBool -> "i1" | Ast.CVoid -> "void"
     | Ast.CNamed _ -> "ptr"
     | Ast.CStruct _ -> "ptr"   -- a C struct is passed by pointer
+    | Ast.COut _ -> "ptr"      -- an OUT param is a pointer to a C scalar
   and cty_is_int (c : Ast.cty) : bool =
     match c with
     | Ast.CI8 -> true | Ast.CI16 -> true | Ast.CI32 -> true | Ast.CI64 -> true
@@ -2384,12 +2385,31 @@ module Codegen =
   -- C symbol with the marshalled signature, call it, and marshal the result back.
   and emit_ffi_call ctx c_symbol c_params c_ret arg_vals =
     let pairs = List.map2 (fn c v -> (c, v)) c_params arg_vals in
-    let marshalled = List.filter_map (fn pair -> let (c, v) = pair in marshal_ffi_arg ctx c v) pairs in
-    let param_tys = List.map (fn pair -> let (ty, _) = pair in ty) marshalled in
+    -- OUT params (`out <cty>`): the MiniML arg is a Ref; allocate the C scalar,
+    -- pass its pointer, and remember (ref_value, cell_ptr, inner_cty) so the value
+    -- the callee wrote can be boxed back into the Ref AFTER the call.
+    let writebacks = Ref.create [] in
+    let cargs = List.filter_map (fn pair ->
+      let (c, v) = pair in
+      match c with
+      | Ast.COut inner ->
+        let cell = Ir_emit.emit_alloca ctx.ir (cty_llvm inner) in
+        Ref.set writebacks ((v, cell, inner) :: Ref.get writebacks);
+        Some ("ptr", cell)
+      | _ -> marshal_ffi_arg ctx c v
+    ) pairs in
+    let param_tys = List.map (fn pair -> let (ty, _) = pair in ty) cargs in
     add_extern ctx c_symbol (cty_llvm c_ret) param_tys;
-    match c_ret with
-    | Ast.CVoid -> (Ir_emit.emit_call_void ctx.ir c_symbol marshalled; "1")
-    | _ -> marshal_ffi_ret ctx c_ret (Ir_emit.emit_call ctx.ir (cty_llvm c_ret) c_symbol marshalled)
+    let result = (match c_ret with
+      | Ast.CVoid -> (Ir_emit.emit_call_void ctx.ir c_symbol cargs; "1")
+      | _ -> marshal_ffi_ret ctx c_ret (Ir_emit.emit_call ctx.ir (cty_llvm c_ret) c_symbol cargs)) in
+    List.iter (fn wb ->
+      let (refv, cell, ic) = wb in
+      let cv = Ir_emit.emit_load ctx.ir (cty_llvm ic) cell in
+      let mml = marshal_ffi_ret ctx ic cv in
+      Ir_emit.emit_store ctx.ir "i64" mml (Ir_emit.emit_inttoptr ctx.ir refv)
+    ) (List.rev (Ref.get writebacks));
+    result
   and emit_fold_with_break_check ctx fold_expr =
     let result = emit_expr ctx fold_expr in
     add_extern ctx "mml_check_fold_broken" "i64" [];
