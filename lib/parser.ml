@@ -313,11 +313,18 @@ and parse_ty_atom_inner p =
       done;
       match !final_name with
       | Some name ->
-          (* Module.typename *)
+          (* Module.typename (lowercase final segment) *)
           Ast.TyQualified (List.rev !mod_parts, name)
-      | None ->
-          (* Just a bare UIDENT — treat as type name *)
-          Ast.TyName s)
+      | None -> (
+          (* No lowercase final segment. In TYPE position a trailing UPPERCASE
+             segment is the type name itself (e.g. `Sdl.Renderer` = module Sdl,
+             type Renderer — extern/foreign types are necessarily uppercase); a
+             bare single UIDENT is just a plain type name. mod_parts was built by
+             prepending, so its head is the last segment read. *)
+          match !mod_parts with
+          | [ single ] -> Ast.TyName single
+          | type_name :: rest_rev -> Ast.TyQualified (List.rev rest_rev, type_name)
+          | [] -> Ast.TyName s))
   | Token.TYVAR s ->
       ignore (advance p);
       Ast.TyVar s
