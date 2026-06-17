@@ -124,7 +124,9 @@ let builtins output_fn : builtin_def list =
     {
       name = "phys_equal";
       arity = 2;
-      impl = (fun args -> VBool (List.nth args 0 == List.nth args 1));
+      impl =
+        (fun args ->
+          VBool (Vm.phys_equal_values (List.nth args 0) (List.nth args 1)));
     };
     (* Conversions *)
     {
