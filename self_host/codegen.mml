@@ -4798,7 +4798,21 @@ else
       do
         match lookup_var ctx qualified_name with
         | Some info -> bind_var ctx short_name info
-        | None -> ()
+        | None ->
+          -- The source may be an FFI extern (ffi_externs) or a module extern
+          -- (module_externs) rather than a value binding — `open M` re-exports it
+          -- under the current module's prefix (e.g. `Sdl.foo` -> `Ui.foo`).
+          -- Propagate the alias into those tables so the re-exported name resolves
+          -- to the same C symbol (otherwise a reference to it from another function
+          -- is mistaken for a free-variable capture).
+          do
+            if Hashtbl.has ctx.ffi_externs qualified_name do
+              Hashtbl.set ctx.ffi_externs short_name (Hashtbl.find ctx.ffi_externs qualified_name)
+            end;
+            if Hashtbl.has ctx.module_externs qualified_name do
+              Hashtbl.set ctx.module_externs short_name (Hashtbl.find ctx.module_externs qualified_name)
+            end
+          end
 
       end) alias_pairs
     | ((((TDType _ | TDClass _) | TDEffect _) | TDExtern _) | TDFfi _) -> ()
