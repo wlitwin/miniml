@@ -906,6 +906,47 @@ Explicit annotations are entirely optional. Common reasons to use them:
 
 If you omit the `/`, the typechecker infers effects exactly as before. Existing code requires no changes.
 
+#### Effect-Polymorphic Recursion
+
+A recursive function whose recursive call sits **inside a `handle`** needs to be
+*effect-polymorphic*: each call must be free to have a different effect row,
+because the handler extends the row around the recursive call. With ordinary
+(monomorphic) recursion the recursive occurrence shares one effect row, and
+unifying it with the handler-extended row fails the occurs check:
+
+```
+let rec loop n =
+  if n <= 0 do () else handle loop (n - 1) with
+    | return x -> x
+    | op _ k -> resume k ()
+-- Type error: occurs check: infinite effect row
+```
+
+Inferring polymorphic recursion is undecidable in general, so MiniML asks you to
+opt in with an annotation — and then *checks* the body against it. Either of two
+signals turns the binding into a polymorphic-recursion binding:
+
+- An explicit **effect-row variable** in the return annotation, `: t / 'e` — the
+  natural choice, since it says exactly "polymorphic in the effect row":
+
+  ```
+  let rec loop n : unit / 'e =
+    if n <= 0 do () else handle loop (n - 1) with
+      | return x -> x
+      | op _ k -> resume k ()
+  ```
+
+  This generalizes *only* the effect row: the value types stay monomorphic
+  within the recursion, so a wrong-typed recursive self-call is still a compile
+  error (the type system never accepts a program that would crash at runtime).
+
+- A locally-abstract type binder, `(type 'a)` — use it when the recursion is
+  polymorphic in a *type*, not just the effect row (it generalizes value types
+  too).
+
+Both work for single bindings, `module` members, and mutually-recursive
+`let rec … and …` groups.
+
 ### Effect-Polymorphic Class Methods
 
 Type class methods can use effect variables to be polymorphic over effects. This allows a single class to have instances that are pure and instances that are effectful:

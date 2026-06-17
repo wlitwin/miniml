@@ -1204,6 +1204,64 @@ let generalize_with_map level ty =
    and unbound effect variables with EffGen *)
 let generalize level ty = fst (generalize_with_map level ty)
 
+(* Generalize ONLY effect variables at levels > [level], leaving type / poly-
+   variant / record-row variables FREE (shared). Used to bind the recursive
+   occurrence of an effect-polymorphic-recursive function (`: t / 'e`): each
+   recursive call gets a fresh effect row, but value types stay monomorphic, so
+   a wrong-typed self-call (e.g. `f "x"` where `f : int -> _`) is a COMPILE
+   error rather than a runtime crash. (The structure is still walked so effect
+   rows nested inside arrows/containers are generalized.) *)
+let generalize_effects_only level ty =
+  let ecounter = ref 0 in
+  let (eff_id_map : (int, eff) Hashtbl.t) = Hashtbl.create 4 in
+  let rec go ty =
+    match repr ty with
+    | TVar _ as t -> t (* type variables are NOT generalized here *)
+    | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
+    | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
+    | TTuple ts -> TTuple (List.map go ts)
+    | TList t -> TList (go t)
+    | TArray t -> TArray (go t)
+    | TRecord row -> TRecord (go_rrow row)
+    | TVariant (name, args) -> TVariant (name, List.map go args)
+    | TPolyVariant row -> TPolyVariant (go_pv row)
+    | (TInt | TFloat | TBool | TString | TByte | TRune | TUnit | TGen _) as t ->
+        t
+  and go_eff eff =
+    match eff_repr eff with
+    | EffVar { contents = EffUnbound (id, l) } when l > level -> (
+        match Hashtbl.find_opt eff_id_map id with
+        | Some gen -> gen
+        | None ->
+            let gen = EffGen !ecounter in
+            incr ecounter;
+            Hashtbl.replace eff_id_map id gen;
+            gen)
+    | EffVar { contents = EffUnbound _ } | EffVar { contents = EffLink _ } -> eff
+    | EffRow (label, params, tail) ->
+        EffRow (label, List.map go params, go_eff tail)
+    | EffEmpty -> EffEmpty
+    | EffGen _ as e -> e
+  and go_pv row =
+    match pv_repr row with
+    | PVRow (tag, ty_opt, tail) -> PVRow (tag, Option.map go ty_opt, go_pv tail)
+    | other -> other (* PVVar / PVEmpty / PVGen: not generalized *)
+  and go_rrow row =
+    match rrow_repr row with
+    | RRow (name, ty, tail) -> RRow (name, go ty, go_rrow tail)
+    | other -> other (* RVar / REmpty / RGen / RWild: not generalized *)
+  in
+  let body = go ty in
+  {
+    quant = 0;
+    equant = !ecounter;
+    pvquant = 0;
+    rquant = 0;
+    constraints = [];
+    record_evidences = [];
+    body;
+  }
+
 (* ---- Scheme pretty-printing ---- *)
 
 let pp_class_arg_impl synonyms = function

@@ -643,11 +643,28 @@ module Typechecker =
     | (Ast.EFun _ | Ast.ELoc ((_, Ast.EFun _))) -> true
     | _ -> false
      -> extract_fn_info inner
-    | Ast.EFun ((param, body)) -> 
+    | Ast.EFun ((param, body)) ->
       let (params, ret, inner) = extract_fn_info body in
       (param :: params, ret, inner)
     | Ast.EAnnot ((inner, annot)) -> ([], Some annot, inner)
     | _ -> ([], None, expr)
+
+  -- True when a recursive function's return annotation declares an explicit
+  -- effect-row VARIABLE (e.g. `: unit / 'e`). The opt-in signal for effect-
+  -- polymorphic recursion: without it, a recursive call inside a `handle`
+  -- occurs-checks ("infinite effect row") because the monomorphic recursive
+  -- occurrence shares the handler-extended row. Such a binding is routed through
+  -- synth_poly_rec_fn (like `(type 'a)`) to generalize the row. Decidable because
+  -- annotation-DRIVEN — we CHECK against the given scheme, never INFER a poly-rec
+  -- type (Milner–Mycroft, undecidable).
+  pub let ret_annot_declares_eff_var (ret_annot : Ast.ty_annot option) =
+    let eff_has_var eff =
+      match eff with
+      | Ast.EffAnnotPure -> false
+      | Ast.EffAnnotRow items -> List.exists (fn it -> match it with Ast.EffVar _ -> true | _ -> false) items in
+    match ret_annot with
+    | Some (Ast.TyWithEffect ((_, eff))) -> eff_has_var eff
+    | _ -> false
 
 
   pub let resolve_module_name ctx name =
@@ -2777,9 +2794,10 @@ module Typechecker =
     mk ctx (TEFieldAssign (r_te, field, v_te)) Types.TUnit
   and synth_let_rec ctx level name type_params e1 e2 =
     match strip_loc e1 with
-    | (Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _))) -> 
-      if type_params <> [] do
-        let (params, ret_annot, body) = extract_fn_info e1 in
+    | (Ast.EFun _ | Ast.EAnnot ((Ast.EFun _, _))) ->
+      let (params, ret_annot, body) = extract_fn_info e1 in
+      -- poly-rec on opt-in: `(type 'a)` OR an explicit effect-row var `: t / 'e`
+      if (type_params <> []) || (ret_annot_declares_eff_var ret_annot) do
         let (e1_te, scheme) = synth_poly_rec_fn ctx level name "" type_params params ret_annot body in
         let ctx' = extend_var ctx name scheme in
         let e2_te = synth ctx' level e2 in
@@ -2889,7 +2907,7 @@ module Typechecker =
       mk ctx (TELet (tmp, None, base_te, record_expr)) (Types.TRecord record_row)
     end
   and synth_let_rec_and ctx level bindings body =
-    let has_poly = List.exists (fn (_, tp, _) -> tp <> []) bindings in
+    let has_poly = List.exists (fn (_, tp, fn_expr) -> (tp <> []) || (let (_, ret_annot, _) = extract_fn_info fn_expr in ret_annot_declares_eff_var ret_annot)) bindings in
     if has_poly do
       let infos = List.map (fn (name, type_params, fn_expr) -> let (params, ret_annot, inner_body) = extract_fn_info fn_expr in
       (name, type_params, params, ret_annot, inner_body)) bindings in
@@ -3581,11 +3599,18 @@ module Typechecker =
         let inner = Types.TArrow (last, body_eff, ret_ty) in
         List.fold (fn acc pty -> Types.TArrow (pty, Types.EffEmpty, acc)) inner rest
      in
-    let scheme = Types.generalize level fn_ty in
-    let ctx_with_self = extend_var ctx name scheme in
+    -- effect-only when triggered solely by an effect-row variable (`: t / 'e`,
+    -- no `(type 'a)`): the recursive occurrence stays value-monomorphic (only its
+    -- effect row generalizes) so a wrong-typed self-call is a compile error, not a
+    -- runtime crash. With `(type 'a)` the user opted into full value polymorphism.
+    let effect_only = (type_params = []) in
+    let rec_scheme =
+      if effect_only do Types.generalize_effects_only level fn_ty
+      else Types.generalize level fn_ty in
+    let ctx_with_self = extend_var ctx name rec_scheme in
     let ctx_with_self =
       if qualified_name <> "" do
-        extend_var ctx_with_self qualified_name scheme
+        extend_var ctx_with_self qualified_name rec_scheme
       else
         ctx_with_self in
     let inner_ctx = List.fold2 (fn c (p : Ast.param) ty -> extend_var_mono c p.name ty) {ctx_with_self with current_eff = body_eff} params param_tys in
@@ -3598,6 +3623,9 @@ module Typechecker =
         List.fold2 (fn acc (p : Ast.param) pty -> mk ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))) inner rest_ps rest_ptys
       | _ -> failwith "assert false"
      in
+    -- external scheme (callers): full generalization now the body has pinned
+    -- the value types the effect-only recursive scheme deliberately left free.
+    let scheme = if effect_only do Types.generalize level fn_ty else rec_scheme in
     (te, scheme)
 
   pub let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =
@@ -4699,7 +4727,7 @@ module Typechecker =
     | Ast.DLetRec {lr_name = name; type_params; params; ret_annot; constraints; body} -> 
       let qualified_name = prefix ^ name in
       let (fn_te, scheme) =
-        if type_params <> [] do
+        if (type_params <> []) || ((constraints = []) && (ret_annot_declares_eff_var ret_annot)) do
           synth_poly_rec_fn sub_ctx level name qualified_name type_params params ret_annot body
         else if constraints <> [] do
           let fn_var = Types.new_tvar (level + 1) in
@@ -4844,7 +4872,7 @@ module Typechecker =
         ctx) sub_ctx' minfo.mod_pub_vars in
       (sub_ctx', TDOpen alias_pairs)
     | Ast.DLetRecAnd bindings -> 
-      let has_poly = List.exists (fn {type_params = tp; _} -> tp <> []) bindings in
+      let has_poly = List.exists (fn {type_params = tp; ret_annot; _} -> (tp <> []) || (ret_annot_declares_eff_var ret_annot)) bindings in
       if has_poly do
         let shared_tvars_list = List.map (fn {type_params; params; ret_annot; _} -> let shared_tvars = Hashtbl.create 4 in
         let shared_eff_tvars = Hashtbl.create 2 in
@@ -5094,8 +5122,8 @@ module Typechecker =
       let scheme = Types.mono te.ty in
       let ctx' = extend_var_mutable ctx name scheme in
       (ctx', TDLetMut (name, te) :: [])
-    | Ast.DLetRec {lr_name = name; type_params; params; ret_annot; constraints; body} -> 
-      if type_params <> [] do
+    | Ast.DLetRec {lr_name = name; type_params; params; ret_annot; constraints; body} ->
+      if (type_params <> []) || ((constraints = []) && (ret_annot_declares_eff_var ret_annot)) do
         let (te, scheme) = synth_poly_rec_fn ctx level name "" type_params params ret_annot body in
         let ctx' = extend_var ctx name scheme in
         (ctx', TDLetRec (name, te) :: [])
@@ -5180,7 +5208,7 @@ module Typechecker =
       let (ctx', td) = process_open ctx mod_name names_opt in
       (ctx', td :: [])
     | Ast.DLetRecAnd bindings -> 
-      let has_poly = List.exists (fn {type_params = tp; _} -> tp <> []) bindings in
+      let has_poly = List.exists (fn {type_params = tp; ret_annot; _} -> (tp <> []) || (ret_annot_declares_eff_var ret_annot)) bindings in
       if has_poly do
         let shared_tvars_list = List.map (fn {type_params; params; ret_annot; _} -> let shared_tvars = Hashtbl.create 4 in
         let shared_eff_tvars = Hashtbl.create 2 in
