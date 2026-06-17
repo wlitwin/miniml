@@ -49,9 +49,12 @@ const compilerFn = new Function(compilerJs);
 function selfhostCompile(source) {
   const out = [];
   globalThis._jsSysArgs = ["compiler", "--emit-js", "input.mml"];
+  // The self-host compiler treats source as latin1 BYTES (UTF-8 held one byte
+  // per char), matching how the real `mml` reads files — so hand it the bytes,
+  // not a UTF-16 JS string (which would corrupt non-ASCII content).
   globalThis._jsReadFile = (f) => {
-    if (f === "input.mml") return source;
-    return fs.readFileSync(path.join(ROOT, f), "utf-8"); // stdlib/*.mml
+    if (f === "input.mml") return Buffer.from(source, "utf-8").toString("latin1");
+    return fs.readFileSync(path.join(ROOT, f), "latin1"); // stdlib/*.mml
   };
   globalThis._jsOutput = (s) => out.push(s);
   try {

@@ -581,6 +581,11 @@ let escape_js_string s =
       | '\t' -> Buffer.add_string buf "\\t"
       | c when Char.code c < 32 ->
           Buffer.add_string buf (Printf.sprintf "\\x%02x" (Char.code c))
+      (* bytes >= 128 are emitted as \xHH so the JS literal is a latin1 byte
+         string (one char per UTF-8 byte), matching the VM/native byte model —
+         otherwise the .js file's UTF-8 decoding would collapse them to runes. *)
+      | c when Char.code c > 126 ->
+          Buffer.add_string buf (Printf.sprintf "\\x%02x" (Char.code c))
       | c -> Buffer.add_char buf c)
     s;
   Buffer.add_char buf '"';
@@ -4295,14 +4300,14 @@ function print(v, _s = null) {
   _output_count++;
   const s = (typeof v === "string") ? v : _pp(v, _s);
   if (typeof globalThis._jsOutput === "function") globalThis._jsOutput(s);
-  else if (typeof process !== "undefined") process.stdout.write(s + "\n");
+  else if (typeof process !== "undefined") process.stdout.write(Buffer.from(s + "\n", "latin1"));
   return undefined;
 }
 function println(v) {
   _output_count++;
   const s = (typeof v === "string") ? v : _pp(v);
   if (typeof globalThis._jsOutput === "function") globalThis._jsOutput(s + "\n");
-  else if (typeof process !== "undefined") process.stdout.write(s + "\n");
+  else if (typeof process !== "undefined") process.stdout.write(Buffer.from(s + "\n", "latin1"));
   return undefined;
 }
 function string_of_int(n) { return String(n); }
@@ -4395,11 +4400,31 @@ function __byte_to_int(b) { return b; }
 function __byte_of_int(n) { return n & 0xFF; }
 function __byte_to_string(b) { return String.fromCharCode(b); }
 function __char_to_byte(s) { return s.charCodeAt(0); }
+// UTF-8 codec over latin1 byte strings (Buffer-free, so it also runs in the
+// browser playground). A MiniML string is a latin1 JS string (1 char = 1 byte)
+// holding UTF-8; runes are Unicode code points.
+function __utf8_decode_cps(s) {
+  const cps = []; let i = 0; const n = s.length;
+  while (i < n) {
+    const b0 = s.charCodeAt(i);
+    if (b0 < 0x80) { cps.push(b0); i += 1; }
+    else if (b0 < 0xE0) { cps.push(((b0 & 0x1F) << 6) | (s.charCodeAt(i+1) & 0x3F)); i += 2; }
+    else if (b0 < 0xF0) { cps.push(((b0 & 0x0F) << 12) | ((s.charCodeAt(i+1) & 0x3F) << 6) | (s.charCodeAt(i+2) & 0x3F)); i += 3; }
+    else { cps.push(((b0 & 0x07) << 18) | ((s.charCodeAt(i+1) & 0x3F) << 12) | ((s.charCodeAt(i+2) & 0x3F) << 6) | (s.charCodeAt(i+3) & 0x3F)); i += 4; }
+  }
+  return cps;
+}
+function __utf8_encode_cp(cp) {
+  if (cp < 0x80) return String.fromCharCode(cp);
+  if (cp < 0x800) return String.fromCharCode(0xC0 | (cp >> 6), 0x80 | (cp & 0x3F));
+  if (cp < 0x10000) return String.fromCharCode(0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+  return String.fromCharCode(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F), 0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F));
+}
 function __rune_to_string(cp) {
-  return String.fromCodePoint(cp);
+  return __utf8_encode_cp(cp);
 }
 function __string_to_runes(s) {
-  const cps = Array.from(s).map(c => c.codePointAt(0));
+  const cps = __utf8_decode_cps(s);
   let result = null;
   for (let i = cps.length - 1; i >= 0; i--) result = {_hd: cps[i], _tl: result};
   return result;
@@ -4461,7 +4486,7 @@ function String$split(delim, input) {
   for (let i = parts.length - 1; i >= 0; i--) r = {_hd: parts[i], _tl: r};
   return r;
 }
-function String$trim(s) { return s.trim(); }
+function String$trim(s) { const w = (c) => c === 0x09 || c === 0x0A || c === 0x0C || c === 0x0D || c === 0x20; let a = 0, b = s.length; while (a < b && w(s.charCodeAt(a))) a++; while (b > a && w(s.charCodeAt(b-1))) b--; return s.substring(a, b); }
 function String$starts_with(prefix, s) { return s.startsWith(prefix); }
 function String$contains(sub, s) { return s.includes(sub); }
 function String$replace(old_s, new_s, input) {
@@ -4501,16 +4526,16 @@ function String$to_runes(s) { return __string_to_runes(s); }
 function String$of_runes(lst) {
   let r = "";
   let c = lst;
-  while (c !== null) { r += String.fromCodePoint(c._hd); c = c._tl; }
+  while (c !== null) { r += __utf8_encode_cp(c._hd); c = c._tl; }
   return r;
 }
 function String$get_rune(s, n) {
-  const cps = Array.from(s);
+  const cps = __utf8_decode_cps(s);
   if (n < 0 || n >= cps.length) throw new Error("String.get_rune: index " + n + " out of bounds");
-  return cps[n].codePointAt(0);
+  return cps[n];
 }
 function String$of_byte(b) { return String.fromCharCode(b); }
-function String$rune_length(s) { return Array.from(s).length; }
+function String$rune_length(s) { return __utf8_decode_cps(s).length; }
 function String$make(n, b) {
   if (n < 0) throw new Error("String.make: negative length");
   return String.fromCharCode(b).repeat(n);
@@ -4535,11 +4560,11 @@ function IO$read_file(path) {
   throw new Error("IO.read_file: not available in this environment");
 }
 function IO$write_file(path, data) {
-  if (typeof require !== "undefined") { require("fs").writeFileSync(path,data); return undefined; }
+  if (typeof require !== "undefined") { require("fs").writeFileSync(path,Buffer.from(data,"latin1")); return undefined; }
   throw new Error("IO.write_file: not available in this environment");
 }
 function IO$append_file(path, data) {
-  if (typeof require !== "undefined") { require("fs").appendFileSync(path,data); return undefined; }
+  if (typeof require !== "undefined") { require("fs").appendFileSync(path,Buffer.from(data,"latin1")); return undefined; }
   throw new Error("IO.append_file: not available in this environment");
 }
 function IO$read_line(u) {
@@ -4655,7 +4680,7 @@ function Process$run(cmd, args) {
   if (typeof require !== "undefined") {
     const a = [];
     for (let l = args; l !== null; l = l._tl) a.push(l._hd);
-    const r = require("child_process").spawnSync(cmd, a, {encoding: "utf8", maxBuffer: 1 << 28});
+    const r = require("child_process").spawnSync(cmd, a, {encoding: "latin1", maxBuffer: 1 << 28});
     if (r.error) return [127, "", ""]; // exec failed (matches native/VM: code 127, no streams)
     return [r.status === null ? -1 : r.status, r.stdout || "", r.stderr || ""];
   }
@@ -4731,7 +4756,7 @@ function __show_bool(a) { return String(a); }
 function __show_string(a) { return a; }
 function __show_unit(_) { return "()"; }
 function __show_byte(a) { return "#" + a.toString(16).padStart(2, "0"); }
-function __show_rune(a) { return "'" + String.fromCodePoint(a) + "'"; }
+function __show_rune(a) { return "'" + __utf8_encode_cp(a) + "'"; }
 function __eq(a, b) {
   if (a === b) return true;
   if (a === null || b === null || a === undefined || b === undefined) return a === b;

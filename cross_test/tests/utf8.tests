@@ -1,0 +1,71 @@
+=== UTF-8 byte strings ===
+
+# MiniML strings are immutable UTF-8 BYTE strings (Go model): byte-indexed
+# String.length/get/sub, with a separate `rune` type + rune ops for Unicode.
+# These lock byte/rune behaviour across every backend — emit-js represents a
+# string as a latin1 byte string (1 char = 1 byte) so it agrees with VM/native.
+
+--- test: String.length counts UTF-8 bytes, not code points
+String.length "café"
+--- expect: 5
+
+--- test: String.length of a 3-byte rune
+String.length "—"
+--- expect: 3
+
+--- test: String.rune_length counts code points
+String.rune_length "café—naïve"
+--- expect: 10
+
+--- test: byte string is 3 bytes per CJK code point
+String.length "日本語"
+--- expect: 9
+
+--- test: String.rune_length of CJK
+String.rune_length "日本語"
+--- expect: 3
+
+--- test: print round-trips a non-ASCII string verbatim
+print "café—naïve 日本語"
+--- expect: café—naïve 日本語
+
+--- test: string interpolation preserves non-ASCII bytes
+let name = "naïve" ;;
+$"hello {name}"
+--- expect: hello naïve
+
+--- test: to_runes / of_runes round-trips
+String.of_runes (String.to_runes "café—日本語")
+--- expect: café—日本語
+
+--- test: get_rune returns the code point (é = U+00E9 = 233)
+Rune.to_int (String.get_rune "café" 3)
+--- expect: 233
+
+--- test: get_rune of a CJK code point (日 = U+65E5 = 26085)
+Rune.to_int (String.get_rune "日本語" 0)
+--- expect: 26085
+
+--- test: String.get returns a raw byte (first UTF-8 byte of é = 0xC3 = 195)
+String.get "café" 3
+--- expect: #c3
+
+--- test: to_bytes / of_bytes round-trips the raw bytes
+String.of_bytes (String.to_bytes "café—")
+--- expect: café—
+
+--- test: byte length via to_bytes equals String.length
+List.length (String.to_bytes "日本語")
+--- expect: 9
+
+--- test: concat of non-ASCII strings is byte concatenation
+String.length ("café" ^ "—" ^ "日")
+--- expect: 11
+
+--- test: trim strips ASCII whitespace around non-ASCII content
+String.trim "  café—naïve  "
+--- expect: café—naïve
+
+--- test: trim does NOT strip a UTF-8 continuation byte that is latin1-whitespace
+String.length (String.trim "à")
+--- expect: 2

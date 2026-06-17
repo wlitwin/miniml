@@ -154,7 +154,16 @@ const MiniML = {
   run(js, options) {
     options = options || {};
     const output = [];
-    globalThis._jsOutput = options.onOutput || function(s) { output.push(s); };
+    // The program emits MiniML strings as latin1 byte strings (1 char = 1 byte,
+    // holding UTF-8). Decode each chunk to a real (UTF-8) JS string before
+    // handing it to the consumer, so non-ASCII output displays correctly.
+    const decode = (s) => {
+      const bytes = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xff;
+      return new TextDecoder("utf-8").decode(bytes);
+    };
+    const sink = options.onOutput || function(s) { output.push(s); };
+    globalThis._jsOutput = (s) => sink(decode(s));
     if (options.args) globalThis._jsSysArgs = options.args;
     if (options.readFile) globalThis._jsReadFile = options.readFile;
     if (options.externs) globalThis._mmlExterns = options.externs;
