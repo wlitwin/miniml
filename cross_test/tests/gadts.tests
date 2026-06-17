@@ -2329,3 +2329,13 @@ let rec (type 'a) eval_clamp (e : 'a expr) : 'a =
 ;;
 eval_clamp (Add (IntLit 80, IntLit 50))
 --- expect: 100
+
+--- test: (type 'a) recursion is value-monomorphic in unannotated params (sound)
+let rec (type 'a) f n =
+  if n <= 0 do 0
+  else
+    let _ = f "string" in
+    n + f (n - 1)
+;;
+f 3
+--- expect-type-error

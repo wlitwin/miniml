@@ -1204,19 +1204,34 @@ let generalize_with_map level ty =
    and unbound effect variables with EffGen *)
 let generalize level ty = fst (generalize_with_map level ty)
 
-(* Generalize ONLY effect variables at levels > [level], leaving type / poly-
-   variant / record-row variables FREE (shared). Used to bind the recursive
-   occurrence of an effect-polymorphic-recursive function (`: t / 'e`): each
-   recursive call gets a fresh effect row, but value types stay monomorphic, so
-   a wrong-typed self-call (e.g. `f "x"` where `f : int -> _`) is a COMPILE
-   error rather than a runtime crash. (The structure is still walked so effect
-   rows nested inside arrows/containers are generalized.) *)
-let generalize_effects_only level ty =
+(* Generalize the scheme bound for the RECURSIVE OCCURRENCE of a polymorphic-
+   recursive function. Quantifies (a) effect variables at levels > [level] and
+   (b) exactly the type variables whose ids are in [poly_ids] — the
+   locally-abstract `(type 'a)` names. Every OTHER value variable (unannotated
+   params, inferred locals, poly-variant / record rows) is left FREE and shared,
+   so it stays monomorphic across recursive calls. This is the soundness
+   guarantee: a wrong-typed self-call — `f "x"` where the body pins `f`'s
+   parameter to `int`, or a recursion at a value type not licensed by a
+   `(type 'a)` — is a COMPILE error, not an accepted-then-crash. With
+   [poly_ids = []] this is "generalize effects only" (the `: t / 'e` case);
+   with the `(type 'a)` ids it adds those names. *)
+let generalize_rec level poly_ids ty =
+  let counter = ref 0 in
+  let (id_map : (int, ty) Hashtbl.t) = Hashtbl.create 4 in
   let ecounter = ref 0 in
   let (eff_id_map : (int, eff) Hashtbl.t) = Hashtbl.create 4 in
   let rec go ty =
     match repr ty with
-    | TVar _ as t -> t (* type variables are NOT generalized here *)
+    | TVar { contents = Unbound (id, _) } when List.mem id poly_ids -> (
+        (* a locally-abstract `(type 'a)` name: polymorphic in the recursion *)
+        match Hashtbl.find_opt id_map id with
+        | Some gen -> gen
+        | None ->
+            let gen = TGen !counter in
+            incr counter;
+            Hashtbl.replace id_map id gen;
+            gen)
+    | TVar _ as t -> t (* every other value var stays free / monomorphic *)
     | TArrow (a, eff, r) -> TArrow (go a, go_eff eff, go r)
     | TCont (a, eff, r) -> TCont (go a, go_eff eff, go r)
     | TTuple ts -> TTuple (List.map go ts)
@@ -1253,7 +1268,7 @@ let generalize_effects_only level ty =
   in
   let body = go ty in
   {
-    quant = 0;
+    quant = !counter;
     equant = !ecounter;
     pvquant = 0;
     rquant = 0;
