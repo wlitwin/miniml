@@ -268,6 +268,43 @@ let values_equal a b =
   in
   eq a b
 
+(* Physical equality — the `==` / [phys_equal] primitive. Models OCaml's `==`
+   as the native backend and the oracle spec do: value-equality for immediates,
+   identity of the heap object for boxed values.
+
+   The subtlety is lists. The VM does NOT give each cons cell its own boxed
+   value: a list is [VList of value list], and CONS/TAIL wrap the underlying
+   OCaml list in a FRESH [VList] box every time (see CONS/TAIL in the
+   interpreter loop). So comparing the [VList] boxes with `==` is meaningless —
+   it is never the same box twice, even for a genuinely shared tail. The
+   underlying OCaml list, however, DOES preserve sharing (CONS conses onto the
+   shared tail; TAIL returns the physical tail), so physical identity must be
+   taken on it. This mirrors the oracle's cons-cell identity (VLCons x == y)
+   and the native backend's pointer comparison, which were both correct while
+   the VM reported FALSE for shared tails. *)
+let phys_equal_values (a : Bytecode.value) (b : Bytecode.value) : bool =
+  match (a, b) with
+  (* Immediates: compared by value, exactly as the native backend's [icmp eq]
+     on the immediate machine word (and independent of constant-pool sharing). *)
+  | Bytecode.VInt x, Bytecode.VInt y -> x = y
+  | Bytecode.VBool x, Bytecode.VBool y -> x = y
+  | Bytecode.VByte x, Bytecode.VByte y -> x = y
+  | Bytecode.VRune x, Bytecode.VRune y -> x = y
+  | Bytecode.VUnit, Bytecode.VUnit -> true
+  (* Nullary constructors are immediates in the native backend (tagged ints),
+     so two occurrences of the same nullary constructor are physically equal. *)
+  | Bytecode.VVariant (t1, _, None), Bytecode.VVariant (t2, _, None) -> t1 = t2
+  (* Lists: identity of the cons CELL, not the always-fresh VList wrapper. *)
+  | Bytecode.VList x, Bytecode.VList y -> (
+      match (x, y) with
+      | [], [] -> true
+      | _ :: _, _ :: _ -> x == y
+      | _ -> false)
+  (* Every other boxed value (records, tuples, arrays, refs, strings, floats,
+     closures, payloaded variants, …): identity of the heap object, which the
+     stable OCaml box already models. *)
+  | _ -> a == b
+
 let values_compare a b =
   let rec cmp a b =
     match (a, b) with

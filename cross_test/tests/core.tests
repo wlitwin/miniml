@@ -1114,6 +1114,54 @@ String.length (String.map (fn c -> c) "hello")
       phys_equal v1 v2
 --- expect: true
 
+--- test: same list value is phys_equal
+      let m = 1 :: 2 :: 3 :: [] in phys_equal m m
+--- expect: true
+
+--- test: distinct equal lists not phys_equal
+      let a = 1 :: 2 :: [] in
+      let b = 1 :: 2 :: [] in
+      phys_equal a b
+--- expect: false
+
+--- test: empty lists are phys_equal
+      phys_equal ([] : int list) ([] : int list)
+--- expect: true
+
+--- test: cons preserves tail identity
+      let m = 1 :: 2 :: 3 :: [] in
+      let e = 0 :: m in
+      match e with
+      | _ :: tl -> phys_equal tl m
+      | [] -> false
+--- expect: true
+
+--- test: physically shared list tail is found by walk
+      let rec walk lst target =
+        if phys_equal lst target do true
+        else
+          match lst with
+          | [] -> false
+          | _ :: tl -> walk tl target
+      ;;
+      let m = 1 :: 2 :: 3 :: [] in
+      let e = 9 :: 8 :: m in
+      walk e m
+--- expect: true
+
+--- test: unshared equal sublist not found by walk
+      let rec walk lst target =
+        if phys_equal lst target do true
+        else
+          match lst with
+          | [] -> false
+          | _ :: tl -> walk tl target
+      ;;
+      let m = 1 :: 2 :: 3 :: [] in
+      let e = 9 :: 8 :: 1 :: 2 :: 3 :: [] in
+      walk e m
+--- expect: false
+
 === Value Restriction Tests ===
 
 --- test: ref used at two different types
