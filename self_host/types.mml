@@ -1087,17 +1087,32 @@ module Types =
 
   pub let generalize level ty = fst (generalize_with_map level ty)
 
-  -- Generalize ONLY effect variables at levels > `level`, leaving type / poly-
-  -- variant / record-row variables FREE (shared). Binds the recursive occurrence
-  -- of an effect-polymorphic-recursive function (`: t / 'e`): each recursive call
-  -- gets a fresh effect row, but value types stay monomorphic, so a wrong-typed
-  -- self-call is a COMPILE error, not a runtime crash. The structure is still
-  -- walked so effect rows nested inside arrows/containers are generalized.
-  pub let generalize_effects_only level ty =
+  -- Generalize the scheme bound for the RECURSIVE OCCURRENCE of a polymorphic-
+  -- recursive function. Quantifies (a) effect variables at levels > `level` and
+  -- (b) exactly the type variables whose ids are in `poly_ids` — the
+  -- locally-abstract `(type 'a)` names. Every OTHER value variable (unannotated
+  -- params, inferred locals, pv / record rows) is left FREE and shared, so it
+  -- stays monomorphic across recursive calls. Soundness: a wrong-typed self-call
+  -- (or a recursion at a value type no `(type 'a)` licenses) is a COMPILE error,
+  -- not an accepted-then-crash. `poly_ids = []` = effect-only (`: t / 'e`).
+  pub let generalize_rec level poly_ids ty =
+    let counter = Ref.create 0 in
+    let (id_map : (int, ty) Hashtbl.t) = Hashtbl.create 4 in
     let ecounter = Ref.create 0 in
     let (eff_id_map : (int, eff) Hashtbl.t) = Hashtbl.create 4 in
     let rec go ty =
       match repr ty with
+      | TVar {contents = Unbound ((id, _))} when List.mem id poly_ids ->
+        do
+          match Hashtbl.get id_map id with
+          | Some gen -> gen
+          | None ->
+            let gen = TGen (Ref.get counter) in
+            Ref.set counter (Ref.get counter + 1);
+            Hashtbl.set id_map id gen;
+            gen
+
+        end
       | TVar _ as t -> t
       | TArrow ((a, eff, r)) -> TArrow (go a, go_eff eff, go r)
       | TCont ((a, eff, r)) -> TCont (go a, go_eff eff, go r)
@@ -1138,7 +1153,7 @@ module Types =
       | other -> other
      in
     let body = go ty in
-    {quant = 0; equant = Ref.get ecounter; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body}
+    {quant = Ref.get counter; equant = Ref.get ecounter; pvquant = 0; rquant = 0; constraints = []; record_evidences = []; body}
 
   pub let pp_class_arg_impl synonyms =
     fn

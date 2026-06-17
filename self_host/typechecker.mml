@@ -3571,7 +3571,13 @@ module Typechecker =
   and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot body =
     let shared_tvars = Hashtbl.create 4 in
     let shared_eff_tvars = Hashtbl.create 2 in
-    List.iter (fn tp -> Hashtbl.set shared_tvars tp (Types.new_tvar (level + 1))) type_params;
+    -- remember the `(type 'a)` tvar ids: ONLY these are polymorphic in recursion
+    let poly_ids = List.filter_map (fn tp ->
+      let tv = Types.new_tvar (level + 1) in
+      Hashtbl.set shared_tvars tp tv;
+      match tv with
+      | Types.TVar {contents = Types.Unbound ((id, _))} -> Some id
+      | _ -> None) type_params in
     let param_tys = List.map (fn (p : Ast.param) ->
       do
         match p.annot with
@@ -3599,14 +3605,11 @@ module Typechecker =
         let inner = Types.TArrow (last, body_eff, ret_ty) in
         List.fold (fn acc pty -> Types.TArrow (pty, Types.EffEmpty, acc)) inner rest
      in
-    -- effect-only when triggered solely by an effect-row variable (`: t / 'e`,
-    -- no `(type 'a)`): the recursive occurrence stays value-monomorphic (only its
-    -- effect row generalizes) so a wrong-typed self-call is a compile error, not a
-    -- runtime crash. With `(type 'a)` the user opted into full value polymorphism.
-    let effect_only = (type_params = []) in
-    let rec_scheme =
-      if effect_only do Types.generalize_effects_only level fn_ty
-      else Types.generalize level fn_ty in
+    -- scheme for the RECURSIVE occurrence: polymorphic ONLY in the named
+    -- `(type 'a)` types (poly_ids) and the effect row. Unannotated params + other
+    -- inferred value types stay monomorphic across recursive calls, so a wrong-
+    -- typed self-call is a compile error, not an accepted-then-crash.
+    let rec_scheme = Types.generalize_rec level poly_ids fn_ty in
     let ctx_with_self = extend_var ctx name rec_scheme in
     let ctx_with_self =
       if qualified_name <> "" do
@@ -3623,9 +3626,10 @@ module Typechecker =
         List.fold2 (fn acc (p : Ast.param) pty -> mk ctx (TEFun (p.name, acc, false)) (Types.TArrow (pty, Types.EffEmpty, acc.ty))) inner rest_ps rest_ptys
       | _ -> failwith "assert false"
      in
-    -- external scheme (callers): full generalization now the body has pinned
-    -- the value types the effect-only recursive scheme deliberately left free.
-    let scheme = if effect_only do Types.generalize level fn_ty else rec_scheme in
+    -- external scheme (callers): full generalization now the body has pinned the
+    -- value types the recursive scheme deliberately left free — so an unannotated
+    -- param used as `int` is reported as `int`, never a spurious `forall 'a. 'a`.
+    let scheme = Types.generalize level fn_ty in
     (te, scheme)
 
   pub let process_type_def ctx type_params type_name (def : Ast.type_def) : ctx =

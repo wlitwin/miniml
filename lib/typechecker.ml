@@ -4065,10 +4065,18 @@ and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot
     body =
   let shared_tvars = Hashtbl.create 4 in
   let shared_eff_tvars = Hashtbl.create 2 in
-  (* Pre-allocate tvars for locally abstract types at level+1 *)
-  List.iter
-    (fun tp -> Hashtbl.replace shared_tvars tp (Types.new_tvar (level + 1)))
-    type_params;
+  (* Pre-allocate tvars for locally abstract types at level+1, remembering their
+     ids: ONLY these `(type 'a)` names are polymorphic in the recursion. *)
+  let poly_ids =
+    List.filter_map
+      (fun tp ->
+        let tv = Types.new_tvar (level + 1) in
+        Hashtbl.replace shared_tvars tp tv;
+        match tv with
+        | Types.TVar { contents = Types.Unbound (id, _) } -> Some id
+        | _ -> None)
+      type_params
+  in
   (* Resolve param types *)
   let param_tys =
     List.map
@@ -4112,16 +4120,12 @@ and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot
           (fun acc pty -> Types.TArrow (pty, Types.EffEmpty, acc))
           inner rest
   in
-  (* Effect-only when poly-rec was triggered SOLELY by an effect-row variable
-     (`: t / 'e`, no `(type 'a)`): the recursive occurrence stays value-
-     monomorphic — only its effect row is generalized — so a wrong-typed self-
-     call is a compile error, not a runtime crash. With `(type 'a)` the user
-     opted into full value polymorphism, so generalize everything (unchanged). *)
-  let effect_only = type_params = [] in
-  let rec_scheme =
-    if effect_only then Types.generalize_effects_only level fn_ty
-    else Types.generalize level fn_ty
-  in
+  (* Scheme bound for the RECURSIVE occurrence: polymorphic ONLY in the named
+     `(type 'a)` types ([poly_ids]) and the effect row. Unannotated params and
+     other inferred value types stay monomorphic across recursive calls, so a
+     wrong-typed self-call is a compile error rather than an accepted-then-crash.
+     (poly_ids = [] is the pure `: t / 'e` case — effect-polymorphic only.) *)
+  let rec_scheme = Types.generalize_rec level poly_ids fn_ty in
   (* Bind name polymorphically — this enables polymorphic recursion *)
   let ctx_with_self = extend_var ctx name rec_scheme in
   let ctx_with_self =
@@ -4156,13 +4160,13 @@ and synth_poly_rec_fn ctx level name qualified_name type_params params ret_annot
           inner rest_ps rest_ptys
     | _ -> assert false
   in
-  (* External scheme (for callers / the rest of the program). In effect-only
-     mode the recursive scheme deliberately left value types free, so recompute
-     a FULL generalization now that the body has pinned them (a genuinely value-
-     polymorphic body still generalizes here — only the *recursion* was mono). *)
-  let scheme =
-    if effect_only then Types.generalize level fn_ty else rec_scheme
-  in
+  (* External scheme (for callers / the rest of the program): a FULL
+     generalization now that the body has pinned the value types the recursive
+     scheme deliberately left free. A genuinely value-polymorphic body still
+     generalizes here — only the *recursion* was monomorphic. This is what makes
+     the external type sound too: an unannotated param used as `int` is reported
+     as `int`, never as a spurious `forall 'a. 'a`. *)
+  let scheme = Types.generalize level fn_ty in
   (te, scheme)
 
 (* ---- Type definition processing ---- *)
