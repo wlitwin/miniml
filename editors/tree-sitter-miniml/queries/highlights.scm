@@ -36,6 +36,7 @@
 
 ; ---- Functions / values ----
 (let_declaration name: (lower_identifier) @function)
+(and_binding name: (lower_identifier) @function)
 (extern_declaration name: (lower_identifier) @function)
 (effect_operation name: (lower_identifier) @function)
 (class_method name: (lower_identifier) @function)
