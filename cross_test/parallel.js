@@ -129,9 +129,14 @@ function runJsInProcess(jsCode, opts = {}) {
     require,
     process,
     console,
+    Buffer, // node global, not a vm intrinsic — IO byte ops (Buffer.from/alloc) need it
   };
   const ctx = nodeVm.createContext(sandbox);
-  const stdout = () => outputs.join("");
+  // The program emits MiniML strings as latin1 byte strings (1 char = 1 byte,
+  // holding UTF-8); reconstruct stdout as a byte stream and decode it as UTF-8,
+  // exactly as a terminal would, so it matches the UTF-8-read expected value.
+  const stdout = () =>
+    Buffer.from(outputs.join(""), "latin1").toString("utf-8");
   try {
     nodeVm.runInContext(jsCode, ctx, { timeout });
     return Promise.resolve({ ok: true, stdout: stdout(), stderr: "", status: 0 });
