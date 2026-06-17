@@ -22,5 +22,5 @@ languages = ["MiniML"]
 # (https://github.com/wlitwin/miniml) and `rev` for a PUSHED commit.
 [grammars.miniml]
 repository = "file:///Users/walter/data/code/ocaml/interpreter"
-rev = "28450b27f52700e6ce4753fcf9a72dadb0ce4f5f"
+rev = "adb527bd978f4e8a9620a9afd7341ebbd8796328"
 path = "editors/tree-sitter-miniml"

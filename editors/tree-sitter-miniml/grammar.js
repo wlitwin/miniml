@@ -98,7 +98,22 @@ module.exports = grammar({
       optional($.where_clause),
       '=',
       field('body', $._expression),
-      optional(repeat(seq('and', optional('rec'), field('name', $._binding_name), repeat($.parameter), optional($.type_annotation), optional($.where_clause), '=', $._expression))),
+      repeat($.and_binding),
+    ),
+
+    // A `and g … = …` clause of a mutually-recursive `let rec … and …`. Same
+    // shape as the head binding (so it also accepts `(type 'a)` / `mut`).
+    and_binding: $ => seq(
+      'and',
+      optional('rec'),
+      optional($.locally_abstract),
+      optional('mut'),
+      field('name', $._binding_name),
+      repeat($.parameter),
+      optional($.type_annotation),
+      optional($.where_clause),
+      '=',
+      field('body', $._expression),
     ),
 
     locally_abstract: $ => seq('(', 'type', repeat1($.type_variable), ')'),
@@ -400,8 +415,8 @@ module.exports = grammar({
     ),
 
     application_expression: $ => prec.left(PREC.app, seq(
-      field('function', $._postfix_expression),
-      repeat1($._postfix_expression),
+      field('function', choice($.application_expression, $._postfix_expression)),
+      $._postfix_expression,
     )),
 
     perform_expression: $ => prec.right(seq('perform', $.lower_identifier, optional($._postfix_expression))),
