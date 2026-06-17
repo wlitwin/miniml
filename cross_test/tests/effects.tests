@@ -3503,3 +3503,86 @@ end
 ;;
 Main.result
 --- expect: 99
+
+=== Effect-polymorphic recursion ===
+
+--- test: recursive call inside a handler needs an effect-row variable annotation
+effect Log =
+  log : int -> unit
+end
+let rec sum n : int / 'e =
+  if n <= 0 do 0
+  else handle n + sum (n - 1) with
+    | return x -> x
+    | log _ k -> resume k ()
+;;
+sum 4
+--- expect: 10
+
+--- test: a (type 'a) binder also enables effect-polymorphic recursion
+effect Log =
+  log : int -> unit
+end
+let rec (type 'a) sum n : int =
+  if n <= 0 do 0
+  else handle n + sum (n - 1) with
+    | return x -> x
+    | log _ k -> resume k ()
+;;
+sum 4
+--- expect: 10
+
+--- test: recursion inside a handler without the effect-var annotation is rejected
+effect Log =
+  log : int -> unit
+end
+let rec sum n =
+  if n <= 0 do 0
+  else handle n + sum (n - 1) with
+    | return x -> x
+    | log _ k -> resume k ()
+;;
+sum 4
+--- expect-type-error: infinite effect row
+
+--- test: effect-var annotation in a module member enables effect-poly recursion
+effect Log =
+  log : int -> unit
+end
+module M =
+  pub let rec sum n : int / 'e =
+    if n <= 0 do 0
+    else handle n + sum (n - 1) with
+      | return x -> x
+      | log _ k -> resume k ()
+end
+;;
+M.sum 5
+--- expect: 15
+
+--- test: mutually-recursive functions can both be effect-polymorphic
+effect Log =
+  log : int -> unit
+end
+let rec ev n : int / 'e =
+  if n <= 0 do 1
+  else handle od (n - 1) with | return x -> x | log _ k -> resume k ()
+and od n : int / 'e =
+  if n <= 0 do 0
+  else handle ev (n - 1) with | return x -> x | log _ k -> resume k ()
+;;
+ev 4
+--- expect: 1
+
+--- test: effect-row variable does NOT grant value-polymorphic recursion (sound)
+effect Log =
+  log : int -> unit
+end
+let rec f n : int / 'e =
+  if n <= 0 do 0
+  else
+    let _ = f "string" in   -- a wrong-typed self-call: must be a COMPILE error,
+    n + f (n - 1)            -- not accepted-then-crash. `: t / 'e` is effect-only.
+;;
+f 3
+--- expect-type-error
