@@ -92335,10 +92335,255 @@ function Driver$extra_link_args(_) {
   }
   return _t22318;
 }
+const Driver$clang_version_cache = Ref$create(({_tag: 0, _name: "None"}));
+function Driver$clang_version(_) {
+  let _t22322;
+  const _t22321 = Ref$get(Driver$clang_version_cache);
+  _t22323: {
+    if (_t22321._tag === 0) {
+      let _t22325;
+      const _t22324 = _call(Process$run, ["clang", ({_hd: "--version", _tl: null})]);
+      _t22326: {
+        const _code = _t22324[0];
+        const out = _t22324[1];
+        const _err = _t22324[2];
+        let _t22328;
+        const _t22327 = _call(String$split, ["\n", out]);
+        _t22329: {
+          if (_t22327 === null) {
+            _t22328 = "unknown";
+            break _t22329;
+          }
+          if (_t22327 !== null) {
+            const x = _t22327._hd;
+            _t22328 = x;
+            break _t22329;
+          }
+          _match_fail("line 0");
+        }
+        const v_22330 = _t22328;
+        Ref$set(Driver$clang_version_cache, ({_tag: 1, _name: "Some", _val: v_22330}));
+        const _t22331 = v_22330;
+        _t22325 = _t22331;
+        break _t22326;
+      }
+      _t22322 = _t22325;
+      break _t22323;
+    }
+    if (_t22321._tag === 1) {
+      const v = _t22321._val;
+      _t22322 = v;
+      break _t22323;
+    }
+    _match_fail("line 0");
+  }
+  return _t22322;
+}
+function Driver$obj_mkdir_p(dir) {
+  let _t22332;
+  if (((dir !== "") && ((dir !== "/") && ((dir !== ".") && (!IO$file_exists(dir)))))) {
+    Driver$obj_mkdir_p(Path$dirname(dir));
+    _t22332 = Fs$make_dir(dir);
+  } else {
+    _t22332 = undefined;
+  }
+  return _t22332;
+}
+function Driver$obj_cache_dir(_) {
+  let _t22334;
+  const _t22333 = Sys$getenv("MML_CACHE");
+  _t22335: {
+    if (_t22333._tag === 0) {
+      let _t22337;
+      const _t22336 = Sys$getenv("HOME");
+      _t22338: {
+        if (_t22336._tag === 0) {
+          let _t22340;
+          const _t22339 = Sys$getenv("TMPDIR");
+          _t22341: {
+            if (_t22339._tag === 0) {
+              _t22340 = "/tmp";
+              break _t22341;
+            }
+            if (_t22339._tag === 1) {
+              const t = _t22339._val;
+              _t22340 = t;
+              break _t22341;
+            }
+            _match_fail("line 0");
+          }
+          _t22337 = Path$join(_t22340, "mml-cache");
+          break _t22338;
+        }
+        if (_t22336._tag === 1) {
+          const h = _t22336._val;
+          _t22337 = Path$join(Path$join(h, ".mml"), "cache");
+          break _t22338;
+        }
+        _match_fail("line 0");
+      }
+      _t22334 = _t22337;
+      break _t22335;
+    }
+    if (_t22333._tag === 1) {
+      const d = _t22333._val;
+      _t22334 = d;
+      break _t22335;
+    }
+    _match_fail("line 0");
+  }
+  const root_22342 = _t22334;
+  const d_22344 = Path$join(root_22342, "obj");
+  Driver$obj_mkdir_p(d_22344);
+  const _t22345 = d_22344;
+  const _t22343 = _t22345;
+  return _t22343;
+}
+function Driver$framed(s) {
+  return (string_of_int(String$length(s)) + (":" + s));
+}
+const Driver$obj_tmp_counter = Ref$create(0);
+function Driver$clang_compile_obj(flags, src, objpath) {
+  const args_22346 = List$concat(flags, ({_hd: "-c", _tl: ({_hd: src, _tl: ({_hd: "-o", _tl: ({_hd: objpath, _tl: null})})})}));
+  let _t22349;
+  const _t22348 = _call(Process$run, ["clang", args_22346]);
+  _t22350: {
+    const code = _t22348[0];
+    const _out = _t22348[1];
+    const cerr = _t22348[2];
+    let _t22351;
+    if ((code !== 0)) {
+      IO$write_err(((("clang failed (exit " + string_of_int(code)) + "): ") + (cerr + "\n")));
+      _t22351 = false;
+    } else {
+      _t22351 = true;
+    }
+    _t22349 = _t22351;
+    break _t22350;
+  }
+  const _t22347 = _t22349;
+  return _t22347;
+}
+function Driver$ensure_object(key_extra, content, compile_to) {
+  const key_22352 = Digest$md5((Driver$framed(Driver$clang_version(undefined)) + (Driver$framed(key_extra) + content)));
+  const obj_22354 = Path$join(Driver$obj_cache_dir(undefined), (key_22352 + ".o"));
+  let _t22356;
+  if (IO$file_exists(obj_22354)) {
+    _t22356 = ({_tag: 1, _name: "Some", _val: obj_22354});
+  } else {
+    Ref$set(Driver$obj_tmp_counter, (Ref$get(Driver$obj_tmp_counter) + 1));
+    const tmp_22357 = (obj_22354 + (".tmp." + (string_of_int(Ref$get(Driver$obj_tmp_counter)) + ("." + string_of_float(Sys$time(undefined))))));
+    let _t22359;
+    if (compile_to(tmp_22357)) {
+      _call(Fs$rename, [tmp_22357, obj_22354]);
+      _t22359 = ({_tag: 1, _name: "Some", _val: obj_22354});
+    } else {
+      _t22359 = ({_tag: 0, _name: "None"});
+    }
+    const _t22358 = _t22359;
+    _t22356 = _t22358;
+  }
+  const _t22355 = _t22356;
+  const _t22353 = _t22355;
+  return _t22353;
+}
+function Driver$compile_and_link(ll, out_path) {
+  const ll_path_22360 = (out_path + ".ll");
+  _call(IO$write_file, [ll_path_22360, ll]);
+  const runtime_c_22362 = Driver$find_runtime_file("runtime.c");
+  const mml_gc_c_22364 = Driver$find_runtime_file("mml_gc.c");
+  const context_asm_22366 = Driver$detect_context_asm(undefined);
+  const mps_dir_22368 = Driver$find_mps_dir(undefined);
+  const mps_c_22370 = (mps_dir_22368 + "/mps.c");
+  const inc_22372 = ("-I" + mps_dir_22368);
+  const o2_22374 = ({_hd: "-O2", _tl: ({_hd: inc_22372, _tl: null})});
+  function _t22376(o) {
+    return Driver$clang_compile_obj(o2_22374, mps_c_22370, o);
+  }
+  const mps_o_22377 = Driver$ensure_object("mps-O2", IO$read_file(mps_c_22370), _t22376);
+  function _t22379(o) {
+    return Driver$clang_compile_obj(o2_22374, runtime_c_22362, o);
+  }
+  const rt_o_22380 = Driver$ensure_object(("rt-O2" + inc_22372), (Driver$framed(IO$read_file(runtime_c_22362)) + inc_22372), _t22379);
+  function _t22382(o) {
+    return Driver$clang_compile_obj(o2_22374, mml_gc_c_22364, o);
+  }
+  const gc_o_22383 = Driver$ensure_object(("gc-O2" + inc_22372), (Driver$framed(IO$read_file(mml_gc_c_22364)) + inc_22372), _t22382);
+  function _t22385(o) {
+    return Driver$clang_compile_obj(null, context_asm_22366, o);
+  }
+  const asm_o_22386 = Driver$ensure_object("asm", IO$read_file(context_asm_22366), _t22385);
+  function _t22388(o) {
+    return Driver$clang_compile_obj(o2_22374, ll_path_22360, o);
+  }
+  const prog_o_22389 = Driver$ensure_object("ll-O2", ll, _t22388);
+  let _t22392;
+  const _t22391 = [mps_o_22377, rt_o_22380, gc_o_22383, asm_o_22386, prog_o_22389];
+  _t22393: {
+    if (_t22391[0]._tag === 1) {
+      if (_t22391[1]._tag === 1) {
+        if (_t22391[2]._tag === 1) {
+          if (_t22391[3]._tag === 1) {
+            if (_t22391[4]._tag === 1) {
+              const m = _t22391[0]._val;
+              const r = _t22391[1]._val;
+              const g = _t22391[2]._val;
+              const a = _t22391[3]._val;
+              const p = _t22391[4]._val;
+              const link_args_22394 = List$concat(({_hd: "-O2", _tl: ({_hd: "-o", _tl: ({_hd: out_path, _tl: ({_hd: p, _tl: ({_hd: r, _tl: ({_hd: a, _tl: ({_hd: g, _tl: ({_hd: m, _tl: null})})})})})})})}), Driver$extra_link_args(undefined));
+              let _t22397;
+              const _t22396 = _call(Process$run, ["clang", link_args_22394]);
+              _t22398: {
+                const code = _t22396[0];
+                const _out = _t22396[1];
+                const cerr = _t22396[2];
+                let _t22399;
+                if ((code !== 0)) {
+                  _t22399 = ({_tag: 1, _name: "Some", _val: ("clang link failed (exit " + (string_of_int(code) + ("): " + cerr)))});
+                } else {
+                  _t22399 = ({_tag: 0, _name: "None"});
+                }
+                _t22397 = _t22399;
+                break _t22398;
+              }
+              const _t22395 = _t22397;
+              _t22392 = _t22395;
+              break _t22393;
+            }
+            _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+            break _t22393;
+          }
+          _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+          break _t22393;
+        }
+        _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+        break _t22393;
+      }
+      _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+      break _t22393;
+    }
+    _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+    break _t22393;
+  }
+  const _t22390 = _t22392;
+  const _t22387 = _t22390;
+  const _t22384 = _t22387;
+  const _t22381 = _t22384;
+  const _t22378 = _t22381;
+  const _t22375 = _t22378;
+  const _t22373 = _t22375;
+  const _t22371 = _t22373;
+  const _t22369 = _t22371;
+  const _t22367 = _t22369;
+  const _t22365 = _t22367;
+  const _t22363 = _t22365;
+  const _t22361 = _t22363;
+  return _t22361;
+}
 function Driver$run_emit_native(filename, out_path) {
-  const _t22321 = (function() {
-    const _t22322 = _h;
-    _h = Object.assign({}, _t22322, {
+  const _t22400 = (function() {
+    const _t22401 = _h;
+    _h = Object.assign({}, _t22401, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92347,72 +92592,58 @@ function Driver$run_emit_native(filename, out_path) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      const ll_22323 = Driver$build_llvm(filename);
-      const ll_path_22325 = (out_path + ".ll");
-      _call(IO$write_file, [ll_path_22325, ll_22323]);
-      const runtime_c_22327 = Driver$find_runtime_file("runtime.c");
-      const mml_gc_c_22329 = Driver$find_runtime_file("mml_gc.c");
-      const context_asm_22331 = Driver$detect_context_asm(undefined);
-      const mps_dir_22333 = Driver$find_mps_dir(undefined);
-      const clang_args_22335 = List$concat(({_hd: "-O2", _tl: ({_hd: ("-I" + mps_dir_22333), _tl: null})}), List$concat(({_hd: ll_path_22325, _tl: ({_hd: runtime_c_22327, _tl: ({_hd: context_asm_22331, _tl: ({_hd: mml_gc_c_22329, _tl: ({_hd: (mps_dir_22333 + "/mps.c"), _tl: null})})})})}), List$concat(({_hd: "-o", _tl: ({_hd: out_path, _tl: null})}), Driver$extra_link_args(undefined))));
-      let _t22338;
-      const _t22337 = _call(Process$run, ["clang", clang_args_22335]);
-      _t22339: {
-        const code = _t22337[0];
-        const _out = _t22337[1];
-        const cerr = _t22337[2];
-        let _t22340;
-        if ((code !== 0)) {
-          _t22340 = failwith(((("clang failed (exit " + string_of_int(code)) + "): ") + cerr));
-        } else {
-          _t22340 = print(((("compiled " + filename) + " -> ") + out_path));
+      const ll_22402 = Driver$build_llvm(filename);
+      let _t22405;
+      const _t22404 = Driver$compile_and_link(ll_22402, out_path);
+      _t22406: {
+        if (_t22404._tag === 0) {
+          _t22405 = print(((("compiled " + filename) + " -> ") + out_path));
+          break _t22406;
         }
-        _t22338 = _t22340;
-        break _t22339;
+        if (_t22404._tag === 1) {
+          const e = _t22404._val;
+          _t22405 = failwith(e);
+          break _t22406;
+        }
+        _match_fail("line 0");
       }
-      const _t22336 = _t22338;
-      const _t22334 = _t22336;
-      const _t22332 = _t22334;
-      const _t22330 = _t22332;
-      const _t22328 = _t22330;
-      const _t22326 = _t22328;
-      const _t22324 = _t22326;
-      const x_22341 = _t22324;
-      return x_22341;
+      const _t22403 = _t22405;
+      const x_22407 = _t22403;
+      return x_22407;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22343;
-        const _t22342 = arg;
-        _t22344: {
-          const msg = _t22342[0];
-          const _loc = _t22342[1];
-          _t22343 = failwith(msg);
-          break _t22344;
+        let _t22409;
+        const _t22408 = arg;
+        _t22410: {
+          const msg = _t22408[0];
+          const _loc = _t22408[1];
+          _t22409 = failwith(msg);
+          break _t22410;
         }
-        return _t22343;
+        return _t22409;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22346;
-        const _t22345 = arg;
-        _t22347: {
-          const msg = _t22345[0];
-          const _loc = _t22345[1];
-          _t22346 = failwith(msg);
-          break _t22347;
+        let _t22412;
+        const _t22411 = arg;
+        _t22413: {
+          const msg = _t22411[0];
+          const _loc = _t22411[1];
+          _t22412 = failwith(msg);
+          break _t22413;
         }
-        return _t22346;
+        return _t22412;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22349;
-        const _t22348 = arg;
-        _t22350: {
-          const msg = _t22348[0];
-          const _loc = _t22348[1];
-          _t22349 = failwith(msg);
-          break _t22350;
+        let _t22415;
+        const _t22414 = arg;
+        _t22416: {
+          const msg = _t22414[0];
+          const _loc = _t22414[1];
+          _t22415 = failwith(msg);
+          break _t22416;
         }
-        return _t22349;
+        return _t22415;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -92423,14 +92654,14 @@ function Driver$run_emit_native(filename, out_path) {
         const msg = _exc._v;
         return failwith(("native codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22322; }
+    } finally { _h = _t22401; }
   })();
-  return _t22321;
+  return _t22400;
 }
 function Driver$build_native_quiet(filename, out_path) {
-  const _t22351 = (function() {
-    const _t22352 = _h;
-    _h = Object.assign({}, _t22352, {
+  const _t22417 = (function() {
+    const _t22418 = _h;
+    _h = Object.assign({}, _t22418, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92439,76 +92670,62 @@ function Driver$build_native_quiet(filename, out_path) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      const ll_22353 = Driver$build_llvm(filename);
-      const ll_path_22355 = (out_path + ".ll");
-      _call(IO$write_file, [ll_path_22355, ll_22353]);
-      const runtime_c_22357 = Driver$find_runtime_file("runtime.c");
-      const mml_gc_c_22359 = Driver$find_runtime_file("mml_gc.c");
-      const context_asm_22361 = Driver$detect_context_asm(undefined);
-      const mps_dir_22363 = Driver$find_mps_dir(undefined);
-      const clang_args_22365 = List$concat(({_hd: "-O2", _tl: ({_hd: ("-I" + mps_dir_22363), _tl: null})}), List$concat(({_hd: ll_path_22355, _tl: ({_hd: runtime_c_22357, _tl: ({_hd: context_asm_22361, _tl: ({_hd: mml_gc_c_22359, _tl: ({_hd: (mps_dir_22363 + "/mps.c"), _tl: null})})})})}), List$concat(({_hd: "-o", _tl: ({_hd: out_path, _tl: null})}), Driver$extra_link_args(undefined))));
-      let _t22368;
-      const _t22367 = _call(Process$run, ["clang", clang_args_22365]);
-      _t22369: {
-        const code = _t22367[0];
-        const _out = _t22367[1];
-        const cerr = _t22367[2];
-        let _t22370;
-        if ((code !== 0)) {
-          IO$write_err((((("clang failed (exit " + string_of_int(code)) + "): ") + cerr) + "\n"));
-          _t22370 = false;
-        } else {
-          _t22370 = true;
+      const ll_22419 = Driver$build_llvm(filename);
+      let _t22422;
+      const _t22421 = Driver$compile_and_link(ll_22419, out_path);
+      _t22423: {
+        if (_t22421._tag === 0) {
+          _t22422 = true;
+          break _t22423;
         }
-        _t22368 = _t22370;
-        break _t22369;
+        if (_t22421._tag === 1) {
+          const e = _t22421._val;
+          IO$write_err((e + "\n"));
+          _t22422 = false;
+          break _t22423;
+        }
+        _match_fail("line 0");
       }
-      const _t22366 = _t22368;
-      const _t22364 = _t22366;
-      const _t22362 = _t22364;
-      const _t22360 = _t22362;
-      const _t22358 = _t22360;
-      const _t22356 = _t22358;
-      const _t22354 = _t22356;
-      const x_22371 = _t22354;
-      return x_22371;
+      const _t22420 = _t22422;
+      const x_22424 = _t22420;
+      return x_22424;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22373;
-        const _t22372 = arg;
-        _t22374: {
-          const msg = _t22372[0];
-          const _loc = _t22372[1];
+        let _t22426;
+        const _t22425 = arg;
+        _t22427: {
+          const msg = _t22425[0];
+          const _loc = _t22425[1];
           IO$write_err((msg + "\n"));
-          _t22373 = false;
-          break _t22374;
+          _t22426 = false;
+          break _t22427;
         }
-        return _t22373;
+        return _t22426;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22376;
-        const _t22375 = arg;
-        _t22377: {
-          const msg = _t22375[0];
-          const _loc = _t22375[1];
+        let _t22429;
+        const _t22428 = arg;
+        _t22430: {
+          const msg = _t22428[0];
+          const _loc = _t22428[1];
           IO$write_err((msg + "\n"));
-          _t22376 = false;
-          break _t22377;
+          _t22429 = false;
+          break _t22430;
         }
-        return _t22376;
+        return _t22429;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22379;
-        const _t22378 = arg;
-        _t22380: {
-          const msg = _t22378[0];
-          const _loc = _t22378[1];
+        let _t22432;
+        const _t22431 = arg;
+        _t22433: {
+          const msg = _t22431[0];
+          const _loc = _t22431[1];
           IO$write_err((msg + "\n"));
-          _t22379 = false;
-          break _t22380;
+          _t22432 = false;
+          break _t22433;
         }
-        return _t22379;
+        return _t22432;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         IO$write_err((msg + "\n"));
@@ -92522,14 +92739,14 @@ function Driver$build_native_quiet(filename, out_path) {
         IO$write_err((("native codegen error: " + msg) + "\n"));
         return false;
       } else { throw _exc; }
-    } finally { _h = _t22352; }
+    } finally { _h = _t22418; }
   })();
-  return _t22351;
+  return _t22417;
 }
 function Driver$run_batch_emit_ir(manifest_file) {
-  const _t22381 = (function() {
-    const _t22382 = _h;
-    _h = Object.assign({}, _t22382, {
+  const _t22434 = (function() {
+    const _t22435 = _h;
+    _h = Object.assign({}, _t22435, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92540,42 +92757,42 @@ function Driver$run_batch_emit_ir(manifest_file) {
     try {
       (Driver$js_capture_mode = true, undefined);
       (Driver$captured_typed_setups = null, undefined);
-      let _t22384;
-      const _t22383 = Driver$setup_builtins(undefined);
-      _t22385: {
-        const ctx = _t22383[0];
-        const global_names = _t22383[1];
-        const mutable_globals = _t22383[2];
-        let _t22387;
-        const _t22386 = Driver$setup_classes(ctx, global_names, mutable_globals);
-        _t22388: {
-          const ctx = _t22386[0];
-          const _class_protos = _t22386[1];
-          let _t22390;
-          const _t22389 = Driver$setup_modules(ctx, global_names, mutable_globals);
-          _t22391: {
-            const ctx = _t22389[0];
-            const _module_protos = _t22389[1];
-            function _t22392(p) {
-              let _t22394;
-              const _t22393 = p;
-              _t22395: {
-                const prog = _t22393[1];
-                _t22394 = prog;
-                break _t22395;
+      let _t22437;
+      const _t22436 = Driver$setup_builtins(undefined);
+      _t22438: {
+        const ctx = _t22436[0];
+        const global_names = _t22436[1];
+        const mutable_globals = _t22436[2];
+        let _t22440;
+        const _t22439 = Driver$setup_classes(ctx, global_names, mutable_globals);
+        _t22441: {
+          const ctx = _t22439[0];
+          const _class_protos = _t22439[1];
+          let _t22443;
+          const _t22442 = Driver$setup_modules(ctx, global_names, mutable_globals);
+          _t22444: {
+            const ctx = _t22442[0];
+            const _module_protos = _t22442[1];
+            function _t22445(p) {
+              let _t22447;
+              const _t22446 = p;
+              _t22448: {
+                const prog = _t22446[1];
+                _t22447 = prog;
+                break _t22448;
               }
-              return _t22394;
+              return _t22447;
             }
-            const stdlib_programs_22396 = List$map(_t22392, Driver$captured_typed_setups);
-            const manifest_22398 = IO$read_file(manifest_file);
-            function _t22400(s) {
+            const stdlib_programs_22449 = List$map(_t22445, Driver$captured_typed_setups);
+            const manifest_22451 = IO$read_file(manifest_file);
+            function _t22453(s) {
               return (s !== "");
             }
-            const files_22401 = List$filter(_t22400, _call(String$split, ["\n", manifest_22398]));
-            function _t22403(filename) {
-              const _t22404 = (function() {
-                const _t22405 = _h;
-                _h = Object.assign({}, _t22405, {
+            const files_22454 = List$filter(_t22453, _call(String$split, ["\n", manifest_22451]));
+            function _t22456(filename) {
+              const _t22457 = (function() {
+                const _t22458 = _h;
+                _h = Object.assign({}, _t22458, {
                   "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                   "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                   "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92583,64 +92800,64 @@ function Driver$run_batch_emit_ir(manifest_file) {
                   "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                 });
                 try {
-                  const source_22406 = IO$read_file(filename);
-                  const tokens_22408 = Lexer$tokenize(source_22406);
-                  const program_22410 = Parser$parse_program(tokens_22408);
-                  let _t22413;
-                  const _t22412 = Typechecker$check_program_in_ctx(ctx, program_22410);
-                  _t22414: {
-                    const ctx2 = _t22412[0];
-                    const typed_program = _t22412[1];
-                    const typed_program2_22415 = Typechecker$transform_constraints(ctx2, typed_program);
-                    const typed_program2_22417 = Pipeline$lower(true, stdlib_programs_22396, ctx2.type_env, typed_program2_22415);
-                    print(Ir_serialize$serialize_program(typed_program2_22417));
-                    const _t22418 = print("===BATCH-SEP===");
-                    const _t22416 = _t22418;
-                    _t22413 = _t22416;
-                    break _t22414;
+                  const source_22459 = IO$read_file(filename);
+                  const tokens_22461 = Lexer$tokenize(source_22459);
+                  const program_22463 = Parser$parse_program(tokens_22461);
+                  let _t22466;
+                  const _t22465 = Typechecker$check_program_in_ctx(ctx, program_22463);
+                  _t22467: {
+                    const ctx2 = _t22465[0];
+                    const typed_program = _t22465[1];
+                    const typed_program2_22468 = Typechecker$transform_constraints(ctx2, typed_program);
+                    const typed_program2_22470 = Pipeline$lower(true, stdlib_programs_22449, ctx2.type_env, typed_program2_22468);
+                    print(Ir_serialize$serialize_program(typed_program2_22470));
+                    const _t22471 = print("===BATCH-SEP===");
+                    const _t22469 = _t22471;
+                    _t22466 = _t22469;
+                    break _t22467;
                   }
-                  const _t22411 = _t22413;
-                  const _t22409 = _t22411;
-                  const _t22407 = _t22409;
-                  const x_22419 = _t22407;
-                  return x_22419;
+                  const _t22464 = _t22466;
+                  const _t22462 = _t22464;
+                  const _t22460 = _t22462;
+                  const x_22472 = _t22460;
+                  return x_22472;
                 } catch (_exc) {
                   if (_exc && _exc._e === "lex_error") {
                     const arg = _exc._v;
-                    let _t22421;
-                    const _t22420 = arg;
-                    _t22422: {
-                      const msg = _t22420[0];
-                      const _loc = _t22420[1];
+                    let _t22474;
+                    const _t22473 = arg;
+                    _t22475: {
+                      const msg = _t22473[0];
+                      const _loc = _t22473[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22421 = print("===BATCH-SEP===");
-                      break _t22422;
+                      _t22474 = print("===BATCH-SEP===");
+                      break _t22475;
                     }
-                    return _t22421;
+                    return _t22474;
                   } else if (_exc && _exc._e === "parse_error") {
                     const arg = _exc._v;
-                    let _t22424;
-                    const _t22423 = arg;
-                    _t22425: {
-                      const msg = _t22423[0];
-                      const _loc = _t22423[1];
+                    let _t22477;
+                    const _t22476 = arg;
+                    _t22478: {
+                      const msg = _t22476[0];
+                      const _loc = _t22476[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22424 = print("===BATCH-SEP===");
-                      break _t22425;
+                      _t22477 = print("===BATCH-SEP===");
+                      break _t22478;
                     }
-                    return _t22424;
+                    return _t22477;
                   } else if (_exc && _exc._e === "type_error") {
                     const arg = _exc._v;
-                    let _t22427;
-                    const _t22426 = arg;
-                    _t22428: {
-                      const msg = _t22426[0];
-                      const _loc = _t22426[1];
+                    let _t22480;
+                    const _t22479 = arg;
+                    _t22481: {
+                      const msg = _t22479[0];
+                      const _loc = _t22479[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22427 = print("===BATCH-SEP===");
-                      break _t22428;
+                      _t22480 = print("===BATCH-SEP===");
+                      break _t22481;
                     }
-                    return _t22427;
+                    return _t22480;
                   } else if (_exc && _exc._e === "compile_error") {
                     const msg = _exc._v;
                     print(("COMPILE-ERROR:" + msg));
@@ -92650,58 +92867,58 @@ function Driver$run_batch_emit_ir(manifest_file) {
                     print(("COMPILE-ERROR:" + msg));
                     return print("===BATCH-SEP===");
                   } else { throw _exc; }
-                } finally { _h = _t22405; }
+                } finally { _h = _t22458; }
               })();
-              return _t22404;
+              return _t22457;
             }
-            const _t22402 = Driver$list_iter(_t22403, files_22401);
-            const _t22399 = _t22402;
-            const _t22397 = _t22399;
-            _t22390 = _t22397;
-            break _t22391;
+            const _t22455 = Driver$list_iter(_t22456, files_22454);
+            const _t22452 = _t22455;
+            const _t22450 = _t22452;
+            _t22443 = _t22450;
+            break _t22444;
           }
-          _t22387 = _t22390;
-          break _t22388;
+          _t22440 = _t22443;
+          break _t22441;
         }
-        _t22384 = _t22387;
-        break _t22385;
+        _t22437 = _t22440;
+        break _t22438;
       }
-      const x_22429 = _t22384;
-      return x_22429;
+      const x_22482 = _t22437;
+      return x_22482;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22431;
-        const _t22430 = arg;
-        _t22432: {
-          const msg = _t22430[0];
-          const _loc = _t22430[1];
-          _t22431 = failwith(msg);
-          break _t22432;
+        let _t22484;
+        const _t22483 = arg;
+        _t22485: {
+          const msg = _t22483[0];
+          const _loc = _t22483[1];
+          _t22484 = failwith(msg);
+          break _t22485;
         }
-        return _t22431;
+        return _t22484;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22434;
-        const _t22433 = arg;
-        _t22435: {
-          const msg = _t22433[0];
-          const _loc = _t22433[1];
-          _t22434 = failwith(msg);
-          break _t22435;
+        let _t22487;
+        const _t22486 = arg;
+        _t22488: {
+          const msg = _t22486[0];
+          const _loc = _t22486[1];
+          _t22487 = failwith(msg);
+          break _t22488;
         }
-        return _t22434;
+        return _t22487;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22437;
-        const _t22436 = arg;
-        _t22438: {
-          const msg = _t22436[0];
-          const _loc = _t22436[1];
-          _t22437 = failwith(msg);
-          break _t22438;
+        let _t22490;
+        const _t22489 = arg;
+        _t22491: {
+          const msg = _t22489[0];
+          const _loc = _t22489[1];
+          _t22490 = failwith(msg);
+          break _t22491;
         }
-        return _t22437;
+        return _t22490;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -92712,14 +92929,14 @@ function Driver$run_batch_emit_ir(manifest_file) {
         const msg = _exc._v;
         return failwith(("IR serialize error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22382; }
+    } finally { _h = _t22435; }
   })();
-  return _t22381;
+  return _t22434;
 }
 function Driver$check_file(filename) {
-  const _t22439 = (function() {
-    const _t22440 = _h;
-    _h = Object.assign({}, _t22440, {
+  const _t22492 = (function() {
+    const _t22493 = _h;
+    _h = Object.assign({}, _t22493, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92729,112 +92946,112 @@ function Driver$check_file(filename) {
     try {
       (Driver$js_capture_mode = true, undefined);
       (Driver$captured_typed_setups = null, undefined);
-      let _t22441;
+      let _t22494;
       if (__cache_has("emit_js")) {
-        let _t22443;
-        const _t22442 = __cache_get("emit_js");
-        _t22444: {
-          const c = _t22442[0];
-          const gn = _t22442[1];
-          const mg = _t22442[2];
-          const cts = _t22442[3];
+        let _t22496;
+        const _t22495 = __cache_get("emit_js");
+        _t22497: {
+          const c = _t22495[0];
+          const gn = _t22495[1];
+          const mg = _t22495[2];
+          const cts = _t22495[3];
           (Driver$captured_typed_setups = cts, undefined);
-          _t22443 = [c, gn, mg];
-          break _t22444;
+          _t22496 = [c, gn, mg];
+          break _t22497;
         }
-        _t22441 = _t22443;
+        _t22494 = _t22496;
       } else {
-        let _t22446;
-        const _t22445 = Driver$setup_builtins(undefined);
-        _t22447: {
-          const ctx = _t22445[0];
-          const global_names = _t22445[1];
-          const mutable_globals = _t22445[2];
-          let _t22449;
-          const _t22448 = Driver$setup_classes(ctx, global_names, mutable_globals);
-          _t22450: {
-            const ctx = _t22448[0];
-            const _class_protos = _t22448[1];
-            let _t22452;
-            const _t22451 = Driver$setup_modules(ctx, global_names, mutable_globals);
-            _t22453: {
-              const ctx = _t22451[0];
-              const _module_protos = _t22451[1];
+        let _t22499;
+        const _t22498 = Driver$setup_builtins(undefined);
+        _t22500: {
+          const ctx = _t22498[0];
+          const global_names = _t22498[1];
+          const mutable_globals = _t22498[2];
+          let _t22502;
+          const _t22501 = Driver$setup_classes(ctx, global_names, mutable_globals);
+          _t22503: {
+            const ctx = _t22501[0];
+            const _class_protos = _t22501[1];
+            let _t22505;
+            const _t22504 = Driver$setup_modules(ctx, global_names, mutable_globals);
+            _t22506: {
+              const ctx = _t22504[0];
+              const _module_protos = _t22504[1];
               _call(__cache_set, ["emit_js", [ctx, global_names, mutable_globals, Driver$captured_typed_setups]]);
-              _t22452 = [ctx, global_names, mutable_globals];
-              break _t22453;
+              _t22505 = [ctx, global_names, mutable_globals];
+              break _t22506;
             }
-            _t22449 = _t22452;
-            break _t22450;
+            _t22502 = _t22505;
+            break _t22503;
           }
-          _t22446 = _t22449;
-          break _t22447;
+          _t22499 = _t22502;
+          break _t22500;
         }
-        _t22441 = _t22446;
+        _t22494 = _t22499;
       }
-      let _t22455;
-      const _t22454 = _t22441;
-      _t22456: {
-        const ctx = _t22454[0];
-        const _gn = _t22454[1];
-        const _mg = _t22454[2];
-        const source_22457 = IO$read_file(filename);
-        const tokens_22459 = Lexer$tokenize(source_22457);
-        const program_22461 = Parser$parse_program(tokens_22459);
-        let _t22464;
-        const _t22463 = Typechecker$check_program_in_ctx(ctx, program_22461);
-        _t22465: {
-          const ctx2 = _t22463[0];
-          const typed_program = _t22463[1];
+      let _t22508;
+      const _t22507 = _t22494;
+      _t22509: {
+        const ctx = _t22507[0];
+        const _gn = _t22507[1];
+        const _mg = _t22507[2];
+        const source_22510 = IO$read_file(filename);
+        const tokens_22512 = Lexer$tokenize(source_22510);
+        const program_22514 = Parser$parse_program(tokens_22512);
+        let _t22517;
+        const _t22516 = Typechecker$check_program_in_ctx(ctx, program_22514);
+        _t22518: {
+          const ctx2 = _t22516[0];
+          const typed_program = _t22516[1];
           Typechecker$transform_constraints(ctx2, typed_program);
-          _t22464 = true;
-          break _t22465;
+          _t22517 = true;
+          break _t22518;
         }
-        const _t22462 = _t22464;
-        const _t22460 = _t22462;
-        const _t22458 = _t22460;
-        _t22455 = _t22458;
-        break _t22456;
+        const _t22515 = _t22517;
+        const _t22513 = _t22515;
+        const _t22511 = _t22513;
+        _t22508 = _t22511;
+        break _t22509;
       }
-      const x_22466 = _t22455;
-      return x_22466;
+      const x_22519 = _t22508;
+      return x_22519;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22468;
-        const _t22467 = arg;
-        _t22469: {
-          const msg = _t22467[0];
-          const _loc = _t22467[1];
+        let _t22521;
+        const _t22520 = arg;
+        _t22522: {
+          const msg = _t22520[0];
+          const _loc = _t22520[1];
           IO$write_err((((filename + ": ") + msg) + "\n"));
-          _t22468 = false;
-          break _t22469;
+          _t22521 = false;
+          break _t22522;
         }
-        return _t22468;
+        return _t22521;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22471;
-        const _t22470 = arg;
-        _t22472: {
-          const msg = _t22470[0];
-          const _loc = _t22470[1];
+        let _t22524;
+        const _t22523 = arg;
+        _t22525: {
+          const msg = _t22523[0];
+          const _loc = _t22523[1];
           IO$write_err((((filename + ": ") + msg) + "\n"));
-          _t22471 = false;
-          break _t22472;
+          _t22524 = false;
+          break _t22525;
         }
-        return _t22471;
+        return _t22524;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22474;
-        const _t22473 = arg;
-        _t22475: {
-          const msg = _t22473[0];
-          const _loc = _t22473[1];
+        let _t22527;
+        const _t22526 = arg;
+        _t22528: {
+          const msg = _t22526[0];
+          const _loc = _t22526[1];
           IO$write_err((((filename + ": ") + msg) + "\n"));
-          _t22474 = false;
-          break _t22475;
+          _t22527 = false;
+          break _t22528;
         }
-        return _t22474;
+        return _t22527;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         IO$write_err((((filename + ": ") + msg) + "\n"));
@@ -92844,175 +93061,175 @@ function Driver$check_file(filename) {
         IO$write_err((((filename + ": ") + msg) + "\n"));
         return false;
       } else { throw _exc; }
-    } finally { _h = _t22440; }
+    } finally { _h = _t22493; }
   })();
-  return _t22439;
+  return _t22492;
 }
 function Driver$run_cli(args) {
-  let _t22477;
-  const _t22476 = args;
-  _t22478: {
-    if (_t22476 !== null) {
-      if (_t22476._tl !== null) {
-        if (_t22476._tl._hd === "--batch") {
-          if (_t22476._tl._tl !== null) {
-            const f = _t22476._tl._tl._hd;
-            _t22477 = ({_tag: 1, _name: "Some", _val: f});
-            break _t22478;
+  let _t22530;
+  const _t22529 = args;
+  _t22531: {
+    if (_t22529 !== null) {
+      if (_t22529._tl !== null) {
+        if (_t22529._tl._hd === "--batch") {
+          if (_t22529._tl._tl !== null) {
+            const f = _t22529._tl._tl._hd;
+            _t22530 = ({_tag: 1, _name: "Some", _val: f});
+            break _t22531;
           }
-          _t22477 = ({_tag: 0, _name: "None"});
-          break _t22478;
+          _t22530 = ({_tag: 0, _name: "None"});
+          break _t22531;
         }
-        _t22477 = ({_tag: 0, _name: "None"});
-        break _t22478;
+        _t22530 = ({_tag: 0, _name: "None"});
+        break _t22531;
       }
-      _t22477 = ({_tag: 0, _name: "None"});
-      break _t22478;
+      _t22530 = ({_tag: 0, _name: "None"});
+      break _t22531;
     }
-    _t22477 = ({_tag: 0, _name: "None"});
-    break _t22478;
+    _t22530 = ({_tag: 0, _name: "None"});
+    break _t22531;
   }
-  const batch_file_22479 = _t22477;
-  let _t22482;
-  const _t22481 = args;
-  _t22483: {
-    if (_t22481 !== null) {
-      if (_t22481._tl !== null) {
-        if (_t22481._tl._hd === "--batch-emit-ir") {
-          if (_t22481._tl._tl !== null) {
-            const f = _t22481._tl._tl._hd;
-            _t22482 = ({_tag: 1, _name: "Some", _val: f});
-            break _t22483;
+  const batch_file_22532 = _t22530;
+  let _t22535;
+  const _t22534 = args;
+  _t22536: {
+    if (_t22534 !== null) {
+      if (_t22534._tl !== null) {
+        if (_t22534._tl._hd === "--batch-emit-ir") {
+          if (_t22534._tl._tl !== null) {
+            const f = _t22534._tl._tl._hd;
+            _t22535 = ({_tag: 1, _name: "Some", _val: f});
+            break _t22536;
           }
-          _t22482 = ({_tag: 0, _name: "None"});
-          break _t22483;
+          _t22535 = ({_tag: 0, _name: "None"});
+          break _t22536;
         }
-        _t22482 = ({_tag: 0, _name: "None"});
-        break _t22483;
+        _t22535 = ({_tag: 0, _name: "None"});
+        break _t22536;
       }
-      _t22482 = ({_tag: 0, _name: "None"});
-      break _t22483;
+      _t22535 = ({_tag: 0, _name: "None"});
+      break _t22536;
     }
-    _t22482 = ({_tag: 0, _name: "None"});
-    break _t22483;
+    _t22535 = ({_tag: 0, _name: "None"});
+    break _t22536;
   }
-  const batch_ir_file_22484 = _t22482;
-  function _t22486(a) {
+  const batch_ir_file_22537 = _t22535;
+  function _t22539(a) {
     return (a === "--emit-js");
   }
-  const emit_js_22487 = List$exists(_t22486, args);
-  function _t22489(a) {
+  const emit_js_22540 = List$exists(_t22539, args);
+  function _t22542(a) {
     return (a === "--emit-ir");
   }
-  const emit_ir_22490 = List$exists(_t22489, args);
-  function _t22492(a) {
+  const emit_ir_22543 = List$exists(_t22542, args);
+  function _t22545(a) {
     return (a === "--emit-llvm");
   }
-  const emit_llvm_22493 = List$exists(_t22492, args);
-  function _t22495(a) {
+  const emit_llvm_22546 = List$exists(_t22545, args);
+  function _t22548(a) {
     return (a === "--emit-native");
   }
-  const emit_native_22496 = List$exists(_t22495, args);
-  function _t22498(a) {
+  const emit_native_22549 = List$exists(_t22548, args);
+  function _t22551(a) {
     return (a === "--no-optimize");
   }
-  const no_optimize_22499 = List$exists(_t22498, args);
-  let _t22501;
-  if (no_optimize_22499) {
-    _t22501 = Ref$set(Compiler$optimize_enabled, false);
+  const no_optimize_22552 = List$exists(_t22551, args);
+  let _t22554;
+  if (no_optimize_22552) {
+    _t22554 = Ref$set(Compiler$optimize_enabled, false);
   } else {
-    _t22501 = undefined;
+    _t22554 = undefined;
   }
-  _t22501;
-  function _t22502(a) {
+  _t22554;
+  function _t22555(a) {
     return (((((a !== "--no-optimize") && (a !== "--emit-js")) && (a !== "--emit-ir")) && (a !== "--emit-llvm")) && (a !== "--emit-native"));
   }
-  const args_22503 = List$filter(_t22502, args);
-  let _t22506;
-  const _t22505 = batch_ir_file_22484;
-  _t22507: {
-    if (_t22505._tag === 0) {
-      let _t22509;
-      const _t22508 = batch_file_22479;
-      _t22510: {
-        if (_t22508._tag === 0) {
-          let _t22511;
-          if (emit_ir_22490) {
-            _t22511 = Driver$run_emit_ir(args_22503);
+  const args_22556 = List$filter(_t22555, args);
+  let _t22559;
+  const _t22558 = batch_ir_file_22537;
+  _t22560: {
+    if (_t22558._tag === 0) {
+      let _t22562;
+      const _t22561 = batch_file_22532;
+      _t22563: {
+        if (_t22561._tag === 0) {
+          let _t22564;
+          if (emit_ir_22543) {
+            _t22564 = Driver$run_emit_ir(args_22556);
           } else {
-            let _t22512;
-            if (emit_llvm_22493) {
-              _t22512 = Driver$run_emit_llvm(args_22503);
+            let _t22565;
+            if (emit_llvm_22546) {
+              _t22565 = Driver$run_emit_llvm(args_22556);
             } else {
-              let _t22513;
-              if (emit_native_22496) {
+              let _t22566;
+              if (emit_native_22549) {
                 function find_out(xs) {
                   while (true) {
-                    let _t22515;
-                    const _t22514 = xs;
-                    _t22516: {
-                      if (_t22514 === null) {
-                        _t22515 = "a.out";
-                        break _t22516;
+                    let _t22568;
+                    const _t22567 = xs;
+                    _t22569: {
+                      if (_t22567 === null) {
+                        _t22568 = "a.out";
+                        break _t22569;
                       }
-                      if (_t22514 !== null) {
-                        if (_t22514._hd === "-o") {
-                          if (_t22514._tl !== null) {
-                            const o = _t22514._tl._hd;
-                            _t22515 = o;
-                            break _t22516;
+                      if (_t22567 !== null) {
+                        if (_t22567._hd === "-o") {
+                          if (_t22567._tl !== null) {
+                            const o = _t22567._tl._hd;
+                            _t22568 = o;
+                            break _t22569;
                           }
-                          const rest = _t22514._tl;
-                          const _t22517 = rest;
-                          xs = _t22517;
+                          const rest = _t22567._tl;
+                          const _t22570 = rest;
+                          xs = _t22570;
                           continue;
-                          _t22515 = undefined;
-                          break _t22516;
+                          _t22568 = undefined;
+                          break _t22569;
                         }
-                        const rest = _t22514._tl;
-                        const _t22518 = rest;
-                        xs = _t22518;
+                        const rest = _t22567._tl;
+                        const _t22571 = rest;
+                        xs = _t22571;
                         continue;
-                        _t22515 = undefined;
-                        break _t22516;
+                        _t22568 = undefined;
+                        break _t22569;
                       }
                       _match_fail("line 0");
                     }
-                    return _t22515;
+                    return _t22568;
                   }
                 }
-                const out_path_22520 = find_out(args_22503);
-                function _t22522(a) {
-                  return ((a !== "-o") && (a !== out_path_22520));
+                const out_path_22573 = find_out(args_22556);
+                function _t22575(a) {
+                  return ((a !== "-o") && (a !== out_path_22573));
                 }
-                let _t22524;
-                const _t22523 = List$filter(_t22522, args_22503);
-                _t22525: {
-                  if (_t22523 !== null) {
-                    if (_t22523._tl !== null) {
-                      const f = _t22523._tl._hd;
-                      _t22524 = f;
-                      break _t22525;
+                let _t22577;
+                const _t22576 = List$filter(_t22575, args_22556);
+                _t22578: {
+                  if (_t22576 !== null) {
+                    if (_t22576._tl !== null) {
+                      const f = _t22576._tl._hd;
+                      _t22577 = f;
+                      break _t22578;
                     }
-                    _t22524 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
-                    break _t22525;
+                    _t22577 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
+                    break _t22578;
                   }
-                  _t22524 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
-                  break _t22525;
+                  _t22577 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
+                  break _t22578;
                 }
-                const filename_22526 = _t22524;
-                const _t22527 = Driver$run_emit_native(filename_22526, out_path_22520);
-                const _t22521 = _t22527;
-                const _t22519 = _t22521;
-                _t22513 = _t22519;
+                const filename_22579 = _t22577;
+                const _t22580 = Driver$run_emit_native(filename_22579, out_path_22573);
+                const _t22574 = _t22580;
+                const _t22572 = _t22574;
+                _t22566 = _t22572;
               } else {
-                let _t22528;
-                if (emit_js_22487) {
-                  _t22528 = Driver$run_emit_js(args_22503);
+                let _t22581;
+                if (emit_js_22540) {
+                  _t22581 = Driver$run_emit_js(args_22556);
                 } else {
-                  const _t22529 = (function() {
-                    const _t22530 = _h;
-                    _h = Object.assign({}, _t22530, {
+                  const _t22582 = (function() {
+                    const _t22583 = _h;
+                    _h = Object.assign({}, _t22583, {
                       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -93020,162 +93237,162 @@ function Driver$run_cli(args) {
                       "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                     });
                     try {
-                      let _t22532;
-                      const _t22531 = args_22503;
-                      _t22533: {
-                        if (_t22531 !== null) {
-                          if (_t22531._tl !== null) {
-                            if (_t22531._tl._hd === "--emit-json") {
-                              if (_t22531._tl._tl !== null) {
-                                const file = _t22531._tl._tl._hd;
-                                _t22532 = file;
-                                break _t22533;
+                      let _t22585;
+                      const _t22584 = args_22556;
+                      _t22586: {
+                        if (_t22584 !== null) {
+                          if (_t22584._tl !== null) {
+                            if (_t22584._tl._hd === "--emit-json") {
+                              if (_t22584._tl._tl !== null) {
+                                const file = _t22584._tl._tl._hd;
+                                _t22585 = file;
+                                break _t22586;
                               }
-                              const file = _t22531._tl._hd;
-                              _t22532 = file;
-                              break _t22533;
+                              const file = _t22584._tl._hd;
+                              _t22585 = file;
+                              break _t22586;
                             }
-                            const file = _t22531._tl._hd;
-                            _t22532 = file;
-                            break _t22533;
+                            const file = _t22584._tl._hd;
+                            _t22585 = file;
+                            break _t22586;
                           }
-                          _t22532 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-                          break _t22533;
+                          _t22585 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+                          break _t22586;
                         }
-                        _t22532 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-                        break _t22533;
+                        _t22585 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+                        break _t22586;
                       }
-                      const filename_22534 = _t22532;
-                      const source_22536 = IO$read_file(filename_22534);
-                      let _t22538;
+                      const filename_22587 = _t22585;
+                      const source_22589 = IO$read_file(filename_22587);
+                      let _t22591;
                       if (__cache_has("emit_json")) {
-                        _t22538 = __cache_get("emit_json");
+                        _t22591 = __cache_get("emit_json");
                       } else {
-                        let _t22540;
-                        const _t22539 = Driver$setup_builtins(undefined);
-                        _t22541: {
-                          const ctx = _t22539[0];
-                          const global_names = _t22539[1];
-                          const mutable_globals = _t22539[2];
-                          let _t22543;
-                          const _t22542 = Driver$setup_classes(ctx, global_names, mutable_globals);
-                          _t22544: {
-                            const ctx = _t22542[0];
-                            const class_protos = _t22542[1];
-                            let _t22546;
-                            const _t22545 = Driver$setup_modules(ctx, global_names, mutable_globals);
-                            _t22547: {
-                              const ctx = _t22545[0];
-                              const module_protos = _t22545[1];
-                              const setup_protos_22548 = List$concat(class_protos, module_protos);
-                              const base_gn_len_22550 = Dynarray$length(global_names);
-                              const base_native_22552 = Driver$native_global_entries;
-                              const base_mutable_22554 = Hashtbl$to_list(mutable_globals);
-                              _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_22548, base_gn_len_22550, base_native_22552, base_mutable_22554]]);
-                              const _t22555 = [ctx, global_names, mutable_globals, setup_protos_22548, base_gn_len_22550, base_native_22552, base_mutable_22554];
-                              const _t22553 = _t22555;
-                              const _t22551 = _t22553;
-                              const _t22549 = _t22551;
-                              _t22546 = _t22549;
-                              break _t22547;
+                        let _t22593;
+                        const _t22592 = Driver$setup_builtins(undefined);
+                        _t22594: {
+                          const ctx = _t22592[0];
+                          const global_names = _t22592[1];
+                          const mutable_globals = _t22592[2];
+                          let _t22596;
+                          const _t22595 = Driver$setup_classes(ctx, global_names, mutable_globals);
+                          _t22597: {
+                            const ctx = _t22595[0];
+                            const class_protos = _t22595[1];
+                            let _t22599;
+                            const _t22598 = Driver$setup_modules(ctx, global_names, mutable_globals);
+                            _t22600: {
+                              const ctx = _t22598[0];
+                              const module_protos = _t22598[1];
+                              const setup_protos_22601 = List$concat(class_protos, module_protos);
+                              const base_gn_len_22603 = Dynarray$length(global_names);
+                              const base_native_22605 = Driver$native_global_entries;
+                              const base_mutable_22607 = Hashtbl$to_list(mutable_globals);
+                              _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_22601, base_gn_len_22603, base_native_22605, base_mutable_22607]]);
+                              const _t22608 = [ctx, global_names, mutable_globals, setup_protos_22601, base_gn_len_22603, base_native_22605, base_mutable_22607];
+                              const _t22606 = _t22608;
+                              const _t22604 = _t22606;
+                              const _t22602 = _t22604;
+                              _t22599 = _t22602;
+                              break _t22600;
                             }
-                            _t22543 = _t22546;
-                            break _t22544;
+                            _t22596 = _t22599;
+                            break _t22597;
                           }
-                          _t22540 = _t22543;
-                          break _t22541;
+                          _t22593 = _t22596;
+                          break _t22594;
                         }
-                        _t22538 = _t22540;
+                        _t22591 = _t22593;
                       }
-                      let _t22557;
-                      const _t22556 = _t22538;
-                      _t22558: {
-                        const ctx = _t22556[0];
-                        const global_names = _t22556[1];
-                        const mutable_globals = _t22556[2];
-                        const setup_protos = _t22556[3];
-                        const base_gn_len = _t22556[4];
-                        const base_native = _t22556[5];
-                        const base_mutable = _t22556[6];
+                      let _t22610;
+                      const _t22609 = _t22591;
+                      _t22611: {
+                        const ctx = _t22609[0];
+                        const global_names = _t22609[1];
+                        const mutable_globals = _t22609[2];
+                        const setup_protos = _t22609[3];
+                        const base_gn_len = _t22609[4];
+                        const base_native = _t22609[5];
+                        const base_mutable = _t22609[6];
                         (global_names.count = base_gn_len, undefined);
                         (Driver$native_global_entries = base_native, undefined);
                         Hashtbl$clear(mutable_globals);
-                        function _t22559(__p567) {
-                          let _t22561;
-                          const _t22560 = __p567;
-                          _t22562: {
-                            const k = _t22560[0];
-                            const v = _t22560[1];
-                            _t22561 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
-                            break _t22562;
+                        function _t22612(__p567) {
+                          let _t22614;
+                          const _t22613 = __p567;
+                          _t22615: {
+                            const k = _t22613[0];
+                            const v = _t22613[1];
+                            _t22614 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
+                            break _t22615;
                           }
-                          return _t22561;
+                          return _t22614;
                         }
-                        Driver$list_iter(_t22559, base_mutable);
-                        const tokens_22563 = Lexer$tokenize(source_22536);
-                        const program_22565 = Parser$parse_program(tokens_22563);
-                        let _t22568;
-                        const _t22567 = Typechecker$check_program_in_ctx(ctx, program_22565);
-                        _t22569: {
-                          const ctx2 = _t22567[0];
-                          const typed_program = _t22567[1];
-                          const typed_program2_22570 = Typechecker$transform_constraints(ctx2, typed_program);
-                          const typed_program2_22572 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22570);
-                          const compiled_22574 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22572);
-                          Driver$register_externs_from_program(typed_program2_22572, global_names);
-                          const ng_json_22576 = _t21804_Driver$build_native_globals_json(undefined);
-                          const json_22578 = Serialize$serialize_bundle(global_names, ng_json_22576, setup_protos, compiled_22574.main);
-                          const _t22579 = print(json_22578);
-                          const _t22577 = _t22579;
-                          const _t22575 = _t22577;
-                          const _t22573 = _t22575;
-                          const _t22571 = _t22573;
-                          _t22568 = _t22571;
-                          break _t22569;
+                        Driver$list_iter(_t22612, base_mutable);
+                        const tokens_22616 = Lexer$tokenize(source_22589);
+                        const program_22618 = Parser$parse_program(tokens_22616);
+                        let _t22621;
+                        const _t22620 = Typechecker$check_program_in_ctx(ctx, program_22618);
+                        _t22622: {
+                          const ctx2 = _t22620[0];
+                          const typed_program = _t22620[1];
+                          const typed_program2_22623 = Typechecker$transform_constraints(ctx2, typed_program);
+                          const typed_program2_22625 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22623);
+                          const compiled_22627 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22625);
+                          Driver$register_externs_from_program(typed_program2_22625, global_names);
+                          const ng_json_22629 = _t21804_Driver$build_native_globals_json(undefined);
+                          const json_22631 = Serialize$serialize_bundle(global_names, ng_json_22629, setup_protos, compiled_22627.main);
+                          const _t22632 = print(json_22631);
+                          const _t22630 = _t22632;
+                          const _t22628 = _t22630;
+                          const _t22626 = _t22628;
+                          const _t22624 = _t22626;
+                          _t22621 = _t22624;
+                          break _t22622;
                         }
-                        const _t22566 = _t22568;
-                        const _t22564 = _t22566;
-                        _t22557 = _t22564;
-                        break _t22558;
+                        const _t22619 = _t22621;
+                        const _t22617 = _t22619;
+                        _t22610 = _t22617;
+                        break _t22611;
                       }
-                      const _t22537 = _t22557;
-                      const _t22535 = _t22537;
-                      const x_22580 = _t22535;
-                      return x_22580;
+                      const _t22590 = _t22610;
+                      const _t22588 = _t22590;
+                      const x_22633 = _t22588;
+                      return x_22633;
                     } catch (_exc) {
                       if (_exc && _exc._e === "lex_error") {
                         const arg = _exc._v;
-                        let _t22582;
-                        const _t22581 = arg;
-                        _t22583: {
-                          const msg = _t22581[0];
-                          const _loc = _t22581[1];
-                          _t22582 = failwith(msg);
-                          break _t22583;
+                        let _t22635;
+                        const _t22634 = arg;
+                        _t22636: {
+                          const msg = _t22634[0];
+                          const _loc = _t22634[1];
+                          _t22635 = failwith(msg);
+                          break _t22636;
                         }
-                        return _t22582;
+                        return _t22635;
                       } else if (_exc && _exc._e === "parse_error") {
                         const arg = _exc._v;
-                        let _t22585;
-                        const _t22584 = arg;
-                        _t22586: {
-                          const msg = _t22584[0];
-                          const _loc = _t22584[1];
-                          _t22585 = failwith(msg);
-                          break _t22586;
+                        let _t22638;
+                        const _t22637 = arg;
+                        _t22639: {
+                          const msg = _t22637[0];
+                          const _loc = _t22637[1];
+                          _t22638 = failwith(msg);
+                          break _t22639;
                         }
-                        return _t22585;
+                        return _t22638;
                       } else if (_exc && _exc._e === "type_error") {
                         const arg = _exc._v;
-                        let _t22588;
-                        const _t22587 = arg;
-                        _t22589: {
-                          const msg = _t22587[0];
-                          const _loc = _t22587[1];
-                          _t22588 = failwith(msg);
-                          break _t22589;
+                        let _t22641;
+                        const _t22640 = arg;
+                        _t22642: {
+                          const msg = _t22640[0];
+                          const _loc = _t22640[1];
+                          _t22641 = failwith(msg);
+                          break _t22642;
                         }
-                        return _t22588;
+                        return _t22641;
                       } else if (_exc && _exc._e === "compile_error") {
                         const msg = _exc._v;
                         return failwith(msg);
@@ -93183,45 +93400,45 @@ function Driver$run_cli(args) {
                         const msg = _exc._v;
                         return failwith(msg);
                       } else { throw _exc; }
-                    } finally { _h = _t22530; }
+                    } finally { _h = _t22583; }
                   })();
-                  _t22528 = _t22529;
+                  _t22581 = _t22582;
                 }
-                _t22513 = _t22528;
+                _t22566 = _t22581;
               }
-              _t22512 = _t22513;
+              _t22565 = _t22566;
             }
-            _t22511 = _t22512;
+            _t22564 = _t22565;
           }
-          _t22509 = _t22511;
-          break _t22510;
+          _t22562 = _t22564;
+          break _t22563;
         }
-        if (_t22508._tag === 1) {
-          const f = _t22508._val;
-          _t22509 = Driver$run_batch(f);
-          break _t22510;
+        if (_t22561._tag === 1) {
+          const f = _t22561._val;
+          _t22562 = Driver$run_batch(f);
+          break _t22563;
         }
         _match_fail("line 0");
       }
-      _t22506 = _t22509;
-      break _t22507;
+      _t22559 = _t22562;
+      break _t22560;
     }
-    if (_t22505._tag === 1) {
-      const f = _t22505._val;
-      _t22506 = Driver$run_batch_emit_ir(f);
-      break _t22507;
+    if (_t22558._tag === 1) {
+      const f = _t22558._val;
+      _t22559 = Driver$run_batch_emit_ir(f);
+      break _t22560;
     }
     _match_fail("line 0");
   }
-  const _t22504 = _t22506;
-  const _t22500 = _t22504;
-  const _t22497 = _t22500;
-  const _t22494 = _t22497;
-  const _t22491 = _t22494;
-  const _t22488 = _t22491;
-  const _t22485 = _t22488;
-  const _t22480 = _t22485;
-  return _t22480;
+  const _t22557 = _t22559;
+  const _t22553 = _t22557;
+  const _t22550 = _t22553;
+  const _t22547 = _t22550;
+  const _t22544 = _t22547;
+  const _t22541 = _t22544;
+  const _t22538 = _t22541;
+  const _t22533 = _t22538;
+  return _t22533;
 }
 const Main$__destruct = Driver$run_cli(Sys$args(undefined));
 var _mml_exports = {"_result": _last_val, "_call": _call, "_pp": _pp};
