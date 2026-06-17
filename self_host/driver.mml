@@ -735,6 +735,97 @@ module Driver =
     | Some s -> List.filter (fn a -> a <> "") (String.split " " s)
     | None -> []
 
+  -- ===== Incremental object cache (mirrors lib/native/driver.ml) =====
+  -- The big, build-stable objects — the MPS amalgamation (~2.6s to compile), the C
+  -- runtime, mml_gc.c, the context-switch asm — plus the program .ll are compiled
+  -- to content-addressed .o files under <cache>/obj and reused across builds. So a
+  -- rebuild re-clangs only what actually changed: MPS is compiled once ever, and a
+  -- no-op rebuild reuses the program object too. Keyed on clang's identity + flags +
+  -- content, so a toolchain or source change invalidates the entry cleanly.
+  let clang_version_cache = Ref.create (None : string option)
+  let clang_version () =
+    match Ref.get clang_version_cache with
+    | Some v -> v
+    | None ->
+      let (_code, out, _err) = Process.run "clang" ("--version" :: []) in
+      let v = (match String.split "\n" out with x :: _ -> x | [] -> "unknown") in
+      Ref.set clang_version_cache (Some v); v
+
+  -- inlined cache-root + mkdir_p (Driver precedes Fetch in the concat, so it can't
+  -- call Fetch.*; same ~/.mml/cache convention as Fetch.cache_root).
+  let rec obj_mkdir_p dir =
+    if (dir <> "") && ((dir <> "/") && ((dir <> ".") && (not (IO.file_exists dir)))) do
+      obj_mkdir_p (Path.dirname dir);
+      Fs.make_dir dir
+    end
+  let obj_cache_dir () =
+    let root =
+      match Sys.getenv "MML_CACHE" with
+      | Some d -> d
+      | None ->
+        match Sys.getenv "HOME" with
+        | Some h -> Path.join (Path.join h ".mml") "cache"
+        | None -> Path.join (match Sys.getenv "TMPDIR" with Some t -> t | None -> "/tmp") "mml-cache" in
+    let d = Path.join root "obj" in
+    obj_mkdir_p d; d
+
+  -- length-prefix so variable components concatenate unambiguously
+  let framed s = (string_of_int (String.length s)) ^ (":" ^ s)
+  let obj_tmp_counter = Ref.create 0
+
+  -- `clang <flags> -c <src> -o <objpath>`; true on success (error to stderr otherwise)
+  let clang_compile_obj flags src objpath =
+    let args = List.concat flags ("-c" :: src :: "-o" :: objpath :: []) in
+    let (code, _out, cerr) = Process.run "clang" args in
+    if code <> 0 do
+      IO.write_err ("clang failed (exit " ^ (string_of_int code) ^ "): " ^ (cerr ^ "\n")); false
+    else
+      true
+
+  -- Cached .o for (key_extra, content): a hit returns it directly; a miss compiles
+  -- via `compile_to tmp` (which returns success) to a unique temp then atomically
+  -- renames it into place. None if the compile failed.
+  let ensure_object key_extra content compile_to =
+    let key = Digest.md5 ((framed (clang_version ())) ^ ((framed key_extra) ^ content)) in
+    let obj = Path.join (obj_cache_dir ()) (key ^ ".o") in
+    if IO.file_exists obj do
+      Some obj
+    else do
+      Ref.set obj_tmp_counter ((Ref.get obj_tmp_counter) + 1);
+      let tmp = obj ^ (".tmp." ^ ((string_of_int (Ref.get obj_tmp_counter)) ^ ("." ^ (string_of_float (Sys.time ()))))) in
+      if compile_to tmp do
+        do Fs.rename tmp obj; Some obj end
+      else
+        None
+
+    end
+
+  -- Build the program .ll + the (cached) runtime / asm / GC / MPS objects and link
+  -- them into out_path. None on success, Some error-message on failure. Shared by
+  -- run_emit_native and build_native_quiet.
+  let compile_and_link ll out_path =
+    let ll_path = out_path ^ ".ll" in
+    IO.write_file ll_path ll;
+    let runtime_c = find_runtime_file "runtime.c" in
+    let mml_gc_c = find_runtime_file "mml_gc.c" in
+    let context_asm = detect_context_asm () in
+    let mps_dir = find_mps_dir () in
+    let mps_c = mps_dir ^ "/mps.c" in
+    let inc = "-I" ^ mps_dir in
+    let o2 = "-O2" :: inc :: [] in
+    let mps_o = ensure_object "mps-O2" (IO.read_file mps_c) (fn o -> clang_compile_obj o2 mps_c o) in
+    let rt_o = ensure_object ("rt-O2" ^ inc) ((framed (IO.read_file runtime_c)) ^ inc) (fn o -> clang_compile_obj o2 runtime_c o) in
+    let gc_o = ensure_object ("gc-O2" ^ inc) ((framed (IO.read_file mml_gc_c)) ^ inc) (fn o -> clang_compile_obj o2 mml_gc_c o) in
+    let asm_o = ensure_object "asm" (IO.read_file context_asm) (fn o -> clang_compile_obj [] context_asm o) in
+    let prog_o = ensure_object "ll-O2" ll (fn o -> clang_compile_obj o2 ll_path o) in
+    match (mps_o, rt_o, gc_o, asm_o, prog_o) with
+    | (Some m, Some r, Some g, Some a, Some p) ->
+      let link_args = List.concat ("-O2" :: "-o" :: out_path :: p :: r :: a :: g :: m :: []) (extra_link_args ()) in
+      let (code, _out, cerr) = Process.run "clang" link_args in
+      if code <> 0 do Some ("clang link failed (exit " ^ ((string_of_int code) ^ ("): " ^ cerr)))
+      else None
+    | _ -> Some "native object compilation failed"
+
   -- Compile a source file to a native executable: build the .ll, then drive clang
   -- with the C runtime, the arch context-switch asm, and the MPS garbage collector
   -- (mml_gc.c + the mps.c amalgamation). This is the hand-written native driver
@@ -742,23 +833,9 @@ module Driver =
   pub let run_emit_native filename out_path =
     handle
       let ll = build_llvm filename in
-      let ll_path = out_path ^ ".ll" in
-      IO.write_file ll_path ll;
-      let runtime_c = find_runtime_file "runtime.c" in
-      let mml_gc_c = find_runtime_file "mml_gc.c" in
-      let context_asm = detect_context_asm () in
-      let mps_dir = find_mps_dir () in
-      -- One clang invocation compiles+links the .ll, runtime.c, context asm, mml_gc.c
-      -- and the MPS amalgamation. MPS is the only GC; no bdw-gc.
-      let clang_args =
-        List.concat ["-O2"; "-I" ^ mps_dir]
-          (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
-            (List.concat ["-o"; out_path] (extra_link_args ()))) in
-      let (code, _out, cerr) = Process.run "clang" clang_args in
-      if code <> 0 do
-        failwith ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr)
-      else
-        print ("compiled " ^ filename ^ " -> " ^ out_path)
+      match compile_and_link ll out_path with
+      | None -> print ("compiled " ^ filename ^ " -> " ^ out_path)
+      | Some e -> failwith e
     with
     | return x -> x
     | lex_error arg _k -> let (msg, _loc) = arg in failwith msg
@@ -775,20 +852,9 @@ module Driver =
   pub let build_native_quiet filename out_path =
     handle
       let ll = build_llvm filename in
-      let ll_path = out_path ^ ".ll" in
-      IO.write_file ll_path ll;
-      let runtime_c = find_runtime_file "runtime.c" in
-      let mml_gc_c = find_runtime_file "mml_gc.c" in
-      let context_asm = detect_context_asm () in
-      let mps_dir = find_mps_dir () in
-      let clang_args =
-        List.concat ["-O2"; "-I" ^ mps_dir]
-          (List.concat [ll_path; runtime_c; context_asm; mml_gc_c; (mps_dir ^ "/mps.c")]
-            (List.concat ["-o"; out_path] (extra_link_args ()))) in
-      let (code, _out, cerr) = Process.run "clang" clang_args in
-      if code <> 0 do
-        IO.write_err ("clang failed (exit " ^ string_of_int code ^ "): " ^ cerr ^ "\n"); false
-      else true
+      match compile_and_link ll out_path with
+      | None -> true
+      | Some e -> do IO.write_err (e ^ "\n"); false end
     with
     | return x -> x
     | lex_error arg _k -> let (msg, _loc) = arg in IO.write_err (msg ^ "\n"); false
