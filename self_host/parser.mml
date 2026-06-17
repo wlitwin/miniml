@@ -286,9 +286,19 @@ module Parser =
           else
             Ref.set continue_reading false
         end;
+        -- No lowercase final segment: in TYPE position a trailing UPPERCASE
+        -- segment is the type name (`Sdl.Renderer` = module Sdl, type Renderer);
+        -- a bare single UIDENT is a plain type name. mod_parts was built by
+        -- prepending, so its head is the last segment read.
         match Ref.get final_name with
         | Some name -> Ast.TyQualified (List.rev (Ref.get mod_parts), name)
-        | None -> Ast.TyName s
+        | None ->
+          do
+            match Ref.get mod_parts with
+            | single :: [] -> Ast.TyName single
+            | type_name :: rest_rev -> Ast.TyQualified (List.rev rest_rev, type_name)
+            | [] -> Ast.TyName s
+          end
 
       end
     | Token.TYVAR s -> 

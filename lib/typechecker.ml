@@ -5610,38 +5610,47 @@ let rec default_extern_effects ty =
 (* The MiniML surface type a C type (cty) presents to callers: integer widths and
    pointers are [int], f32/f64 are [float], CStr is [string], CBool [bool], CVoid
    [unit]. The exact C width is kept on the TDFfi for the backend to marshal. *)
-let rec cty_to_mml_ty : Ast.cty -> Types.ty = function
+let rec cty_to_mml_ty type_env : Ast.cty -> Types.ty = function
   | Ast.CI8 | Ast.CI16 | Ast.CI32 | Ast.CI64
   | Ast.CU8 | Ast.CU16 | Ast.CU32 | Ast.CU64 | Ast.CPtr -> Types.TInt
   | Ast.CF32 | Ast.CF64 -> Types.TFloat
   | Ast.CStr -> Types.TString
   | Ast.CBool -> Types.TBool
   | Ast.CVoid -> Types.TUnit
-  (* opaque foreign type: a distinct 0-ary nominal type *)
-  | Ast.CNamed name -> Types.TVariant (name, [])
+  (* Opaque foreign type: a distinct 0-ary nominal type. Canonicalise the name
+     through the type env so an `extern type` declared inside a module (exported
+     and aliased short->qualified, e.g. Renderer -> Sdl.Renderer) yields the SAME
+     nominal as a `Sdl.Renderer` annotation. Top-level externs have an identity
+     alias, so they are unchanged. Without this, a module-nested FFI signature
+     names the type `Renderer` while its declaration is `Sdl.Renderer`, and the
+     two never unify across the module boundary. *)
+  | Ast.CNamed name -> Types.TVariant (resolve_type_alias type_env name, [])
   (* a C struct presents to MiniML as a (structural) record of its fields *)
   | Ast.CStruct (_, fields) ->
       Types.TRecord
         (Types.fields_to_closed_row
-           (List.map (fun (n, c) -> (n, cty_to_mml_ty c)) fields))
+           (List.map (fun (n, c) -> (n, cty_to_mml_ty type_env c)) fields))
   (* an OUT scalar param takes a Ref (= { contents : t }) the callee writes *)
   | Ast.COut c ->
-      Types.TRecord (Types.fields_to_closed_row [ ("contents", cty_to_mml_ty c) ])
+      Types.TRecord
+        (Types.fields_to_closed_row [ ("contents", cty_to_mml_ty type_env c) ])
   (* a C array param takes a MiniML array of the element type *)
-  | Ast.CArray e -> Types.TArray (cty_to_mml_ty e)
+  | Ast.CArray e -> Types.TArray (cty_to_mml_ty type_env e)
   (* a nullable pointer takes an option of the inner type (None = NULL) *)
-  | Ast.CNullable c -> Types.TVariant ("option", [ cty_to_mml_ty c ])
+  | Ast.CNullable c -> Types.TVariant ("option", [ cty_to_mml_ty type_env c ])
 
 (* Curried MiniML function type for an FFI signature. The IO effect sits on the
    LAST arrow (applying the final argument performs the C call), matching the
    register_module_fn convention — and crucially marking the call effectful so the
    optimizer never eliminates it as a pure dead computation. *)
-let ffi_fun_ty (params : Ast.cty list) (ret : Ast.cty) : Types.ty =
+let ffi_fun_ty type_env (params : Ast.cty list) (ret : Ast.cty) : Types.ty =
   let io_eff = Types.EffRow ("IO", [], Types.EffEmpty) in
   let rec build = function
-    | [] -> cty_to_mml_ty ret
-    | [ p ] -> Types.TArrow (cty_to_mml_ty p, io_eff, cty_to_mml_ty ret)
-    | p :: rest -> Types.TArrow (cty_to_mml_ty p, Types.EffEmpty, build rest)
+    | [] -> cty_to_mml_ty type_env ret
+    | [ p ] ->
+        Types.TArrow (cty_to_mml_ty type_env p, io_eff, cty_to_mml_ty type_env ret)
+    | p :: rest ->
+        Types.TArrow (cty_to_mml_ty type_env p, Types.EffEmpty, build rest)
   in
   build params
 
@@ -6165,7 +6174,7 @@ and check_module_item sub_ctx level prefix (item : Ast.module_decl)
       (sub_ctx', TDExtern (qualified_name, scheme))
   | Ast.DFfi (name, c_symbol, c_params, c_ret) ->
       let qualified_name = prefix ^ name in
-      let scheme = Types.generalize 0 (ffi_fun_ty c_params c_ret) in
+      let scheme = Types.generalize 0 (ffi_fun_ty sub_ctx.type_env c_params c_ret) in
       let sub_ctx' = extend_var sub_ctx name scheme in
       let sub_ctx' = extend_var sub_ctx' qualified_name scheme in
       (match item.vis with
@@ -6829,7 +6838,7 @@ let check_decl ctx level (decl : Ast.decl) : ctx * tdecl list =
       let ctx = extend_var ctx name scheme in
       (ctx, [ TDExtern (name, scheme) ])
   | Ast.DFfi (name, c_symbol, c_params, c_ret) ->
-      let scheme = Types.generalize 0 (ffi_fun_ty c_params c_ret) in
+      let scheme = Types.generalize 0 (ffi_fun_ty ctx.type_env c_params c_ret) in
       let ctx = extend_var ctx name scheme in
       (ctx, [ TDFfi (name, scheme, c_symbol, c_params, c_ret) ])
   (* parse-time layout directive only (see process_module_def) — no typed decl *)
