@@ -86570,8 +86570,12 @@ function Codegen$free_vars_of_fun(ctx, params, body) {
       }
       if (_t20570._tag === 1) {
         const c = _t20570._val;
-        let _t20576;
+        let _t20577;
         if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, c.module_externs, name])) {
+          _t20577 = true;
+        } else {
+        let _t20576;
+        if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, c.ffi_externs, name])) {
           _t20576 = true;
         } else {
         let _t20574;
@@ -86602,2666 +86606,2668 @@ function Codegen$free_vars_of_fun(ctx, params, body) {
         }
           _t20576 = _t20574;
         }
-        _t20571 = _t20576;
+          _t20577 = _t20576;
+        }
+        _t20571 = _t20577;
         break _t20572;
       }
       _match_fail("line 0");
     }
     return _t20571;
   }
-  const is_known_global_20577 = _t20569;
-  function _t20579(name) {
-    let _t20581;
-    const _t20580 = ctx;
-    _t20582: {
-      if (_t20580._tag === 0) {
-        _t20581 = false;
-        break _t20582;
+  const is_known_global_20578 = _t20569;
+  function _t20580(name) {
+    let _t20582;
+    const _t20581 = ctx;
+    _t20583: {
+      if (_t20581._tag === 0) {
+        _t20582 = false;
+        break _t20583;
       }
-      if (_t20580._tag === 1) {
-        const c = _t20580._val;
-        let _t20584;
-        const _t20583 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, c, name]);
-        _t20585: {
-          if (_t20583._tag === 1) {
-            if (_t20583._val._tag === 0) {
-              _t20584 = true;
-              break _t20585;
+      if (_t20581._tag === 1) {
+        const c = _t20581._val;
+        let _t20585;
+        const _t20584 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, c, name]);
+        _t20586: {
+          if (_t20584._tag === 1) {
+            if (_t20584._val._tag === 0) {
+              _t20585 = true;
+              break _t20586;
             }
-            if (_t20583._val._tag === 1) {
-              _t20584 = true;
-              break _t20585;
+            if (_t20584._val._tag === 1) {
+              _t20585 = true;
+              break _t20586;
             }
-            if (_t20583._val._tag === 2) {
-              _t20584 = true;
-              break _t20585;
+            if (_t20584._val._tag === 2) {
+              _t20585 = true;
+              break _t20586;
             }
-            _t20584 = false;
-            break _t20585;
+            _t20585 = false;
+            break _t20586;
           }
-          _t20584 = false;
-          break _t20585;
+          _t20585 = false;
+          break _t20586;
         }
-        _t20581 = _t20584;
-        break _t20582;
+        _t20582 = _t20585;
+        break _t20583;
       }
       _match_fail("line 0");
     }
-    return _t20581;
+    return _t20582;
   }
-  const shadows_value_local_20586 = _t20579;
-  function _t20588(record_ty, field_name) {
-    let _t20590;
-    const _t20589 = ctx;
-    _t20591: {
-      if (_t20589._tag === 0) {
-        _t20590 = undefined;
-        break _t20591;
+  const shadows_value_local_20587 = _t20580;
+  function _t20589(record_ty, field_name) {
+    let _t20591;
+    const _t20590 = ctx;
+    _t20592: {
+      if (_t20590._tag === 0) {
+        _t20591 = undefined;
+        break _t20592;
       }
-      if (_t20589._tag === 1) {
-        const c = _t20589._val;
-        let _t20593;
-        const _t20592 = Codegen$field_evidence_param(c, record_ty, field_name);
-        _t20594: {
-          if (_t20592._tag === 0) {
-            _t20593 = undefined;
-            break _t20594;
+      if (_t20590._tag === 1) {
+        const c = _t20590._val;
+        let _t20594;
+        const _t20593 = Codegen$field_evidence_param(c, record_ty, field_name);
+        _t20595: {
+          if (_t20593._tag === 0) {
+            _t20594 = undefined;
+            break _t20595;
           }
-          if (_t20592._tag === 1) {
-            const ev_name = _t20592._val;
-            let _t20595;
+          if (_t20593._tag === 1) {
+            const ev_name = _t20593._val;
+            let _t20596;
             if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, ev_name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, ev_name])) && (!_call(List$mem, [__dict_Eq_string, ev_name, Ref$get(free_20565)]))))) {
-              _t20595 = Ref$set(free_20565, ({_hd: ev_name, _tl: Ref$get(free_20565)}));
+              _t20596 = Ref$set(free_20565, ({_hd: ev_name, _tl: Ref$get(free_20565)}));
             } else {
-              _t20595 = undefined;
+              _t20596 = undefined;
             }
-            _t20593 = _t20595;
-            break _t20594;
+            _t20594 = _t20596;
+            break _t20595;
           }
           _match_fail("line 0");
         }
-        _t20590 = _t20593;
-        break _t20591;
+        _t20591 = _t20594;
+        break _t20592;
       }
       _match_fail("line 0");
     }
-    return _t20590;
+    return _t20591;
   }
-  const capture_field_evidence_20596 = _t20588;
+  const capture_field_evidence_20597 = _t20589;
   function scan_expr(e) {
     while (true) {
-      let _t20599;
-      const _t20598 = e.expr;
-      _t20600: {
-        if (_t20598._tag === 11) {
-          const a = _t20598._val[0];
-          const b = _t20598._val[1];
+      let _t20600;
+      const _t20599 = e.expr;
+      _t20601: {
+        if (_t20599._tag === 11) {
+          const a = _t20599._val[0];
+          const b = _t20599._val[1];
           scan_expr(a);
-          const _t20601 = b;
-          e = _t20601;
+          const _t20602 = b;
+          e = _t20602;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 38) {
-          const elems = _t20598._val;
-          _t20599 = List$iter(scan_expr, elems);
-          break _t20600;
+        if (_t20599._tag === 38) {
+          const elems = _t20599._val;
+          _t20600 = List$iter(scan_expr, elems);
+          break _t20601;
         }
-        if (_t20598._tag === 26) {
-          const name = _t20598._val[0];
-          const e_20602 = _t20598._val[1];
-          let _t20603;
-          if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, name])) && ((!is_known_global_20577(name)) && ((!Codegen$is_builtin_name(name)) || shadows_value_local_20586(name)))))) {
-            let _t20604;
+        if (_t20599._tag === 26) {
+          const name = _t20599._val[0];
+          const e_20603 = _t20599._val[1];
+          let _t20604;
+          if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, name])) && ((!is_known_global_20578(name)) && ((!Codegen$is_builtin_name(name)) || shadows_value_local_20587(name)))))) {
+            let _t20605;
             if ((!_call(List$mem, [__dict_Eq_string, name, Ref$get(free_20565)]))) {
-              _t20604 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
+              _t20605 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
             } else {
-              _t20604 = undefined;
+              _t20605 = undefined;
             }
-            _t20603 = _t20604;
+            _t20604 = _t20605;
           } else {
-            _t20603 = undefined;
+            _t20604 = undefined;
           }
-          _t20603;
-          const _t20605 = e_20602;
-          e = _t20605;
-          continue;
-          _t20599 = undefined;
-          break _t20600;
-        }
-        if (_t20598._tag === 13) {
-          const a = _t20598._val[1];
-          const b = _t20598._val[2];
-          scan_expr(a);
-          const _t20606 = b;
+          _t20604;
+          const _t20606 = e_20603;
           e = _t20606;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 2) {
-          _t20599 = undefined;
-          break _t20600;
-        }
-        if (_t20598._tag === 33) {
-          const e_20607 = _t20598._val;
-          const _t20608 = e_20607;
-          e = _t20608;
+        if (_t20599._tag === 13) {
+          const a = _t20599._val[1];
+          const b = _t20599._val[2];
+          scan_expr(a);
+          const _t20607 = b;
+          e = _t20607;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 4) {
-          _t20599 = undefined;
-          break _t20600;
+        if (_t20599._tag === 2) {
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 21) {
-          const hd = _t20598._val[0];
-          const tl = _t20598._val[1];
-          scan_expr(hd);
-          const _t20609 = tl;
+        if (_t20599._tag === 33) {
+          const e_20608 = _t20599._val;
+          const _t20609 = e_20608;
           e = _t20609;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 23) {
-          const arg = _t20598._val[1];
-          _t20599 = Option$iter(scan_expr, arg);
-          break _t20600;
+        if (_t20599._tag === 4) {
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 34) {
-          _t20599 = undefined;
-          break _t20600;
-        }
-        if (_t20598._tag === 19) {
-          const e_20610 = _t20598._val[0];
-          const fname = _t20598._val[1];
-          capture_field_evidence_20596(e_20610.ty, fname);
-          const _t20611 = e_20610;
-          e = _t20611;
+        if (_t20599._tag === 21) {
+          const hd = _t20599._val[0];
+          const tl = _t20599._val[1];
+          scan_expr(hd);
+          const _t20610 = tl;
+          e = _t20610;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 27) {
-          const e1 = _t20598._val[0];
-          const fname = _t20598._val[1];
-          const e2 = _t20598._val[2];
-          capture_field_evidence_20596(e1.ty, fname);
-          scan_expr(e1);
-          const _t20612 = e2;
+        if (_t20599._tag === 23) {
+          const arg = _t20599._val[1];
+          _t20600 = Option$iter(scan_expr, arg);
+          break _t20601;
+        }
+        if (_t20599._tag === 34) {
+          _t20600 = undefined;
+          break _t20601;
+        }
+        if (_t20599._tag === 19) {
+          const e_20611 = _t20599._val[0];
+          const fname = _t20599._val[1];
+          capture_field_evidence_20597(e_20611.ty, fname);
+          const _t20612 = e_20611;
           e = _t20612;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 1) {
-          _t20599 = undefined;
-          break _t20600;
-        }
-        if (_t20598._tag === 35) {
-          const e_20613 = _t20598._val;
-          const _t20614 = e_20613;
-          e = _t20614;
+        if (_t20599._tag === 27) {
+          const e1 = _t20599._val[0];
+          const fname = _t20599._val[1];
+          const e2 = _t20599._val[2];
+          capture_field_evidence_20597(e1.ty, fname);
+          scan_expr(e1);
+          const _t20613 = e2;
+          e = _t20613;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 36) {
-          const e_20615 = _t20598._val;
-          const _t20616 = e_20615;
-          e = _t20616;
+        if (_t20599._tag === 1) {
+          _t20600 = undefined;
+          break _t20601;
+        }
+        if (_t20599._tag === 35) {
+          const e_20614 = _t20599._val;
+          const _t20615 = e_20614;
+          e = _t20615;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 10) {
-          const p = _t20598._val[0];
-          const body = _t20598._val[1];
-          const was_param_20617 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, p]);
+        if (_t20599._tag === 36) {
+          const e_20616 = _t20599._val;
+          const _t20617 = e_20616;
+          e = _t20617;
+          continue;
+          _t20600 = undefined;
+          break _t20601;
+        }
+        if (_t20599._tag === 10) {
+          const p = _t20599._val[0];
+          const body = _t20599._val[1];
+          const was_param_20618 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, p]);
           _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, param_set_20562, p, undefined]);
           scan_expr(body);
-          let _t20619;
-          if ((!was_param_20617)) {
-            _t20619 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, param_set_20562, p]);
+          let _t20620;
+          if ((!was_param_20618)) {
+            _t20620 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, param_set_20562, p]);
           } else {
-            _t20619 = undefined;
+            _t20620 = undefined;
           }
-          const _t20618 = _t20619;
-          _t20599 = _t20618;
-          break _t20600;
+          const _t20619 = _t20620;
+          _t20600 = _t20619;
+          break _t20601;
         }
-        if (_t20598._tag === 30) {
-          const body_e = _t20598._val[0];
-          const arms = _t20598._val[1];
+        if (_t20599._tag === 30) {
+          const body_e = _t20599._val[0];
+          const arms = _t20599._val[1];
           scan_expr(body_e);
-          function _t20620(arm) {
-            let _t20622;
-            const _t20621 = arm;
-            _t20623: {
-              if (_t20621._tag === 1) {
-                const arg = _t20621._val.arg;
-                const k = _t20621._val.k;
-                const e = _t20621._val.body;
+          function _t20621(arm) {
+            let _t20623;
+            const _t20622 = arm;
+            _t20624: {
+              if (_t20622._tag === 1) {
+                const arg = _t20622._val.arg;
+                const k = _t20622._val.k;
+                const e = _t20622._val.body;
                 _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg, undefined]);
                 _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, k, undefined]);
                 scan_expr(e);
                 _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg]);
-                _t20622 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, k]);
-                break _t20623;
+                _t20623 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, k]);
+                break _t20624;
               }
-              if (_t20621._tag === 2) {
-                const arg = _t20621._val[1];
-                const e = _t20621._val[2];
+              if (_t20622._tag === 2) {
+                const arg = _t20622._val[1];
+                const e = _t20622._val[2];
                 _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg, undefined]);
                 scan_expr(e);
-                _t20622 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg]);
-                break _t20623;
+                _t20623 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg]);
+                break _t20624;
               }
-              if (_t20621._tag === 3) {
-                const arg = _t20621._val[1];
-                const e = _t20621._val[2];
+              if (_t20622._tag === 3) {
+                const arg = _t20622._val[1];
+                const e = _t20622._val[2];
                 _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg, undefined]);
                 scan_expr(e);
-                _t20622 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg]);
-                break _t20623;
+                _t20623 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, arg]);
+                break _t20624;
               }
-              if (_t20621._tag === 0) {
-                const name = _t20621._val[0];
-                const e = _t20621._val[1];
+              if (_t20622._tag === 0) {
+                const name = _t20622._val[0];
+                const e = _t20622._val[1];
                 _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, name, undefined]);
                 scan_expr(e);
-                _t20622 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, name]);
-                break _t20623;
+                _t20623 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, name]);
+                break _t20624;
               }
               _match_fail("line 0");
             }
-            return _t20622;
+            return _t20623;
           }
-          _t20599 = List$iter(_t20620, arms);
-          break _t20600;
+          _t20600 = List$iter(_t20621, arms);
+          break _t20601;
         }
-        if (_t20598._tag === 12) {
-          const c = _t20598._val[0];
-          const t = _t20598._val[1];
-          const e_20624 = _t20598._val[2];
+        if (_t20599._tag === 12) {
+          const c = _t20599._val[0];
+          const t = _t20599._val[1];
+          const e_20625 = _t20599._val[2];
           scan_expr(c);
           scan_expr(t);
-          const _t20625 = e_20624;
-          e = _t20625;
-          continue;
-          _t20599 = undefined;
-          break _t20600;
-        }
-        if (_t20598._tag === 20) {
-          const e1 = _t20598._val[0];
-          const e2 = _t20598._val[1];
-          scan_expr(e1);
-          const _t20626 = e2;
+          const _t20626 = e_20625;
           e = _t20626;
           continue;
-          _t20599 = undefined;
-          break _t20600;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 0) {
-          _t20599 = undefined;
-          break _t20600;
+        if (_t20599._tag === 20) {
+          const e1 = _t20599._val[0];
+          const e2 = _t20599._val[1];
+          scan_expr(e1);
+          const _t20627 = e2;
+          e = _t20627;
+          continue;
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 8) {
-          const n = _t20598._val[0];
-          const init = _t20598._val[2];
-          const body = _t20598._val[3];
+        if (_t20599._tag === 0) {
+          _t20600 = undefined;
+          break _t20601;
+        }
+        if (_t20599._tag === 8) {
+          const n = _t20599._val[0];
+          const init = _t20599._val[2];
+          const body = _t20599._val[3];
           scan_expr(init);
-          const was_bound_20627 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+          const was_bound_20628 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
           _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, n, undefined]);
           scan_expr(body);
-          let _t20629;
-          if ((!was_bound_20627)) {
-            _t20629 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+          let _t20630;
+          if ((!was_bound_20628)) {
+            _t20630 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
           } else {
-            _t20629 = undefined;
+            _t20630 = undefined;
           }
-          const _t20628 = _t20629;
-          _t20599 = _t20628;
-          break _t20600;
+          const _t20629 = _t20630;
+          _t20600 = _t20629;
+          break _t20601;
         }
-        if (_t20598._tag === 25) {
-          const n = _t20598._val[0];
-          const init = _t20598._val[1];
-          const body = _t20598._val[2];
+        if (_t20599._tag === 25) {
+          const n = _t20599._val[0];
+          const init = _t20599._val[1];
+          const body = _t20599._val[2];
           scan_expr(init);
-          const was_bound_20630 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+          const was_bound_20631 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
           _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, n, undefined]);
           scan_expr(body);
-          let _t20632;
-          if ((!was_bound_20630)) {
-            _t20632 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+          let _t20633;
+          if ((!was_bound_20631)) {
+            _t20633 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
           } else {
-            _t20632 = undefined;
+            _t20633 = undefined;
           }
-          const _t20631 = _t20632;
-          _t20599 = _t20631;
-          break _t20600;
+          const _t20632 = _t20633;
+          _t20600 = _t20632;
+          break _t20601;
         }
-        if (_t20598._tag === 9) {
-          const n = _t20598._val[0];
-          const init = _t20598._val[2];
-          const body = _t20598._val[3];
-          const was_bound_20633 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+        if (_t20599._tag === 9) {
+          const n = _t20599._val[0];
+          const init = _t20599._val[2];
+          const body = _t20599._val[3];
+          const was_bound_20634 = _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
           _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, n, undefined]);
           scan_expr(init);
           scan_expr(body);
-          let _t20635;
-          if ((!was_bound_20633)) {
-            _t20635 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+          let _t20636;
+          if ((!was_bound_20634)) {
+            _t20636 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
           } else {
-            _t20635 = undefined;
+            _t20636 = undefined;
           }
-          const _t20634 = _t20635;
-          _t20599 = _t20634;
-          break _t20600;
+          const _t20635 = _t20636;
+          _t20600 = _t20635;
+          break _t20601;
         }
-        if (_t20598._tag === 37) {
-          const bindings = _t20598._val[0];
-          const body = _t20598._val[1];
-          function _t20636(__p510) {
-            let _t20638;
-            const _t20637 = __p510;
-            _t20639: {
-              const n = _t20637[0];
-              _t20638 = [n, _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n])];
-              break _t20639;
+        if (_t20599._tag === 37) {
+          const bindings = _t20599._val[0];
+          const body = _t20599._val[1];
+          function _t20637(__p510) {
+            let _t20639;
+            const _t20638 = __p510;
+            _t20640: {
+              const n = _t20638[0];
+              _t20639 = [n, _call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, n])];
+              break _t20640;
             }
-            return _t20638;
+            return _t20639;
           }
-          const prev_20640 = List$map(_t20636, bindings);
-          function _t20642(__p511) {
-            let _t20644;
-            const _t20643 = __p511;
-            _t20645: {
-              const n = _t20643[0];
-              _t20644 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, n, undefined]);
-              break _t20645;
+          const prev_20641 = List$map(_t20637, bindings);
+          function _t20643(__p511) {
+            let _t20645;
+            const _t20644 = __p511;
+            _t20646: {
+              const n = _t20644[0];
+              _t20645 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, n, undefined]);
+              break _t20646;
             }
-            return _t20644;
+            return _t20645;
           }
-          List$iter(_t20642, bindings);
-          function _t20646(__p512) {
-            let _t20648;
-            const _t20647 = __p512;
-            _t20649: {
-              const e = _t20647[1];
-              _t20648 = scan_expr(e);
-              break _t20649;
+          List$iter(_t20643, bindings);
+          function _t20647(__p512) {
+            let _t20649;
+            const _t20648 = __p512;
+            _t20650: {
+              const e = _t20648[1];
+              _t20649 = scan_expr(e);
+              break _t20650;
             }
-            return _t20648;
+            return _t20649;
           }
-          List$iter(_t20646, bindings);
+          List$iter(_t20647, bindings);
           scan_expr(body);
-          function _t20650(__p513) {
-            let _t20652;
-            const _t20651 = __p513;
-            _t20653: {
-              const n = _t20651[0];
-              const was = _t20651[1];
-              let _t20654;
+          function _t20651(__p513) {
+            let _t20653;
+            const _t20652 = __p513;
+            _t20654: {
+              const n = _t20652[0];
+              const was = _t20652[1];
+              let _t20655;
               if ((!was)) {
-                _t20654 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
+                _t20655 = _call(Hashtbl$remove, [__dict_Hash_string, __dict_Eq_string, bound_20567, n]);
               } else {
-                _t20654 = undefined;
+                _t20655 = undefined;
               }
-              _t20652 = _t20654;
-              break _t20653;
+              _t20653 = _t20655;
+              break _t20654;
             }
-            return _t20652;
+            return _t20653;
           }
-          const _t20641 = List$iter(_t20650, prev_20640);
-          _t20599 = _t20641;
-          break _t20600;
+          const _t20642 = List$iter(_t20651, prev_20641);
+          _t20600 = _t20642;
+          break _t20601;
         }
-        if (_t20598._tag === 24) {
-          const scrut = _t20598._val[0];
-          const arms = _t20598._val[1];
+        if (_t20599._tag === 24) {
+          const scrut = _t20599._val[0];
+          const arms = _t20599._val[1];
           scan_expr(scrut);
-          function _t20655(__p518) {
-            let _t20657;
-            const _t20656 = __p518;
-            _t20658: {
-              const pat = _t20656[0];
-              const guard = _t20656[1];
-              const body = _t20656[2];
+          function _t20656(__p518) {
+            let _t20658;
+            const _t20657 = __p518;
+            _t20659: {
+              const pat = _t20657[0];
+              const guard = _t20657[1];
+              const body = _t20657[2];
               scan_pattern(pat);
               Option$iter(scan_expr, guard);
-              _t20657 = scan_expr(body);
-              break _t20658;
+              _t20658 = scan_expr(body);
+              break _t20659;
             }
-            return _t20657;
+            return _t20658;
           }
-          _t20599 = List$iter(_t20655, arms);
-          break _t20600;
+          _t20600 = List$iter(_t20656, arms);
+          break _t20601;
         }
-        if (_t20598._tag === 40) {
-          const cm = _t20598._val;
+        if (_t20599._tag === 40) {
+          const cm = _t20599._val;
           scan_expr(cm.scrutinee);
-          function _t20659(name) {
-            let _t20660;
-            if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, name])) && ((!is_known_global_20577(name)) && ((!Codegen$is_builtin_name(name)) || shadows_value_local_20586(name)))))) {
-              let _t20661;
+          function _t20660(name) {
+            let _t20661;
+            if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, name])) && ((!is_known_global_20578(name)) && ((!Codegen$is_builtin_name(name)) || shadows_value_local_20587(name)))))) {
+              let _t20662;
               if ((!_call(List$mem, [__dict_Eq_string, name, Ref$get(free_20565)]))) {
-                _t20661 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
+                _t20662 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
               } else {
-                _t20661 = undefined;
+                _t20662 = undefined;
               }
-              _t20660 = _t20661;
+              _t20661 = _t20662;
             } else {
-              _t20660 = undefined;
+              _t20661 = undefined;
             }
-            return _t20660;
+            return _t20661;
           }
-          const scan_var_name_20662 = _t20659;
-          function _t20664(mk) {
-            let _t20666;
-            const _t20665 = mk;
-            _t20667: {
-              if (_t20665._tag === 4) {
-                const name = _t20665._val;
-                _t20666 = scan_var_name_20662(name);
-                break _t20667;
+          const scan_var_name_20663 = _t20660;
+          function _t20665(mk) {
+            let _t20667;
+            const _t20666 = mk;
+            _t20668: {
+              if (_t20666._tag === 4) {
+                const name = _t20666._val;
+                _t20667 = scan_var_name_20663(name);
+                break _t20668;
               }
-              _t20666 = undefined;
-              break _t20667;
+              _t20667 = undefined;
+              break _t20668;
             }
-            return _t20666;
+            return _t20667;
           }
-          const scan_map_key_20668 = _t20664;
-          function _t20670(occ) {
-            function _t20671(__x) {
-              let _t20673;
-              const _t20672 = __x;
-              _t20674: {
-                if (_t20672._tag === 6) {
-                  const mk = _t20672._val;
-                  _t20673 = scan_map_key_20668(mk);
-                  break _t20674;
+          const scan_map_key_20669 = _t20665;
+          function _t20671(occ) {
+            function _t20672(__x) {
+              let _t20674;
+              const _t20673 = __x;
+              _t20675: {
+                if (_t20673._tag === 6) {
+                  const mk = _t20673._val;
+                  _t20674 = scan_map_key_20669(mk);
+                  break _t20675;
                 }
-                _t20673 = undefined;
-                break _t20674;
+                _t20674 = undefined;
+                break _t20675;
               }
-              return _t20673;
+              return _t20674;
             }
-            return List$iter(_t20671, occ);
+            return List$iter(_t20672, occ);
           }
-          const scan_occ_20675 = _t20670;
+          const scan_occ_20676 = _t20671;
           function collect_bindings(__x) {
             while (true) {
-              let _t20678;
-              const _t20677 = __x;
-              _t20679: {
-                if (_t20677._tag === 3) {
-                  _t20678 = undefined;
-                  break _t20679;
+              let _t20679;
+              const _t20678 = __x;
+              _t20680: {
+                if (_t20678._tag === 3) {
+                  _t20679 = undefined;
+                  break _t20680;
                 }
-                if (_t20677._tag === 1) {
-                  const bindings = _t20677._val.bindings;
-                  const on_true = _t20677._val.on_true;
-                  const on_false = _t20677._val.on_false;
-                  function _t20680(b) {
+                if (_t20678._tag === 1) {
+                  const bindings = _t20678._val.bindings;
+                  const on_true = _t20678._val.on_true;
+                  const on_false = _t20678._val.on_false;
+                  function _t20681(b) {
                     return _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, b.var_name, undefined]);
                   }
-                  List$iter(_t20680, bindings);
+                  List$iter(_t20681, bindings);
                   collect_bindings(on_true);
-                  const _t20681 = on_false;
-                  __x = _t20681;
+                  const _t20682 = on_false;
+                  __x = _t20682;
                   continue;
-                  _t20678 = undefined;
-                  break _t20679;
+                  _t20679 = undefined;
+                  break _t20680;
                 }
-                if (_t20677._tag === 2) {
-                  const bindings = _t20677._val.bindings;
-                  function _t20682(b) {
+                if (_t20678._tag === 2) {
+                  const bindings = _t20678._val.bindings;
+                  function _t20683(b) {
                     return _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, b.var_name, undefined]);
                   }
-                  _t20678 = List$iter(_t20682, bindings);
-                  break _t20679;
+                  _t20679 = List$iter(_t20683, bindings);
+                  break _t20680;
                 }
-                if (_t20677._tag === 0) {
-                  const cases = _t20677._val.cases;
-                  const _mml$default = _t20677._val._mml$default;
-                  function _t20683(__p519) {
-                    let _t20685;
-                    const _t20684 = __p519;
-                    _t20686: {
-                      const sub = _t20684[2];
-                      _t20685 = collect_bindings(sub);
-                      break _t20686;
+                if (_t20678._tag === 0) {
+                  const cases = _t20678._val.cases;
+                  const _mml$default = _t20678._val._mml$default;
+                  function _t20684(__p519) {
+                    let _t20686;
+                    const _t20685 = __p519;
+                    _t20687: {
+                      const sub = _t20685[2];
+                      _t20686 = collect_bindings(sub);
+                      break _t20687;
                     }
-                    return _t20685;
+                    return _t20686;
                   }
-                  List$iter(_t20683, cases);
-                  _t20678 = Option$iter(collect_bindings, _mml$default);
-                  break _t20679;
+                  List$iter(_t20684, cases);
+                  _t20679 = Option$iter(collect_bindings, _mml$default);
+                  break _t20680;
                 }
                 _match_fail("line 0");
               }
-              return _t20678;
+              return _t20679;
             }
           }
           collect_bindings(cm.tree);
-          function _t20688(arm) {
+          function _t20689(arm) {
             return scan_expr(arm.arm_body);
           }
-          Array$iter(_t20688, cm.match_arms);
+          Array$iter(_t20689, cm.match_arms);
           function scan_tree(__x) {
             while (true) {
-              let _t20690;
-              const _t20689 = __x;
-              _t20691: {
-                if (_t20689._tag === 3) {
-                  _t20690 = undefined;
-                  break _t20691;
+              let _t20691;
+              const _t20690 = __x;
+              _t20692: {
+                if (_t20690._tag === 3) {
+                  _t20691 = undefined;
+                  break _t20692;
                 }
-                if (_t20689._tag === 1) {
-                  const guard = _t20689._val.guard;
-                  const bindings = _t20689._val.bindings;
-                  const on_true = _t20689._val.on_true;
-                  const on_false = _t20689._val.on_false;
-                  function _t20692(b) {
-                    return scan_occ_20675(b.bind_occ);
+                if (_t20690._tag === 1) {
+                  const guard = _t20690._val.guard;
+                  const bindings = _t20690._val.bindings;
+                  const on_true = _t20690._val.on_true;
+                  const on_false = _t20690._val.on_false;
+                  function _t20693(b) {
+                    return scan_occ_20676(b.bind_occ);
                   }
-                  List$iter(_t20692, bindings);
+                  List$iter(_t20693, bindings);
                   scan_expr(guard);
                   scan_tree(on_true);
-                  const _t20693 = on_false;
-                  __x = _t20693;
+                  const _t20694 = on_false;
+                  __x = _t20694;
                   continue;
-                  _t20690 = undefined;
-                  break _t20691;
+                  _t20691 = undefined;
+                  break _t20692;
                 }
-                if (_t20689._tag === 2) {
-                  const bindings = _t20689._val.bindings;
-                  function _t20694(b) {
-                    return scan_occ_20675(b.bind_occ);
+                if (_t20690._tag === 2) {
+                  const bindings = _t20690._val.bindings;
+                  function _t20695(b) {
+                    return scan_occ_20676(b.bind_occ);
                   }
-                  _t20690 = List$iter(_t20694, bindings);
-                  break _t20691;
+                  _t20691 = List$iter(_t20695, bindings);
+                  break _t20692;
                 }
-                if (_t20689._tag === 0) {
-                  const cases = _t20689._val.cases;
-                  const _mml$default = _t20689._val._mml$default;
-                  function _t20695(__p520) {
-                    let _t20697;
-                    const _t20696 = __p520;
-                    _t20698: {
-                      const test = _t20696[0];
-                      const sub = _t20696[2];
-                      function _t20699(test) {
-                        let _t20701;
-                        const _t20700 = test;
-                        _t20702: {
-                          if (_t20700._tag === 10) {
-                            const mk = _t20700._val;
-                            _t20701 = scan_map_key_20668(mk);
-                            break _t20702;
+                if (_t20690._tag === 0) {
+                  const cases = _t20690._val.cases;
+                  const _mml$default = _t20690._val._mml$default;
+                  function _t20696(__p520) {
+                    let _t20698;
+                    const _t20697 = __p520;
+                    _t20699: {
+                      const test = _t20697[0];
+                      const sub = _t20697[2];
+                      function _t20700(test) {
+                        let _t20702;
+                        const _t20701 = test;
+                        _t20703: {
+                          if (_t20701._tag === 10) {
+                            const mk = _t20701._val;
+                            _t20702 = scan_map_key_20669(mk);
+                            break _t20703;
                           }
-                          if (_t20700._tag === 11) {
-                            const name = _t20700._val;
-                            _t20701 = scan_var_name_20662(name);
-                            break _t20702;
+                          if (_t20701._tag === 11) {
+                            const name = _t20701._val;
+                            _t20702 = scan_var_name_20663(name);
+                            break _t20703;
                           }
-                          _t20701 = undefined;
-                          break _t20702;
+                          _t20702 = undefined;
+                          break _t20703;
                         }
-                        return _t20701;
+                        return _t20702;
                       }
-                      _t20699(test);
-                      _t20697 = scan_tree(sub);
-                      break _t20698;
+                      _t20700(test);
+                      _t20698 = scan_tree(sub);
+                      break _t20699;
                     }
-                    return _t20697;
+                    return _t20698;
                   }
-                  List$iter(_t20695, cases);
-                  _t20690 = Option$iter(scan_tree, _mml$default);
-                  break _t20691;
+                  List$iter(_t20696, cases);
+                  _t20691 = Option$iter(scan_tree, _mml$default);
+                  break _t20692;
                 }
                 _match_fail("line 0");
               }
-              return _t20690;
+              return _t20691;
             }
           }
-          const _t20703 = scan_tree(cm.tree);
-          const _t20687 = _t20703;
-          const _t20676 = _t20687;
-          const _t20669 = _t20676;
-          const _t20663 = _t20669;
-          _t20599 = _t20663;
-          break _t20600;
+          const _t20704 = scan_tree(cm.tree);
+          const _t20688 = _t20704;
+          const _t20677 = _t20688;
+          const _t20670 = _t20677;
+          const _t20664 = _t20670;
+          _t20600 = _t20664;
+          break _t20601;
         }
-        if (_t20598._tag === 22) {
-          _t20599 = undefined;
-          break _t20600;
+        if (_t20599._tag === 22) {
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 29) {
-          const _op = _t20598._val[0];
-          const arg_e = _t20598._val[1];
-          _t20599 = scan_expr(arg_e);
-          break _t20600;
+        if (_t20599._tag === 29) {
+          const _op = _t20599._val[0];
+          const arg_e = _t20599._val[1];
+          _t20600 = scan_expr(arg_e);
+          break _t20601;
         }
-        if (_t20598._tag === 16) {
-          const fields = _t20598._val;
-          function _t20704(__p514) {
-            let _t20706;
-            const _t20705 = __p514;
-            _t20707: {
-              const e = _t20705[1];
-              _t20706 = scan_expr(e);
-              break _t20707;
+        if (_t20599._tag === 16) {
+          const fields = _t20599._val;
+          function _t20705(__p514) {
+            let _t20707;
+            const _t20706 = __p514;
+            _t20708: {
+              const e = _t20706[1];
+              _t20707 = scan_expr(e);
+              break _t20708;
             }
-            return _t20706;
+            return _t20707;
           }
-          _t20599 = List$iter(_t20704, fields);
-          break _t20600;
+          _t20600 = List$iter(_t20705, fields);
+          break _t20601;
         }
-        if (_t20598._tag === 17) {
-          const base = _t20598._val[0];
-          const overrides = _t20598._val[1];
-          function _t20708(__p515) {
-            let _t20710;
-            const _t20709 = __p515;
-            _t20711: {
-              const fname = _t20709[0];
-              _t20710 = capture_field_evidence_20596(base.ty, fname);
-              break _t20711;
+        if (_t20599._tag === 17) {
+          const base = _t20599._val[0];
+          const overrides = _t20599._val[1];
+          function _t20709(__p515) {
+            let _t20711;
+            const _t20710 = __p515;
+            _t20712: {
+              const fname = _t20710[0];
+              _t20711 = capture_field_evidence_20597(base.ty, fname);
+              break _t20712;
             }
-            return _t20710;
+            return _t20711;
           }
-          List$iter(_t20708, overrides);
+          List$iter(_t20709, overrides);
           scan_expr(base);
-          function _t20712(__p516) {
-            let _t20714;
-            const _t20713 = __p516;
-            _t20715: {
-              const e = _t20713[1];
-              _t20714 = scan_expr(e);
-              break _t20715;
+          function _t20713(__p516) {
+            let _t20715;
+            const _t20714 = __p516;
+            _t20716: {
+              const e = _t20714[1];
+              _t20715 = scan_expr(e);
+              break _t20716;
             }
-            return _t20714;
+            return _t20715;
           }
-          _t20599 = List$iter(_t20712, overrides);
-          break _t20600;
+          _t20600 = List$iter(_t20713, overrides);
+          break _t20601;
         }
-        if (_t20598._tag === 18) {
-          const base = _t20598._val[0];
-          const pairs = _t20598._val[1];
+        if (_t20599._tag === 18) {
+          const base = _t20599._val[0];
+          const pairs = _t20599._val[1];
           scan_expr(base);
-          function _t20716(__p517) {
-            let _t20718;
-            const _t20717 = __p517;
-            _t20719: {
-              const i = _t20717[0];
-              const v = _t20717[1];
+          function _t20717(__p517) {
+            let _t20719;
+            const _t20718 = __p517;
+            _t20720: {
+              const i = _t20718[0];
+              const v = _t20718[1];
               scan_expr(i);
-              _t20718 = scan_expr(v);
-              break _t20719;
+              _t20719 = scan_expr(v);
+              break _t20720;
             }
-            return _t20718;
+            return _t20719;
           }
-          _t20599 = List$iter(_t20716, pairs);
-          break _t20600;
+          _t20600 = List$iter(_t20717, pairs);
+          break _t20601;
         }
-        if (_t20598._tag === 31) {
-          const k_e = _t20598._val[0];
-          const v_e = _t20598._val[1];
+        if (_t20599._tag === 31) {
+          const k_e = _t20599._val[0];
+          const v_e = _t20599._val[1];
           scan_expr(k_e);
-          _t20599 = scan_expr(v_e);
-          break _t20600;
+          _t20600 = scan_expr(v_e);
+          break _t20601;
         }
-        if (_t20598._tag === 39) {
-          const e_20720 = _t20598._val;
-          _t20599 = scan_expr(e_20720);
-          break _t20600;
+        if (_t20599._tag === 39) {
+          const e_20721 = _t20599._val;
+          _t20600 = scan_expr(e_20721);
+          break _t20601;
         }
-        if (_t20598._tag === 5) {
-          _t20599 = undefined;
-          break _t20600;
+        if (_t20599._tag === 5) {
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 28) {
-          const a = _t20598._val[0];
-          const b = _t20598._val[1];
+        if (_t20599._tag === 28) {
+          const a = _t20599._val[0];
+          const b = _t20599._val[1];
           scan_expr(a);
-          _t20599 = scan_expr(b);
-          break _t20600;
+          _t20600 = scan_expr(b);
+          break _t20601;
         }
-        if (_t20598._tag === 3) {
-          _t20599 = undefined;
-          break _t20600;
+        if (_t20599._tag === 3) {
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 15) {
-          const es = _t20598._val;
-          _t20599 = List$iter(scan_expr, es);
-          break _t20600;
+        if (_t20599._tag === 15) {
+          const es = _t20599._val;
+          _t20600 = List$iter(scan_expr, es);
+          break _t20601;
         }
-        if (_t20598._tag === 6) {
-          _t20599 = undefined;
-          break _t20600;
+        if (_t20599._tag === 6) {
+          _t20600 = undefined;
+          break _t20601;
         }
-        if (_t20598._tag === 14) {
-          const a = _t20598._val[1];
-          _t20599 = scan_expr(a);
-          break _t20600;
+        if (_t20599._tag === 14) {
+          const a = _t20599._val[1];
+          _t20600 = scan_expr(a);
+          break _t20601;
         }
-        if (_t20598._tag === 7) {
-          const name = _t20598._val;
-          let _t20721;
-          if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, name])) && ((!is_known_global_20577(name)) && ((!Codegen$is_builtin_name(name)) || shadows_value_local_20586(name)))))) {
-            let _t20722;
+        if (_t20599._tag === 7) {
+          const name = _t20599._val;
+          let _t20722;
+          if (((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, param_set_20562, name])) && ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, bound_20567, name])) && ((!is_known_global_20578(name)) && ((!Codegen$is_builtin_name(name)) || shadows_value_local_20587(name)))))) {
+            let _t20723;
             if ((!_call(List$mem, [__dict_Eq_string, name, Ref$get(free_20565)]))) {
-              let _t20723;
+              let _t20724;
               if (Codegen$is_dict_or_inst(name)) {
-                let _t20725;
-                const _t20724 = ctx;
-                _t20726: {
-                  if (_t20724._tag === 1) {
-                    const c = _t20724._val;
+                let _t20726;
+                const _t20725 = ctx;
+                _t20727: {
+                  if (_t20725._tag === 1) {
+                    const c = _t20725._val;
                     if (!_eq(_call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, c, name]), ({_tag: 0, _name: "None"}))) {
-                      const c = _t20724._val;
-                      _t20725 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
-                      break _t20726;
+                      const c = _t20725._val;
+                      _t20726 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
+                      break _t20727;
                     } else {
-                      _t20725 = undefined;
-                      break _t20726;
+                      _t20726 = undefined;
+                      break _t20727;
                     }
                   }
-                  _t20725 = undefined;
-                  break _t20726;
+                  _t20726 = undefined;
+                  break _t20727;
                 }
-                _t20723 = _t20725;
+                _t20724 = _t20726;
               } else {
-                _t20723 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
+                _t20724 = Ref$set(free_20565, ({_hd: name, _tl: Ref$get(free_20565)}));
               }
-              _t20722 = _t20723;
+              _t20723 = _t20724;
             } else {
-              _t20722 = undefined;
+              _t20723 = undefined;
             }
-            _t20721 = _t20722;
+            _t20722 = _t20723;
           } else {
-            _t20721 = undefined;
+            _t20722 = undefined;
           }
-          _t20599 = _t20721;
-          break _t20600;
+          _t20600 = _t20722;
+          break _t20601;
         }
-        if (_t20598._tag === 32) {
-          const tw_cond = _t20598._val.tw_cond;
-          const tw_body = _t20598._val.tw_body;
-          const tw_step = _t20598._val.tw_step;
+        if (_t20599._tag === 32) {
+          const tw_cond = _t20599._val.tw_cond;
+          const tw_body = _t20599._val.tw_body;
+          const tw_step = _t20599._val.tw_step;
           scan_expr(tw_cond);
           scan_expr(tw_body);
-          _t20599 = Option$iter(scan_expr, tw_step);
-          break _t20600;
+          _t20600 = Option$iter(scan_expr, tw_step);
+          break _t20601;
         }
         _match_fail("line 0");
       }
-      return _t20599;
+      return _t20600;
     }
   }
   function scan_pattern(__x) {
     while (true) {
-      let _t20728;
-      const _t20727 = __x;
-      _t20729: {
-        if (_t20727._tag === 19) {
-          const p = _t20727._val[0];
-          const _t20730 = p;
-          __x = _t20730;
-          continue;
-          _t20728 = undefined;
-          break _t20729;
-        }
-        if (_t20727._tag === 14) {
-          const pats = _t20727._val;
-          _t20728 = List$iter(scan_pattern, pats);
-          break _t20729;
-        }
-        if (_t20727._tag === 12) {
-          const p = _t20727._val[0];
-          const name = _t20727._val[1];
-          _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, name, undefined]);
+      let _t20729;
+      const _t20728 = __x;
+      _t20730: {
+        if (_t20728._tag === 19) {
+          const p = _t20728._val[0];
           const _t20731 = p;
           __x = _t20731;
           continue;
-          _t20728 = undefined;
-          break _t20729;
+          _t20729 = undefined;
+          break _t20730;
         }
-        if (_t20727._tag === 8) {
-          const p1 = _t20727._val[0];
-          const p2 = _t20727._val[1];
-          scan_pattern(p1);
-          const _t20732 = p2;
+        if (_t20728._tag === 14) {
+          const pats = _t20728._val;
+          _t20729 = List$iter(scan_pattern, pats);
+          break _t20730;
+        }
+        if (_t20728._tag === 12) {
+          const p = _t20728._val[0];
+          const name = _t20728._val[1];
+          _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, name, undefined]);
+          const _t20732 = p;
           __x = _t20732;
           continue;
-          _t20728 = undefined;
-          break _t20729;
+          _t20729 = undefined;
+          break _t20730;
         }
-        if (_t20727._tag === 10) {
-          const sub = _t20727._val[1];
-          _t20728 = Option$iter(scan_pattern, sub);
-          break _t20729;
-        }
-        if (_t20727._tag === 15) {
-          const entries = _t20727._val;
-          function _t20733(__p522) {
-            let _t20735;
-            const _t20734 = __p522;
-            _t20736: {
-              const vp = _t20734[1];
-              _t20735 = scan_pattern(vp);
-              break _t20736;
-            }
-            return _t20735;
-          }
-          _t20728 = List$iter(_t20733, entries);
-          break _t20729;
-        }
-        if (_t20727._tag === 13) {
-          const p1 = _t20727._val[0];
-          const p2 = _t20727._val[1];
+        if (_t20728._tag === 8) {
+          const p1 = _t20728._val[0];
+          const p2 = _t20728._val[1];
           scan_pattern(p1);
-          const _t20737 = p2;
-          __x = _t20737;
+          const _t20733 = p2;
+          __x = _t20733;
           continue;
-          _t20728 = undefined;
-          break _t20729;
+          _t20729 = undefined;
+          break _t20730;
         }
-        if (_t20727._tag === 18) {
-          _t20728 = undefined;
-          break _t20729;
+        if (_t20728._tag === 10) {
+          const sub = _t20728._val[1];
+          _t20729 = Option$iter(scan_pattern, sub);
+          break _t20730;
         }
-        if (_t20727._tag === 17) {
-          const sub = _t20727._val[1];
-          _t20728 = Option$iter(scan_pattern, sub);
-          break _t20729;
-        }
-        if (_t20727._tag === 11) {
-          const fields = _t20727._val;
-          function _t20738(__p521) {
-            let _t20740;
-            const _t20739 = __p521;
-            _t20741: {
-              const p = _t20739[1];
-              _t20740 = scan_pattern(p);
-              break _t20741;
+        if (_t20728._tag === 15) {
+          const entries = _t20728._val;
+          function _t20734(__p522) {
+            let _t20736;
+            const _t20735 = __p522;
+            _t20737: {
+              const vp = _t20735[1];
+              _t20736 = scan_pattern(vp);
+              break _t20737;
             }
-            return _t20740;
+            return _t20736;
           }
-          _t20728 = List$iter(_t20738, fields);
-          break _t20729;
+          _t20729 = List$iter(_t20734, entries);
+          break _t20730;
         }
-        if (_t20727._tag === 7) {
-          const pats = _t20727._val;
-          _t20728 = List$iter(scan_pattern, pats);
-          break _t20729;
+        if (_t20728._tag === 13) {
+          const p1 = _t20728._val[0];
+          const p2 = _t20728._val[1];
+          scan_pattern(p1);
+          const _t20738 = p2;
+          __x = _t20738;
+          continue;
+          _t20729 = undefined;
+          break _t20730;
         }
-        if (_t20727._tag === 1) {
-          const name = _t20727._val;
-          _t20728 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, name, undefined]);
-          break _t20729;
+        if (_t20728._tag === 18) {
+          _t20729 = undefined;
+          break _t20730;
         }
-        _t20728 = undefined;
-        break _t20729;
+        if (_t20728._tag === 17) {
+          const sub = _t20728._val[1];
+          _t20729 = Option$iter(scan_pattern, sub);
+          break _t20730;
+        }
+        if (_t20728._tag === 11) {
+          const fields = _t20728._val;
+          function _t20739(__p521) {
+            let _t20741;
+            const _t20740 = __p521;
+            _t20742: {
+              const p = _t20740[1];
+              _t20741 = scan_pattern(p);
+              break _t20742;
+            }
+            return _t20741;
+          }
+          _t20729 = List$iter(_t20739, fields);
+          break _t20730;
+        }
+        if (_t20728._tag === 7) {
+          const pats = _t20728._val;
+          _t20729 = List$iter(scan_pattern, pats);
+          break _t20730;
+        }
+        if (_t20728._tag === 1) {
+          const name = _t20728._val;
+          _t20729 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, bound_20567, name, undefined]);
+          break _t20730;
+        }
+        _t20729 = undefined;
+        break _t20730;
       }
-      return _t20728;
+      return _t20729;
     }
   }
   scan_expr(body);
-  const _t20742 = List$rev(Ref$get(free_20565));
-  const _t20597 = _t20742;
-  const _t20587 = _t20597;
-  const _t20578 = _t20587;
-  const _t20568 = _t20578;
+  const _t20743 = List$rev(Ref$get(free_20565));
+  const _t20598 = _t20743;
+  const _t20588 = _t20598;
+  const _t20579 = _t20588;
+  const _t20568 = _t20579;
   const _t20566 = _t20568;
   const _t20563 = _t20566;
   return _t20563;
 }
 function Codegen$emit_named_function(ctx, llvm_name, params, body) {
-  function _t20743(fn_ir) {
-    const outer_scopes_20744 = ctx.scopes;
-    const seen_20746 = Hashtbl$create(8);
-    function _t20748(p) {
-      const base_20749 = Codegen$sanitize_name(p);
-      let _t20751;
-      if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, seen_20746, base_20749])) {
-        const n_20752 = _call(Hashtbl$find, [__dict_Eq_string, __dict_Hash_string, seen_20746, base_20749]);
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20746, base_20749, (n_20752 + 1)]);
-        const _t20753 = [p, ((("param_" + __dict_Show_string.show(base_20749)) + "_") + __dict_Show_int.show(n_20752))];
-        _t20751 = _t20753;
+  function _t20744(fn_ir) {
+    const outer_scopes_20745 = ctx.scopes;
+    const seen_20747 = Hashtbl$create(8);
+    function _t20749(p) {
+      const base_20750 = Codegen$sanitize_name(p);
+      let _t20752;
+      if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, seen_20747, base_20750])) {
+        const n_20753 = _call(Hashtbl$find, [__dict_Eq_string, __dict_Hash_string, seen_20747, base_20750]);
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20747, base_20750, (n_20753 + 1)]);
+        const _t20754 = [p, ((("param_" + __dict_Show_string.show(base_20750)) + "_") + __dict_Show_int.show(n_20753))];
+        _t20752 = _t20754;
       } else {
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20746, base_20749, 1]);
-        _t20751 = [p, ("param_" + __dict_Show_string.show(base_20749))];
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20747, base_20750, 1]);
+        _t20752 = [p, ("param_" + __dict_Show_string.show(base_20750))];
       }
-      const _t20750 = _t20751;
-      return _t20750;
+      const _t20751 = _t20752;
+      return _t20751;
     }
-    const unique_params_20754 = List$map(_t20748, params);
-    function _t20756(__p523) {
-      let _t20758;
-      const _t20757 = __p523;
-      _t20759: {
-        const llvm_p = _t20757[1];
-        _t20758 = ["i64", ("%" + __dict_Show_string.show(llvm_p))];
-        break _t20759;
+    const unique_params_20755 = List$map(_t20749, params);
+    function _t20757(__p523) {
+      let _t20759;
+      const _t20758 = __p523;
+      _t20760: {
+        const llvm_p = _t20758[1];
+        _t20759 = ["i64", ("%" + __dict_Show_string.show(llvm_p))];
+        break _t20760;
       }
-      return _t20758;
+      return _t20759;
     }
-    const param_pairs_20760 = List$map(_t20756, unique_params_20754);
-    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", llvm_name, param_pairs_20760]);
+    const param_pairs_20761 = List$map(_t20757, unique_params_20755);
+    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", llvm_name, param_pairs_20761]);
     _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir, "entry"]);
     (ctx.current_label = "entry", undefined);
     (ctx.loop_stack = null, undefined);
-    const fn_scope_20762 = Hashtbl$create(16);
-    function _t20764(scope) {
-      function _t20765(name, info) {
-        let _t20767;
-        const _t20766 = info;
-        _t20768: {
-          if (_t20766._tag === 5) {
-            let _t20769;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name]))) {
-              _t20769 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name, info]);
-            } else {
-              _t20769 = undefined;
-            }
-            _t20767 = _t20769;
-            break _t20768;
-          }
-          if (_t20766._tag === 6) {
+    const fn_scope_20763 = Hashtbl$create(16);
+    function _t20765(scope) {
+      function _t20766(name, info) {
+        let _t20768;
+        const _t20767 = info;
+        _t20769: {
+          if (_t20767._tag === 5) {
             let _t20770;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name]))) {
-              _t20770 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name]))) {
+              _t20770 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name, info]);
             } else {
               _t20770 = undefined;
             }
-            _t20767 = _t20770;
-            break _t20768;
+            _t20768 = _t20770;
+            break _t20769;
           }
-          if (_t20766._tag === 3) {
+          if (_t20767._tag === 6) {
             let _t20771;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name]))) {
-              _t20771 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name]))) {
+              _t20771 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name, info]);
             } else {
               _t20771 = undefined;
             }
-            _t20767 = _t20771;
-            break _t20768;
+            _t20768 = _t20771;
+            break _t20769;
           }
-          if (_t20766._tag === 0) {
-            _t20767 = undefined;
-            break _t20768;
-          }
-          if (_t20766._tag === 4) {
+          if (_t20767._tag === 3) {
             let _t20772;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name]))) {
-              _t20772 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20762, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name]))) {
+              _t20772 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name, info]);
             } else {
               _t20772 = undefined;
             }
-            _t20767 = _t20772;
-            break _t20768;
+            _t20768 = _t20772;
+            break _t20769;
           }
-          if (_t20766._tag === 1) {
-            _t20767 = undefined;
-            break _t20768;
+          if (_t20767._tag === 0) {
+            _t20768 = undefined;
+            break _t20769;
           }
-          if (_t20766._tag === 2) {
-            _t20767 = undefined;
-            break _t20768;
+          if (_t20767._tag === 4) {
+            let _t20773;
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name]))) {
+              _t20773 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20763, name, info]);
+            } else {
+              _t20773 = undefined;
+            }
+            _t20768 = _t20773;
+            break _t20769;
+          }
+          if (_t20767._tag === 1) {
+            _t20768 = undefined;
+            break _t20769;
+          }
+          if (_t20767._tag === 2) {
+            _t20768 = undefined;
+            break _t20769;
           }
           _match_fail("line 0");
         }
-        return _t20767;
+        return _t20768;
       }
-      return Hashtbl$iter(_t20765, scope);
+      return Hashtbl$iter(_t20766, scope);
     }
-    List$iter(_t20764, outer_scopes_20744);
-    (ctx.scopes = ({_hd: fn_scope_20762, _tl: null}), undefined);
-    function _t20773(__p524) {
-      let _t20775;
-      const _t20774 = __p524;
-      _t20776: {
-        const p = _t20774[0];
-        const llvm_p = _t20774[1];
-        const ptr_20777 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-        _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", ("%" + __dict_Show_string.show(llvm_p)), ptr_20777]);
-        const _t20778 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, p, ({_tag: 0, _name: "Local", _val: ptr_20777})]);
-        _t20775 = _t20778;
-        break _t20776;
+    List$iter(_t20765, outer_scopes_20745);
+    (ctx.scopes = ({_hd: fn_scope_20763, _tl: null}), undefined);
+    function _t20774(__p524) {
+      let _t20776;
+      const _t20775 = __p524;
+      _t20777: {
+        const p = _t20775[0];
+        const llvm_p = _t20775[1];
+        const ptr_20778 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+        _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", ("%" + __dict_Show_string.show(llvm_p)), ptr_20778]);
+        const _t20779 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, p, ({_tag: 0, _name: "Local", _val: ptr_20778})]);
+        _t20776 = _t20779;
+        break _t20777;
       }
-      return _t20775;
+      return _t20776;
     }
-    List$iter(_t20773, unique_params_20754);
+    List$iter(_t20774, unique_params_20755);
     Codegen$setup_handler_mark(ctx, body);
-    const body_result_20779 = Codegen$emit_expr(ctx, body);
-    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20779]);
-    const _t20780 = Ir_emit$emit_define_end(0, fn_ir);
-    const _t20763 = _t20780;
-    const _t20761 = _t20763;
-    const _t20755 = _t20761;
-    const _t20747 = _t20755;
-    const _t20745 = _t20747;
-    return _t20745;
+    const body_result_20780 = Codegen$emit_expr(ctx, body);
+    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20780]);
+    const _t20781 = Ir_emit$emit_define_end(0, fn_ir);
+    const _t20764 = _t20781;
+    const _t20762 = _t20764;
+    const _t20756 = _t20762;
+    const _t20748 = _t20756;
+    const _t20746 = _t20748;
+    return _t20746;
   }
-  return Codegen$with_fresh_ir(ctx, _t20743);
+  return Codegen$with_fresh_ir(ctx, _t20744);
 }
 function Codegen$emit_named_function_with_captures(ctx, llvm_name, params, body, self_name, captures, capture_modes) {
-  function _t20781(fn_ir) {
-    const outer_scopes_20782 = ctx.scopes;
-    const seen_20784 = Hashtbl$create(8);
-    function _t20786(p) {
-      const base_20787 = Codegen$sanitize_name(p);
-      let _t20789;
-      if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, seen_20784, base_20787])) {
-        const n_20790 = _call(Hashtbl$find, [__dict_Eq_string, __dict_Hash_string, seen_20784, base_20787]);
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20784, base_20787, (n_20790 + 1)]);
-        const _t20791 = [p, ((("param_" + __dict_Show_string.show(base_20787)) + "_") + __dict_Show_int.show(n_20790))];
-        _t20789 = _t20791;
+  function _t20782(fn_ir) {
+    const outer_scopes_20783 = ctx.scopes;
+    const seen_20785 = Hashtbl$create(8);
+    function _t20787(p) {
+      const base_20788 = Codegen$sanitize_name(p);
+      let _t20790;
+      if (_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, seen_20785, base_20788])) {
+        const n_20791 = _call(Hashtbl$find, [__dict_Eq_string, __dict_Hash_string, seen_20785, base_20788]);
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20785, base_20788, (n_20791 + 1)]);
+        const _t20792 = [p, ((("param_" + __dict_Show_string.show(base_20788)) + "_") + __dict_Show_int.show(n_20791))];
+        _t20790 = _t20792;
       } else {
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20784, base_20787, 1]);
-        _t20789 = [p, ("param_" + __dict_Show_string.show(base_20787))];
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_20785, base_20788, 1]);
+        _t20790 = [p, ("param_" + __dict_Show_string.show(base_20788))];
       }
-      const _t20788 = _t20789;
-      return _t20788;
+      const _t20789 = _t20790;
+      return _t20789;
     }
-    const unique_params_20792 = List$map(_t20786, params);
-    const arity_20794 = List$length(params);
-    const high_arity_20796 = (arity_20794 > 8);
-    let _t20798;
-    if (high_arity_20796) {
-      _t20798 = ({_hd: ["ptr", "%env"], _tl: ({_hd: ["ptr", "%args"], _tl: null})});
+    const unique_params_20793 = List$map(_t20787, params);
+    const arity_20795 = List$length(params);
+    const high_arity_20797 = (arity_20795 > 8);
+    let _t20799;
+    if (high_arity_20797) {
+      _t20799 = ({_hd: ["ptr", "%env"], _tl: ({_hd: ["ptr", "%args"], _tl: null})});
     } else {
-      function _t20799(__p525) {
-        let _t20801;
-        const _t20800 = __p525;
-        _t20802: {
-          const llvm_p = _t20800[1];
-          _t20801 = ["i64", ("%" + __dict_Show_string.show(llvm_p))];
-          break _t20802;
+      function _t20800(__p525) {
+        let _t20802;
+        const _t20801 = __p525;
+        _t20803: {
+          const llvm_p = _t20801[1];
+          _t20802 = ["i64", ("%" + __dict_Show_string.show(llvm_p))];
+          break _t20803;
         }
-        return _t20801;
+        return _t20802;
       }
-      _t20798 = ({_hd: ["ptr", "%env"], _tl: List$map(_t20799, unique_params_20792)});
+      _t20799 = ({_hd: ["ptr", "%env"], _tl: List$map(_t20800, unique_params_20793)});
     }
-    const param_pairs_20803 = _t20798;
-    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", llvm_name, param_pairs_20803]);
+    const param_pairs_20804 = _t20799;
+    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", llvm_name, param_pairs_20804]);
     _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir, "entry"]);
     (ctx.current_label = "entry", undefined);
     (ctx.loop_stack = null, undefined);
-    const fn_scope_20805 = Hashtbl$create(16);
-    function _t20807(scope) {
-      function _t20808(name, info) {
-        let _t20810;
-        const _t20809 = info;
-        _t20811: {
-          if (_t20809._tag === 5) {
-            let _t20812;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name]))) {
-              _t20812 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name, info]);
-            } else {
-              _t20812 = undefined;
-            }
-            _t20810 = _t20812;
-            break _t20811;
-          }
-          if (_t20809._tag === 6) {
+    const fn_scope_20806 = Hashtbl$create(16);
+    function _t20808(scope) {
+      function _t20809(name, info) {
+        let _t20811;
+        const _t20810 = info;
+        _t20812: {
+          if (_t20810._tag === 5) {
             let _t20813;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name]))) {
-              _t20813 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name]))) {
+              _t20813 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name, info]);
             } else {
               _t20813 = undefined;
             }
-            _t20810 = _t20813;
-            break _t20811;
+            _t20811 = _t20813;
+            break _t20812;
           }
-          if (_t20809._tag === 3) {
+          if (_t20810._tag === 6) {
             let _t20814;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name]))) {
-              _t20814 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name]))) {
+              _t20814 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name, info]);
             } else {
               _t20814 = undefined;
             }
-            _t20810 = _t20814;
-            break _t20811;
+            _t20811 = _t20814;
+            break _t20812;
           }
-          if (_t20809._tag === 0) {
-            _t20810 = undefined;
-            break _t20811;
-          }
-          if (_t20809._tag === 4) {
+          if (_t20810._tag === 3) {
             let _t20815;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name]))) {
-              _t20815 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20805, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name]))) {
+              _t20815 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name, info]);
             } else {
               _t20815 = undefined;
             }
-            _t20810 = _t20815;
-            break _t20811;
+            _t20811 = _t20815;
+            break _t20812;
           }
-          if (_t20809._tag === 1) {
-            _t20810 = undefined;
-            break _t20811;
+          if (_t20810._tag === 0) {
+            _t20811 = undefined;
+            break _t20812;
           }
-          if (_t20809._tag === 2) {
-            _t20810 = undefined;
-            break _t20811;
+          if (_t20810._tag === 4) {
+            let _t20816;
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name]))) {
+              _t20816 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20806, name, info]);
+            } else {
+              _t20816 = undefined;
+            }
+            _t20811 = _t20816;
+            break _t20812;
+          }
+          if (_t20810._tag === 1) {
+            _t20811 = undefined;
+            break _t20812;
+          }
+          if (_t20810._tag === 2) {
+            _t20811 = undefined;
+            break _t20812;
           }
           _match_fail("line 0");
         }
-        return _t20810;
+        return _t20811;
       }
-      return Hashtbl$iter(_t20808, scope);
+      return Hashtbl$iter(_t20809, scope);
     }
-    List$iter(_t20807, outer_scopes_20782);
-    (ctx.scopes = ({_hd: fn_scope_20805, _tl: null}), undefined);
-    const self_i64_20816 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, fn_ir, "%env"]);
-    const self_alloca_20818 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", self_i64_20816, self_alloca_20818]);
-    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, self_name, ({_tag: 0, _name: "Local", _val: self_alloca_20818})]);
-    function _t20820(i, cap_name) {
-      const cap_ptr_20821 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", (3 + i)]);
-      const cap_val_20823 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", cap_ptr_20821]);
-      const mode_20825 = List$nth(capture_modes, i);
-      let _t20828;
-      const _t20827 = mode_20825;
-      _t20829: {
-        if (_t20827._tag === 379730274) {
-          const alloca_20830 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20823, alloca_20830]);
-          const _t20831 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, cap_name, ({_tag: 0, _name: "Local", _val: alloca_20830})]);
-          _t20828 = _t20831;
-          break _t20829;
+    List$iter(_t20808, outer_scopes_20783);
+    (ctx.scopes = ({_hd: fn_scope_20806, _tl: null}), undefined);
+    const self_i64_20817 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, fn_ir, "%env"]);
+    const self_alloca_20819 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", self_i64_20817, self_alloca_20819]);
+    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, self_name, ({_tag: 0, _name: "Local", _val: self_alloca_20819})]);
+    function _t20821(i, cap_name) {
+      const cap_ptr_20822 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", (3 + i)]);
+      const cap_val_20824 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", cap_ptr_20822]);
+      const mode_20826 = List$nth(capture_modes, i);
+      let _t20829;
+      const _t20828 = mode_20826;
+      _t20830: {
+        if (_t20828._tag === 379730274) {
+          const alloca_20831 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20824, alloca_20831]);
+          const _t20832 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, cap_name, ({_tag: 0, _name: "Local", _val: alloca_20831})]);
+          _t20829 = _t20832;
+          break _t20830;
         }
-        if (_t20827._tag === 930549510) {
-          const mut_ptr_20832 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, fn_ir, cap_val_20823]);
-          const _t20833 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, cap_name, ({_tag: 1, _name: "MutLocal", _val: mut_ptr_20832})]);
-          _t20828 = _t20833;
-          break _t20829;
+        if (_t20828._tag === 930549510) {
+          const mut_ptr_20833 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, fn_ir, cap_val_20824]);
+          const _t20834 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, cap_name, ({_tag: 1, _name: "MutLocal", _val: mut_ptr_20833})]);
+          _t20829 = _t20834;
+          break _t20830;
         }
-        if (_t20827._tag === 601214069) {
-          const alloca_20834 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20823, alloca_20834]);
-          const _t20835 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, cap_name, ({_tag: 2, _name: "MutRefCell", _val: alloca_20834})]);
-          _t20828 = _t20835;
-          break _t20829;
+        if (_t20828._tag === 601214069) {
+          const alloca_20835 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20824, alloca_20835]);
+          const _t20836 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, cap_name, ({_tag: 2, _name: "MutRefCell", _val: alloca_20835})]);
+          _t20829 = _t20836;
+          break _t20830;
         }
         _match_fail("line 0");
       }
-      const _t20826 = _t20828;
-      const _t20824 = _t20826;
-      const _t20822 = _t20824;
-      return _t20822;
+      const _t20827 = _t20829;
+      const _t20825 = _t20827;
+      const _t20823 = _t20825;
+      return _t20823;
     }
-    List$iteri(_t20820, captures);
-    let _t20836;
-    if (high_arity_20796) {
-      function _t20837(i, __p526) {
-        let _t20839;
-        const _t20838 = __p526;
-        _t20840: {
-          const p = _t20838[0];
-          const arg_ptr_20841 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%args", i]);
-          const arg_val_20843 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", arg_ptr_20841]);
-          const ptr_20845 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", arg_val_20843, ptr_20845]);
-          const _t20846 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, p, ({_tag: 0, _name: "Local", _val: ptr_20845})]);
-          const _t20844 = _t20846;
-          const _t20842 = _t20844;
-          _t20839 = _t20842;
-          break _t20840;
+    List$iteri(_t20821, captures);
+    let _t20837;
+    if (high_arity_20797) {
+      function _t20838(i, __p526) {
+        let _t20840;
+        const _t20839 = __p526;
+        _t20841: {
+          const p = _t20839[0];
+          const arg_ptr_20842 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%args", i]);
+          const arg_val_20844 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", arg_ptr_20842]);
+          const ptr_20846 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", arg_val_20844, ptr_20846]);
+          const _t20847 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, p, ({_tag: 0, _name: "Local", _val: ptr_20846})]);
+          const _t20845 = _t20847;
+          const _t20843 = _t20845;
+          _t20840 = _t20843;
+          break _t20841;
         }
-        return _t20839;
+        return _t20840;
       }
-      _t20836 = List$iteri(_t20837, unique_params_20792);
+      _t20837 = List$iteri(_t20838, unique_params_20793);
     } else {
-      function _t20847(__p527) {
-        let _t20849;
-        const _t20848 = __p527;
-        _t20850: {
-          const p = _t20848[0];
-          const llvm_p = _t20848[1];
-          const ptr_20851 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", ("%" + __dict_Show_string.show(llvm_p)), ptr_20851]);
-          const _t20852 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, p, ({_tag: 0, _name: "Local", _val: ptr_20851})]);
-          _t20849 = _t20852;
-          break _t20850;
+      function _t20848(__p527) {
+        let _t20850;
+        const _t20849 = __p527;
+        _t20851: {
+          const p = _t20849[0];
+          const llvm_p = _t20849[1];
+          const ptr_20852 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", ("%" + __dict_Show_string.show(llvm_p)), ptr_20852]);
+          const _t20853 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, p, ({_tag: 0, _name: "Local", _val: ptr_20852})]);
+          _t20850 = _t20853;
+          break _t20851;
         }
-        return _t20849;
+        return _t20850;
       }
-      _t20836 = List$iter(_t20847, unique_params_20792);
+      _t20837 = List$iter(_t20848, unique_params_20793);
     }
-    _t20836;
+    _t20837;
     Codegen$setup_handler_mark(ctx, body);
-    const body_result_20853 = Codegen$emit_expr(ctx, body);
-    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20853]);
-    const _t20854 = Ir_emit$emit_define_end(0, fn_ir);
-    const _t20819 = _t20854;
-    const _t20817 = _t20819;
-    const _t20806 = _t20817;
-    const _t20804 = _t20806;
-    const _t20797 = _t20804;
-    const _t20795 = _t20797;
-    const _t20793 = _t20795;
-    const _t20785 = _t20793;
-    const _t20783 = _t20785;
-    return _t20783;
+    const body_result_20854 = Codegen$emit_expr(ctx, body);
+    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20854]);
+    const _t20855 = Ir_emit$emit_define_end(0, fn_ir);
+    const _t20820 = _t20855;
+    const _t20818 = _t20820;
+    const _t20807 = _t20818;
+    const _t20805 = _t20807;
+    const _t20798 = _t20805;
+    const _t20796 = _t20798;
+    const _t20794 = _t20796;
+    const _t20786 = _t20794;
+    const _t20784 = _t20786;
+    return _t20784;
   }
-  return Codegen$with_fresh_ir(ctx, _t20781);
+  return Codegen$with_fresh_ir(ctx, _t20782);
 }
 function Codegen$emit_c_string(ctx, s) {
-  const name_20855 = (".cstr." + __dict_Show_int.show(ctx.str_counter));
+  const name_20856 = (".cstr." + __dict_Show_int.show(ctx.str_counter));
   (ctx.str_counter = (ctx.str_counter + 1), undefined);
-  const escaped_20857 = Buffer$contents(Codegen$llvm_escape_string(s));
-  const decl_20859 = (((((("@" + __dict_Show_string.show(name_20855)) + " = private unnamed_addr constant [") + __dict_Show_int.show((String$length(s) + 1))) + " x i8] c\"") + __dict_Show_string.show(escaped_20857)) + "\\00\"");
-  (ctx.string_globals = ({_hd: decl_20859, _tl: ctx.string_globals}), undefined);
-  const _t20860 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(name_20855))]);
-  const _t20858 = _t20860;
-  const _t20856 = _t20858;
-  return _t20856;
+  const escaped_20858 = Buffer$contents(Codegen$llvm_escape_string(s));
+  const decl_20860 = (((((("@" + __dict_Show_string.show(name_20856)) + " = private unnamed_addr constant [") + __dict_Show_int.show((String$length(s) + 1))) + " x i8] c\"") + __dict_Show_string.show(escaped_20858)) + "\\00\"");
+  (ctx.string_globals = ({_hd: decl_20860, _tl: ctx.string_globals}), undefined);
+  const _t20861 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(name_20856))]);
+  const _t20859 = _t20861;
+  const _t20857 = _t20859;
+  return _t20857;
 }
 function Codegen$handler_arm_free_vars(ctx, bound_names, body) {
-  const free_20861 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), bound_names, body);
-  function _t20863(name) {
-    let _t20865;
-    const _t20864 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name]);
-    _t20866: {
-      if (_t20864._tag === 0) {
-        _t20865 = ({_tag: 0, _name: "None"});
-        break _t20866;
+  const free_20862 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), bound_names, body);
+  function _t20864(name) {
+    let _t20866;
+    const _t20865 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name]);
+    _t20867: {
+      if (_t20865._tag === 0) {
+        _t20866 = ({_tag: 0, _name: "None"});
+        break _t20867;
       }
-      if (_t20864._tag === 1) {
-        const info = _t20864._val;
-        _t20865 = ({_tag: 1, _name: "Some", _val: [name, info]});
-        break _t20866;
+      if (_t20865._tag === 1) {
+        const info = _t20865._val;
+        _t20866 = ({_tag: 1, _name: "Some", _val: [name, info]});
+        break _t20867;
       }
       _match_fail("line 0");
     }
-    return _t20865;
+    return _t20866;
   }
-  const _t20862 = List$filter_map(_t20863, free_20861);
-  return _t20862;
+  const _t20863 = List$filter_map(_t20864, free_20862);
+  return _t20863;
 }
 function Codegen$emit_handler_env(ctx, free_with_info) {
-  let _t20868;
-  const _t20867 = free_with_info;
-  _t20869: {
-    if (_t20867 === null) {
-      _t20868 = "0";
-      break _t20869;
+  let _t20869;
+  const _t20868 = free_with_info;
+  _t20870: {
+    if (_t20868 === null) {
+      _t20869 = "0";
+      break _t20870;
     }
-    const captures = _t20867;
-    const n_20870 = List$length(captures);
-    const env_ptr_20872 = Codegen$emit_alloc(ctx, (n_20870 * 8), Codegen$make_header(n_20870, Codegen$mml_hdr_tuple));
-    function _t20874(i, __p528) {
-      let _t20876;
-      const _t20875 = __p528;
-      _t20877: {
-        const name = _t20875[0];
-        const info = _t20875[1];
-        const cap_val_20878 = Codegen$emit_capture_value(ctx, name, info);
-        const slot_20880 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", env_ptr_20872, i]);
-        const _t20881 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", cap_val_20878, slot_20880]);
-        const _t20879 = _t20881;
-        _t20876 = _t20879;
-        break _t20877;
+    const captures = _t20868;
+    const n_20871 = List$length(captures);
+    const env_ptr_20873 = Codegen$emit_alloc(ctx, (n_20871 * 8), Codegen$make_header(n_20871, Codegen$mml_hdr_tuple));
+    function _t20875(i, __p528) {
+      let _t20877;
+      const _t20876 = __p528;
+      _t20878: {
+        const name = _t20876[0];
+        const info = _t20876[1];
+        const cap_val_20879 = Codegen$emit_capture_value(ctx, name, info);
+        const slot_20881 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", env_ptr_20873, i]);
+        const _t20882 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", cap_val_20879, slot_20881]);
+        const _t20880 = _t20882;
+        _t20877 = _t20880;
+        break _t20878;
       }
-      return _t20876;
+      return _t20877;
     }
-    List$iteri(_t20874, captures);
-    const _t20873 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, env_ptr_20872]);
-    const _t20871 = _t20873;
-    _t20868 = _t20871;
-    break _t20869;
+    List$iteri(_t20875, captures);
+    const _t20874 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, env_ptr_20873]);
+    const _t20872 = _t20874;
+    _t20869 = _t20872;
+    break _t20870;
   }
-  return _t20868;
+  return _t20869;
 }
 function Codegen$emit_handler_arm_fn(ctx, arg_name, body, free_with_info) {
-  const fn_name_20882 = (("mml_handler_arm_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_int.show(ctx.fn_counter));
+  const fn_name_20883 = (("mml_handler_arm_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_int.show(ctx.fn_counter));
   (ctx.fn_counter = (ctx.fn_counter + 1), undefined);
-  function _t20884(fn_ir) {
-    const outer_scopes_20885 = ctx.scopes;
-    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", fn_name_20882, ({_hd: ["ptr", "%env"], _tl: ({_hd: ["i64", "%arg"], _tl: ({_hd: ["i64", "%k"], _tl: null})})})]);
+  function _t20885(fn_ir) {
+    const outer_scopes_20886 = ctx.scopes;
+    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", fn_name_20883, ({_hd: ["ptr", "%env"], _tl: ({_hd: ["i64", "%arg"], _tl: ({_hd: ["i64", "%k"], _tl: null})})})]);
     _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir, "entry"]);
     (ctx.current_label = "entry", undefined);
     (ctx.loop_stack = null, undefined);
-    const fn_scope_20887 = Hashtbl$create(16);
-    function _t20889(scope) {
-      function _t20890(name, info) {
-        let _t20892;
-        const _t20891 = info;
-        _t20893: {
-          if (_t20891._tag === 5) {
-            let _t20894;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name]))) {
-              _t20894 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name, info]);
-            } else {
-              _t20894 = undefined;
-            }
-            _t20892 = _t20894;
-            break _t20893;
-          }
-          if (_t20891._tag === 6) {
+    const fn_scope_20888 = Hashtbl$create(16);
+    function _t20890(scope) {
+      function _t20891(name, info) {
+        let _t20893;
+        const _t20892 = info;
+        _t20894: {
+          if (_t20892._tag === 5) {
             let _t20895;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name]))) {
-              _t20895 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name]))) {
+              _t20895 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name, info]);
             } else {
               _t20895 = undefined;
             }
-            _t20892 = _t20895;
-            break _t20893;
+            _t20893 = _t20895;
+            break _t20894;
           }
-          if (_t20891._tag === 3) {
+          if (_t20892._tag === 6) {
             let _t20896;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name]))) {
-              _t20896 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name]))) {
+              _t20896 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name, info]);
             } else {
               _t20896 = undefined;
             }
-            _t20892 = _t20896;
-            break _t20893;
+            _t20893 = _t20896;
+            break _t20894;
           }
-          if (_t20891._tag === 0) {
-            _t20892 = undefined;
-            break _t20893;
-          }
-          if (_t20891._tag === 4) {
+          if (_t20892._tag === 3) {
             let _t20897;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name]))) {
-              _t20897 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20887, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name]))) {
+              _t20897 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name, info]);
             } else {
               _t20897 = undefined;
             }
-            _t20892 = _t20897;
-            break _t20893;
+            _t20893 = _t20897;
+            break _t20894;
           }
-          if (_t20891._tag === 1) {
-            _t20892 = undefined;
-            break _t20893;
+          if (_t20892._tag === 0) {
+            _t20893 = undefined;
+            break _t20894;
           }
-          if (_t20891._tag === 2) {
-            _t20892 = undefined;
-            break _t20893;
+          if (_t20892._tag === 4) {
+            let _t20898;
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name]))) {
+              _t20898 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20888, name, info]);
+            } else {
+              _t20898 = undefined;
+            }
+            _t20893 = _t20898;
+            break _t20894;
+          }
+          if (_t20892._tag === 1) {
+            _t20893 = undefined;
+            break _t20894;
+          }
+          if (_t20892._tag === 2) {
+            _t20893 = undefined;
+            break _t20894;
           }
           _match_fail("line 0");
         }
-        return _t20892;
+        return _t20893;
       }
-      return Hashtbl$iter(_t20890, scope);
+      return Hashtbl$iter(_t20891, scope);
     }
-    List$iter(_t20889, outer_scopes_20885);
-    (ctx.scopes = ({_hd: fn_scope_20887, _tl: null}), undefined);
-    function _t20898(i, __p529) {
-      let _t20900;
-      const _t20899 = __p529;
-      _t20901: {
-        const name = _t20899[0];
-        const info = _t20899[1];
-        const env_slot_20902 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", i]);
-        const cap_val_20904 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", env_slot_20902]);
-        let _t20907;
-        const _t20906 = info;
-        _t20908: {
-          if (_t20906._tag === 4) {
-            const alloca_ptr_20909 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20904, alloca_ptr_20909]);
-            const _t20910 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20909})]);
-            _t20907 = _t20910;
-            break _t20908;
+    List$iter(_t20890, outer_scopes_20886);
+    (ctx.scopes = ({_hd: fn_scope_20888, _tl: null}), undefined);
+    function _t20899(i, __p529) {
+      let _t20901;
+      const _t20900 = __p529;
+      _t20902: {
+        const name = _t20900[0];
+        const info = _t20900[1];
+        const env_slot_20903 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", i]);
+        const cap_val_20905 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", env_slot_20903]);
+        let _t20908;
+        const _t20907 = info;
+        _t20909: {
+          if (_t20907._tag === 4) {
+            const alloca_ptr_20910 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20905, alloca_ptr_20910]);
+            const _t20911 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20910})]);
+            _t20908 = _t20911;
+            break _t20909;
           }
-          if (_t20906._tag === 1) {
-            const alloca_ptr_20911 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20904, alloca_ptr_20911]);
-            const _t20912 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20911})]);
-            _t20907 = _t20912;
-            break _t20908;
+          if (_t20907._tag === 1) {
+            const alloca_ptr_20912 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20905, alloca_ptr_20912]);
+            const _t20913 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20912})]);
+            _t20908 = _t20913;
+            break _t20909;
           }
-          if (_t20906._tag === 2) {
-            const alloca_ptr_20913 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20904, alloca_ptr_20913]);
-            const _t20914 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20913})]);
-            _t20907 = _t20914;
-            break _t20908;
+          if (_t20907._tag === 2) {
+            const alloca_ptr_20914 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20905, alloca_ptr_20914]);
+            const _t20915 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20914})]);
+            _t20908 = _t20915;
+            break _t20909;
           }
-          const ptr_20915 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20904, ptr_20915]);
-          const _t20916 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_20915})]);
-          _t20907 = _t20916;
-          break _t20908;
+          const ptr_20916 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20905, ptr_20916]);
+          const _t20917 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_20916})]);
+          _t20908 = _t20917;
+          break _t20909;
         }
-        const _t20905 = _t20907;
-        const _t20903 = _t20905;
-        _t20900 = _t20903;
-        break _t20901;
+        const _t20906 = _t20908;
+        const _t20904 = _t20906;
+        _t20901 = _t20904;
+        break _t20902;
       }
-      return _t20900;
+      return _t20901;
     }
-    List$iteri(_t20898, free_with_info);
-    const arg_ptr_20917 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", "%arg", arg_ptr_20917]);
-    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, arg_name, ({_tag: 0, _name: "Local", _val: arg_ptr_20917})]);
+    List$iteri(_t20899, free_with_info);
+    const arg_ptr_20918 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", "%arg", arg_ptr_20918]);
+    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, arg_name, ({_tag: 0, _name: "Local", _val: arg_ptr_20918})]);
     Codegen$setup_handler_mark(ctx, body);
-    const body_result_20919 = Codegen$emit_expr(ctx, body);
-    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20919]);
-    const _t20920 = Ir_emit$emit_define_end(0, fn_ir);
-    const _t20918 = _t20920;
-    const _t20888 = _t20918;
-    const _t20886 = _t20888;
-    return _t20886;
+    const body_result_20920 = Codegen$emit_expr(ctx, body);
+    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20920]);
+    const _t20921 = Ir_emit$emit_define_end(0, fn_ir);
+    const _t20919 = _t20921;
+    const _t20889 = _t20919;
+    const _t20887 = _t20889;
+    return _t20887;
   }
-  Codegen$with_fresh_ir(ctx, _t20884);
-  const _t20883 = fn_name_20882;
-  return _t20883;
+  Codegen$with_fresh_ir(ctx, _t20885);
+  const _t20884 = fn_name_20883;
+  return _t20884;
 }
 function Codegen$emit_full_handler_arm_fn(ctx, arg_name, k_name, body, free_with_info) {
-  const fn_name_20921 = (("mml_handler_arm_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_int.show(ctx.fn_counter));
+  const fn_name_20922 = (("mml_handler_arm_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_int.show(ctx.fn_counter));
   (ctx.fn_counter = (ctx.fn_counter + 1), undefined);
-  function _t20923(fn_ir) {
-    const outer_scopes_20924 = ctx.scopes;
-    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", fn_name_20921, ({_hd: ["ptr", "%env"], _tl: ({_hd: ["i64", "%arg"], _tl: ({_hd: ["i64", "%k"], _tl: null})})})]);
+  function _t20924(fn_ir) {
+    const outer_scopes_20925 = ctx.scopes;
+    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", fn_name_20922, ({_hd: ["ptr", "%env"], _tl: ({_hd: ["i64", "%arg"], _tl: ({_hd: ["i64", "%k"], _tl: null})})})]);
     _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir, "entry"]);
     (ctx.current_label = "entry", undefined);
     (ctx.loop_stack = null, undefined);
-    const fn_scope_20926 = Hashtbl$create(16);
-    function _t20928(scope) {
-      function _t20929(name, info) {
-        let _t20931;
-        const _t20930 = info;
-        _t20932: {
-          if (_t20930._tag === 5) {
-            let _t20933;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name]))) {
-              _t20933 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name, info]);
-            } else {
-              _t20933 = undefined;
-            }
-            _t20931 = _t20933;
-            break _t20932;
-          }
-          if (_t20930._tag === 6) {
+    const fn_scope_20927 = Hashtbl$create(16);
+    function _t20929(scope) {
+      function _t20930(name, info) {
+        let _t20932;
+        const _t20931 = info;
+        _t20933: {
+          if (_t20931._tag === 5) {
             let _t20934;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name]))) {
-              _t20934 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name]))) {
+              _t20934 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name, info]);
             } else {
               _t20934 = undefined;
             }
-            _t20931 = _t20934;
-            break _t20932;
+            _t20932 = _t20934;
+            break _t20933;
           }
-          if (_t20930._tag === 3) {
+          if (_t20931._tag === 6) {
             let _t20935;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name]))) {
-              _t20935 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name]))) {
+              _t20935 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name, info]);
             } else {
               _t20935 = undefined;
             }
-            _t20931 = _t20935;
-            break _t20932;
+            _t20932 = _t20935;
+            break _t20933;
           }
-          if (_t20930._tag === 0) {
-            _t20931 = undefined;
-            break _t20932;
-          }
-          if (_t20930._tag === 4) {
+          if (_t20931._tag === 3) {
             let _t20936;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name]))) {
-              _t20936 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20926, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name]))) {
+              _t20936 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name, info]);
             } else {
               _t20936 = undefined;
             }
-            _t20931 = _t20936;
-            break _t20932;
+            _t20932 = _t20936;
+            break _t20933;
           }
-          if (_t20930._tag === 1) {
-            _t20931 = undefined;
-            break _t20932;
+          if (_t20931._tag === 0) {
+            _t20932 = undefined;
+            break _t20933;
           }
-          if (_t20930._tag === 2) {
-            _t20931 = undefined;
-            break _t20932;
+          if (_t20931._tag === 4) {
+            let _t20937;
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name]))) {
+              _t20937 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20927, name, info]);
+            } else {
+              _t20937 = undefined;
+            }
+            _t20932 = _t20937;
+            break _t20933;
+          }
+          if (_t20931._tag === 1) {
+            _t20932 = undefined;
+            break _t20933;
+          }
+          if (_t20931._tag === 2) {
+            _t20932 = undefined;
+            break _t20933;
           }
           _match_fail("line 0");
         }
-        return _t20931;
+        return _t20932;
       }
-      return Hashtbl$iter(_t20929, scope);
+      return Hashtbl$iter(_t20930, scope);
     }
-    List$iter(_t20928, outer_scopes_20924);
-    (ctx.scopes = ({_hd: fn_scope_20926, _tl: null}), undefined);
-    function _t20937(i, __p530) {
-      let _t20939;
-      const _t20938 = __p530;
-      _t20940: {
-        const name = _t20938[0];
-        const info = _t20938[1];
-        const env_slot_20941 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", i]);
-        const cap_val_20943 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", env_slot_20941]);
-        let _t20946;
-        const _t20945 = info;
-        _t20947: {
-          if (_t20945._tag === 4) {
-            const alloca_ptr_20948 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20943, alloca_ptr_20948]);
-            const _t20949 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20948})]);
-            _t20946 = _t20949;
-            break _t20947;
+    List$iter(_t20929, outer_scopes_20925);
+    (ctx.scopes = ({_hd: fn_scope_20927, _tl: null}), undefined);
+    function _t20938(i, __p530) {
+      let _t20940;
+      const _t20939 = __p530;
+      _t20941: {
+        const name = _t20939[0];
+        const info = _t20939[1];
+        const env_slot_20942 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", i]);
+        const cap_val_20944 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", env_slot_20942]);
+        let _t20947;
+        const _t20946 = info;
+        _t20948: {
+          if (_t20946._tag === 4) {
+            const alloca_ptr_20949 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20944, alloca_ptr_20949]);
+            const _t20950 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20949})]);
+            _t20947 = _t20950;
+            break _t20948;
           }
-          if (_t20945._tag === 1) {
-            const alloca_ptr_20950 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20943, alloca_ptr_20950]);
-            const _t20951 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20950})]);
-            _t20946 = _t20951;
-            break _t20947;
+          if (_t20946._tag === 1) {
+            const alloca_ptr_20951 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20944, alloca_ptr_20951]);
+            const _t20952 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20951})]);
+            _t20947 = _t20952;
+            break _t20948;
           }
-          if (_t20945._tag === 2) {
-            const alloca_ptr_20952 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20943, alloca_ptr_20952]);
-            const _t20953 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20952})]);
-            _t20946 = _t20953;
-            break _t20947;
+          if (_t20946._tag === 2) {
+            const alloca_ptr_20953 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20944, alloca_ptr_20953]);
+            const _t20954 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20953})]);
+            _t20947 = _t20954;
+            break _t20948;
           }
-          const ptr_20954 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20943, ptr_20954]);
-          const _t20955 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_20954})]);
-          _t20946 = _t20955;
-          break _t20947;
+          const ptr_20955 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20944, ptr_20955]);
+          const _t20956 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_20955})]);
+          _t20947 = _t20956;
+          break _t20948;
         }
-        const _t20944 = _t20946;
-        const _t20942 = _t20944;
-        _t20939 = _t20942;
-        break _t20940;
+        const _t20945 = _t20947;
+        const _t20943 = _t20945;
+        _t20940 = _t20943;
+        break _t20941;
       }
-      return _t20939;
+      return _t20940;
     }
-    List$iteri(_t20937, free_with_info);
-    const arg_ptr_20956 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", "%arg", arg_ptr_20956]);
-    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, arg_name, ({_tag: 0, _name: "Local", _val: arg_ptr_20956})]);
-    const k_ptr_20958 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", "%k", k_ptr_20958]);
-    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, k_name, ({_tag: 0, _name: "Local", _val: k_ptr_20958})]);
+    List$iteri(_t20938, free_with_info);
+    const arg_ptr_20957 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", "%arg", arg_ptr_20957]);
+    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, arg_name, ({_tag: 0, _name: "Local", _val: arg_ptr_20957})]);
+    const k_ptr_20959 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+    _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", "%k", k_ptr_20959]);
+    _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, k_name, ({_tag: 0, _name: "Local", _val: k_ptr_20959})]);
     Codegen$setup_handler_mark(ctx, body);
-    const body_result_20960 = Codegen$emit_expr(ctx, body);
-    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20960]);
-    const _t20961 = Ir_emit$emit_define_end(0, fn_ir);
-    const _t20959 = _t20961;
-    const _t20957 = _t20959;
-    const _t20927 = _t20957;
-    const _t20925 = _t20927;
-    return _t20925;
+    const body_result_20961 = Codegen$emit_expr(ctx, body);
+    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20961]);
+    const _t20962 = Ir_emit$emit_define_end(0, fn_ir);
+    const _t20960 = _t20962;
+    const _t20958 = _t20960;
+    const _t20928 = _t20958;
+    const _t20926 = _t20928;
+    return _t20926;
   }
-  Codegen$with_fresh_ir(ctx, _t20923);
-  const _t20922 = fn_name_20921;
-  return _t20922;
+  Codegen$with_fresh_ir(ctx, _t20924);
+  const _t20923 = fn_name_20922;
+  return _t20923;
 }
 function Codegen$emit_handler_body_thunk(ctx, body, free_with_info) {
-  const fn_name_20962 = (("mml_handler_body_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_int.show(ctx.fn_counter));
+  const fn_name_20963 = (("mml_handler_body_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_int.show(ctx.fn_counter));
   (ctx.fn_counter = (ctx.fn_counter + 1), undefined);
-  function _t20964(fn_ir) {
-    const outer_scopes_20965 = ctx.scopes;
-    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", fn_name_20962, ({_hd: ["ptr", "%env"], _tl: null})]);
+  function _t20965(fn_ir) {
+    const outer_scopes_20966 = ctx.scopes;
+    _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "i64", fn_name_20963, ({_hd: ["ptr", "%env"], _tl: null})]);
     _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir, "entry"]);
     (ctx.current_label = "entry", undefined);
     (ctx.loop_stack = null, undefined);
-    const fn_scope_20967 = Hashtbl$create(16);
-    function _t20969(scope) {
-      function _t20970(name, info) {
-        let _t20972;
-        const _t20971 = info;
-        _t20973: {
-          if (_t20971._tag === 5) {
-            let _t20974;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name]))) {
-              _t20974 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name, info]);
-            } else {
-              _t20974 = undefined;
-            }
-            _t20972 = _t20974;
-            break _t20973;
-          }
-          if (_t20971._tag === 6) {
+    const fn_scope_20968 = Hashtbl$create(16);
+    function _t20970(scope) {
+      function _t20971(name, info) {
+        let _t20973;
+        const _t20972 = info;
+        _t20974: {
+          if (_t20972._tag === 5) {
             let _t20975;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name]))) {
-              _t20975 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name]))) {
+              _t20975 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name, info]);
             } else {
               _t20975 = undefined;
             }
-            _t20972 = _t20975;
-            break _t20973;
+            _t20973 = _t20975;
+            break _t20974;
           }
-          if (_t20971._tag === 3) {
+          if (_t20972._tag === 6) {
             let _t20976;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name]))) {
-              _t20976 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name]))) {
+              _t20976 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name, info]);
             } else {
               _t20976 = undefined;
             }
-            _t20972 = _t20976;
-            break _t20973;
+            _t20973 = _t20976;
+            break _t20974;
           }
-          if (_t20971._tag === 0) {
-            _t20972 = undefined;
-            break _t20973;
-          }
-          if (_t20971._tag === 4) {
+          if (_t20972._tag === 3) {
             let _t20977;
-            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name]))) {
-              _t20977 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20967, name, info]);
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name]))) {
+              _t20977 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name, info]);
             } else {
               _t20977 = undefined;
             }
-            _t20972 = _t20977;
-            break _t20973;
+            _t20973 = _t20977;
+            break _t20974;
           }
-          if (_t20971._tag === 1) {
-            _t20972 = undefined;
-            break _t20973;
+          if (_t20972._tag === 0) {
+            _t20973 = undefined;
+            break _t20974;
           }
-          if (_t20971._tag === 2) {
-            _t20972 = undefined;
-            break _t20973;
+          if (_t20972._tag === 4) {
+            let _t20978;
+            if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name]))) {
+              _t20978 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, fn_scope_20968, name, info]);
+            } else {
+              _t20978 = undefined;
+            }
+            _t20973 = _t20978;
+            break _t20974;
+          }
+          if (_t20972._tag === 1) {
+            _t20973 = undefined;
+            break _t20974;
+          }
+          if (_t20972._tag === 2) {
+            _t20973 = undefined;
+            break _t20974;
           }
           _match_fail("line 0");
         }
-        return _t20972;
+        return _t20973;
       }
-      return Hashtbl$iter(_t20970, scope);
+      return Hashtbl$iter(_t20971, scope);
     }
-    List$iter(_t20969, outer_scopes_20965);
-    (ctx.scopes = ({_hd: fn_scope_20967, _tl: null}), undefined);
-    function _t20978(i, __p531) {
-      let _t20980;
-      const _t20979 = __p531;
-      _t20981: {
-        const name = _t20979[0];
-        const info = _t20979[1];
-        const env_slot_20982 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", i]);
-        const cap_val_20984 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", env_slot_20982]);
-        let _t20987;
-        const _t20986 = info;
-        _t20988: {
-          if (_t20986._tag === 4) {
-            const alloca_ptr_20989 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20984, alloca_ptr_20989]);
-            const _t20990 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20989})]);
-            _t20987 = _t20990;
-            break _t20988;
+    List$iter(_t20970, outer_scopes_20966);
+    (ctx.scopes = ({_hd: fn_scope_20968, _tl: null}), undefined);
+    function _t20979(i, __p531) {
+      let _t20981;
+      const _t20980 = __p531;
+      _t20982: {
+        const name = _t20980[0];
+        const info = _t20980[1];
+        const env_slot_20983 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, fn_ir, "i64", "%env", i]);
+        const cap_val_20985 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, fn_ir, "i64", env_slot_20983]);
+        let _t20988;
+        const _t20987 = info;
+        _t20989: {
+          if (_t20987._tag === 4) {
+            const alloca_ptr_20990 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20985, alloca_ptr_20990]);
+            const _t20991 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20990})]);
+            _t20988 = _t20991;
+            break _t20989;
           }
-          if (_t20986._tag === 1) {
-            const alloca_ptr_20991 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20984, alloca_ptr_20991]);
-            const _t20992 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20991})]);
-            _t20987 = _t20992;
-            break _t20988;
+          if (_t20987._tag === 1) {
+            const alloca_ptr_20992 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20985, alloca_ptr_20992]);
+            const _t20993 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20992})]);
+            _t20988 = _t20993;
+            break _t20989;
           }
-          if (_t20986._tag === 2) {
-            const alloca_ptr_20993 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20984, alloca_ptr_20993]);
-            const _t20994 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20993})]);
-            _t20987 = _t20994;
-            break _t20988;
+          if (_t20987._tag === 2) {
+            const alloca_ptr_20994 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20985, alloca_ptr_20994]);
+            const _t20995 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 2, _name: "MutRefCell", _val: alloca_ptr_20994})]);
+            _t20988 = _t20995;
+            break _t20989;
           }
-          const ptr_20995 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
-          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20984, ptr_20995]);
-          const _t20996 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_20995})]);
-          _t20987 = _t20996;
-          break _t20988;
+          const ptr_20996 = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir, "i64"]);
+          _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", cap_val_20985, ptr_20996]);
+          const _t20997 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_20996})]);
+          _t20988 = _t20997;
+          break _t20989;
         }
-        const _t20985 = _t20987;
-        const _t20983 = _t20985;
-        _t20980 = _t20983;
-        break _t20981;
+        const _t20986 = _t20988;
+        const _t20984 = _t20986;
+        _t20981 = _t20984;
+        break _t20982;
       }
-      return _t20980;
+      return _t20981;
     }
-    List$iteri(_t20978, free_with_info);
+    List$iteri(_t20979, free_with_info);
     Codegen$setup_handler_mark(ctx, body);
     (ctx.in_handler_thunk = true, undefined);
-    const body_result_20997 = Codegen$emit_expr(ctx, body);
-    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20997]);
-    const _t20998 = Ir_emit$emit_define_end(0, fn_ir);
-    const _t20968 = _t20998;
-    const _t20966 = _t20968;
-    return _t20966;
+    const body_result_20998 = Codegen$emit_expr(ctx, body);
+    _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, fn_ir, "i64", body_result_20998]);
+    const _t20999 = Ir_emit$emit_define_end(0, fn_ir);
+    const _t20969 = _t20999;
+    const _t20967 = _t20969;
+    return _t20967;
   }
-  Codegen$with_fresh_ir(ctx, _t20964);
-  const _t20963 = fn_name_20962;
-  return _t20963;
+  Codegen$with_fresh_ir(ctx, _t20965);
+  const _t20964 = fn_name_20963;
+  return _t20964;
 }
 function Codegen$emit_handle(ctx, body_expr, arms) {
-  const return_arm_20999 = Ref$create(({_tag: 0, _name: "None"}));
-  const provide_ops_21001 = Ref$create(null);
-  const try_ops_21003 = Ref$create(null);
-  const full_ops_21005 = Ref$create(null);
-  function _t21007(arm) {
-    let _t21009;
-    const _t21008 = arm;
-    _t21010: {
-      if (_t21008._tag === 1) {
-        const op = _t21008._val.op_name;
-        const arg = _t21008._val.arg;
-        const k = _t21008._val.k;
-        const e = _t21008._val.body;
-        _t21009 = Ref$set(full_ops_21005, ({_hd: [op, arg, k, e], _tl: Ref$get(full_ops_21005)}));
-        break _t21010;
+  const return_arm_21000 = Ref$create(({_tag: 0, _name: "None"}));
+  const provide_ops_21002 = Ref$create(null);
+  const try_ops_21004 = Ref$create(null);
+  const full_ops_21006 = Ref$create(null);
+  function _t21008(arm) {
+    let _t21010;
+    const _t21009 = arm;
+    _t21011: {
+      if (_t21009._tag === 1) {
+        const op = _t21009._val.op_name;
+        const arg = _t21009._val.arg;
+        const k = _t21009._val.k;
+        const e = _t21009._val.body;
+        _t21010 = Ref$set(full_ops_21006, ({_hd: [op, arg, k, e], _tl: Ref$get(full_ops_21006)}));
+        break _t21011;
       }
-      if (_t21008._tag === 2) {
-        const op = _t21008._val[0];
-        const arg = _t21008._val[1];
-        const e = _t21008._val[2];
-        _t21009 = Ref$set(provide_ops_21001, ({_hd: [op, arg, e], _tl: Ref$get(provide_ops_21001)}));
-        break _t21010;
+      if (_t21009._tag === 2) {
+        const op = _t21009._val[0];
+        const arg = _t21009._val[1];
+        const e = _t21009._val[2];
+        _t21010 = Ref$set(provide_ops_21002, ({_hd: [op, arg, e], _tl: Ref$get(provide_ops_21002)}));
+        break _t21011;
       }
-      if (_t21008._tag === 3) {
-        const op = _t21008._val[0];
-        const arg = _t21008._val[1];
-        const e = _t21008._val[2];
-        _t21009 = Ref$set(try_ops_21003, ({_hd: [op, arg, e], _tl: Ref$get(try_ops_21003)}));
-        break _t21010;
+      if (_t21009._tag === 3) {
+        const op = _t21009._val[0];
+        const arg = _t21009._val[1];
+        const e = _t21009._val[2];
+        _t21010 = Ref$set(try_ops_21004, ({_hd: [op, arg, e], _tl: Ref$get(try_ops_21004)}));
+        break _t21011;
       }
-      if (_t21008._tag === 0) {
-        const name = _t21008._val[0];
-        const e = _t21008._val[1];
-        _t21009 = Ref$set(return_arm_20999, ({_tag: 1, _name: "Some", _val: [name, e]}));
-        break _t21010;
+      if (_t21009._tag === 0) {
+        const name = _t21009._val[0];
+        const e = _t21009._val[1];
+        _t21010 = Ref$set(return_arm_21000, ({_tag: 1, _name: "Some", _val: [name, e]}));
+        break _t21011;
       }
       _match_fail("line 0");
     }
-    return _t21009;
+    return _t21010;
   }
-  List$iter(_t21007, arms);
-  const provide_ops_21011 = List$rev(Ref$get(provide_ops_21001));
-  const try_ops_21013 = List$rev(Ref$get(try_ops_21003));
-  const full_ops_21015 = List$rev(Ref$get(full_ops_21005));
-  const has_full_arms_21017 = !_eq(full_ops_21015, null);
-  const all_ops_21019 = ((List$length(provide_ops_21011) + List$length(try_ops_21013)) + List$length(full_ops_21015));
-  function _t21021(__p532) {
-    let _t21023;
-    const _t21022 = __p532;
-    _t21024: {
-      const op = _t21022[0];
-      const arg = _t21022[1];
-      const body = _t21022[2];
-      const free_21025 = Codegen$handler_arm_free_vars(ctx, ({_hd: arg, _tl: null}), body);
-      const fn_name_21027 = Codegen$emit_handler_arm_fn(ctx, arg, body, free_21025);
-      const env_val_21029 = Codegen$emit_handler_env(ctx, free_21025);
-      const _t21030 = [op, fn_name_21027, env_val_21029, "0"];
-      const _t21028 = _t21030;
-      const _t21026 = _t21028;
-      _t21023 = _t21026;
-      break _t21024;
+  List$iter(_t21008, arms);
+  const provide_ops_21012 = List$rev(Ref$get(provide_ops_21002));
+  const try_ops_21014 = List$rev(Ref$get(try_ops_21004));
+  const full_ops_21016 = List$rev(Ref$get(full_ops_21006));
+  const has_full_arms_21018 = !_eq(full_ops_21016, null);
+  const all_ops_21020 = ((List$length(provide_ops_21012) + List$length(try_ops_21014)) + List$length(full_ops_21016));
+  function _t21022(__p532) {
+    let _t21024;
+    const _t21023 = __p532;
+    _t21025: {
+      const op = _t21023[0];
+      const arg = _t21023[1];
+      const body = _t21023[2];
+      const free_21026 = Codegen$handler_arm_free_vars(ctx, ({_hd: arg, _tl: null}), body);
+      const fn_name_21028 = Codegen$emit_handler_arm_fn(ctx, arg, body, free_21026);
+      const env_val_21030 = Codegen$emit_handler_env(ctx, free_21026);
+      const _t21031 = [op, fn_name_21028, env_val_21030, "0"];
+      const _t21029 = _t21031;
+      const _t21027 = _t21029;
+      _t21024 = _t21027;
+      break _t21025;
     }
-    return _t21023;
+    return _t21024;
   }
-  const compiled_provide_21031 = List$map(_t21021, provide_ops_21011);
-  function _t21033(__p533) {
-    let _t21035;
-    const _t21034 = __p533;
-    _t21036: {
-      const op = _t21034[0];
-      const arg = _t21034[1];
-      const body = _t21034[2];
-      const free_21037 = Codegen$handler_arm_free_vars(ctx, ({_hd: arg, _tl: null}), body);
-      const fn_name_21039 = Codegen$emit_handler_arm_fn(ctx, arg, body, free_21037);
-      const env_val_21041 = Codegen$emit_handler_env(ctx, free_21037);
-      const _t21042 = [op, fn_name_21039, env_val_21041, "1"];
-      const _t21040 = _t21042;
-      const _t21038 = _t21040;
-      _t21035 = _t21038;
-      break _t21036;
+  const compiled_provide_21032 = List$map(_t21022, provide_ops_21012);
+  function _t21034(__p533) {
+    let _t21036;
+    const _t21035 = __p533;
+    _t21037: {
+      const op = _t21035[0];
+      const arg = _t21035[1];
+      const body = _t21035[2];
+      const free_21038 = Codegen$handler_arm_free_vars(ctx, ({_hd: arg, _tl: null}), body);
+      const fn_name_21040 = Codegen$emit_handler_arm_fn(ctx, arg, body, free_21038);
+      const env_val_21042 = Codegen$emit_handler_env(ctx, free_21038);
+      const _t21043 = [op, fn_name_21040, env_val_21042, "1"];
+      const _t21041 = _t21043;
+      const _t21039 = _t21041;
+      _t21036 = _t21039;
+      break _t21037;
     }
-    return _t21035;
+    return _t21036;
   }
-  const compiled_try_21043 = List$map(_t21033, try_ops_21013);
-  function _t21045(__p534) {
-    let _t21047;
-    const _t21046 = __p534;
-    _t21048: {
-      const op = _t21046[0];
-      const arg = _t21046[1];
-      const k = _t21046[2];
-      const body = _t21046[3];
-      const free_21049 = Codegen$handler_arm_free_vars(ctx, ({_hd: arg, _tl: ({_hd: k, _tl: null})}), body);
-      const fn_name_21051 = Codegen$emit_full_handler_arm_fn(ctx, arg, k, body, free_21049);
-      const env_val_21053 = Codegen$emit_handler_env(ctx, free_21049);
-      const _t21054 = [op, fn_name_21051, env_val_21053, "2"];
-      const _t21052 = _t21054;
-      const _t21050 = _t21052;
-      _t21047 = _t21050;
-      break _t21048;
+  const compiled_try_21044 = List$map(_t21034, try_ops_21014);
+  function _t21046(__p534) {
+    let _t21048;
+    const _t21047 = __p534;
+    _t21049: {
+      const op = _t21047[0];
+      const arg = _t21047[1];
+      const k = _t21047[2];
+      const body = _t21047[3];
+      const free_21050 = Codegen$handler_arm_free_vars(ctx, ({_hd: arg, _tl: ({_hd: k, _tl: null})}), body);
+      const fn_name_21052 = Codegen$emit_full_handler_arm_fn(ctx, arg, k, body, free_21050);
+      const env_val_21054 = Codegen$emit_handler_env(ctx, free_21050);
+      const _t21055 = [op, fn_name_21052, env_val_21054, "2"];
+      const _t21053 = _t21055;
+      const _t21051 = _t21053;
+      _t21048 = _t21051;
+      break _t21049;
     }
-    return _t21047;
+    return _t21048;
   }
-  const compiled_full_21055 = List$map(_t21045, full_ops_21015);
-  const compiled_ops_21057 = List$concat(compiled_provide_21031, List$concat(compiled_try_21043, compiled_full_21055));
+  const compiled_full_21056 = List$map(_t21046, full_ops_21016);
+  const compiled_ops_21058 = List$concat(compiled_provide_21032, List$concat(compiled_try_21044, compiled_full_21056));
   Codegen$add_extern(ctx, "mml_alloc_handler", "i64", ({_hd: "i64", _tl: null}));
-  const handler_val_21059 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "i64", "mml_alloc_handler", ({_hd: ["i64", string_of_int(all_ops_21019)], _tl: null})]);
+  const handler_val_21060 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "i64", "mml_alloc_handler", ({_hd: ["i64", string_of_int(all_ops_21020)], _tl: null})]);
   Codegen$add_extern(ctx, "mml_handler_set_op", "void", ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: null})})})})})}));
-  function _t21061(i, __p535) {
-    let _t21063;
-    const _t21062 = __p535;
-    _t21064: {
-      const op = _t21062[0];
-      const fn_name = _t21062[1];
-      const env_val = _t21062[2];
-      const kind_str = _t21062[3];
-      const op_str_21065 = Codegen$emit_c_string(ctx, op);
-      const fn_ptr_21067 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(fn_name))]);
-      const _t21068 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_handler_set_op", ({_hd: ["i64", handler_val_21059], _tl: ({_hd: ["i64", string_of_int(i)], _tl: ({_hd: ["i64", op_str_21065], _tl: ({_hd: ["i64", kind_str], _tl: ({_hd: ["i64", fn_ptr_21067], _tl: ({_hd: ["i64", env_val], _tl: null})})})})})})]);
-      const _t21066 = _t21068;
-      _t21063 = _t21066;
-      break _t21064;
+  function _t21062(i, __p535) {
+    let _t21064;
+    const _t21063 = __p535;
+    _t21065: {
+      const op = _t21063[0];
+      const fn_name = _t21063[1];
+      const env_val = _t21063[2];
+      const kind_str = _t21063[3];
+      const op_str_21066 = Codegen$emit_c_string(ctx, op);
+      const fn_ptr_21068 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(fn_name))]);
+      const _t21069 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_handler_set_op", ({_hd: ["i64", handler_val_21060], _tl: ({_hd: ["i64", string_of_int(i)], _tl: ({_hd: ["i64", op_str_21066], _tl: ({_hd: ["i64", kind_str], _tl: ({_hd: ["i64", fn_ptr_21068], _tl: ({_hd: ["i64", env_val], _tl: null})})})})})})]);
+      const _t21067 = _t21069;
+      _t21064 = _t21067;
+      break _t21065;
     }
-    return _t21063;
+    return _t21064;
   }
-  List$iteri(_t21061, compiled_ops_21057);
-  let _t21070;
-  const _t21069 = Ref$get(return_arm_20999);
-  _t21071: {
-    if (_t21069._tag === 0) {
-      _t21070 = ["0", "0"];
-      break _t21071;
+  List$iteri(_t21062, compiled_ops_21058);
+  let _t21071;
+  const _t21070 = Ref$get(return_arm_21000);
+  _t21072: {
+    if (_t21070._tag === 0) {
+      _t21071 = ["0", "0"];
+      break _t21072;
     }
-    if (_t21069._tag === 1) {
-      const name = _t21069._val[0];
-      const body = _t21069._val[1];
-      let _t21073;
-      const _t21072 = body.expr;
-      _t21074: {
-        if (_t21072._tag === 7) {
-          const v = _t21072._val;
-          _t21073 = (v === name);
-          break _t21074;
+    if (_t21070._tag === 1) {
+      const name = _t21070._val[0];
+      const body = _t21070._val[1];
+      let _t21074;
+      const _t21073 = body.expr;
+      _t21075: {
+        if (_t21073._tag === 7) {
+          const v = _t21073._val;
+          _t21074 = (v === name);
+          break _t21075;
         }
-        _t21073 = false;
-        break _t21074;
+        _t21074 = false;
+        break _t21075;
       }
-      const is_identity_21075 = _t21073;
-      let _t21077;
-      if (is_identity_21075) {
-        _t21077 = ["0", "0"];
+      const is_identity_21076 = _t21074;
+      let _t21078;
+      if (is_identity_21076) {
+        _t21078 = ["0", "0"];
       } else {
-        const free_21078 = Codegen$handler_arm_free_vars(ctx, ({_hd: name, _tl: null}), body);
-        const fn_name_21080 = Codegen$emit_handler_arm_fn(ctx, name, body, free_21078);
-        const env_val_21082 = Codegen$emit_handler_env(ctx, free_21078);
-        const fn_ptr_21084 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(fn_name_21080))]);
-        const _t21085 = [fn_ptr_21084, env_val_21082];
-        const _t21083 = _t21085;
-        const _t21081 = _t21083;
-        const _t21079 = _t21081;
-        _t21077 = _t21079;
+        const free_21079 = Codegen$handler_arm_free_vars(ctx, ({_hd: name, _tl: null}), body);
+        const fn_name_21081 = Codegen$emit_handler_arm_fn(ctx, name, body, free_21079);
+        const env_val_21083 = Codegen$emit_handler_env(ctx, free_21079);
+        const fn_ptr_21085 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(fn_name_21081))]);
+        const _t21086 = [fn_ptr_21085, env_val_21083];
+        const _t21084 = _t21086;
+        const _t21082 = _t21084;
+        const _t21080 = _t21082;
+        _t21078 = _t21080;
       }
-      const _t21076 = _t21077;
-      _t21070 = _t21076;
-      break _t21071;
+      const _t21077 = _t21078;
+      _t21071 = _t21077;
+      break _t21072;
     }
     _match_fail("line 0");
   }
-  let _t21087;
-  const _t21086 = _t21070;
-  _t21088: {
-    const return_fn_name = _t21086[0];
-    const return_env_val = _t21086[1];
+  let _t21088;
+  const _t21087 = _t21071;
+  _t21089: {
+    const return_fn_name = _t21087[0];
+    const return_env_val = _t21087[1];
     Codegen$add_extern(ctx, "mml_handler_set_return", "void", ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: null})})}));
-    _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_handler_set_return", ({_hd: ["i64", handler_val_21059], _tl: ({_hd: ["i64", return_fn_name], _tl: ({_hd: ["i64", return_env_val], _tl: null})})})]);
+    _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_handler_set_return", ({_hd: ["i64", handler_val_21060], _tl: ({_hd: ["i64", return_fn_name], _tl: ({_hd: ["i64", return_env_val], _tl: null})})})]);
     Codegen$add_extern(ctx, "mml_push_handler", "void", ({_hd: "i64", _tl: null}));
-    _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_push_handler", ({_hd: ["i64", handler_val_21059], _tl: null})]);
-    let _t21089;
-    if ((!(!_eq(try_ops_21013, null) || has_full_arms_21017))) {
-      const body_val_21090 = Codegen$emit_expr(ctx, body_expr);
+    _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_push_handler", ({_hd: ["i64", handler_val_21060], _tl: null})]);
+    let _t21090;
+    if ((!(!_eq(try_ops_21014, null) || has_full_arms_21018))) {
+      const body_val_21091 = Codegen$emit_expr(ctx, body_expr);
       Codegen$add_extern(ctx, "mml_pop_handler", "void", null);
       _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx.ir, "mml_pop_handler", null]);
-      let _t21093;
-      const _t21092 = Ref$get(return_arm_20999);
-      _t21094: {
-        if (_t21092._tag === 0) {
-          _t21093 = body_val_21090;
-          break _t21094;
+      let _t21094;
+      const _t21093 = Ref$get(return_arm_21000);
+      _t21095: {
+        if (_t21093._tag === 0) {
+          _t21094 = body_val_21091;
+          break _t21095;
         }
-        if (_t21092._tag === 1) {
-          const name = _t21092._val[0];
-          const ret_body = _t21092._val[1];
-          let _t21096;
-          const _t21095 = ret_body.expr;
-          _t21097: {
-            if (_t21095._tag === 7) {
-              const v = _t21095._val;
-              _t21096 = (v === name);
-              break _t21097;
+        if (_t21093._tag === 1) {
+          const name = _t21093._val[0];
+          const ret_body = _t21093._val[1];
+          let _t21097;
+          const _t21096 = ret_body.expr;
+          _t21098: {
+            if (_t21096._tag === 7) {
+              const v = _t21096._val;
+              _t21097 = (v === name);
+              break _t21098;
             }
-            _t21096 = false;
-            break _t21097;
+            _t21097 = false;
+            break _t21098;
           }
-          const is_identity_21098 = _t21096;
-          let _t21100;
-          if (is_identity_21098) {
-            _t21100 = body_val_21090;
+          const is_identity_21099 = _t21097;
+          let _t21101;
+          if (is_identity_21099) {
+            _t21101 = body_val_21091;
           } else {
             Codegen$push_scope(25, ctx);
-            const ptr_21101 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", body_val_21090, ptr_21101]);
-            _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_21101})]);
-            const result_21103 = Codegen$emit_expr(ctx, ret_body);
+            const ptr_21102 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", body_val_21091, ptr_21102]);
+            _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 0, _name: "Local", _val: ptr_21102})]);
+            const result_21104 = Codegen$emit_expr(ctx, ret_body);
             Codegen$pop_scope(25, ctx);
-            const _t21104 = result_21103;
-            const _t21102 = _t21104;
-            _t21100 = _t21102;
+            const _t21105 = result_21104;
+            const _t21103 = _t21105;
+            _t21101 = _t21103;
           }
-          const _t21099 = _t21100;
-          _t21093 = _t21099;
-          break _t21094;
+          const _t21100 = _t21101;
+          _t21094 = _t21100;
+          break _t21095;
         }
         _match_fail("line 0");
       }
-      const _t21091 = _t21093;
-      _t21089 = _t21091;
+      const _t21092 = _t21094;
+      _t21090 = _t21092;
     } else {
-      const body_free_21105 = Codegen$handler_arm_free_vars(ctx, null, body_expr);
-      const body_fn_name_21107 = Codegen$emit_handler_body_thunk(ctx, body_expr, body_free_21105);
-      const body_env_val_21109 = Codegen$emit_handler_env(ctx, body_free_21105);
-      const body_fn_ptr_21111 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(body_fn_name_21107))]);
-      let _t21113;
-      if (has_full_arms_21017) {
-        _t21113 = "mml_run_full_handler";
+      const body_free_21106 = Codegen$handler_arm_free_vars(ctx, null, body_expr);
+      const body_fn_name_21108 = Codegen$emit_handler_body_thunk(ctx, body_expr, body_free_21106);
+      const body_env_val_21110 = Codegen$emit_handler_env(ctx, body_free_21106);
+      const body_fn_ptr_21112 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(body_fn_name_21108))]);
+      let _t21114;
+      if (has_full_arms_21018) {
+        _t21114 = "mml_run_full_handler";
       } else {
-        _t21113 = "mml_run_try_handler";
+        _t21114 = "mml_run_try_handler";
       }
-      const runtime_fn_21114 = _t21113;
-      Codegen$add_extern(ctx, runtime_fn_21114, "i64", ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: null})})})})}));
-      const hv_21116 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "i64", runtime_fn_21114, ({_hd: ["i64", handler_val_21059], _tl: ({_hd: ["i64", body_fn_ptr_21111], _tl: ({_hd: ["i64", body_env_val_21109], _tl: ({_hd: ["i64", return_fn_name], _tl: ({_hd: ["i64", return_env_val], _tl: null})})})})})]);
-      let _t21118;
-      if ((!has_full_arms_21017)) {
+      const runtime_fn_21115 = _t21114;
+      Codegen$add_extern(ctx, runtime_fn_21115, "i64", ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: ({_hd: "i64", _tl: null})})})})}));
+      const hv_21117 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "i64", runtime_fn_21115, ({_hd: ["i64", handler_val_21060], _tl: ({_hd: ["i64", body_fn_ptr_21112], _tl: ({_hd: ["i64", body_env_val_21110], _tl: ({_hd: ["i64", return_fn_name], _tl: ({_hd: ["i64", return_env_val], _tl: null})})})})})]);
+      let _t21119;
+      if ((!has_full_arms_21018)) {
         Codegen$add_extern(ctx, "mml_check_early_return", "i64", null);
-        const flag_21119 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_check_early_return", null]);
-        const has_ret_21121 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", flag_21119, "0"]);
-        const early_21123 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_early_ret"]);
-        const cont_21125 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_no_ret"]);
-        _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, has_ret_21121, early_21123, cont_21125]);
-        _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, early_21123]);
-        (ctx.current_label = early_21123, undefined);
+        const flag_21120 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_check_early_return", null]);
+        const has_ret_21122 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", flag_21120, "0"]);
+        const early_21124 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_early_ret"]);
+        const cont_21126 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_no_ret"]);
+        _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, has_ret_21122, early_21124, cont_21126]);
+        _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, early_21124]);
+        (ctx.current_label = early_21124, undefined);
         Codegen$emit_handler_mark_restore(ctx);
-        let _t21127;
+        let _t21128;
         if (((ctx.fold_break_depth > 0) || ctx.in_handler_thunk)) {
-          _t21127 = _call(Codegen$emit_ctl_ret, [__dict_Show_string, ctx, hv_21116]);
+          _t21128 = _call(Codegen$emit_ctl_ret, [__dict_Show_string, ctx, hv_21117]);
         } else {
           Codegen$add_extern(ctx, "mml_get_early_return", "i64", null);
-          const rv_21128 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_get_early_return", null]);
-          const _t21129 = _call(Codegen$emit_ctl_ret, [__dict_Show_string, ctx, rv_21128]);
-          _t21127 = _t21129;
+          const rv_21129 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_get_early_return", null]);
+          const _t21130 = _call(Codegen$emit_ctl_ret, [__dict_Show_string, ctx, rv_21129]);
+          _t21128 = _t21130;
         }
-        _t21127;
-        _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cont_21125]);
-        (ctx.current_label = cont_21125, undefined);
-        let _t21130;
+        _t21128;
+        _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cont_21126]);
+        (ctx.current_label = cont_21126, undefined);
+        let _t21131;
         if ((!_eq(ctx.loop_stack, null) || ((ctx.fold_break_depth > 0) || ctx.in_handler_thunk))) {
           Codegen$add_extern(ctx, "mml_check_break_escape", "i64", null);
-          const bflag_21131 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_check_break_escape", null]);
-          const has_brk_21133 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", bflag_21131, "0"]);
-          const brk_21135 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_break"]);
-          const cont2_21137 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_no_break"]);
-          _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, has_brk_21133, brk_21135, cont2_21137]);
-          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, brk_21135]);
-          (ctx.current_label = brk_21135, undefined);
+          const bflag_21132 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_check_break_escape", null]);
+          const has_brk_21134 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", bflag_21132, "0"]);
+          const brk_21136 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_break"]);
+          const cont2_21138 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_no_break"]);
+          _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, has_brk_21134, brk_21136, cont2_21138]);
+          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, brk_21136]);
+          (ctx.current_label = brk_21136, undefined);
           Codegen$add_extern(ctx, "mml_get_break_escape", "i64", null);
-          const bv_21139 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_get_break_escape", null]);
-          _call(Codegen$emit_break_action, [__dict_Show_string, ctx, bv_21139]);
-          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cont2_21137]);
-          (ctx.current_label = cont2_21137, undefined);
+          const bv_21140 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_get_break_escape", null]);
+          _call(Codegen$emit_break_action, [__dict_Show_string, ctx, bv_21140]);
+          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cont2_21138]);
+          (ctx.current_label = cont2_21138, undefined);
           Codegen$add_extern(ctx, "mml_check_continue_escape", "i64", null);
-          const cflag_21141 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_check_continue_escape", null]);
-          const has_cont_21143 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", cflag_21141, "0"]);
-          const cl_21145 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_continue"]);
-          const cont3_21147 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_no_continue"]);
-          _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, has_cont_21143, cl_21145, cont3_21147]);
-          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cl_21145]);
-          (ctx.current_label = cl_21145, undefined);
+          const cflag_21142 = _call(Ir_emit$emit_call, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx.ir, "i64", "mml_check_continue_escape", null]);
+          const has_cont_21144 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", cflag_21142, "0"]);
+          const cl_21146 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_continue"]);
+          const cont3_21148 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "h_no_continue"]);
+          _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, has_cont_21144, cl_21146, cont3_21148]);
+          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cl_21146]);
+          (ctx.current_label = cl_21146, undefined);
           Codegen$add_extern(ctx, "mml_clear_continue_escape", "void", null);
           _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx.ir, "mml_clear_continue_escape", null]);
           Codegen$emit_continue_action(ctx);
-          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cont3_21147]);
-          const _t21148 = (ctx.current_label = cont3_21147, undefined);
-          const _t21146 = _t21148;
-          const _t21144 = _t21146;
-          const _t21142 = _t21144;
-          const _t21140 = _t21142;
-          const _t21138 = _t21140;
-          const _t21136 = _t21138;
-          const _t21134 = _t21136;
-          const _t21132 = _t21134;
-          _t21130 = _t21132;
+          _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, cont3_21148]);
+          const _t21149 = (ctx.current_label = cont3_21148, undefined);
+          const _t21147 = _t21149;
+          const _t21145 = _t21147;
+          const _t21143 = _t21145;
+          const _t21141 = _t21143;
+          const _t21139 = _t21141;
+          const _t21137 = _t21139;
+          const _t21135 = _t21137;
+          const _t21133 = _t21135;
+          _t21131 = _t21133;
         } else {
-          _t21130 = undefined;
+          _t21131 = undefined;
         }
-        const _t21126 = _t21130;
-        const _t21124 = _t21126;
-        const _t21122 = _t21124;
-        const _t21120 = _t21122;
-        _t21118 = _t21120;
+        const _t21127 = _t21131;
+        const _t21125 = _t21127;
+        const _t21123 = _t21125;
+        const _t21121 = _t21123;
+        _t21119 = _t21121;
       } else {
-        _t21118 = undefined;
+        _t21119 = undefined;
       }
-      _t21118;
-      const _t21117 = hv_21116;
-      const _t21115 = _t21117;
-      const _t21112 = _t21115;
-      const _t21110 = _t21112;
-      const _t21108 = _t21110;
-      const _t21106 = _t21108;
-      _t21089 = _t21106;
+      _t21119;
+      const _t21118 = hv_21117;
+      const _t21116 = _t21118;
+      const _t21113 = _t21116;
+      const _t21111 = _t21113;
+      const _t21109 = _t21111;
+      const _t21107 = _t21109;
+      _t21090 = _t21107;
     }
-    _t21087 = _t21089;
-    break _t21088;
+    _t21088 = _t21090;
+    break _t21089;
   }
-  const _t21060 = _t21087;
-  const _t21058 = _t21060;
-  const _t21056 = _t21058;
-  const _t21044 = _t21056;
-  const _t21032 = _t21044;
-  const _t21020 = _t21032;
-  const _t21018 = _t21020;
-  const _t21016 = _t21018;
-  const _t21014 = _t21016;
-  const _t21012 = _t21014;
-  const _t21006 = _t21012;
-  const _t21004 = _t21006;
-  const _t21002 = _t21004;
-  const _t21000 = _t21002;
-  return _t21000;
+  const _t21061 = _t21088;
+  const _t21059 = _t21061;
+  const _t21057 = _t21059;
+  const _t21045 = _t21057;
+  const _t21033 = _t21045;
+  const _t21021 = _t21033;
+  const _t21019 = _t21021;
+  const _t21017 = _t21019;
+  const _t21015 = _t21017;
+  const _t21013 = _t21015;
+  const _t21007 = _t21013;
+  const _t21005 = _t21007;
+  const _t21003 = _t21005;
+  const _t21001 = _t21003;
+  return _t21001;
 }
 function Codegen$infer_result_type(expr) {
   while (true) {
-    const ty_21149 = Types$repr(expr.ty);
-    function _t21151(t) {
-      let _t21153;
-      const _t21152 = t;
-      _t21154: {
-        if (_t21152._tag === 16) {
-          _t21153 = true;
-          break _t21154;
+    const ty_21150 = Types$repr(expr.ty);
+    function _t21152(t) {
+      let _t21154;
+      const _t21153 = t;
+      _t21155: {
+        if (_t21153._tag === 16) {
+          _t21154 = true;
+          break _t21155;
         }
-        if (_t21152._tag === 15) {
-          if (_t21152._val.contents._tag === 0) {
-            _t21153 = true;
-            break _t21154;
+        if (_t21153._tag === 15) {
+          if (_t21153._val.contents._tag === 0) {
+            _t21154 = true;
+            break _t21155;
           }
-          _t21153 = false;
-          break _t21154;
+          _t21154 = false;
+          break _t21155;
         }
-        _t21153 = false;
-        break _t21154;
+        _t21154 = false;
+        break _t21155;
       }
-      return _t21153;
+      return _t21154;
     }
-    const is_unresolved_21155 = _t21151;
-    let _t21157;
-    if ((!is_unresolved_21155(ty_21149))) {
-      _t21157 = ty_21149;
+    const is_unresolved_21156 = _t21152;
+    let _t21158;
+    if ((!is_unresolved_21156(ty_21150))) {
+      _t21158 = ty_21150;
     } else {
-      let _t21159;
-      const _t21158 = expr.expr;
-      _t21160: {
-        if (_t21158._tag === 11) {
-          const fn_expr = _t21158._val[0];
-          const fn_ty_21161 = Types$repr(fn_expr.ty);
-          let _t21164;
-          const _t21163 = fn_ty_21161;
-          _t21165: {
-            if (_t21163._tag === 7) {
-              const ret_ty = _t21163._val[2];
-              const ret_21166 = Types$repr(ret_ty);
-              let _t21168;
-              if ((!is_unresolved_21155(ret_21166))) {
-                _t21168 = ret_21166;
+      let _t21160;
+      const _t21159 = expr.expr;
+      _t21161: {
+        if (_t21159._tag === 11) {
+          const fn_expr = _t21159._val[0];
+          const fn_ty_21162 = Types$repr(fn_expr.ty);
+          let _t21165;
+          const _t21164 = fn_ty_21162;
+          _t21166: {
+            if (_t21164._tag === 7) {
+              const ret_ty = _t21164._val[2];
+              const ret_21167 = Types$repr(ret_ty);
+              let _t21169;
+              if ((!is_unresolved_21156(ret_21167))) {
+                _t21169 = ret_21167;
               } else {
-                _t21168 = Codegen$infer_type_from_dict_method(fn_expr);
+                _t21169 = Codegen$infer_type_from_dict_method(fn_expr);
               }
-              const _t21167 = _t21168;
-              _t21164 = _t21167;
-              break _t21165;
+              const _t21168 = _t21169;
+              _t21165 = _t21168;
+              break _t21166;
             }
-            _t21164 = ty_21149;
-            break _t21165;
+            _t21165 = ty_21150;
+            break _t21166;
           }
-          const _t21162 = _t21164;
-          _t21159 = _t21162;
-          break _t21160;
+          const _t21163 = _t21165;
+          _t21160 = _t21163;
+          break _t21161;
         }
-        if (_t21158._tag === 12) {
-          const then_e = _t21158._val[1];
-          const _t21169 = then_e;
-          expr = _t21169;
-          continue;
-          _t21159 = undefined;
-          break _t21160;
-        }
-        if (_t21158._tag === 8) {
-          const body = _t21158._val[3];
-          const _t21170 = body;
+        if (_t21159._tag === 12) {
+          const then_e = _t21159._val[1];
+          const _t21170 = then_e;
           expr = _t21170;
           continue;
-          _t21159 = undefined;
-          break _t21160;
+          _t21160 = undefined;
+          break _t21161;
         }
-        if (_t21158._tag === 24) {
-          if (_t21158._val[1] !== null) {
-            const first_body = _t21158._val[1]._hd[2];
-            const _t21171 = first_body;
-            expr = _t21171;
-            continue;
-            _t21159 = undefined;
-            break _t21160;
-          }
-          _t21159 = ty_21149;
-          break _t21160;
-        }
-        if (_t21158._tag === 28) {
-          const body = _t21158._val[1];
-          const _t21172 = body;
-          expr = _t21172;
+        if (_t21159._tag === 8) {
+          const body = _t21159._val[3];
+          const _t21171 = body;
+          expr = _t21171;
           continue;
-          _t21159 = undefined;
-          break _t21160;
+          _t21160 = undefined;
+          break _t21161;
         }
-        _t21159 = ty_21149;
-        break _t21160;
+        if (_t21159._tag === 24) {
+          if (_t21159._val[1] !== null) {
+            const first_body = _t21159._val[1]._hd[2];
+            const _t21172 = first_body;
+            expr = _t21172;
+            continue;
+            _t21160 = undefined;
+            break _t21161;
+          }
+          _t21160 = ty_21150;
+          break _t21161;
+        }
+        if (_t21159._tag === 28) {
+          const body = _t21159._val[1];
+          const _t21173 = body;
+          expr = _t21173;
+          continue;
+          _t21160 = undefined;
+          break _t21161;
+        }
+        _t21160 = ty_21150;
+        break _t21161;
       }
-      _t21157 = _t21159;
+      _t21158 = _t21160;
     }
-    const _t21156 = _t21157;
-    const _t21150 = _t21156;
-    return _t21150;
+    const _t21157 = _t21158;
+    const _t21151 = _t21157;
+    return _t21151;
   }
 }
 function Codegen$infer_type_from_dict_method(fn_expr) {
   return Types$repr(fn_expr.ty);
 }
 function Codegen$emit_decl(ctx, decl) {
-  let _t21174;
-  const _t21173 = decl;
-  _t21175: {
-    if (_t21173._tag === 6) {
-      _t21174 = undefined;
-      break _t21175;
+  let _t21175;
+  const _t21174 = decl;
+  _t21176: {
+    if (_t21174._tag === 6) {
+      _t21175 = undefined;
+      break _t21176;
     }
-    if (_t21173._tag === 7) {
-      _t21174 = undefined;
-      break _t21175;
+    if (_t21174._tag === 7) {
+      _t21175 = undefined;
+      break _t21176;
     }
-    if (_t21173._tag === 5) {
-      const expr = _t21173._val;
-      const v_21176 = Codegen$emit_expr(ctx, expr);
+    if (_t21174._tag === 5) {
+      const expr = _t21174._val;
+      const v_21177 = Codegen$emit_expr(ctx, expr);
       (ctx.result_type = Codegen$infer_result_type(expr), undefined);
-      const _t21177 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21176, ctx.result_ptr]);
-      _t21174 = _t21177;
-      break _t21175;
+      const _t21178 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21177, ctx.result_ptr]);
+      _t21175 = _t21178;
+      break _t21176;
     }
-    if (_t21173._tag === 8) {
-      _t21174 = undefined;
-      break _t21175;
+    if (_t21174._tag === 8) {
+      _t21175 = undefined;
+      break _t21176;
     }
-    if (_t21173._tag === 9) {
-      _t21174 = undefined;
-      break _t21175;
+    if (_t21174._tag === 9) {
+      _t21175 = undefined;
+      break _t21176;
     }
-    if (_t21173._tag === 0) {
-      if (_t21173._val[0] === "_") {
-        const expr = _t21173._val[1];
-        const v_21178 = Codegen$emit_expr(ctx, expr);
+    if (_t21174._tag === 0) {
+      if (_t21174._val[0] === "_") {
+        const expr = _t21174._val[1];
+        const v_21179 = Codegen$emit_expr(ctx, expr);
         (ctx.result_type = Codegen$infer_result_type(expr), undefined);
-        _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21178, ctx.result_ptr]);
-        const _t21179 = undefined;
-        _t21174 = _t21179;
-        break _t21175;
+        _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21179, ctx.result_ptr]);
+        const _t21180 = undefined;
+        _t21175 = _t21180;
+        break _t21176;
       }
-      const name = _t21173._val[0];
-      const expr = _t21173._val[1];
-      const is_dict_21180 = ((String$length(name) > 7) && (_call(String$sub, [name, 0, 7]) === "__dict_"));
-      let _t21182;
-      if (is_dict_21180) {
-        _t21182 = (ctx.current_dict_name = ({_tag: 1, _name: "Some", _val: name}), undefined);
+      const name = _t21174._val[0];
+      const expr = _t21174._val[1];
+      const is_dict_21181 = ((String$length(name) > 7) && (_call(String$sub, [name, 0, 7]) === "__dict_"));
+      let _t21183;
+      if (is_dict_21181) {
+        _t21183 = (ctx.current_dict_name = ({_tag: 1, _name: "Some", _val: name}), undefined);
       } else {
-        _t21182 = undefined;
+        _t21183 = undefined;
       }
-      _t21182;
-      let _t21184;
-      const _t21183 = expr.expr;
-      _t21185: {
-        if (_t21183._tag === 10) {
-          let _t21187;
-          const _t21186 = Codegen$flatten_fun(expr);
-          _t21188: {
-            const params = _t21186[0];
-            const body = _t21186[1];
-            let _t21189;
+      _t21183;
+      let _t21185;
+      const _t21184 = expr.expr;
+      _t21186: {
+        if (_t21184._tag === 10) {
+          let _t21188;
+          const _t21187 = Codegen$flatten_fun(expr);
+          _t21189: {
+            const params = _t21187[0];
+            const body = _t21187[1];
+            let _t21190;
             if (!_eq(params, null)) {
-              const fn_id_21190 = ctx.fn_counter;
+              const fn_id_21191 = ctx.fn_counter;
               (ctx.fn_counter = (ctx.fn_counter + 1), undefined);
-              const llvm_name_21192 = (((("mml_f_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name))) + "_") + __dict_Show_int.show(fn_id_21190));
-              const free_21194 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), params, body);
-              let _t21196;
-              if (!_eq(free_21194, null)) {
-                _t21196 = failwith((((("native codegen: top-level function " + __dict_Show_string.show(name)) + " captures free variables: ") + __dict_Show_string.show(_call(String$concat, [", ", free_21194]))) + " (Phase 3)"));
+              const llvm_name_21193 = (((("mml_f_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name))) + "_") + __dict_Show_int.show(fn_id_21191));
+              const free_21195 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), params, body);
+              let _t21197;
+              if (!_eq(free_21195, null)) {
+                _t21197 = failwith((((("native codegen: top-level function " + __dict_Show_string.show(name)) + " captures free variables: ") + __dict_Show_string.show(_call(String$concat, [", ", free_21195]))) + " (Phase 3)"));
               } else {
-                _t21196 = undefined;
+                _t21197 = undefined;
               }
-              _t21196;
-              _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 5, _name: "Func", _val: [llvm_name_21192, List$length(params)]})]);
-              Codegen$emit_named_function(ctx, llvm_name_21192, params, body);
+              _t21197;
+              _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 5, _name: "Func", _val: [llvm_name_21193, List$length(params)]})]);
+              Codegen$emit_named_function(ctx, llvm_name_21193, params, body);
               (ctx.result_type = ({_tag: 6, _name: "TUnit"}), undefined);
-              const _t21195 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
-              const _t21193 = _t21195;
-              const _t21191 = _t21193;
-              _t21189 = _t21191;
+              const _t21196 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
+              const _t21194 = _t21196;
+              const _t21192 = _t21194;
+              _t21190 = _t21192;
             } else {
-              _t21189 = _call(Codegen$emit_global_let, [ctx, name, expr]);
+              _t21190 = _call(Codegen$emit_global_let, [ctx, name, expr]);
             }
-            _t21187 = _t21189;
-            break _t21188;
+            _t21188 = _t21190;
+            break _t21189;
           }
-          _t21184 = _t21187;
-          break _t21185;
+          _t21185 = _t21188;
+          break _t21186;
         }
-        _t21184 = _call(Codegen$emit_global_let, [ctx, name, expr]);
-        break _t21185;
+        _t21185 = _call(Codegen$emit_global_let, [ctx, name, expr]);
+        break _t21186;
       }
-      _t21184;
-      let _t21197;
-      if (is_dict_21180) {
-        _t21197 = (ctx.current_dict_name = ({_tag: 0, _name: "None"}), undefined);
+      _t21185;
+      let _t21198;
+      if (is_dict_21181) {
+        _t21198 = (ctx.current_dict_name = ({_tag: 0, _name: "None"}), undefined);
       } else {
-        _t21197 = undefined;
+        _t21198 = undefined;
       }
-      const _t21181 = _t21197;
-      _t21174 = _t21181;
-      break _t21175;
+      const _t21182 = _t21198;
+      _t21175 = _t21182;
+      break _t21176;
     }
-    if (_t21173._tag === 1) {
-      const name = _t21173._val[0];
-      const expr = _t21173._val[1];
-      const v_21198 = Codegen$emit_expr(ctx, expr);
-      const gname_21200 = _call(Codegen$ensure_global, [ctx, name]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21198, ("@" + __dict_Show_string.show(gname_21200))]);
-      _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 4, _name: "MutGlobal", _val: gname_21200})]);
+    if (_t21174._tag === 1) {
+      const name = _t21174._val[0];
+      const expr = _t21174._val[1];
+      const v_21199 = Codegen$emit_expr(ctx, expr);
+      const gname_21201 = _call(Codegen$ensure_global, [ctx, name]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21199, ("@" + __dict_Show_string.show(gname_21201))]);
+      _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 4, _name: "MutGlobal", _val: gname_21201})]);
       (ctx.result_type = ({_tag: 6, _name: "TUnit"}), undefined);
-      const _t21201 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
-      const _t21199 = _t21201;
-      _t21174 = _t21199;
-      break _t21175;
+      const _t21202 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
+      const _t21200 = _t21202;
+      _t21175 = _t21200;
+      break _t21176;
     }
-    if (_t21173._tag === 2) {
-      const name = _t21173._val[0];
-      const expr = _t21173._val[1];
-      let _t21203;
-      const _t21202 = Codegen$flatten_fun(expr);
-      _t21204: {
-        const params = _t21202[0];
-        const body = _t21202[1];
-        let _t21205;
+    if (_t21174._tag === 2) {
+      const name = _t21174._val[0];
+      const expr = _t21174._val[1];
+      let _t21204;
+      const _t21203 = Codegen$flatten_fun(expr);
+      _t21205: {
+        const params = _t21203[0];
+        const body = _t21203[1];
+        let _t21206;
         if (_eq(params, null)) {
-          let _t21207;
-          const _t21206 = Codegen$emit_rec_placeholder(ctx, expr);
-          _t21208: {
-            const placeholder_val = _t21206[0];
-            const nbytes = _t21206[1];
-            const gname_21209 = _call(Codegen$ensure_global, [ctx, name]);
-            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", placeholder_val, ("@" + __dict_Show_string.show(gname_21209))]);
-            _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 3, _name: "Global", _val: gname_21209})]);
-            const computed_val_21211 = Codegen$emit_expr(ctx, expr);
-            Codegen$emit_backpatch(ctx, placeholder_val, computed_val_21211, nbytes);
+          let _t21208;
+          const _t21207 = Codegen$emit_rec_placeholder(ctx, expr);
+          _t21209: {
+            const placeholder_val = _t21207[0];
+            const nbytes = _t21207[1];
+            const gname_21210 = _call(Codegen$ensure_global, [ctx, name]);
+            _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", placeholder_val, ("@" + __dict_Show_string.show(gname_21210))]);
+            _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 3, _name: "Global", _val: gname_21210})]);
+            const computed_val_21212 = Codegen$emit_expr(ctx, expr);
+            Codegen$emit_backpatch(ctx, placeholder_val, computed_val_21212, nbytes);
             (ctx.result_type = ({_tag: 6, _name: "TUnit"}), undefined);
-            const _t21212 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
-            const _t21210 = _t21212;
-            _t21207 = _t21210;
-            break _t21208;
+            const _t21213 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
+            const _t21211 = _t21213;
+            _t21208 = _t21211;
+            break _t21209;
           }
-          _t21205 = _t21207;
+          _t21206 = _t21208;
         } else {
-          const fn_id_21213 = ctx.fn_counter;
+          const fn_id_21214 = ctx.fn_counter;
           (ctx.fn_counter = (ctx.fn_counter + 1), undefined);
-          const llvm_name_21215 = (((("mml_f_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name))) + "_") + __dict_Show_int.show(fn_id_21213));
-          _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 5, _name: "Func", _val: [llvm_name_21215, List$length(params)]})]);
-          const free_21217 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), ({_hd: name, _tl: params}), body);
-          let _t21219;
-          if (!_eq(free_21217, null)) {
-            _t21219 = failwith((((("native codegen: top-level function " + __dict_Show_string.show(name)) + " captures free variables: ") + __dict_Show_string.show(_call(String$concat, [", ", free_21217]))) + " (Phase 3)"));
+          const llvm_name_21216 = (((("mml_f_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name))) + "_") + __dict_Show_int.show(fn_id_21214));
+          _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 5, _name: "Func", _val: [llvm_name_21216, List$length(params)]})]);
+          const free_21218 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), ({_hd: name, _tl: params}), body);
+          let _t21220;
+          if (!_eq(free_21218, null)) {
+            _t21220 = failwith((((("native codegen: top-level function " + __dict_Show_string.show(name)) + " captures free variables: ") + __dict_Show_string.show(_call(String$concat, [", ", free_21218]))) + " (Phase 3)"));
           } else {
-            _t21219 = undefined;
+            _t21220 = undefined;
           }
-          _t21219;
-          Codegen$emit_named_function(ctx, llvm_name_21215, params, body);
+          _t21220;
+          Codegen$emit_named_function(ctx, llvm_name_21216, params, body);
           (ctx.result_type = ({_tag: 6, _name: "TUnit"}), undefined);
-          const _t21218 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
-          const _t21216 = _t21218;
-          const _t21214 = _t21216;
-          _t21205 = _t21214;
+          const _t21219 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
+          const _t21217 = _t21219;
+          const _t21215 = _t21217;
+          _t21206 = _t21215;
         }
-        _t21203 = _t21205;
-        break _t21204;
+        _t21204 = _t21206;
+        break _t21205;
       }
-      _t21174 = _t21203;
-      break _t21175;
+      _t21175 = _t21204;
+      break _t21176;
     }
-    if (_t21173._tag === 3) {
-      const bindings = _t21173._val;
-      const all_names_21220 = List$map(fst, bindings);
-      function _t21222(__p536) {
-        let _t21224;
-        const _t21223 = __p536;
-        _t21225: {
-          const name = _t21223[0];
-          const expr = _t21223[1];
-          let _t21227;
-          const _t21226 = Codegen$flatten_fun(expr);
-          _t21228: {
-            const params = _t21226[0];
-            let _t21229;
+    if (_t21174._tag === 3) {
+      const bindings = _t21174._val;
+      const all_names_21221 = List$map(fst, bindings);
+      function _t21223(__p536) {
+        let _t21225;
+        const _t21224 = __p536;
+        _t21226: {
+          const name = _t21224[0];
+          const expr = _t21224[1];
+          let _t21228;
+          const _t21227 = Codegen$flatten_fun(expr);
+          _t21229: {
+            const params = _t21227[0];
+            let _t21230;
             if (!_eq(params, null)) {
-              _t21229 = ({_tag: 2201316, _name: "`Func", _val: [name, expr]});
+              _t21230 = ({_tag: 2201316, _name: "`Func", _val: [name, expr]});
             } else {
-              _t21229 = ({_tag: 82420049, _name: "`Value", _val: [name, expr]});
+              _t21230 = ({_tag: 82420049, _name: "`Value", _val: [name, expr]});
             }
-            _t21227 = _t21229;
-            break _t21228;
+            _t21228 = _t21230;
+            break _t21229;
           }
-          _t21224 = _t21227;
-          break _t21225;
+          _t21225 = _t21228;
+          break _t21226;
         }
-        return _t21224;
+        return _t21225;
       }
-      const binding_info_21230 = List$map(_t21222, bindings);
-      const value_infos_21232 = Ref$create(null);
-      function _t21234(info) {
-        let _t21236;
-        const _t21235 = info;
-        _t21237: {
-          if (_t21235._tag === 2201316) {
-            const name = _t21235._val[0];
-            const expr = _t21235._val[1];
-            let _t21239;
-            const _t21238 = Codegen$flatten_fun(expr);
-            _t21240: {
-              const params = _t21238[0];
-              const fn_id_21241 = ctx.fn_counter;
+      const binding_info_21231 = List$map(_t21223, bindings);
+      const value_infos_21233 = Ref$create(null);
+      function _t21235(info) {
+        let _t21237;
+        const _t21236 = info;
+        _t21238: {
+          if (_t21236._tag === 2201316) {
+            const name = _t21236._val[0];
+            const expr = _t21236._val[1];
+            let _t21240;
+            const _t21239 = Codegen$flatten_fun(expr);
+            _t21241: {
+              const params = _t21239[0];
+              const fn_id_21242 = ctx.fn_counter;
               (ctx.fn_counter = (ctx.fn_counter + 1), undefined);
-              const llvm_name_21243 = (((("mml_f_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name))) + "_") + __dict_Show_int.show(fn_id_21241));
-              const _t21244 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 5, _name: "Func", _val: [llvm_name_21243, List$length(params)]})]);
-              const _t21242 = _t21244;
-              _t21239 = _t21242;
-              break _t21240;
+              const llvm_name_21244 = (((("mml_f_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name))) + "_") + __dict_Show_int.show(fn_id_21242));
+              const _t21245 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 5, _name: "Func", _val: [llvm_name_21244, List$length(params)]})]);
+              const _t21243 = _t21245;
+              _t21240 = _t21243;
+              break _t21241;
             }
-            _t21236 = _t21239;
-            break _t21237;
+            _t21237 = _t21240;
+            break _t21238;
           }
-          if (_t21235._tag === 82420049) {
-            const name = _t21235._val[0];
-            const expr = _t21235._val[1];
-            let _t21246;
-            const _t21245 = Codegen$emit_rec_placeholder(ctx, expr);
-            _t21247: {
-              const placeholder_val = _t21245[0];
-              const nbytes = _t21245[1];
-              const gname_21248 = _call(Codegen$ensure_global, [ctx, name]);
-              _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", placeholder_val, ("@" + __dict_Show_string.show(gname_21248))]);
-              _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 3, _name: "Global", _val: gname_21248})]);
-              const _t21249 = Ref$set(value_infos_21232, ({_hd: [name, expr, placeholder_val, nbytes], _tl: Ref$get(value_infos_21232)}));
-              _t21246 = _t21249;
-              break _t21247;
+          if (_t21236._tag === 82420049) {
+            const name = _t21236._val[0];
+            const expr = _t21236._val[1];
+            let _t21247;
+            const _t21246 = Codegen$emit_rec_placeholder(ctx, expr);
+            _t21248: {
+              const placeholder_val = _t21246[0];
+              const nbytes = _t21246[1];
+              const gname_21249 = _call(Codegen$ensure_global, [ctx, name]);
+              _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", placeholder_val, ("@" + __dict_Show_string.show(gname_21249))]);
+              _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 3, _name: "Global", _val: gname_21249})]);
+              const _t21250 = Ref$set(value_infos_21233, ({_hd: [name, expr, placeholder_val, nbytes], _tl: Ref$get(value_infos_21233)}));
+              _t21247 = _t21250;
+              break _t21248;
             }
-            _t21236 = _t21246;
-            break _t21237;
+            _t21237 = _t21247;
+            break _t21238;
           }
           _match_fail("line 0");
         }
-        return _t21236;
+        return _t21237;
       }
-      List$iter(_t21234, binding_info_21230);
-      const value_infos_21250 = List$rev(Ref$get(value_infos_21232));
-      function _t21252(info) {
-        let _t21254;
-        const _t21253 = info;
-        _t21255: {
-          if (_t21253._tag === 2201316) {
-            const name = _t21253._val[0];
-            const expr = _t21253._val[1];
-            let _t21257;
-            const _t21256 = Codegen$flatten_fun(expr);
-            _t21258: {
-              const params = _t21256[0];
-              const body = _t21256[1];
-              let _t21260;
-              const _t21259 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name]);
-              _t21261: {
-                if (_t21259._tag === 1) {
-                  if (_t21259._val._tag === 5) {
-                    const n = _t21259._val._val[0];
-                    _t21260 = n;
-                    break _t21261;
+      List$iter(_t21235, binding_info_21231);
+      const value_infos_21251 = List$rev(Ref$get(value_infos_21233));
+      function _t21253(info) {
+        let _t21255;
+        const _t21254 = info;
+        _t21256: {
+          if (_t21254._tag === 2201316) {
+            const name = _t21254._val[0];
+            const expr = _t21254._val[1];
+            let _t21258;
+            const _t21257 = Codegen$flatten_fun(expr);
+            _t21259: {
+              const params = _t21257[0];
+              const body = _t21257[1];
+              let _t21261;
+              const _t21260 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name]);
+              _t21262: {
+                if (_t21260._tag === 1) {
+                  if (_t21260._val._tag === 5) {
+                    const n = _t21260._val._val[0];
+                    _t21261 = n;
+                    break _t21262;
                   }
-                  _t21260 = failwith("expected Func");
-                  break _t21261;
+                  _t21261 = failwith("expected Func");
+                  break _t21262;
                 }
-                _t21260 = failwith("expected Func");
-                break _t21261;
+                _t21261 = failwith("expected Func");
+                break _t21262;
               }
-              const llvm_name_21262 = _t21260;
-              const free_21264 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), List$concat(all_names_21220, params), body);
-              let _t21266;
-              if (!_eq(free_21264, null)) {
-                _t21266 = failwith((("native codegen: top-level function captures free variables: " + __dict_Show_string.show(_call(String$concat, [", ", free_21264]))) + " (Phase 3)"));
+              const llvm_name_21263 = _t21261;
+              const free_21265 = Codegen$free_vars_of_fun(({_tag: 1, _name: "Some", _val: ctx}), List$concat(all_names_21221, params), body);
+              let _t21267;
+              if (!_eq(free_21265, null)) {
+                _t21267 = failwith((("native codegen: top-level function captures free variables: " + __dict_Show_string.show(_call(String$concat, [", ", free_21265]))) + " (Phase 3)"));
               } else {
-                _t21266 = undefined;
+                _t21267 = undefined;
               }
-              _t21266;
-              const _t21265 = Codegen$emit_named_function(ctx, llvm_name_21262, params, body);
-              const _t21263 = _t21265;
-              _t21257 = _t21263;
-              break _t21258;
+              _t21267;
+              const _t21266 = Codegen$emit_named_function(ctx, llvm_name_21263, params, body);
+              const _t21264 = _t21266;
+              _t21258 = _t21264;
+              break _t21259;
             }
-            _t21254 = _t21257;
-            break _t21255;
+            _t21255 = _t21258;
+            break _t21256;
           }
-          if (_t21253._tag === 82420049) {
-            _t21254 = undefined;
-            break _t21255;
+          if (_t21254._tag === 82420049) {
+            _t21255 = undefined;
+            break _t21256;
           }
           _match_fail("line 0");
         }
-        return _t21254;
+        return _t21255;
       }
-      List$iter(_t21252, binding_info_21230);
-      function _t21267(__p537) {
-        let _t21269;
-        const _t21268 = __p537;
-        _t21270: {
-          const expr = _t21268[1];
-          const placeholder_val = _t21268[2];
-          const nbytes = _t21268[3];
-          const computed_val_21271 = Codegen$emit_expr(ctx, expr);
-          const _t21272 = Codegen$emit_backpatch(ctx, placeholder_val, computed_val_21271, nbytes);
-          _t21269 = _t21272;
-          break _t21270;
+      List$iter(_t21253, binding_info_21231);
+      function _t21268(__p537) {
+        let _t21270;
+        const _t21269 = __p537;
+        _t21271: {
+          const expr = _t21269[1];
+          const placeholder_val = _t21269[2];
+          const nbytes = _t21269[3];
+          const computed_val_21272 = Codegen$emit_expr(ctx, expr);
+          const _t21273 = Codegen$emit_backpatch(ctx, placeholder_val, computed_val_21272, nbytes);
+          _t21270 = _t21273;
+          break _t21271;
         }
-        return _t21269;
+        return _t21270;
       }
-      List$iter(_t21267, value_infos_21250);
+      List$iter(_t21268, value_infos_21251);
       (ctx.result_type = ({_tag: 6, _name: "TUnit"}), undefined);
-      const _t21251 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
-      const _t21233 = _t21251;
-      const _t21231 = _t21233;
-      const _t21221 = _t21231;
-      _t21174 = _t21221;
-      break _t21175;
+      const _t21252 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
+      const _t21234 = _t21252;
+      const _t21232 = _t21234;
+      const _t21222 = _t21232;
+      _t21175 = _t21222;
+      break _t21176;
     }
-    if (_t21173._tag === 10) {
-      const _name = _t21173._val[0];
-      const inner_decls = _t21173._val[1];
-      _t21174 = List$iter(_call(Codegen$emit_decl, [ctx]), inner_decls);
-      break _t21175;
+    if (_t21174._tag === 10) {
+      const _name = _t21174._val[0];
+      const inner_decls = _t21174._val[1];
+      _t21175 = List$iter(_call(Codegen$emit_decl, [ctx]), inner_decls);
+      break _t21176;
     }
-    if (_t21173._tag === 11) {
-      const alias_pairs = _t21173._val;
-      function _t21273(__p538) {
-        let _t21275;
-        const _t21274 = __p538;
-        _t21276: {
-          const short_name = _t21274[0];
-          const qualified_name = _t21274[1];
-          let _t21278;
-          const _t21277 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, qualified_name]);
-          _t21279: {
-            if (_t21277._tag === 0) {
-              _t21278 = undefined;
-              break _t21279;
+    if (_t21174._tag === 11) {
+      const alias_pairs = _t21174._val;
+      function _t21274(__p538) {
+        let _t21276;
+        const _t21275 = __p538;
+        _t21277: {
+          const short_name = _t21275[0];
+          const qualified_name = _t21275[1];
+          let _t21279;
+          const _t21278 = _call(Codegen$lookup_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, qualified_name]);
+          _t21280: {
+            if (_t21278._tag === 0) {
+              _t21279 = undefined;
+              break _t21280;
             }
-            if (_t21277._tag === 1) {
-              const info = _t21277._val;
-              _t21278 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, short_name, info]);
-              break _t21279;
+            if (_t21278._tag === 1) {
+              const info = _t21278._val;
+              _t21279 = _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, short_name, info]);
+              break _t21280;
             }
             _match_fail("line 0");
           }
-          _t21275 = _t21278;
-          break _t21276;
+          _t21276 = _t21279;
+          break _t21277;
         }
-        return _t21275;
+        return _t21276;
       }
-      _t21174 = List$iter(_t21273, alias_pairs);
-      break _t21175;
+      _t21175 = List$iter(_t21274, alias_pairs);
+      break _t21176;
     }
-    if (_t21173._tag === 4) {
-      _t21174 = undefined;
-      break _t21175;
+    if (_t21174._tag === 4) {
+      _t21175 = undefined;
+      break _t21176;
     }
     _match_fail("line 0");
   }
-  return _t21174;
+  return _t21175;
 }
 function Codegen$ensure_global(ctx, name) {
-  const gname_21280 = (("mml_g_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name)));
-  const decl_21282 = (("@" + __dict_Show_string.show(gname_21280)) + " = global i64 0, section \"__DATA,__mmlgc\"");
-  let _t21284;
-  if ((!_call(List$mem, [__dict_Eq_string, decl_21282, ctx.global_decls]))) {
-    _t21284 = (ctx.global_decls = ({_hd: decl_21282, _tl: ctx.global_decls}), undefined);
+  const gname_21281 = (("mml_g_" + __dict_Show_string.show(ctx.unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(name)));
+  const decl_21283 = (("@" + __dict_Show_string.show(gname_21281)) + " = global i64 0, section \"__DATA,__mmlgc\"");
+  let _t21285;
+  if ((!_call(List$mem, [__dict_Eq_string, decl_21283, ctx.global_decls]))) {
+    _t21285 = (ctx.global_decls = ({_hd: decl_21283, _tl: ctx.global_decls}), undefined);
   } else {
-    _t21284 = undefined;
+    _t21285 = undefined;
   }
-  _t21284;
-  const _t21283 = gname_21280;
-  const _t21281 = _t21283;
-  return _t21281;
+  _t21285;
+  const _t21284 = gname_21281;
+  const _t21282 = _t21284;
+  return _t21282;
 }
 function Codegen$emit_global_let(ctx, name, expr) {
-  const v_21285 = Codegen$emit_expr(ctx, expr);
-  const gname_21287 = Codegen$ensure_global(ctx, name);
-  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21285, ("@" + __dict_Show_string.show(gname_21287))]);
-  _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 3, _name: "Global", _val: gname_21287})]);
+  const v_21286 = Codegen$emit_expr(ctx, expr);
+  const gname_21288 = Codegen$ensure_global(ctx, name);
+  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", v_21286, ("@" + __dict_Show_string.show(gname_21288))]);
+  _call(Codegen$bind_var, [__dict_Eq_string, __dict_Hash_string, 25, ctx, name, ({_tag: 3, _name: "Global", _val: gname_21288})]);
   (ctx.result_type = ({_tag: 6, _name: "TUnit"}), undefined);
-  const _t21288 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
-  const _t21286 = _t21288;
-  return _t21286;
+  const _t21289 = _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$unit_value, ctx.result_ptr]);
+  const _t21287 = _t21289;
+  return _t21287;
 }
 function Codegen$result_type_tag(ty) {
-  let _t21290;
-  const _t21289 = Types$repr(ty);
-  _t21291: {
-    if (_t21289._tag === 13) {
-      _t21290 = 5;
-      break _t21291;
+  let _t21291;
+  const _t21290 = Types$repr(ty);
+  _t21292: {
+    if (_t21290._tag === 13) {
+      _t21291 = 5;
+      break _t21292;
     }
-    if (_t21289._tag === 2) {
-      _t21290 = 1;
-      break _t21291;
+    if (_t21290._tag === 2) {
+      _t21291 = 1;
+      break _t21292;
     }
-    if (_t21289._tag === 4) {
-      _t21290 = 6;
-      break _t21291;
+    if (_t21290._tag === 4) {
+      _t21291 = 6;
+      break _t21292;
     }
-    if (_t21289._tag === 1) {
-      _t21290 = 3;
-      break _t21291;
+    if (_t21290._tag === 1) {
+      _t21291 = 3;
+      break _t21292;
     }
-    if (_t21289._tag === 0) {
-      _t21290 = 0;
-      break _t21291;
+    if (_t21290._tag === 0) {
+      _t21291 = 0;
+      break _t21292;
     }
-    if (_t21289._tag === 10) {
-      _t21290 = 5;
-      break _t21291;
+    if (_t21290._tag === 10) {
+      _t21291 = 5;
+      break _t21292;
     }
-    if (_t21289._tag === 14) {
-      _t21290 = 5;
-      break _t21291;
+    if (_t21290._tag === 14) {
+      _t21291 = 5;
+      break _t21292;
     }
-    if (_t21289._tag === 11) {
-      _t21290 = 5;
-      break _t21291;
+    if (_t21290._tag === 11) {
+      _t21291 = 5;
+      break _t21292;
     }
-    if (_t21289._tag === 5) {
-      _t21290 = 7;
-      break _t21291;
+    if (_t21290._tag === 5) {
+      _t21291 = 7;
+      break _t21292;
     }
-    if (_t21289._tag === 3) {
-      _t21290 = 2;
-      break _t21291;
+    if (_t21290._tag === 3) {
+      _t21291 = 2;
+      break _t21292;
     }
-    if (_t21289._tag === 9) {
-      _t21290 = 5;
-      break _t21291;
+    if (_t21290._tag === 9) {
+      _t21291 = 5;
+      break _t21292;
     }
-    if (_t21289._tag === 6) {
-      _t21290 = 4;
-      break _t21291;
+    if (_t21290._tag === 6) {
+      _t21291 = 4;
+      break _t21292;
     }
-    if (_t21289._tag === 12) {
-      _t21290 = 5;
-      break _t21291;
+    if (_t21290._tag === 12) {
+      _t21291 = 5;
+      break _t21292;
     }
-    _t21290 = 4;
-    break _t21291;
+    _t21291 = 4;
+    break _t21292;
   }
-  return _t21290;
+  return _t21291;
 }
 function Codegen$needs_format_result(ty) {
-  let _t21293;
-  const _t21292 = Types$repr(ty);
-  _t21294: {
-    if (_t21292._tag === 13) {
-      _t21293 = true;
-      break _t21294;
+  let _t21294;
+  const _t21293 = Types$repr(ty);
+  _t21295: {
+    if (_t21293._tag === 13) {
+      _t21294 = true;
+      break _t21295;
     }
-    if (_t21292._tag === 10) {
-      _t21293 = true;
-      break _t21294;
+    if (_t21293._tag === 10) {
+      _t21294 = true;
+      break _t21295;
     }
-    if (_t21292._tag === 14) {
-      _t21293 = true;
-      break _t21294;
+    if (_t21293._tag === 14) {
+      _t21294 = true;
+      break _t21295;
     }
-    if (_t21292._tag === 11) {
-      _t21293 = true;
-      break _t21294;
+    if (_t21293._tag === 11) {
+      _t21294 = true;
+      break _t21295;
     }
-    if (_t21292._tag === 9) {
-      _t21293 = true;
-      break _t21294;
+    if (_t21293._tag === 9) {
+      _t21294 = true;
+      break _t21295;
     }
-    if (_t21292._tag === 12) {
-      _t21293 = true;
-      break _t21294;
+    if (_t21293._tag === 12) {
+      _t21294 = true;
+      break _t21295;
     }
-    _t21293 = false;
-    break _t21294;
+    _t21294 = false;
+    break _t21295;
   }
-  return _t21293;
+  return _t21294;
 }
 function Codegen$emit_format_result(ctx, ty) {
-  function _t21295(fn_ir) {
+  function _t21296(fn_ir) {
     (ctx.scopes = ({_hd: Hashtbl$create(8), _tl: null}), undefined);
     _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, fn_ir, "void", "mml_format_result", ({_hd: ["i64", "%param_val"], _tl: null})]);
     _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir, "entry"]);
@@ -89270,1554 +89276,1554 @@ function Codegen$emit_format_result(ctx, ty) {
     Ir_emit$emit_ret_void(0, fn_ir);
     return Ir_emit$emit_define_end(0, fn_ir);
   }
-  return Codegen$with_fresh_ir(ctx, _t21295);
+  return Codegen$with_fresh_ir(ctx, _t21296);
 }
 function Codegen$emit_format_value(ctx, val_reg, ty) {
-  let _t21297;
-  const _t21296 = Types$repr(ty);
-  _t21298: {
-    if (_t21296._tag === 13) {
-      const elem_ty = _t21296._val;
+  let _t21298;
+  const _t21297 = Types$repr(ty);
+  _t21299: {
+    if (_t21297._tag === 13) {
+      const elem_ty = _t21297._val;
       _call(Codegen$emit_format_str, [ctx, "#["]);
-      const is_empty_21299 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", val_reg, "1"]);
-      const empty_check_21301 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", is_empty_21299, "0"]);
-      const arr_nonempty_21303 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_nonempty"]);
-      const arr_end_21305 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_end"]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, empty_check_21301, arr_end_21305, arr_nonempty_21303]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, arr_nonempty_21303]);
-      (ctx.current_label = arr_nonempty_21303, undefined);
-      const arr_ptr_21307 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
-      const len_ptr_21309 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", arr_ptr_21307, 0]);
-      const arr_len_21311 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", len_ptr_21309]);
-      const idx_ptr_21313 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", "0", idx_ptr_21313]);
-      const loop_head_21315 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_loop"]);
-      const loop_body_21317 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_body"]);
-      const loop_done_21319 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_done"]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21315]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_head_21315]);
-      (ctx.current_label = loop_head_21315, undefined);
-      const idx_21321 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", idx_ptr_21313]);
-      const cmp_21323 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "slt", "i64", idx_21321, arr_len_21311]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, cmp_21323, loop_body_21317, loop_done_21319]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_body_21317]);
-      (ctx.current_label = loop_body_21317, undefined);
-      const not_first_21325 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", idx_21321, "0"]);
-      const sep_label_21327 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_sep"]);
-      const elem_label_21329 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_elem"]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, not_first_21325, sep_label_21327, elem_label_21329]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, sep_label_21327]);
-      (ctx.current_label = sep_label_21327, undefined);
+      const is_empty_21300 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", val_reg, "1"]);
+      const empty_check_21302 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", is_empty_21300, "0"]);
+      const arr_nonempty_21304 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_nonempty"]);
+      const arr_end_21306 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_end"]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, empty_check_21302, arr_end_21306, arr_nonempty_21304]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, arr_nonempty_21304]);
+      (ctx.current_label = arr_nonempty_21304, undefined);
+      const arr_ptr_21308 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
+      const len_ptr_21310 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", arr_ptr_21308, 0]);
+      const arr_len_21312 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", len_ptr_21310]);
+      const idx_ptr_21314 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", "0", idx_ptr_21314]);
+      const loop_head_21316 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_loop"]);
+      const loop_body_21318 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_body"]);
+      const loop_done_21320 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_done"]);
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21316]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_head_21316]);
+      (ctx.current_label = loop_head_21316, undefined);
+      const idx_21322 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", idx_ptr_21314]);
+      const cmp_21324 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "slt", "i64", idx_21322, arr_len_21312]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, cmp_21324, loop_body_21318, loop_done_21320]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_body_21318]);
+      (ctx.current_label = loop_body_21318, undefined);
+      const not_first_21326 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", idx_21322, "0"]);
+      const sep_label_21328 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_sep"]);
+      const elem_label_21330 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "arr_elem"]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, not_first_21326, sep_label_21328, elem_label_21330]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, sep_label_21328]);
+      (ctx.current_label = sep_label_21328, undefined);
       _call(Codegen$emit_format_str, [ctx, "; "]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, elem_label_21329]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, elem_label_21329]);
-      (ctx.current_label = elem_label_21329, undefined);
-      const offset_21331 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "add", "i64", idx_21321, "1"]);
-      const elem_ptr_21333 = _call(Ir_emit$emit_gep_dynamic, [__dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "i64", arr_ptr_21307, offset_21331]);
-      const elem_val_21335 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", elem_ptr_21333]);
-      Codegen$emit_format_value(ctx, elem_val_21335, elem_ty);
-      const next_idx_21337 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "add", "i64", idx_21321, "1"]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", next_idx_21337, idx_ptr_21313]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21315]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_done_21319]);
-      (ctx.current_label = loop_done_21319, undefined);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, arr_end_21305]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, arr_end_21305]);
-      (ctx.current_label = arr_end_21305, undefined);
-      const _t21338 = _call(Codegen$emit_format_str, [ctx, "]"]);
-      const _t21336 = _t21338;
-      const _t21334 = _t21336;
-      const _t21332 = _t21334;
-      const _t21330 = _t21332;
-      const _t21328 = _t21330;
-      const _t21326 = _t21328;
-      const _t21324 = _t21326;
-      const _t21322 = _t21324;
-      const _t21320 = _t21322;
-      const _t21318 = _t21320;
-      const _t21316 = _t21318;
-      const _t21314 = _t21316;
-      const _t21312 = _t21314;
-      const _t21310 = _t21312;
-      const _t21308 = _t21310;
-      const _t21306 = _t21308;
-      const _t21304 = _t21306;
-      const _t21302 = _t21304;
-      const _t21300 = _t21302;
-      _t21297 = _t21300;
-      break _t21298;
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, elem_label_21330]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, elem_label_21330]);
+      (ctx.current_label = elem_label_21330, undefined);
+      const offset_21332 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "add", "i64", idx_21322, "1"]);
+      const elem_ptr_21334 = _call(Ir_emit$emit_gep_dynamic, [__dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "i64", arr_ptr_21308, offset_21332]);
+      const elem_val_21336 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", elem_ptr_21334]);
+      Codegen$emit_format_value(ctx, elem_val_21336, elem_ty);
+      const next_idx_21338 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "add", "i64", idx_21322, "1"]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", next_idx_21338, idx_ptr_21314]);
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21316]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_done_21320]);
+      (ctx.current_label = loop_done_21320, undefined);
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, arr_end_21306]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, arr_end_21306]);
+      (ctx.current_label = arr_end_21306, undefined);
+      const _t21339 = _call(Codegen$emit_format_str, [ctx, "]"]);
+      const _t21337 = _t21339;
+      const _t21335 = _t21337;
+      const _t21333 = _t21335;
+      const _t21331 = _t21333;
+      const _t21329 = _t21331;
+      const _t21327 = _t21329;
+      const _t21325 = _t21327;
+      const _t21323 = _t21325;
+      const _t21321 = _t21323;
+      const _t21319 = _t21321;
+      const _t21317 = _t21319;
+      const _t21315 = _t21317;
+      const _t21313 = _t21315;
+      const _t21311 = _t21313;
+      const _t21309 = _t21311;
+      const _t21307 = _t21309;
+      const _t21305 = _t21307;
+      const _t21303 = _t21305;
+      const _t21301 = _t21303;
+      _t21298 = _t21301;
+      break _t21299;
     }
-    if (_t21296._tag === 2) {
+    if (_t21297._tag === 2) {
       Codegen$add_extern(ctx, "mml_fmt_bool", "void", ({_hd: "i64", _tl: null}));
-      _t21297 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_bool", ({_hd: ["i64", val_reg], _tl: null})]);
-      break _t21298;
+      _t21298 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_bool", ({_hd: ["i64", val_reg], _tl: null})]);
+      break _t21299;
     }
-    if (_t21296._tag === 4) {
+    if (_t21297._tag === 4) {
       Codegen$add_extern(ctx, "mml_fmt_byte", "void", ({_hd: "i64", _tl: null}));
-      _t21297 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_byte", ({_hd: ["i64", val_reg], _tl: null})]);
-      break _t21298;
+      _t21298 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_byte", ({_hd: ["i64", val_reg], _tl: null})]);
+      break _t21299;
     }
-    if (_t21296._tag === 1) {
+    if (_t21297._tag === 1) {
       Codegen$add_extern(ctx, "mml_fmt_float", "void", ({_hd: "i64", _tl: null}));
-      _t21297 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_float", ({_hd: ["i64", val_reg], _tl: null})]);
-      break _t21298;
+      _t21298 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_float", ({_hd: ["i64", val_reg], _tl: null})]);
+      break _t21299;
     }
-    if (_t21296._tag === 0) {
+    if (_t21297._tag === 0) {
       Codegen$add_extern(ctx, "mml_fmt_int", "void", ({_hd: "i64", _tl: null}));
-      _t21297 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_int", ({_hd: ["i64", val_reg], _tl: null})]);
-      break _t21298;
+      _t21298 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_int", ({_hd: ["i64", val_reg], _tl: null})]);
+      break _t21299;
     }
-    if (_t21296._tag === 10) {
-      const elem_ty = _t21296._val;
+    if (_t21297._tag === 10) {
+      const elem_ty = _t21297._val;
       _call(Codegen$emit_format_str, [ctx, "["]);
-      const loop_head_21339 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_loop"]);
-      const loop_body_21341 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_body"]);
-      const loop_done_21343 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_done"]);
-      const cur_ptr_21345 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
-      const first_ptr_21347 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", val_reg, cur_ptr_21345]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$true_value, first_ptr_21347]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21339]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_head_21339]);
-      (ctx.current_label = loop_head_21339, undefined);
-      const cur_21349 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", cur_ptr_21345]);
-      const low_bit_21351 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", cur_21349, "1"]);
-      const is_nil_21353 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", low_bit_21351, "0"]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, is_nil_21353, loop_done_21343, loop_body_21341]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_body_21341]);
-      (ctx.current_label = loop_body_21341, undefined);
-      const is_first_21355 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", first_ptr_21347]);
-      const not_first_21357 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "eq", "i64", is_first_21355, Codegen$false_value]);
-      const sep_label_21359 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_sep"]);
-      const elem_label_21361 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_elem"]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, not_first_21357, sep_label_21359, elem_label_21361]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, sep_label_21359]);
-      (ctx.current_label = sep_label_21359, undefined);
+      const loop_head_21340 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_loop"]);
+      const loop_body_21342 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_body"]);
+      const loop_done_21344 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_done"]);
+      const cur_ptr_21346 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
+      const first_ptr_21348 = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx.ir, "i64"]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", val_reg, cur_ptr_21346]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$true_value, first_ptr_21348]);
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21340]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_head_21340]);
+      (ctx.current_label = loop_head_21340, undefined);
+      const cur_21350 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", cur_ptr_21346]);
+      const low_bit_21352 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", cur_21350, "1"]);
+      const is_nil_21354 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", low_bit_21352, "0"]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, is_nil_21354, loop_done_21344, loop_body_21342]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_body_21342]);
+      (ctx.current_label = loop_body_21342, undefined);
+      const is_first_21356 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", first_ptr_21348]);
+      const not_first_21358 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "eq", "i64", is_first_21356, Codegen$false_value]);
+      const sep_label_21360 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_sep"]);
+      const elem_label_21362 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "list_elem"]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, not_first_21358, sep_label_21360, elem_label_21362]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, sep_label_21360]);
+      (ctx.current_label = sep_label_21360, undefined);
       _call(Codegen$emit_format_str, [ctx, "; "]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, elem_label_21361]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, elem_label_21361]);
-      (ctx.current_label = elem_label_21361, undefined);
-      const cell_ptr_21363 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, cur_21349]);
-      const hd_ptr_21365 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", cell_ptr_21363, 0]);
-      const hd_val_21367 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", hd_ptr_21365]);
-      Codegen$emit_format_value(ctx, hd_val_21367, elem_ty);
-      const tl_ptr_21369 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", cell_ptr_21363, 1]);
-      const tl_val_21371 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", tl_ptr_21369]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", tl_val_21371, cur_ptr_21345]);
-      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$false_value, first_ptr_21347]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21339]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_done_21343]);
-      (ctx.current_label = loop_done_21343, undefined);
-      const _t21372 = _call(Codegen$emit_format_str, [ctx, "]"]);
-      const _t21370 = _t21372;
-      const _t21368 = _t21370;
-      const _t21366 = _t21368;
-      const _t21364 = _t21366;
-      const _t21362 = _t21364;
-      const _t21360 = _t21362;
-      const _t21358 = _t21360;
-      const _t21356 = _t21358;
-      const _t21354 = _t21356;
-      const _t21352 = _t21354;
-      const _t21350 = _t21352;
-      const _t21348 = _t21350;
-      const _t21346 = _t21348;
-      const _t21344 = _t21346;
-      const _t21342 = _t21344;
-      const _t21340 = _t21342;
-      _t21297 = _t21340;
-      break _t21298;
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, elem_label_21362]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, elem_label_21362]);
+      (ctx.current_label = elem_label_21362, undefined);
+      const cell_ptr_21364 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, cur_21350]);
+      const hd_ptr_21366 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", cell_ptr_21364, 0]);
+      const hd_val_21368 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", hd_ptr_21366]);
+      Codegen$emit_format_value(ctx, hd_val_21368, elem_ty);
+      const tl_ptr_21370 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", cell_ptr_21364, 1]);
+      const tl_val_21372 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", tl_ptr_21370]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", tl_val_21372, cur_ptr_21346]);
+      _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "i64", Codegen$false_value, first_ptr_21348]);
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, loop_head_21340]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, loop_done_21344]);
+      (ctx.current_label = loop_done_21344, undefined);
+      const _t21373 = _call(Codegen$emit_format_str, [ctx, "]"]);
+      const _t21371 = _t21373;
+      const _t21369 = _t21371;
+      const _t21367 = _t21369;
+      const _t21365 = _t21367;
+      const _t21363 = _t21365;
+      const _t21361 = _t21363;
+      const _t21359 = _t21361;
+      const _t21357 = _t21359;
+      const _t21355 = _t21357;
+      const _t21353 = _t21355;
+      const _t21351 = _t21353;
+      const _t21349 = _t21351;
+      const _t21347 = _t21349;
+      const _t21345 = _t21347;
+      const _t21343 = _t21345;
+      const _t21341 = _t21343;
+      _t21298 = _t21341;
+      break _t21299;
     }
-    if (_t21296._tag === 14) {
-      const row = _t21296._val;
+    if (_t21297._tag === 14) {
+      const row = _t21297._val;
       function collect_tags(acc, __x) {
         while (true) {
-          let _t21374;
-          const _t21373 = __x;
-          _t21375: {
-            if (_t21373._tag === 0) {
-              const name = _t21373._val[0];
-              const payload_ty = _t21373._val[1];
-              const rest = _t21373._val[2];
-              const tag_21376 = Types$polyvar_tag(name);
-              const _t21378 = ({_hd: [tag_21376, name, payload_ty], _tl: acc});
-              const _t21379 = rest;
-              acc = _t21378;
-              __x = _t21379;
+          let _t21375;
+          const _t21374 = __x;
+          _t21376: {
+            if (_t21374._tag === 0) {
+              const name = _t21374._val[0];
+              const payload_ty = _t21374._val[1];
+              const rest = _t21374._val[2];
+              const tag_21377 = Types$polyvar_tag(name);
+              const _t21379 = ({_hd: [tag_21377, name, payload_ty], _tl: acc});
+              const _t21380 = rest;
+              acc = _t21379;
+              __x = _t21380;
               continue;
-              const _t21377 = undefined;
-              _t21374 = _t21377;
-              break _t21375;
+              const _t21378 = undefined;
+              _t21375 = _t21378;
+              break _t21376;
             }
-            if (_t21373._tag === 1) {
-              if (_t21373._val.contents._tag === 1) {
-                const r = _t21373._val.contents._val;
-                const _t21380 = acc;
-                const _t21381 = r;
-                acc = _t21380;
-                __x = _t21381;
+            if (_t21374._tag === 1) {
+              if (_t21374._val.contents._tag === 1) {
+                const r = _t21374._val.contents._val;
+                const _t21381 = acc;
+                const _t21382 = r;
+                acc = _t21381;
+                __x = _t21382;
                 continue;
-                _t21374 = undefined;
-                break _t21375;
+                _t21375 = undefined;
+                break _t21376;
               }
-              _t21374 = List$rev(acc);
-              break _t21375;
+              _t21375 = List$rev(acc);
+              break _t21376;
             }
-            _t21374 = List$rev(acc);
-            break _t21375;
+            _t21375 = List$rev(acc);
+            break _t21376;
           }
-          return _t21374;
+          return _t21375;
         }
       }
-      const tags_21383 = collect_tags(null, row);
-      const done_label_21385 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_done"]);
-      const low_bit_21387 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", val_reg, "1"]);
-      const is_tagged_21389 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", low_bit_21387, "0"]);
-      const tagged_label_21391 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_tagged"]);
-      const ptr_label_21393 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_ptr"]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, is_tagged_21389, tagged_label_21391, ptr_label_21393]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, tagged_label_21391]);
-      (ctx.current_label = tagged_label_21391, undefined);
-      const default_tagged_21395 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_tagged_default"]);
-      function _t21397(__p542) {
-        let _t21399;
-        const _t21398 = __p542;
-        _t21400: {
-          const tag = _t21398[0];
-          const name = _t21398[1];
-          const payload_ty = _t21398[2];
-          let _t21402;
-          const _t21401 = payload_ty;
-          _t21403: {
-            if (_t21401._tag === 0) {
-              const label_21404 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_pvt_" + __dict_Show_int.show(tag))]);
-              const _t21405 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(tag), label_21404, name]});
-              _t21402 = _t21405;
-              break _t21403;
+      const tags_21384 = collect_tags(null, row);
+      const done_label_21386 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_done"]);
+      const low_bit_21388 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", val_reg, "1"]);
+      const is_tagged_21390 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", low_bit_21388, "0"]);
+      const tagged_label_21392 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_tagged"]);
+      const ptr_label_21394 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_ptr"]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, is_tagged_21390, tagged_label_21392, ptr_label_21394]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, tagged_label_21392]);
+      (ctx.current_label = tagged_label_21392, undefined);
+      const default_tagged_21396 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_tagged_default"]);
+      function _t21398(__p542) {
+        let _t21400;
+        const _t21399 = __p542;
+        _t21401: {
+          const tag = _t21399[0];
+          const name = _t21399[1];
+          const payload_ty = _t21399[2];
+          let _t21403;
+          const _t21402 = payload_ty;
+          _t21404: {
+            if (_t21402._tag === 0) {
+              const label_21405 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_pvt_" + __dict_Show_int.show(tag))]);
+              const _t21406 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(tag), label_21405, name]});
+              _t21403 = _t21406;
+              break _t21404;
             }
-            if (_t21401._tag === 1) {
-              _t21402 = ({_tag: 0, _name: "None"});
-              break _t21403;
+            if (_t21402._tag === 1) {
+              _t21403 = ({_tag: 0, _name: "None"});
+              break _t21404;
             }
             _match_fail("line 0");
           }
-          _t21399 = _t21402;
-          break _t21400;
+          _t21400 = _t21403;
+          break _t21401;
         }
-        return _t21399;
+        return _t21400;
       }
-      const tagged_cases_21406 = List$filter_map(_t21397, tags_21383);
-      function _t21408(__p543) {
-        let _t21410;
-        const _t21409 = __p543;
-        _t21411: {
-          const tag = _t21409[0];
-          const label = _t21409[1];
-          _t21410 = [tag, label];
-          break _t21411;
+      const tagged_cases_21407 = List$filter_map(_t21398, tags_21384);
+      function _t21409(__p543) {
+        let _t21411;
+        const _t21410 = __p543;
+        _t21412: {
+          const tag = _t21410[0];
+          const label = _t21410[1];
+          _t21411 = [tag, label];
+          break _t21412;
         }
-        return _t21410;
+        return _t21411;
       }
-      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, val_reg, default_tagged_21395, List$map(_t21408, tagged_cases_21406)]);
-      function _t21412(__p544) {
-        let _t21414;
-        const _t21413 = __p544;
-        _t21415: {
-          const label = _t21413[1];
-          const name = _t21413[2];
+      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, val_reg, default_tagged_21396, List$map(_t21409, tagged_cases_21407)]);
+      function _t21413(__p544) {
+        let _t21415;
+        const _t21414 = __p544;
+        _t21416: {
+          const label = _t21414[1];
+          const name = _t21414[2];
           _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, label]);
           (ctx.current_label = label, undefined);
           _call(Codegen$emit_format_str, [ctx, ("`" + name)]);
-          _t21414 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21385]);
-          break _t21415;
+          _t21415 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21386]);
+          break _t21416;
         }
-        return _t21414;
+        return _t21415;
       }
-      List$iter(_t21412, tagged_cases_21406);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_tagged_21395]);
-      (ctx.current_label = default_tagged_21395, undefined);
+      List$iter(_t21413, tagged_cases_21407);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_tagged_21396]);
+      (ctx.current_label = default_tagged_21396, undefined);
       _call(Codegen$emit_format_str, [ctx, "<poly_variant>"]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21385]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, ptr_label_21393]);
-      (ctx.current_label = ptr_label_21393, undefined);
-      const ptr_21416 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
-      const tag_ptr_21418 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21416, 0]);
-      const tag_val_21420 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", tag_ptr_21418]);
-      const default_ptr_21422 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_ptr_default"]);
-      function _t21424(__p545) {
-        let _t21426;
-        const _t21425 = __p545;
-        _t21427: {
-          const tag = _t21425[0];
-          const name = _t21425[1];
-          const payload_ty = _t21425[2];
-          let _t21429;
-          const _t21428 = payload_ty;
-          _t21430: {
-            if (_t21428._tag === 0) {
-              _t21429 = ({_tag: 0, _name: "None"});
-              break _t21430;
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21386]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, ptr_label_21394]);
+      (ctx.current_label = ptr_label_21394, undefined);
+      const ptr_21417 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
+      const tag_ptr_21419 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21417, 0]);
+      const tag_val_21421 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", tag_ptr_21419]);
+      const default_ptr_21423 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_pv_ptr_default"]);
+      function _t21425(__p545) {
+        let _t21427;
+        const _t21426 = __p545;
+        _t21428: {
+          const tag = _t21426[0];
+          const name = _t21426[1];
+          const payload_ty = _t21426[2];
+          let _t21430;
+          const _t21429 = payload_ty;
+          _t21431: {
+            if (_t21429._tag === 0) {
+              _t21430 = ({_tag: 0, _name: "None"});
+              break _t21431;
             }
-            if (_t21428._tag === 1) {
-              const label_21431 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_pvp_" + __dict_Show_int.show(tag))]);
-              const _t21432 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(tag), label_21431, name, payload_ty]});
-              _t21429 = _t21432;
-              break _t21430;
+            if (_t21429._tag === 1) {
+              const label_21432 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_pvp_" + __dict_Show_int.show(tag))]);
+              const _t21433 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(tag), label_21432, name, payload_ty]});
+              _t21430 = _t21433;
+              break _t21431;
             }
             _match_fail("line 0");
           }
-          _t21426 = _t21429;
-          break _t21427;
+          _t21427 = _t21430;
+          break _t21428;
         }
-        return _t21426;
+        return _t21427;
       }
-      const ptr_cases_21433 = List$filter_map(_t21424, tags_21383);
-      function _t21435(__p546) {
-        let _t21437;
-        const _t21436 = __p546;
-        _t21438: {
-          const tag = _t21436[0];
-          const label = _t21436[1];
-          _t21437 = [tag, label];
-          break _t21438;
+      const ptr_cases_21434 = List$filter_map(_t21425, tags_21384);
+      function _t21436(__p546) {
+        let _t21438;
+        const _t21437 = __p546;
+        _t21439: {
+          const tag = _t21437[0];
+          const label = _t21437[1];
+          _t21438 = [tag, label];
+          break _t21439;
         }
-        return _t21437;
+        return _t21438;
       }
-      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, tag_val_21420, default_ptr_21422, List$map(_t21435, ptr_cases_21433)]);
-      function _t21439(__p547) {
-        let _t21441;
-        const _t21440 = __p547;
-        _t21442: {
-          const _tag = _t21440[0];
-          const label = _t21440[1];
-          const name = _t21440[2];
-          const payload_ty = _t21440[3];
+      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, tag_val_21421, default_ptr_21423, List$map(_t21436, ptr_cases_21434)]);
+      function _t21440(__p547) {
+        let _t21442;
+        const _t21441 = __p547;
+        _t21443: {
+          const _tag = _t21441[0];
+          const label = _t21441[1];
+          const name = _t21441[2];
+          const payload_ty = _t21441[3];
           _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, label]);
           (ctx.current_label = label, undefined);
-          let _t21444;
-          const _t21443 = payload_ty;
-          _t21445: {
-            if (_t21443._tag === 0) {
-              _t21444 = _call(Codegen$emit_format_str, [ctx, ("`" + name)]);
-              break _t21445;
+          let _t21445;
+          const _t21444 = payload_ty;
+          _t21446: {
+            if (_t21444._tag === 0) {
+              _t21445 = _call(Codegen$emit_format_str, [ctx, ("`" + name)]);
+              break _t21446;
             }
-            if (_t21443._tag === 1) {
-              const pty = _t21443._val;
+            if (_t21444._tag === 1) {
+              const pty = _t21444._val;
               _call(Codegen$emit_format_str, [ctx, ("`" + (name + " "))]);
-              const payload_ptr_21446 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21416, 1]);
-              const payload_21448 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", payload_ptr_21446]);
-              let _t21451;
-              const _t21450 = Types$repr(pty);
-              _t21452: {
-                if (_t21450._tag === 14) {
-                  _t21451 = true;
-                  break _t21452;
+              const payload_ptr_21447 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21417, 1]);
+              const payload_21449 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", payload_ptr_21447]);
+              let _t21452;
+              const _t21451 = Types$repr(pty);
+              _t21453: {
+                if (_t21451._tag === 14) {
+                  _t21452 = true;
+                  break _t21453;
                 }
-                if (_t21450._tag === 9) {
-                  _t21451 = true;
-                  break _t21452;
+                if (_t21451._tag === 9) {
+                  _t21452 = true;
+                  break _t21453;
                 }
-                if (_t21450._tag === 12) {
-                  _t21451 = true;
-                  break _t21452;
+                if (_t21451._tag === 12) {
+                  _t21452 = true;
+                  break _t21453;
                 }
-                _t21451 = false;
-                break _t21452;
+                _t21452 = false;
+                break _t21453;
               }
-              const needs_parens_21453 = _t21451;
-              let _t21455;
-              if (needs_parens_21453) {
-                _t21455 = _call(Codegen$emit_format_str, [ctx, "("]);
-              } else {
-                _t21455 = undefined;
-              }
-              _t21455;
-              Codegen$emit_format_value(ctx, payload_21448, pty);
+              const needs_parens_21454 = _t21452;
               let _t21456;
-              if (needs_parens_21453) {
-                _t21456 = _call(Codegen$emit_format_str, [ctx, ")"]);
+              if (needs_parens_21454) {
+                _t21456 = _call(Codegen$emit_format_str, [ctx, "("]);
               } else {
                 _t21456 = undefined;
               }
-              const _t21454 = _t21456;
-              const _t21449 = _t21454;
-              const _t21447 = _t21449;
-              _t21444 = _t21447;
-              break _t21445;
+              _t21456;
+              Codegen$emit_format_value(ctx, payload_21449, pty);
+              let _t21457;
+              if (needs_parens_21454) {
+                _t21457 = _call(Codegen$emit_format_str, [ctx, ")"]);
+              } else {
+                _t21457 = undefined;
+              }
+              const _t21455 = _t21457;
+              const _t21450 = _t21455;
+              const _t21448 = _t21450;
+              _t21445 = _t21448;
+              break _t21446;
             }
             _match_fail("line 0");
           }
-          _t21444;
-          _t21441 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21385]);
-          break _t21442;
+          _t21445;
+          _t21442 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21386]);
+          break _t21443;
         }
-        return _t21441;
+        return _t21442;
       }
-      List$iter(_t21439, ptr_cases_21433);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_ptr_21422]);
-      (ctx.current_label = default_ptr_21422, undefined);
+      List$iter(_t21440, ptr_cases_21434);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_ptr_21423]);
+      (ctx.current_label = default_ptr_21423, undefined);
       _call(Codegen$emit_format_str, [ctx, "<poly_variant>"]);
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21385]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, done_label_21385]);
-      const _t21434 = (ctx.current_label = done_label_21385, undefined);
-      const _t21423 = _t21434;
-      const _t21421 = _t21423;
-      const _t21419 = _t21421;
-      const _t21417 = _t21419;
-      const _t21407 = _t21417;
-      const _t21396 = _t21407;
-      const _t21394 = _t21396;
-      const _t21392 = _t21394;
-      const _t21390 = _t21392;
-      const _t21388 = _t21390;
-      const _t21386 = _t21388;
-      const _t21384 = _t21386;
-      const _t21382 = _t21384;
-      _t21297 = _t21382;
-      break _t21298;
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21386]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, done_label_21386]);
+      const _t21435 = (ctx.current_label = done_label_21386, undefined);
+      const _t21424 = _t21435;
+      const _t21422 = _t21424;
+      const _t21420 = _t21422;
+      const _t21418 = _t21420;
+      const _t21408 = _t21418;
+      const _t21397 = _t21408;
+      const _t21395 = _t21397;
+      const _t21393 = _t21395;
+      const _t21391 = _t21393;
+      const _t21389 = _t21391;
+      const _t21387 = _t21389;
+      const _t21385 = _t21387;
+      const _t21383 = _t21385;
+      _t21298 = _t21383;
+      break _t21299;
     }
-    if (_t21296._tag === 11) {
-      const row = _t21296._val;
-      const fields_21457 = Types$record_row_to_fields(row);
-      function _t21459(__p539, __p540) {
-        let _t21461;
-        const _t21460 = __p539;
-        _t21462: {
-          const a = _t21460[0];
-          let _t21464;
-          const _t21463 = __p540;
-          _t21465: {
-            const b = _t21463[0];
-            _t21464 = _call(String$compare, [a, b]);
-            break _t21465;
+    if (_t21297._tag === 11) {
+      const row = _t21297._val;
+      const fields_21458 = Types$record_row_to_fields(row);
+      function _t21460(__p539, __p540) {
+        let _t21462;
+        const _t21461 = __p539;
+        _t21463: {
+          const a = _t21461[0];
+          let _t21465;
+          const _t21464 = __p540;
+          _t21466: {
+            const b = _t21464[0];
+            _t21465 = _call(String$compare, [a, b]);
+            break _t21466;
           }
-          _t21461 = _t21464;
-          break _t21462;
+          _t21462 = _t21465;
+          break _t21463;
         }
-        return _t21461;
+        return _t21462;
       }
-      const sorted_21466 = List$sort(_t21459, fields_21457);
+      const sorted_21467 = List$sort(_t21460, fields_21458);
       _call(Codegen$emit_format_str, [ctx, "{ "]);
-      const ptr_21468 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
-      function _t21470(i, __p541) {
-        let _t21472;
-        const _t21471 = __p541;
-        _t21473: {
-          const fname = _t21471[0];
-          const fty = _t21471[1];
-          let _t21474;
+      const ptr_21469 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
+      function _t21471(i, __p541) {
+        let _t21473;
+        const _t21472 = __p541;
+        _t21474: {
+          const fname = _t21472[0];
+          const fty = _t21472[1];
+          let _t21475;
           if ((i > 0)) {
-            _t21474 = _call(Codegen$emit_format_str, [ctx, "; "]);
+            _t21475 = _call(Codegen$emit_format_str, [ctx, "; "]);
           } else {
-            _t21474 = undefined;
+            _t21475 = undefined;
           }
-          _t21474;
+          _t21475;
           _call(Codegen$emit_format_str, [ctx, (fname + " = ")]);
-          const elem_ptr_21475 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21468, i]);
-          const elem_21477 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", elem_ptr_21475]);
-          const _t21478 = Codegen$emit_format_value(ctx, elem_21477, fty);
-          const _t21476 = _t21478;
-          _t21472 = _t21476;
-          break _t21473;
+          const elem_ptr_21476 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21469, i]);
+          const elem_21478 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", elem_ptr_21476]);
+          const _t21479 = Codegen$emit_format_value(ctx, elem_21478, fty);
+          const _t21477 = _t21479;
+          _t21473 = _t21477;
+          break _t21474;
         }
-        return _t21472;
+        return _t21473;
       }
-      List$iteri(_t21470, sorted_21466);
-      const _t21469 = _call(Codegen$emit_format_str, [ctx, " }"]);
-      const _t21467 = _t21469;
-      const _t21458 = _t21467;
-      _t21297 = _t21458;
-      break _t21298;
+      List$iteri(_t21471, sorted_21467);
+      const _t21470 = _call(Codegen$emit_format_str, [ctx, " }"]);
+      const _t21468 = _t21470;
+      const _t21459 = _t21468;
+      _t21298 = _t21459;
+      break _t21299;
     }
-    if (_t21296._tag === 5) {
+    if (_t21297._tag === 5) {
       Codegen$add_extern(ctx, "mml_fmt_rune", "void", ({_hd: "i64", _tl: null}));
-      _t21297 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_rune", ({_hd: ["i64", val_reg], _tl: null})]);
-      break _t21298;
+      _t21298 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_rune", ({_hd: ["i64", val_reg], _tl: null})]);
+      break _t21299;
     }
-    if (_t21296._tag === 3) {
+    if (_t21297._tag === 3) {
       Codegen$add_extern(ctx, "mml_fmt_string", "void", ({_hd: "i64", _tl: null}));
-      _t21297 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_string", ({_hd: ["i64", val_reg], _tl: null})]);
-      break _t21298;
+      _t21298 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_string", ({_hd: ["i64", val_reg], _tl: null})]);
+      break _t21299;
     }
-    if (_t21296._tag === 9) {
-      const tys = _t21296._val;
+    if (_t21297._tag === 9) {
+      const tys = _t21297._val;
       _call(Codegen$emit_format_str, [ctx, "("]);
-      const ptr_21479 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
-      function _t21481(i, elem_ty) {
-        let _t21482;
+      const ptr_21480 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
+      function _t21482(i, elem_ty) {
+        let _t21483;
         if ((i > 0)) {
-          _t21482 = _call(Codegen$emit_format_str, [ctx, ", "]);
+          _t21483 = _call(Codegen$emit_format_str, [ctx, ", "]);
         } else {
-          _t21482 = undefined;
+          _t21483 = undefined;
         }
-        _t21482;
-        const elem_ptr_21483 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21479, i]);
-        const elem_21485 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", elem_ptr_21483]);
-        const _t21486 = Codegen$emit_format_value(ctx, elem_21485, elem_ty);
-        const _t21484 = _t21486;
-        return _t21484;
+        _t21483;
+        const elem_ptr_21484 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21480, i]);
+        const elem_21486 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", elem_ptr_21484]);
+        const _t21487 = Codegen$emit_format_value(ctx, elem_21486, elem_ty);
+        const _t21485 = _t21487;
+        return _t21485;
       }
-      List$iteri(_t21481, tys);
-      const _t21480 = _call(Codegen$emit_format_str, [ctx, ")"]);
-      _t21297 = _t21480;
-      break _t21298;
+      List$iteri(_t21482, tys);
+      const _t21481 = _call(Codegen$emit_format_str, [ctx, ")"]);
+      _t21298 = _t21481;
+      break _t21299;
     }
-    if (_t21296._tag === 6) {
-      _t21297 = _call(Codegen$emit_format_str, [ctx, "()"]);
-      break _t21298;
+    if (_t21297._tag === 6) {
+      _t21298 = _call(Codegen$emit_format_str, [ctx, "()"]);
+      break _t21299;
     }
-    if (_t21296._tag === 12) {
-      const type_name = _t21296._val[0];
-      const ty_args = _t21296._val[1];
-      let _t21487;
+    if (_t21297._tag === 12) {
+      const type_name = _t21297._val[0];
+      const ty_args = _t21297._val[1];
+      let _t21488;
       if (Types$type_is_newtype(ctx.type_env, type_name)) {
-        let _t21489;
-        const _t21488 = _call(List$assoc_opt, [__dict_Eq_string, type_name, ctx.variant_defs]);
-        _t21490: {
-          if (_t21488._tag === 1) {
-            if (_t21488._val !== null) {
-              if (_t21488._val._hd[1]._tag === 1) {
-                if (_t21488._val._tl === null) {
-                  const underlying_ty = _t21488._val._hd[1]._val;
-                  const args_21491 = Array$of_list(ty_args);
+        let _t21490;
+        const _t21489 = _call(List$assoc_opt, [__dict_Eq_string, type_name, ctx.variant_defs]);
+        _t21491: {
+          if (_t21489._tag === 1) {
+            if (_t21489._val !== null) {
+              if (_t21489._val._hd[1]._tag === 1) {
+                if (_t21489._val._tl === null) {
+                  const underlying_ty = _t21489._val._hd[1]._val;
+                  const args_21492 = Array$of_list(ty_args);
                   function instantiate(t) {
-                    let _t21494;
-                    const _t21493 = Types$repr(t);
-                    _t21495: {
-                      if (_t21493._tag === 16) {
-                        const i = _t21493._val;
-                        if ((i < Array$length(args_21491))) {
-                          const i = _t21493._val;
-                          _t21494 = _call(Array$get, [args_21491, i]);
-                          break _t21495;
+                    let _t21495;
+                    const _t21494 = Types$repr(t);
+                    _t21496: {
+                      if (_t21494._tag === 16) {
+                        const i = _t21494._val;
+                        if ((i < Array$length(args_21492))) {
+                          const i = _t21494._val;
+                          _t21495 = _call(Array$get, [args_21492, i]);
+                          break _t21496;
                         } else {
-                          _t21494 = t;
-                          break _t21495;
+                          _t21495 = t;
+                          break _t21496;
                         }
                       }
-                      if (_t21493._tag === 10) {
-                        const t$p = _t21493._val;
-                        _t21494 = ({_tag: 10, _name: "TList", _val: instantiate(t$p)});
-                        break _t21495;
+                      if (_t21494._tag === 10) {
+                        const t$p = _t21494._val;
+                        _t21495 = ({_tag: 10, _name: "TList", _val: instantiate(t$p)});
+                        break _t21496;
                       }
-                      if (_t21493._tag === 9) {
-                        const ts = _t21493._val;
-                        _t21494 = ({_tag: 9, _name: "TTuple", _val: List$map(instantiate, ts)});
-                        break _t21495;
+                      if (_t21494._tag === 9) {
+                        const ts = _t21494._val;
+                        _t21495 = ({_tag: 9, _name: "TTuple", _val: List$map(instantiate, ts)});
+                        break _t21496;
                       }
-                      if (_t21493._tag === 12) {
-                        const n = _t21493._val[0];
-                        const ts = _t21493._val[1];
-                        _t21494 = ({_tag: 12, _name: "TVariant", _val: [n, List$map(instantiate, ts)]});
-                        break _t21495;
+                      if (_t21494._tag === 12) {
+                        const n = _t21494._val[0];
+                        const ts = _t21494._val[1];
+                        _t21495 = ({_tag: 12, _name: "TVariant", _val: [n, List$map(instantiate, ts)]});
+                        break _t21496;
                       }
-                      _t21494 = t;
-                      break _t21495;
+                      _t21495 = t;
+                      break _t21496;
                     }
-                    return _t21494;
+                    return _t21495;
                   }
-                  const _t21496 = Codegen$emit_format_value(ctx, val_reg, instantiate(underlying_ty));
-                  const _t21492 = _t21496;
-                  _t21489 = _t21492;
-                  break _t21490;
+                  const _t21497 = Codegen$emit_format_value(ctx, val_reg, instantiate(underlying_ty));
+                  const _t21493 = _t21497;
+                  _t21490 = _t21493;
+                  break _t21491;
                 }
-                _t21489 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
-                break _t21490;
+                _t21490 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
+                break _t21491;
               }
-              _t21489 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
-              break _t21490;
+              _t21490 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
+              break _t21491;
             }
-            _t21489 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
-            break _t21490;
+            _t21490 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
+            break _t21491;
           }
-          _t21489 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
-          break _t21490;
+          _t21490 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
+          break _t21491;
         }
-        _t21487 = _t21489;
+        _t21488 = _t21490;
       } else {
-        _t21487 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
+        _t21488 = _call(Codegen$emit_format_variant, [ctx, val_reg, type_name, ty_args]);
       }
-      _t21297 = _t21487;
-      break _t21298;
+      _t21298 = _t21488;
+      break _t21299;
     }
-    _t21297 = _call(Codegen$emit_format_str, [ctx, "<unknown>"]);
-    break _t21298;
+    _t21298 = _call(Codegen$emit_format_str, [ctx, "<unknown>"]);
+    break _t21299;
   }
-  return _t21297;
+  return _t21298;
 }
 function Codegen$emit_format_str(ctx, s) {
-  const name_21497 = (".str." + __dict_Show_int.show(ctx.str_counter));
+  const name_21498 = (".str." + __dict_Show_int.show(ctx.str_counter));
   (ctx.str_counter = (ctx.str_counter + 1), undefined);
-  const escaped_21499 = Buffer$contents(Codegen$llvm_escape_string(s));
-  const decl_21501 = (((((("@" + __dict_Show_string.show(name_21497)) + " = private unnamed_addr constant [") + __dict_Show_int.show((String$length(s) + 1))) + " x i8] c\"") + __dict_Show_string.show(escaped_21499)) + "\\00\"");
-  (ctx.string_globals = ({_hd: decl_21501, _tl: ctx.string_globals}), undefined);
-  const sptr_21503 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(name_21497))]);
+  const escaped_21500 = Buffer$contents(Codegen$llvm_escape_string(s));
+  const decl_21502 = (((((("@" + __dict_Show_string.show(name_21498)) + " = private unnamed_addr constant [") + __dict_Show_int.show((String$length(s) + 1))) + " x i8] c\"") + __dict_Show_string.show(escaped_21500)) + "\\00\"");
+  (ctx.string_globals = ({_hd: decl_21502, _tl: ctx.string_globals}), undefined);
+  const sptr_21504 = _call(Ir_emit$emit_ptrtoint, [__dict_Show_string, ctx.ir, ("@" + __dict_Show_string.show(name_21498))]);
   Codegen$add_extern(ctx, "mml_fmt_str", "void", ({_hd: "i64", _tl: null}));
-  const _t21504 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_str", ({_hd: ["i64", sptr_21503], _tl: null})]);
-  const _t21502 = _t21504;
-  const _t21500 = _t21502;
-  const _t21498 = _t21500;
-  return _t21498;
+  const _t21505 = _call(Ir_emit$emit_call_void, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, "mml_fmt_str", ({_hd: ["i64", sptr_21504], _tl: null})]);
+  const _t21503 = _t21505;
+  const _t21501 = _t21503;
+  const _t21499 = _t21501;
+  return _t21499;
 }
 function Codegen$emit_format_variant(ctx, val_reg, type_name, ty_args) {
-  let _t21506;
-  const _t21505 = _call(List$assoc_opt, [__dict_Eq_string, type_name, ctx.variant_defs]);
-  _t21507: {
-    if (_t21505._tag === 0) {
-      _t21506 = Codegen$emit_format_str(ctx, "<variant>");
-      break _t21507;
+  let _t21507;
+  const _t21506 = _call(List$assoc_opt, [__dict_Eq_string, type_name, ctx.variant_defs]);
+  _t21508: {
+    if (_t21506._tag === 0) {
+      _t21507 = Codegen$emit_format_str(ctx, "<variant>");
+      break _t21508;
     }
-    if (_t21505._tag === 1) {
-      const vdef = _t21505._val;
-      const done_label_21508 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_done"]);
-      const low_bit_21510 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", val_reg, "1"]);
-      const is_tagged_21512 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", low_bit_21510, "0"]);
-      const tagged_label_21514 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_tagged"]);
-      const ptr_label_21516 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_ptr"]);
-      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, is_tagged_21512, tagged_label_21514, ptr_label_21516]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, tagged_label_21514]);
-      (ctx.current_label = tagged_label_21514, undefined);
-      const default_tagged_21518 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_tagged_default"]);
-      function _t21520(__p548) {
-        let _t21522;
-        const _t21521 = __p548;
-        _t21523: {
-          const i = _t21521[0];
-          const ctor_name = _t21521[1][0];
-          const payload_ty = _t21521[1][1];
-          let _t21525;
-          const _t21524 = payload_ty;
-          _t21526: {
-            if (_t21524._tag === 0) {
-              const label_21527 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_tag_" + __dict_Show_int.show(i))]);
-              const _t21528 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(i), label_21527, ctor_name]});
-              _t21525 = _t21528;
-              break _t21526;
+    if (_t21506._tag === 1) {
+      const vdef = _t21506._val;
+      const done_label_21509 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_done"]);
+      const low_bit_21511 = _call(Ir_emit$emit_binop, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "and", "i64", val_reg, "1"]);
+      const is_tagged_21513 = _call(Ir_emit$emit_icmp, [__dict_Show_string, __dict_Show_string, __dict_Show_string, __dict_Show_string, ctx.ir, "ne", "i64", low_bit_21511, "0"]);
+      const tagged_label_21515 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_tagged"]);
+      const ptr_label_21517 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_ptr"]);
+      _call(Ir_emit$emit_condbr, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx.ir, is_tagged_21513, tagged_label_21515, ptr_label_21517]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, tagged_label_21515]);
+      (ctx.current_label = tagged_label_21515, undefined);
+      const default_tagged_21519 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_tagged_default"]);
+      function _t21521(__p548) {
+        let _t21523;
+        const _t21522 = __p548;
+        _t21524: {
+          const i = _t21522[0];
+          const ctor_name = _t21522[1][0];
+          const payload_ty = _t21522[1][1];
+          let _t21526;
+          const _t21525 = payload_ty;
+          _t21527: {
+            if (_t21525._tag === 0) {
+              const label_21528 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_tag_" + __dict_Show_int.show(i))]);
+              const _t21529 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(i), label_21528, ctor_name]});
+              _t21526 = _t21529;
+              break _t21527;
             }
-            if (_t21524._tag === 1) {
-              _t21525 = ({_tag: 0, _name: "None"});
-              break _t21526;
+            if (_t21525._tag === 1) {
+              _t21526 = ({_tag: 0, _name: "None"});
+              break _t21527;
             }
             _match_fail("line 0");
           }
-          _t21522 = _t21525;
-          break _t21523;
+          _t21523 = _t21526;
+          break _t21524;
         }
-        return _t21522;
+        return _t21523;
       }
-      function _t21529(i, c) {
+      function _t21530(i, c) {
         return [i, c];
       }
-      const tagged_cases_21530 = List$filter_map(_t21520, List$mapi(_t21529, vdef));
-      function _t21532(__p549) {
-        let _t21534;
-        const _t21533 = __p549;
-        _t21535: {
-          const tag = _t21533[0];
-          const label = _t21533[1];
-          _t21534 = [tag, label];
-          break _t21535;
+      const tagged_cases_21531 = List$filter_map(_t21521, List$mapi(_t21530, vdef));
+      function _t21533(__p549) {
+        let _t21535;
+        const _t21534 = __p549;
+        _t21536: {
+          const tag = _t21534[0];
+          const label = _t21534[1];
+          _t21535 = [tag, label];
+          break _t21536;
         }
-        return _t21534;
+        return _t21535;
       }
-      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, val_reg, default_tagged_21518, List$map(_t21532, tagged_cases_21530)]);
-      function _t21536(__p550) {
-        let _t21538;
-        const _t21537 = __p550;
-        _t21539: {
-          const label = _t21537[1];
-          const ctor_name = _t21537[2];
+      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, val_reg, default_tagged_21519, List$map(_t21533, tagged_cases_21531)]);
+      function _t21537(__p550) {
+        let _t21539;
+        const _t21538 = __p550;
+        _t21540: {
+          const label = _t21538[1];
+          const ctor_name = _t21538[2];
           _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, label]);
           (ctx.current_label = label, undefined);
           Codegen$emit_format_str(ctx, ctor_name);
-          _t21538 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21508]);
-          break _t21539;
+          _t21539 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21509]);
+          break _t21540;
         }
-        return _t21538;
+        return _t21539;
       }
-      List$iter(_t21536, tagged_cases_21530);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_tagged_21518]);
-      (ctx.current_label = default_tagged_21518, undefined);
+      List$iter(_t21537, tagged_cases_21531);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_tagged_21519]);
+      (ctx.current_label = default_tagged_21519, undefined);
       Codegen$emit_format_str(ctx, "<unknown>");
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21508]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, ptr_label_21516]);
-      (ctx.current_label = ptr_label_21516, undefined);
-      const ptr_21540 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
-      const tag_ptr_21542 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21540, 0]);
-      const tag_val_21544 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", tag_ptr_21542]);
-      const default_ptr_21546 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_ptr_default"]);
-      function _t21548(__p551) {
-        let _t21550;
-        const _t21549 = __p551;
-        _t21551: {
-          const i = _t21549[0];
-          const ctor_name = _t21549[1][0];
-          const payload_ty = _t21549[1][1];
-          let _t21553;
-          const _t21552 = payload_ty;
-          _t21554: {
-            if (_t21552._tag === 0) {
-              _t21553 = ({_tag: 0, _name: "None"});
-              break _t21554;
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21509]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, ptr_label_21517]);
+      (ctx.current_label = ptr_label_21517, undefined);
+      const ptr_21541 = _call(Ir_emit$emit_inttoptr, [__dict_Show_string, ctx.ir, val_reg]);
+      const tag_ptr_21543 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21541, 0]);
+      const tag_val_21545 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", tag_ptr_21543]);
+      const default_ptr_21547 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, "fmt_ptr_default"]);
+      function _t21549(__p551) {
+        let _t21551;
+        const _t21550 = __p551;
+        _t21552: {
+          const i = _t21550[0];
+          const ctor_name = _t21550[1][0];
+          const payload_ty = _t21550[1][1];
+          let _t21554;
+          const _t21553 = payload_ty;
+          _t21555: {
+            if (_t21553._tag === 0) {
+              _t21554 = ({_tag: 0, _name: "None"});
+              break _t21555;
             }
-            if (_t21552._tag === 1) {
-              const label_21555 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_ctor_" + __dict_Show_int.show(i))]);
-              const _t21556 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(i), label_21555, ctor_name, payload_ty]});
-              _t21553 = _t21556;
-              break _t21554;
+            if (_t21553._tag === 1) {
+              const label_21556 = _call(Codegen$fresh_label, [__dict_Show_string, ctx, ("fmt_ctor_" + __dict_Show_int.show(i))]);
+              const _t21557 = ({_tag: 1, _name: "Some", _val: [Codegen$tag_int_value(i), label_21556, ctor_name, payload_ty]});
+              _t21554 = _t21557;
+              break _t21555;
             }
             _match_fail("line 0");
           }
-          _t21550 = _t21553;
-          break _t21551;
+          _t21551 = _t21554;
+          break _t21552;
         }
-        return _t21550;
+        return _t21551;
       }
-      function _t21557(i, c) {
+      function _t21558(i, c) {
         return [i, c];
       }
-      const ptr_cases_21558 = List$filter_map(_t21548, List$mapi(_t21557, vdef));
-      function _t21560(__p552) {
-        let _t21562;
-        const _t21561 = __p552;
-        _t21563: {
-          const tag = _t21561[0];
-          const label = _t21561[1];
-          _t21562 = [tag, label];
-          break _t21563;
+      const ptr_cases_21559 = List$filter_map(_t21549, List$mapi(_t21558, vdef));
+      function _t21561(__p552) {
+        let _t21563;
+        const _t21562 = __p552;
+        _t21564: {
+          const tag = _t21562[0];
+          const label = _t21562[1];
+          _t21563 = [tag, label];
+          break _t21564;
         }
-        return _t21562;
+        return _t21563;
       }
-      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, tag_val_21544, default_ptr_21546, List$map(_t21560, ptr_cases_21558)]);
-      function _t21564(__p553) {
-        let _t21566;
-        const _t21565 = __p553;
-        _t21567: {
-          const _tag = _t21565[0];
-          const label = _t21565[1];
-          const ctor_name = _t21565[2];
-          const payload_ty = _t21565[3];
+      _call(Ir_emit$emit_switch, [__dict_Show_string, __dict_Show_string, __dict_Show_int, __dict_Show_string, 0, ctx.ir, tag_val_21545, default_ptr_21547, List$map(_t21561, ptr_cases_21559)]);
+      function _t21565(__p553) {
+        let _t21567;
+        const _t21566 = __p553;
+        _t21568: {
+          const _tag = _t21566[0];
+          const label = _t21566[1];
+          const ctor_name = _t21566[2];
+          const payload_ty = _t21566[3];
           _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, label]);
           (ctx.current_label = label, undefined);
-          let _t21569;
-          const _t21568 = payload_ty;
-          _t21570: {
-            if (_t21568._tag === 0) {
-              _t21569 = Codegen$emit_format_str(ctx, ctor_name);
-              break _t21570;
+          let _t21570;
+          const _t21569 = payload_ty;
+          _t21571: {
+            if (_t21569._tag === 0) {
+              _t21570 = Codegen$emit_format_str(ctx, ctor_name);
+              break _t21571;
             }
-            if (_t21568._tag === 1) {
-              const pty = _t21568._val;
-              function _t21571(ty) {
-                const args_21572 = Array$of_list(ty_args);
+            if (_t21569._tag === 1) {
+              const pty = _t21569._val;
+              function _t21572(ty) {
+                const args_21573 = Array$of_list(ty_args);
                 function go(t) {
-                  let _t21575;
-                  const _t21574 = Types$repr(t);
-                  _t21576: {
-                    if (_t21574._tag === 16) {
-                      const i = _t21574._val;
-                      if ((i < Array$length(args_21572))) {
-                        const i = _t21574._val;
-                        _t21575 = _call(Array$get, [args_21572, i]);
-                        break _t21576;
+                  let _t21576;
+                  const _t21575 = Types$repr(t);
+                  _t21577: {
+                    if (_t21575._tag === 16) {
+                      const i = _t21575._val;
+                      if ((i < Array$length(args_21573))) {
+                        const i = _t21575._val;
+                        _t21576 = _call(Array$get, [args_21573, i]);
+                        break _t21577;
                       } else {
-                        _t21575 = t;
-                        break _t21576;
+                        _t21576 = t;
+                        break _t21577;
                       }
                     }
-                    if (_t21574._tag === 10) {
-                      const t$p = _t21574._val;
-                      _t21575 = ({_tag: 10, _name: "TList", _val: go(t$p)});
-                      break _t21576;
+                    if (_t21575._tag === 10) {
+                      const t$p = _t21575._val;
+                      _t21576 = ({_tag: 10, _name: "TList", _val: go(t$p)});
+                      break _t21577;
                     }
-                    if (_t21574._tag === 11) {
-                      _t21575 = t;
-                      break _t21576;
+                    if (_t21575._tag === 11) {
+                      _t21576 = t;
+                      break _t21577;
                     }
-                    if (_t21574._tag === 9) {
-                      const ts = _t21574._val;
-                      _t21575 = ({_tag: 9, _name: "TTuple", _val: List$map(go, ts)});
-                      break _t21576;
+                    if (_t21575._tag === 9) {
+                      const ts = _t21575._val;
+                      _t21576 = ({_tag: 9, _name: "TTuple", _val: List$map(go, ts)});
+                      break _t21577;
                     }
-                    if (_t21574._tag === 12) {
-                      const n = _t21574._val[0];
-                      const ts = _t21574._val[1];
-                      _t21575 = ({_tag: 12, _name: "TVariant", _val: [n, List$map(go, ts)]});
-                      break _t21576;
+                    if (_t21575._tag === 12) {
+                      const n = _t21575._val[0];
+                      const ts = _t21575._val[1];
+                      _t21576 = ({_tag: 12, _name: "TVariant", _val: [n, List$map(go, ts)]});
+                      break _t21577;
                     }
-                    _t21575 = t;
-                    break _t21576;
+                    _t21576 = t;
+                    break _t21577;
                   }
-                  return _t21575;
+                  return _t21576;
                 }
-                const _t21577 = go(ty);
-                const _t21573 = _t21577;
-                return _t21573;
+                const _t21578 = go(ty);
+                const _t21574 = _t21578;
+                return _t21574;
               }
-              const concrete_pty_21578 = _t21571(pty);
+              const concrete_pty_21579 = _t21572(pty);
               Codegen$emit_format_str(ctx, (ctor_name + " "));
-              const payload_ptr_21580 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21540, 1]);
-              const payload_21582 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", payload_ptr_21580]);
-              let _t21585;
-              const _t21584 = Types$repr(concrete_pty_21578);
-              _t21586: {
-                if (_t21584._tag === 9) {
-                  _t21585 = true;
-                  break _t21586;
+              const payload_ptr_21581 = _call(Ir_emit$emit_gep, [__dict_Show_string, __dict_Show_string, __dict_Show_int, ctx.ir, "i64", ptr_21541, 1]);
+              const payload_21583 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx.ir, "i64", payload_ptr_21581]);
+              let _t21586;
+              const _t21585 = Types$repr(concrete_pty_21579);
+              _t21587: {
+                if (_t21585._tag === 9) {
+                  _t21586 = true;
+                  break _t21587;
                 }
-                if (_t21584._tag === 12) {
-                  _t21585 = true;
-                  break _t21586;
+                if (_t21585._tag === 12) {
+                  _t21586 = true;
+                  break _t21587;
                 }
-                _t21585 = false;
-                break _t21586;
+                _t21586 = false;
+                break _t21587;
               }
-              const needs_parens_21587 = _t21585;
-              let _t21589;
-              if (needs_parens_21587) {
-                _t21589 = Codegen$emit_format_str(ctx, "(");
-              } else {
-                _t21589 = undefined;
-              }
-              _t21589;
-              Codegen$emit_format_value(ctx, payload_21582, concrete_pty_21578);
+              const needs_parens_21588 = _t21586;
               let _t21590;
-              if (needs_parens_21587) {
-                _t21590 = Codegen$emit_format_str(ctx, ")");
+              if (needs_parens_21588) {
+                _t21590 = Codegen$emit_format_str(ctx, "(");
               } else {
                 _t21590 = undefined;
               }
-              const _t21588 = _t21590;
-              const _t21583 = _t21588;
-              const _t21581 = _t21583;
-              const _t21579 = _t21581;
-              _t21569 = _t21579;
-              break _t21570;
+              _t21590;
+              Codegen$emit_format_value(ctx, payload_21583, concrete_pty_21579);
+              let _t21591;
+              if (needs_parens_21588) {
+                _t21591 = Codegen$emit_format_str(ctx, ")");
+              } else {
+                _t21591 = undefined;
+              }
+              const _t21589 = _t21591;
+              const _t21584 = _t21589;
+              const _t21582 = _t21584;
+              const _t21580 = _t21582;
+              _t21570 = _t21580;
+              break _t21571;
             }
             _match_fail("line 0");
           }
-          _t21569;
-          _t21566 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21508]);
-          break _t21567;
+          _t21570;
+          _t21567 = _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21509]);
+          break _t21568;
         }
-        return _t21566;
+        return _t21567;
       }
-      List$iter(_t21564, ptr_cases_21558);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_ptr_21546]);
-      (ctx.current_label = default_ptr_21546, undefined);
+      List$iter(_t21565, ptr_cases_21559);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, default_ptr_21547]);
+      (ctx.current_label = default_ptr_21547, undefined);
       Codegen$emit_format_str(ctx, "<unknown>");
-      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21508]);
-      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, done_label_21508]);
-      const _t21559 = (ctx.current_label = done_label_21508, undefined);
-      const _t21547 = _t21559;
-      const _t21545 = _t21547;
-      const _t21543 = _t21545;
-      const _t21541 = _t21543;
-      const _t21531 = _t21541;
-      const _t21519 = _t21531;
-      const _t21517 = _t21519;
-      const _t21515 = _t21517;
-      const _t21513 = _t21515;
-      const _t21511 = _t21513;
-      const _t21509 = _t21511;
-      _t21506 = _t21509;
-      break _t21507;
+      _call(Ir_emit$emit_br, [__dict_Show_string, 0, ctx.ir, done_label_21509]);
+      _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx.ir, done_label_21509]);
+      const _t21560 = (ctx.current_label = done_label_21509, undefined);
+      const _t21548 = _t21560;
+      const _t21546 = _t21548;
+      const _t21544 = _t21546;
+      const _t21542 = _t21544;
+      const _t21532 = _t21542;
+      const _t21520 = _t21532;
+      const _t21518 = _t21520;
+      const _t21516 = _t21518;
+      const _t21514 = _t21516;
+      const _t21512 = _t21514;
+      const _t21510 = _t21512;
+      _t21507 = _t21510;
+      break _t21508;
     }
     _match_fail("line 0");
   }
-  return _t21506;
+  return _t21507;
 }
 function Codegen$tag_int_value(n) {
   return (__int_lsl(n, 1) | 1);
 }
 function Codegen$collect_symbol_refs(text) {
-  const n_21591 = String$length(text);
-  const set_21593 = Hashtbl$create(256);
-  const i_21595 = Ref$create(0);
-  let _t21597 = undefined;
-  let _t21598 = false, _t21599;
+  const n_21592 = String$length(text);
+  const set_21594 = Hashtbl$create(256);
+  const i_21596 = Ref$create(0);
+  let _t21598 = undefined;
+  let _t21599 = false, _t21600;
   while (true) {
-    if (!((Ref$get(i_21595) < n_21591))) break;
-    let _t21600;
-    if ((_call(String$get, [text, Ref$get(i_21595)]) === 64)) {
-      const j_21601 = Ref$create((Ref$get(i_21595) + 1));
-      let _t21603 = undefined;
-      let _t21604 = false, _t21605;
+    if (!((Ref$get(i_21596) < n_21592))) break;
+    let _t21601;
+    if ((_call(String$get, [text, Ref$get(i_21596)]) === 64)) {
+      const j_21602 = Ref$create((Ref$get(i_21596) + 1));
+      let _t21604 = undefined;
+      let _t21605 = false, _t21606;
       while (true) {
-        let _t21607;
-        if ((Ref$get(j_21601) < n_21591)) {
-        function _t21606(c) {
+        let _t21608;
+        if ((Ref$get(j_21602) < n_21592)) {
+        function _t21607(c) {
           return (((c >= 97) && (c <= 122)) || (((c >= 65) && (c <= 90)) || (((c >= 48) && (c <= 57)) || ((c === 95) || ((c === 46) || ((c === 36) || (c === 45)))))));
         }
-          _t21607 = _t21606(_call(String$get, [text, Ref$get(j_21601)]));
+          _t21608 = _t21607(_call(String$get, [text, Ref$get(j_21602)]));
         } else {
-          _t21607 = false;
+          _t21608 = false;
         }
-        if (!(_t21607)) break;
-        Ref$set(j_21601, (Ref$get(j_21601) + 1));
+        if (!(_t21608)) break;
+        Ref$set(j_21602, (Ref$get(j_21602) + 1));
       }
-      _t21603 = _t21604 ? _t21605 : undefined;
-      _t21603;
-      let _t21608;
-      if ((Ref$get(j_21601) > (Ref$get(i_21595) + 1))) {
-        _t21608 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, set_21593, _call(String$sub, [text, (Ref$get(i_21595) + 1), ((Ref$get(j_21601) - Ref$get(i_21595)) - 1)]), undefined]);
+      _t21604 = _t21605 ? _t21606 : undefined;
+      _t21604;
+      let _t21609;
+      if ((Ref$get(j_21602) > (Ref$get(i_21596) + 1))) {
+        _t21609 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, set_21594, _call(String$sub, [text, (Ref$get(i_21596) + 1), ((Ref$get(j_21602) - Ref$get(i_21596)) - 1)]), undefined]);
       } else {
-        _t21608 = undefined;
+        _t21609 = undefined;
       }
-      _t21608;
-      const _t21602 = Ref$set(i_21595, Ref$get(j_21601));
-      _t21600 = _t21602;
+      _t21609;
+      const _t21603 = Ref$set(i_21596, Ref$get(j_21602));
+      _t21601 = _t21603;
     } else {
-      _t21600 = Ref$set(i_21595, (Ref$get(i_21595) + 1));
+      _t21601 = Ref$set(i_21596, (Ref$get(i_21596) + 1));
     }
-    _t21600;
+    _t21601;
   }
-  _t21597 = _t21598 ? _t21599 : undefined;
-  _t21597;
-  const _t21596 = set_21593;
-  const _t21594 = _t21596;
-  const _t21592 = _t21594;
-  return _t21592;
+  _t21598 = _t21599 ? _t21600 : undefined;
+  _t21598;
+  const _t21597 = set_21594;
+  const _t21595 = _t21597;
+  const _t21593 = _t21595;
+  return _t21593;
 }
 function Codegen$assemble_output(imports, aliases, emit_result_type, ctx, main_body) {
-  const body_21609 = Buffer$create(8192);
-  function _t21611(decl) {
-    Buffer$add_string(body_21609, decl);
-    return Buffer$add_byte(body_21609, 10);
+  const body_21610 = Buffer$create(8192);
+  function _t21612(decl) {
+    Buffer$add_string(body_21610, decl);
+    return Buffer$add_byte(body_21610, 10);
   }
-  List$iter(_t21611, List$rev(ctx.string_globals));
-  let _t21612;
+  List$iter(_t21612, List$rev(ctx.string_globals));
+  let _t21613;
   if (!_eq(ctx.string_globals, null)) {
-    _t21612 = Buffer$add_byte(body_21609, 10);
+    _t21613 = Buffer$add_byte(body_21610, 10);
   } else {
-    _t21612 = undefined;
+    _t21613 = undefined;
   }
-  _t21612;
-  function _t21613(decl) {
-    Buffer$add_string(body_21609, decl);
-    return Buffer$add_byte(body_21609, 10);
+  _t21613;
+  function _t21614(decl) {
+    Buffer$add_string(body_21610, decl);
+    return Buffer$add_byte(body_21610, 10);
   }
-  List$iter(_t21613, List$rev(ctx.float_globals));
-  let _t21614;
+  List$iter(_t21614, List$rev(ctx.float_globals));
+  let _t21615;
   if (!_eq(ctx.float_globals, null)) {
-    _t21614 = Buffer$add_byte(body_21609, 10);
+    _t21615 = Buffer$add_byte(body_21610, 10);
   } else {
-    _t21614 = undefined;
+    _t21615 = undefined;
   }
-  _t21614;
-  function _t21615(decl) {
-    Buffer$add_string(body_21609, decl);
-    return Buffer$add_byte(body_21609, 10);
+  _t21615;
+  function _t21616(decl) {
+    Buffer$add_string(body_21610, decl);
+    return Buffer$add_byte(body_21610, 10);
   }
-  List$iter(_t21615, List$rev(ctx.global_decls));
-  let _t21616;
+  List$iter(_t21616, List$rev(ctx.global_decls));
+  let _t21617;
   if (emit_result_type) {
-    let _t21617;
+    let _t21618;
     if (ctx.result_present) {
-      _t21617 = Codegen$result_type_tag(ctx.result_type);
+      _t21618 = Codegen$result_type_tag(ctx.result_type);
     } else {
-      _t21617 = 8;
+      _t21618 = 8;
     }
-    const tag_21618 = _t21617;
-    const _t21619 = Buffer$add_string(body_21609, (("@mml_result_type = global i32 " + __dict_Show_int.show(tag_21618)) + "\n"));
-    _t21616 = _t21619;
+    const tag_21619 = _t21618;
+    const _t21620 = Buffer$add_string(body_21610, (("@mml_result_type = global i32 " + __dict_Show_int.show(tag_21619)) + "\n"));
+    _t21617 = _t21620;
   } else {
-    _t21616 = undefined;
+    _t21617 = undefined;
   }
-  _t21616;
-  Buffer$add_byte(body_21609, 10);
-  let _t21620;
+  _t21617;
+  Buffer$add_byte(body_21610, 10);
+  let _t21621;
   if ((Buffer$length(ctx.fn_buf) > 0)) {
-    _t21620 = Buffer$add_buffer(body_21609, ctx.fn_buf);
+    _t21621 = Buffer$add_buffer(body_21610, ctx.fn_buf);
   } else {
-    _t21620 = undefined;
+    _t21621 = undefined;
   }
-  _t21620;
-  Buffer$add_string(body_21609, main_body);
-  function _t21621(a) {
-    Buffer$add_byte(body_21609, 10);
-    Buffer$add_string(body_21609, a);
-    return Buffer$add_byte(body_21609, 10);
+  _t21621;
+  Buffer$add_string(body_21610, main_body);
+  function _t21622(a) {
+    Buffer$add_byte(body_21610, 10);
+    Buffer$add_string(body_21610, a);
+    return Buffer$add_byte(body_21610, 10);
   }
-  List$iter(_t21621, aliases);
-  const body_str_21622 = Buffer$contents(body_21609);
-  const out_21624 = Buffer$create((String$length(body_str_21622) + 4096));
-  Buffer$add_string(out_21624, (("target triple = \"" + __dict_Show_string.show(ctx.target_triple)) + "\"\n\n"));
-  const all_externs_21626 = List$concat(({_hd: ["mml_print_int", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_bool", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_string", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_float", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_unit", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_value", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_box_float", "i64", ({_hd: "double", _tl: null})], _tl: ({_hd: ["mml_unbox_float", "double", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_alloc", "ptr", ({_hd: "i64", _tl: ({_hd: "i64", _tl: null})})], _tl: null})})})})})})})})}), ctx.extern_decls);
-  const seen_21628 = Hashtbl$create(16);
-  function _t21630(__p554) {
-    let _t21632;
-    const _t21631 = __p554;
-    _t21633: {
-      const name = _t21631[0];
-      const ret_ty = _t21631[1];
-      const param_tys = _t21631[2];
-      let _t21634;
-      if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, seen_21628, name]))) {
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_21628, name, undefined]);
-        let _t21636;
-        const _t21635 = param_tys;
-        _t21637: {
-          if (_t21635 === null) {
-            _t21636 = "";
-            break _t21637;
+  List$iter(_t21622, aliases);
+  const body_str_21623 = Buffer$contents(body_21610);
+  const out_21625 = Buffer$create((String$length(body_str_21623) + 4096));
+  Buffer$add_string(out_21625, (("target triple = \"" + __dict_Show_string.show(ctx.target_triple)) + "\"\n\n"));
+  const all_externs_21627 = List$concat(({_hd: ["mml_print_int", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_bool", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_string", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_float", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_unit", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_print_value", "i64", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_box_float", "i64", ({_hd: "double", _tl: null})], _tl: ({_hd: ["mml_unbox_float", "double", ({_hd: "i64", _tl: null})], _tl: ({_hd: ["mml_alloc", "ptr", ({_hd: "i64", _tl: ({_hd: "i64", _tl: null})})], _tl: null})})})})})})})})}), ctx.extern_decls);
+  const seen_21629 = Hashtbl$create(16);
+  function _t21631(__p554) {
+    let _t21633;
+    const _t21632 = __p554;
+    _t21634: {
+      const name = _t21632[0];
+      const ret_ty = _t21632[1];
+      const param_tys = _t21632[2];
+      let _t21635;
+      if ((!_call(Hashtbl$has, [__dict_Hash_string, __dict_Eq_string, seen_21629, name]))) {
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, seen_21629, name, undefined]);
+        let _t21637;
+        const _t21636 = param_tys;
+        _t21638: {
+          if (_t21636 === null) {
+            _t21637 = "";
+            break _t21638;
           }
-          _t21636 = _call(String$concat, [", ", param_tys]);
-          break _t21637;
+          _t21637 = _call(String$concat, [", ", param_tys]);
+          break _t21638;
         }
-        const pt_str_21638 = _t21636;
-        let _t21640;
+        const pt_str_21639 = _t21637;
+        let _t21641;
         if (((name === "mml_panic") || (name === "mml_panic_mml"))) {
-          _t21640 = " noreturn";
+          _t21641 = " noreturn";
         } else {
-          _t21640 = "";
+          _t21641 = "";
         }
-        const attrs_21641 = _t21640;
-        const _t21642 = Buffer$add_string(out_21624, (((((((("declare " + __dict_Show_string.show(ret_ty)) + " @") + __dict_Show_string.show(name)) + "(") + __dict_Show_string.show(pt_str_21638)) + ")") + __dict_Show_string.show(attrs_21641)) + "\n"));
-        const _t21639 = _t21642;
-        _t21634 = _t21639;
+        const attrs_21642 = _t21641;
+        const _t21643 = Buffer$add_string(out_21625, (((((((("declare " + __dict_Show_string.show(ret_ty)) + " @") + __dict_Show_string.show(name)) + "(") + __dict_Show_string.show(pt_str_21639)) + ")") + __dict_Show_string.show(attrs_21642)) + "\n"));
+        const _t21640 = _t21643;
+        _t21635 = _t21640;
       } else {
-        _t21634 = undefined;
+        _t21635 = undefined;
       }
-      _t21632 = _t21634;
-      break _t21633;
+      _t21633 = _t21635;
+      break _t21634;
     }
-    return _t21632;
+    return _t21633;
   }
-  List$iter(_t21630, all_externs_21626);
-  const refs_21643 = Codegen$collect_symbol_refs(body_str_21622);
-  function _t21645(sym, _, acc) {
-    let _t21647;
-    const _t21646 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, imports, sym]);
-    _t21648: {
-      if (_t21646._tag === 0) {
-        _t21647 = acc;
-        break _t21648;
+  List$iter(_t21631, all_externs_21627);
+  const refs_21644 = Codegen$collect_symbol_refs(body_str_21623);
+  function _t21646(sym, _, acc) {
+    let _t21648;
+    const _t21647 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, imports, sym]);
+    _t21649: {
+      if (_t21647._tag === 0) {
+        _t21648 = acc;
+        break _t21649;
       }
-      if (_t21646._tag === 1) {
-        const d = _t21646._val;
-        _t21647 = ({_hd: d, _tl: acc});
-        break _t21648;
+      if (_t21647._tag === 1) {
+        const d = _t21647._val;
+        _t21648 = ({_hd: d, _tl: acc});
+        break _t21649;
       }
       _match_fail("line 0");
     }
-    return _t21647;
+    return _t21648;
   }
-  const needed_21649 = Hashtbl$fold(_t21645, refs_21643, null);
-  function _t21651(d) {
-    Buffer$add_string(out_21624, d);
-    return Buffer$add_byte(out_21624, 10);
+  const needed_21650 = Hashtbl$fold(_t21646, refs_21644, null);
+  function _t21652(d) {
+    Buffer$add_string(out_21625, d);
+    return Buffer$add_byte(out_21625, 10);
   }
-  List$iter(_t21651, List$sort_uniq(String$compare, needed_21649));
-  Buffer$add_byte(out_21624, 10);
-  Buffer$add_string(out_21624, body_str_21622);
-  const _t21650 = Buffer$contents(out_21624);
-  const _t21644 = _t21650;
-  const _t21629 = _t21644;
-  const _t21627 = _t21629;
-  const _t21625 = _t21627;
-  const _t21623 = _t21625;
-  const _t21610 = _t21623;
-  return _t21610;
+  List$iter(_t21652, List$sort_uniq(String$compare, needed_21650));
+  Buffer$add_byte(out_21625, 10);
+  Buffer$add_string(out_21625, body_str_21623);
+  const _t21651 = Buffer$contents(out_21625);
+  const _t21645 = _t21651;
+  const _t21630 = _t21645;
+  const _t21628 = _t21630;
+  const _t21626 = _t21628;
+  const _t21624 = _t21626;
+  const _t21611 = _t21624;
+  return _t21611;
 }
 function Codegen$emit_unit_init(__dict_Show_0, ctx, init_name, decls) {
-  const saved_ir_21652 = ctx.ir;
-  const saved_label_21654 = ctx.current_label;
-  const saved_result_ptr_21656 = ctx.result_ptr;
-  const saved_fn_void_21658 = ctx.current_fn_void;
-  const fn_ir_21660 = Ir_emit$create(undefined);
-  (ctx.ir = fn_ir_21660, undefined);
+  const saved_ir_21653 = ctx.ir;
+  const saved_label_21655 = ctx.current_label;
+  const saved_result_ptr_21657 = ctx.result_ptr;
+  const saved_fn_void_21659 = ctx.current_fn_void;
+  const fn_ir_21661 = Ir_emit$create(undefined);
+  (ctx.ir = fn_ir_21661, undefined);
   (ctx.current_fn_void = true, undefined);
-  _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_0, ({show: __show_value}), ({show: __show_value}), fn_ir_21660, "void", init_name, null]);
-  _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir_21660, "entry"]);
+  _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_0, ({show: __show_value}), ({show: __show_value}), fn_ir_21661, "void", init_name, null]);
+  _call(Ir_emit$emit_label, [__dict_Show_string, 0, fn_ir_21661, "entry"]);
   (ctx.current_label = "entry", undefined);
-  (ctx.result_ptr = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir_21660, "i64"]), undefined);
-  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir_21660, "i64", Codegen$unit_value, ctx.result_ptr]);
+  (ctx.result_ptr = _call(Ir_emit$emit_alloca, [__dict_Show_string, fn_ir_21661, "i64"]), undefined);
+  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, fn_ir_21661, "i64", Codegen$unit_value, ctx.result_ptr]);
   List$iter(_call(Codegen$emit_decl, [ctx]), decls);
   Ir_emit$emit_ret_void(0, ctx.ir);
   Ir_emit$emit_define_end(0, ctx.ir);
   Buffer$add_string(ctx.fn_buf, Ir_emit$contents(0, ctx.ir));
   Buffer$add_byte(ctx.fn_buf, 10);
-  (ctx.ir = saved_ir_21652, undefined);
-  (ctx.current_label = saved_label_21654, undefined);
-  (ctx.result_ptr = saved_result_ptr_21656, undefined);
-  const _t21661 = (ctx.current_fn_void = saved_fn_void_21658, undefined);
-  const _t21659 = _t21661;
-  const _t21657 = _t21659;
-  const _t21655 = _t21657;
-  const _t21653 = _t21655;
-  return _t21653;
+  (ctx.ir = saved_ir_21653, undefined);
+  (ctx.current_label = saved_label_21655, undefined);
+  (ctx.result_ptr = saved_result_ptr_21657, undefined);
+  const _t21662 = (ctx.current_fn_void = saved_fn_void_21659, undefined);
+  const _t21660 = _t21662;
+  const _t21658 = _t21660;
+  const _t21656 = _t21658;
+  const _t21654 = _t21656;
+  return _t21654;
 }
 function Codegen$arrow_arity(ty) {
-  let _t21663;
-  const _t21662 = Types$repr(ty);
-  _t21664: {
-    if (_t21662._tag === 7) {
-      const ret = _t21662._val[2];
-      _t21663 = (1 + Codegen$arrow_arity(ret));
-      break _t21664;
+  let _t21664;
+  const _t21663 = Types$repr(ty);
+  _t21665: {
+    if (_t21663._tag === 7) {
+      const ret = _t21663._val[2];
+      _t21664 = (1 + Codegen$arrow_arity(ret));
+      break _t21665;
     }
-    _t21663 = 0;
-    break _t21664;
+    _t21664 = 0;
+    break _t21665;
   }
-  return _t21663;
+  return _t21664;
 }
 function Codegen$is_ffi_bare_extern(name) {
   return _call(List$mem, [__dict_Eq_string, name, ({_hd: "__cache_has", _tl: ({_hd: "__cache_get", _tl: ({_hd: "__cache_set", _tl: null})})})]);
 }
 function Codegen$collect_module_externs(programs) {
-  const tbl_21665 = Hashtbl$create(32);
+  const tbl_21666 = Hashtbl$create(32);
   function scan(decls) {
-    function _t21667(d) {
-      let _t21669;
-      const _t21668 = d;
-      _t21670: {
-        if (_t21668._tag === 8) {
-          const name = _t21668._val[0];
-          const scheme = _t21668._val[1];
+    function _t21668(d) {
+      let _t21670;
+      const _t21669 = d;
+      _t21671: {
+        if (_t21669._tag === 8) {
+          const name = _t21669._val[0];
+          const scheme = _t21669._val[1];
           if ((_call(String$contains, [".", name]) || Codegen$is_ffi_bare_extern(name))) {
-            const name = _t21668._val[0];
-            const scheme = _t21668._val[1];
-            _t21669 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, tbl_21665, name, Codegen$arrow_arity(scheme.body)]);
-            break _t21670;
+            const name = _t21669._val[0];
+            const scheme = _t21669._val[1];
+            _t21670 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, tbl_21666, name, Codegen$arrow_arity(scheme.body)]);
+            break _t21671;
           } else {
-            _t21669 = undefined;
-            break _t21670;
+            _t21670 = undefined;
+            break _t21671;
           }
         }
-        if (_t21668._tag === 10) {
-          const inner = _t21668._val[1];
-          _t21669 = scan(inner);
-          break _t21670;
+        if (_t21669._tag === 10) {
+          const inner = _t21669._val[1];
+          _t21670 = scan(inner);
+          break _t21671;
         }
-        _t21669 = undefined;
-        break _t21670;
+        _t21670 = undefined;
+        break _t21671;
       }
-      return _t21669;
+      return _t21670;
     }
-    return List$iter(_t21667, decls);
+    return List$iter(_t21668, decls);
   }
   List$iter(scan, programs);
-  const _t21671 = tbl_21665;
-  const _t21666 = _t21671;
-  return _t21666;
+  const _t21672 = tbl_21666;
+  const _t21667 = _t21672;
+  return _t21667;
 }
 function Codegen$collect_ffi_externs(programs) {
-  const tbl_21672 = Hashtbl$create(16);
+  const tbl_21673 = Hashtbl$create(16);
   function scan(decls) {
-    function _t21674(d) {
-      let _t21676;
-      const _t21675 = d;
-      _t21677: {
-        if (_t21675._tag === 9) {
-          const name = _t21675._val[0];
-          const _scheme = _t21675._val[1];
-          const c_symbol = _t21675._val[2];
-          const c_params = _t21675._val[3];
-          const c_ret = _t21675._val[4];
-          _t21676 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, tbl_21672, name, [c_symbol, c_params, c_ret]]);
-          break _t21677;
+    function _t21675(d) {
+      let _t21677;
+      const _t21676 = d;
+      _t21678: {
+        if (_t21676._tag === 9) {
+          const name = _t21676._val[0];
+          const _scheme = _t21676._val[1];
+          const c_symbol = _t21676._val[2];
+          const c_params = _t21676._val[3];
+          const c_ret = _t21676._val[4];
+          _t21677 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, tbl_21673, name, [c_symbol, c_params, c_ret]]);
+          break _t21678;
         }
-        if (_t21675._tag === 10) {
-          const inner = _t21675._val[1];
-          _t21676 = scan(inner);
-          break _t21677;
+        if (_t21676._tag === 10) {
+          const inner = _t21676._val[1];
+          _t21677 = scan(inner);
+          break _t21678;
         }
-        _t21676 = undefined;
-        break _t21677;
+        _t21677 = undefined;
+        break _t21678;
       }
-      return _t21676;
+      return _t21677;
     }
-    return List$iter(_t21674, decls);
+    return List$iter(_t21675, decls);
   }
   List$iter(scan, programs);
-  const _t21678 = tbl_21672;
-  const _t21673 = _t21678;
-  return _t21673;
+  const _t21679 = tbl_21673;
+  const _t21674 = _t21679;
+  return _t21674;
 }
 function Codegen$compile_program_with_stdlib(target_triple, type_env, stdlib_programs, user_program) {
-  const ctx_21679 = Codegen$create_ctx(target_triple, type_env);
-  (ctx_21679.module_externs = Codegen$collect_module_externs(({_hd: user_program, _tl: List$map(snd, stdlib_programs)})), undefined);
-  (ctx_21679.ffi_externs = Codegen$collect_ffi_externs(({_hd: user_program, _tl: List$map(snd, stdlib_programs)})), undefined);
-  function _t21681(__p555) {
-    let _t21683;
-    const _t21682 = __p555;
-    _t21684: {
-      const _te = _t21682[0];
-      const prog = _t21682[1];
-      _t21683 = prog;
-      break _t21684;
+  const ctx_21680 = Codegen$create_ctx(target_triple, type_env);
+  (ctx_21680.module_externs = Codegen$collect_module_externs(({_hd: user_program, _tl: List$map(snd, stdlib_programs)})), undefined);
+  (ctx_21680.ffi_externs = Codegen$collect_ffi_externs(({_hd: user_program, _tl: List$map(snd, stdlib_programs)})), undefined);
+  function _t21682(__p555) {
+    let _t21684;
+    const _t21683 = __p555;
+    _t21685: {
+      const _te = _t21683[0];
+      const prog = _t21683[1];
+      _t21684 = prog;
+      break _t21685;
     }
-    return _t21683;
+    return _t21684;
   }
-  const stdlib_decls_21685 = List$concat_map(_t21681, stdlib_programs);
-  _call(Codegen$emit_unit_init, [__dict_Show_string, ctx_21679, "mml_init_std", stdlib_decls_21685]);
-  _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx_21679.ir, "i64", "mml_main", null]);
-  _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx_21679.ir, "entry"]);
-  (ctx_21679.current_label = "entry", undefined);
-  (ctx_21679.result_ptr = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx_21679.ir, "i64"]), undefined);
-  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx_21679.ir, "i64", Codegen$unit_value, ctx_21679.result_ptr]);
-  _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx_21679.ir, "mml_init_std", null]);
-  List$iter(_call(Codegen$emit_decl, [ctx_21679]), user_program);
-  let _t21688;
-  const _t21687 = List$rev(user_program);
-  _t21689: {
-    if (_t21687 !== null) {
-      if (_t21687._hd._tag === 5) {
-        _t21688 = true;
-        break _t21689;
+  const stdlib_decls_21686 = List$concat_map(_t21682, stdlib_programs);
+  _call(Codegen$emit_unit_init, [__dict_Show_string, ctx_21680, "mml_init_std", stdlib_decls_21686]);
+  _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx_21680.ir, "i64", "mml_main", null]);
+  _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx_21680.ir, "entry"]);
+  (ctx_21680.current_label = "entry", undefined);
+  (ctx_21680.result_ptr = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx_21680.ir, "i64"]), undefined);
+  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx_21680.ir, "i64", Codegen$unit_value, ctx_21680.result_ptr]);
+  _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx_21680.ir, "mml_init_std", null]);
+  List$iter(_call(Codegen$emit_decl, [ctx_21680]), user_program);
+  let _t21689;
+  const _t21688 = List$rev(user_program);
+  _t21690: {
+    if (_t21688 !== null) {
+      if (_t21688._hd._tag === 5) {
+        _t21689 = true;
+        break _t21690;
       }
-      _t21688 = false;
-      break _t21689;
+      _t21689 = false;
+      break _t21690;
     }
-    _t21688 = false;
-    break _t21689;
+    _t21689 = false;
+    break _t21690;
   }
-  (ctx_21679.result_present = _t21688, undefined);
-  const result_21690 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx_21679.ir, "i64", ctx_21679.result_ptr]);
-  _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, ctx_21679.ir, "i64", result_21690]);
-  Ir_emit$emit_define_end(0, ctx_21679.ir);
-  Codegen$emit_format_result(ctx_21679, ctx_21679.result_type);
-  const main_body_21692 = Ir_emit$contents(0, ctx_21679.ir);
-  const _t21693 = Codegen$assemble_output(Hashtbl$create(1), null, true, ctx_21679, main_body_21692);
-  const _t21691 = _t21693;
-  const _t21686 = _t21691;
-  const _t21680 = _t21686;
-  return _t21680;
+  (ctx_21680.result_present = _t21689, undefined);
+  const result_21691 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx_21680.ir, "i64", ctx_21680.result_ptr]);
+  _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, ctx_21680.ir, "i64", result_21691]);
+  Ir_emit$emit_define_end(0, ctx_21680.ir);
+  Codegen$emit_format_result(ctx_21680, ctx_21680.result_type);
+  const main_body_21693 = Ir_emit$contents(0, ctx_21680.ir);
+  const _t21694 = Codegen$assemble_output(Hashtbl$create(1), null, true, ctx_21680, main_body_21693);
+  const _t21692 = _t21694;
+  const _t21687 = _t21692;
+  const _t21681 = _t21687;
+  return _t21681;
 }
 function Codegen$global_decl_to_extern(decl) {
-  let _t21695;
-  const _t21694 = _call(String$index_opt, [decl, 32]);
-  _t21696: {
-    if (_t21694._tag === 0) {
-      _t21695 = decl;
-      break _t21696;
+  let _t21696;
+  const _t21695 = _call(String$index_opt, [decl, 32]);
+  _t21697: {
+    if (_t21695._tag === 0) {
+      _t21696 = decl;
+      break _t21697;
     }
-    if (_t21694._tag === 1) {
-      const i = _t21694._val;
-      _t21695 = (_call(String$sub, [decl, 0, i]) + " = external global i64");
-      break _t21696;
+    if (_t21695._tag === 1) {
+      const i = _t21695._val;
+      _t21696 = (_call(String$sub, [decl, 0, i]) + " = external global i64");
+      break _t21697;
     }
     _match_fail("line 0");
   }
-  return _t21695;
+  return _t21696;
 }
 function Codegen$export_alias_name(__dict_Show_0, unit_prefix, source_name) {
   return (("mml_x_" + __dict_Show_0.show(unit_prefix)) + __dict_Show_string.show(Codegen$sanitize_name(source_name)));
 }
 function Codegen$capture_exports(__ev_global_decls_r0, __ev_scopes_r0, __ev_unit_prefix_r0, ctx, init_name) {
-  const scope_21697 = List$hd(ctx.scopes);
-  const funcs_21699 = Ref$create(null);
-  const entries_21701 = Ref$create(null);
-  const aliases_21703 = Ref$create(null);
-  const local_prefix_21705 = ("mml_f_" + ctx.unit_prefix);
-  function _t21707(name, info) {
-    let _t21709;
-    const _t21708 = info;
-    _t21710: {
-      if (_t21708._tag === 6) {
-        const n = _t21708._val[0];
-        const a = _t21708._val[1];
-        _t21709 = ({_tag: 5, _name: "Func", _val: [n, a]});
-        break _t21710;
+  const scope_21698 = List$hd(ctx.scopes);
+  const funcs_21700 = Ref$create(null);
+  const entries_21702 = Ref$create(null);
+  const aliases_21704 = Ref$create(null);
+  const local_prefix_21706 = ("mml_f_" + ctx.unit_prefix);
+  function _t21708(name, info) {
+    let _t21710;
+    const _t21709 = info;
+    _t21711: {
+      if (_t21709._tag === 6) {
+        const n = _t21709._val[0];
+        const a = _t21709._val[1];
+        _t21710 = ({_tag: 5, _name: "Func", _val: [n, a]});
+        break _t21711;
       }
-      const i = _t21708;
-      _t21709 = i;
-      break _t21710;
+      const i = _t21709;
+      _t21710 = i;
+      break _t21711;
     }
-    let _t21712;
-    const _t21711 = _t21709;
-    _t21713: {
-      if (_t21711._tag === 5) {
-        const internal = _t21711._val[0];
-        const a = _t21711._val[1];
-        if (_call(String$starts_with, [local_prefix_21705, internal])) {
-          const internal = _t21711._val[0];
-          const a = _t21711._val[1];
-          const stable_21714 = _call(Codegen$export_alias_name, [__dict_Show_string, ctx.unit_prefix, name]);
-          function _t21716(_) {
+    let _t21713;
+    const _t21712 = _t21710;
+    _t21714: {
+      if (_t21712._tag === 5) {
+        const internal = _t21712._val[0];
+        const a = _t21712._val[1];
+        if (_call(String$starts_with, [local_prefix_21706, internal])) {
+          const internal = _t21712._val[0];
+          const a = _t21712._val[1];
+          const stable_21715 = _call(Codegen$export_alias_name, [__dict_Show_string, ctx.unit_prefix, name]);
+          function _t21717(_) {
             return "i64";
           }
-          const ps_21717 = _call(String$concat, [", ", List$init(a, _t21716)]);
-          Ref$set(aliases_21703, ({_hd: ((((("@" + __dict_Show_string.show(stable_21714)) + " = alias i64 (") + __dict_Show_string.show(ps_21717)) + "), ptr @") + __dict_Show_string.show(internal)), _tl: Ref$get(aliases_21703)}));
-          Ref$set(funcs_21699, ({_hd: [stable_21714, a], _tl: Ref$get(funcs_21699)}));
-          const _t21718 = Ref$set(entries_21701, ({_hd: [name, ({_tag: 5, _name: "Func", _val: [stable_21714, a]})], _tl: Ref$get(entries_21701)}));
-          const _t21715 = _t21718;
-          _t21712 = _t21715;
-          break _t21713;
+          const ps_21718 = _call(String$concat, [", ", List$init(a, _t21717)]);
+          Ref$set(aliases_21704, ({_hd: ((((("@" + __dict_Show_string.show(stable_21715)) + " = alias i64 (") + __dict_Show_string.show(ps_21718)) + "), ptr @") + __dict_Show_string.show(internal)), _tl: Ref$get(aliases_21704)}));
+          Ref$set(funcs_21700, ({_hd: [stable_21715, a], _tl: Ref$get(funcs_21700)}));
+          const _t21719 = Ref$set(entries_21702, ({_hd: [name, ({_tag: 5, _name: "Func", _val: [stable_21715, a]})], _tl: Ref$get(entries_21702)}));
+          const _t21716 = _t21719;
+          _t21713 = _t21716;
+          break _t21714;
         } else {
-          const internal = _t21711._val[0];
-          const a = _t21711._val[1];
-          Ref$set(funcs_21699, ({_hd: [internal, a], _tl: Ref$get(funcs_21699)}));
-          _t21712 = Ref$set(entries_21701, ({_hd: [name, ({_tag: 5, _name: "Func", _val: [internal, a]})], _tl: Ref$get(entries_21701)}));
-          break _t21713;
+          const internal = _t21712._val[0];
+          const a = _t21712._val[1];
+          Ref$set(funcs_21700, ({_hd: [internal, a], _tl: Ref$get(funcs_21700)}));
+          _t21713 = Ref$set(entries_21702, ({_hd: [name, ({_tag: 5, _name: "Func", _val: [internal, a]})], _tl: Ref$get(entries_21702)}));
+          break _t21714;
         }
       }
-      const other = _t21711;
-      _t21712 = Ref$set(entries_21701, ({_hd: [name, other], _tl: Ref$get(entries_21701)}));
-      break _t21713;
+      const other = _t21712;
+      _t21713 = Ref$set(entries_21702, ({_hd: [name, other], _tl: Ref$get(entries_21702)}));
+      break _t21714;
     }
-    return _t21712;
+    return _t21713;
   }
-  Hashtbl$iter(_t21707, scope_21697);
-  const _t21706 = ({ue_aliases: Ref$get(aliases_21703), ue_funcs: Ref$get(funcs_21699), ue_global_externs: List$map(Codegen$global_decl_to_extern, ctx.global_decls), ue_init: init_name, ue_scope: Ref$get(entries_21701)});
-  const _t21704 = _t21706;
-  const _t21702 = _t21704;
-  const _t21700 = _t21702;
-  const _t21698 = _t21700;
-  return _t21698;
+  Hashtbl$iter(_t21708, scope_21698);
+  const _t21707 = ({ue_aliases: Ref$get(aliases_21704), ue_funcs: Ref$get(funcs_21700), ue_global_externs: List$map(Codegen$global_decl_to_extern, ctx.global_decls), ue_init: init_name, ue_scope: Ref$get(entries_21702)});
+  const _t21705 = _t21707;
+  const _t21703 = _t21705;
+  const _t21701 = _t21703;
+  const _t21699 = _t21701;
+  return _t21699;
 }
 function Codegen$global_extern_name(line) {
-  let _t21719;
+  let _t21720;
   if (((String$length(line) > 1) && (_call(String$get, [line, 0]) === 64))) {
-    let _t21721;
-    const _t21720 = _call(String$index_opt, [line, 32]);
-    _t21722: {
-      if (_t21720._tag === 0) {
-        _t21721 = ({_tag: 0, _name: "None"});
-        break _t21722;
+    let _t21722;
+    const _t21721 = _call(String$index_opt, [line, 32]);
+    _t21723: {
+      if (_t21721._tag === 0) {
+        _t21722 = ({_tag: 0, _name: "None"});
+        break _t21723;
       }
-      if (_t21720._tag === 1) {
-        const i = _t21720._val;
-        _t21721 = ({_tag: 1, _name: "Some", _val: _call(String$sub, [line, 1, (i - 1)])});
-        break _t21722;
+      if (_t21721._tag === 1) {
+        const i = _t21721._val;
+        _t21722 = ({_tag: 1, _name: "Some", _val: _call(String$sub, [line, 1, (i - 1)])});
+        break _t21723;
       }
       _match_fail("line 0");
     }
-    _t21719 = _t21721;
+    _t21720 = _t21722;
   } else {
-    _t21719 = ({_tag: 0, _name: "None"});
+    _t21720 = ({_tag: 0, _name: "None"});
   }
-  return _t21719;
+  return _t21720;
 }
 function Codegen$build_import_table(exps) {
-  const t_21723 = Hashtbl$create(512);
-  function _t21725(e) {
-    _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, t_21723, e.ue_init, (("declare void @" + __dict_Show_string.show(e.ue_init)) + "()")]);
-    function _t21726(__p556) {
-      let _t21728;
-      const _t21727 = __p556;
-      _t21729: {
-        const n = _t21727[0];
-        const a = _t21727[1];
-        function _t21730(_) {
+  const t_21724 = Hashtbl$create(512);
+  function _t21726(e) {
+    _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, t_21724, e.ue_init, (("declare void @" + __dict_Show_string.show(e.ue_init)) + "()")]);
+    function _t21727(__p556) {
+      let _t21729;
+      const _t21728 = __p556;
+      _t21730: {
+        const n = _t21728[0];
+        const a = _t21728[1];
+        function _t21731(_) {
           return "i64";
         }
-        const ps_21731 = _call(String$concat, [", ", List$init(a, _t21730)]);
-        const _t21732 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, t_21723, n, (((("declare i64 @" + __dict_Show_string.show(n)) + "(") + __dict_Show_string.show(ps_21731)) + ")")]);
-        _t21728 = _t21732;
-        break _t21729;
+        const ps_21732 = _call(String$concat, [", ", List$init(a, _t21731)]);
+        const _t21733 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, t_21724, n, (((("declare i64 @" + __dict_Show_string.show(n)) + "(") + __dict_Show_string.show(ps_21732)) + ")")]);
+        _t21729 = _t21733;
+        break _t21730;
       }
-      return _t21728;
+      return _t21729;
     }
-    List$iter(_t21726, e.ue_funcs);
-    function _t21733(gext) {
-      let _t21735;
-      const _t21734 = Codegen$global_extern_name(gext);
-      _t21736: {
-        if (_t21734._tag === 0) {
-          _t21735 = undefined;
-          break _t21736;
+    List$iter(_t21727, e.ue_funcs);
+    function _t21734(gext) {
+      let _t21736;
+      const _t21735 = Codegen$global_extern_name(gext);
+      _t21737: {
+        if (_t21735._tag === 0) {
+          _t21736 = undefined;
+          break _t21737;
         }
-        if (_t21734._tag === 1) {
-          const nm = _t21734._val;
-          _t21735 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, t_21723, nm, gext]);
-          break _t21736;
+        if (_t21735._tag === 1) {
+          const nm = _t21735._val;
+          _t21736 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, t_21724, nm, gext]);
+          break _t21737;
         }
         _match_fail("line 0");
       }
-      return _t21735;
+      return _t21736;
     }
-    return List$iter(_t21733, e.ue_global_externs);
+    return List$iter(_t21734, e.ue_global_externs);
   }
-  List$iter(_t21725, exps);
-  const _t21724 = t_21723;
-  return _t21724;
+  List$iter(_t21726, exps);
+  const _t21725 = t_21724;
+  return _t21725;
 }
 function Codegen$seed_scope(__ev_scopes_r0, ctx, exp) {
-  const top_21737 = List$hd(ctx.scopes);
-  function _t21739(__p557) {
-    let _t21741;
-    const _t21740 = __p557;
-    _t21742: {
-      const name = _t21740[0];
-      const info = _t21740[1];
-      _t21741 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, top_21737, name, info]);
-      break _t21742;
+  const top_21738 = List$hd(ctx.scopes);
+  function _t21740(__p557) {
+    let _t21742;
+    const _t21741 = __p557;
+    _t21743: {
+      const name = _t21741[0];
+      const info = _t21741[1];
+      _t21742 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, top_21738, name, info]);
+      break _t21743;
     }
-    return _t21741;
+    return _t21742;
   }
-  const _t21738 = List$iter(_t21739, exp.ue_scope);
-  return _t21738;
+  const _t21739 = List$iter(_t21740, exp.ue_scope);
+  return _t21739;
 }
 function Codegen$compile_units(target_triple, type_env, stdlib_programs, user_program) {
-  const externs_21743 = Codegen$collect_module_externs(({_hd: user_program, _tl: List$map(snd, stdlib_programs)}));
-  const ctx_std_21745 = Codegen$create_ctx(target_triple, type_env);
-  (ctx_std_21745.module_externs = externs_21743, undefined);
-  (ctx_std_21745.unit_prefix = "s_", undefined);
-  function _t21747(__p558) {
-    let _t21749;
-    const _t21748 = __p558;
-    _t21750: {
-      const _te = _t21748[0];
-      const p = _t21748[1];
-      _t21749 = p;
-      break _t21750;
+  const externs_21744 = Codegen$collect_module_externs(({_hd: user_program, _tl: List$map(snd, stdlib_programs)}));
+  const ctx_std_21746 = Codegen$create_ctx(target_triple, type_env);
+  (ctx_std_21746.module_externs = externs_21744, undefined);
+  (ctx_std_21746.unit_prefix = "s_", undefined);
+  function _t21748(__p558) {
+    let _t21750;
+    const _t21749 = __p558;
+    _t21751: {
+      const _te = _t21749[0];
+      const p = _t21749[1];
+      _t21750 = p;
+      break _t21751;
     }
-    return _t21749;
+    return _t21750;
   }
-  const stdlib_decls_21751 = List$concat_map(_t21747, stdlib_programs);
-  _call(Codegen$emit_unit_init, [__dict_Show_string, ctx_std_21745, "mml_init_std", stdlib_decls_21751]);
-  const exports_std_21753 = Codegen$capture_exports(13, 25, 30, ctx_std_21745, "mml_init_std");
-  const stdlib_ll_21755 = Codegen$assemble_output(Hashtbl$create(1), exports_std_21753.ue_aliases, false, ctx_std_21745, "");
-  const ctx_21757 = Codegen$create_ctx(target_triple, type_env);
-  (ctx_21757.module_externs = externs_21743, undefined);
-  (ctx_21757.unit_prefix = "u_", undefined);
-  Codegen$seed_scope(25, ctx_21757, exports_std_21753);
-  _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx_21757.ir, "i64", "mml_main", null]);
-  _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx_21757.ir, "entry"]);
-  (ctx_21757.current_label = "entry", undefined);
-  (ctx_21757.result_ptr = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx_21757.ir, "i64"]), undefined);
-  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx_21757.ir, "i64", Codegen$unit_value, ctx_21757.result_ptr]);
-  _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx_21757.ir, "mml_init_std", null]);
-  const visible_21759 = Ref$create(({_hd: exports_std_21753, _tl: null}));
-  const module_units_21761 = Ref$create(null);
-  const mod_seen_21763 = Hashtbl$create(8);
-  function _t21765(decl) {
-    let _t21767;
-    const _t21766 = decl;
-    _t21768: {
-      if (_t21766._tag === 10) {
-        const name = _t21766._val[0];
-        const inner = _t21766._val[1];
-        const base_21769 = Codegen$sanitize_name(name);
-        let _t21772;
-        const _t21771 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, mod_seen_21763, base_21769]);
-        _t21773: {
-          if (_t21771._tag === 0) {
-            _t21772 = 0;
-            break _t21773;
+  const stdlib_decls_21752 = List$concat_map(_t21748, stdlib_programs);
+  _call(Codegen$emit_unit_init, [__dict_Show_string, ctx_std_21746, "mml_init_std", stdlib_decls_21752]);
+  const exports_std_21754 = Codegen$capture_exports(13, 25, 30, ctx_std_21746, "mml_init_std");
+  const stdlib_ll_21756 = Codegen$assemble_output(Hashtbl$create(1), exports_std_21754.ue_aliases, false, ctx_std_21746, "");
+  const ctx_21758 = Codegen$create_ctx(target_triple, type_env);
+  (ctx_21758.module_externs = externs_21744, undefined);
+  (ctx_21758.unit_prefix = "u_", undefined);
+  Codegen$seed_scope(25, ctx_21758, exports_std_21754);
+  _call(Ir_emit$emit_define_start, [__dict_Show_string, __dict_Show_string, ({show: __show_value}), ({show: __show_value}), ctx_21758.ir, "i64", "mml_main", null]);
+  _call(Ir_emit$emit_label, [__dict_Show_string, 0, ctx_21758.ir, "entry"]);
+  (ctx_21758.current_label = "entry", undefined);
+  (ctx_21758.result_ptr = _call(Ir_emit$emit_alloca, [__dict_Show_string, ctx_21758.ir, "i64"]), undefined);
+  _call(Ir_emit$emit_store, [__dict_Show_string, __dict_Show_string, __dict_Show_string, 0, ctx_21758.ir, "i64", Codegen$unit_value, ctx_21758.result_ptr]);
+  _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx_21758.ir, "mml_init_std", null]);
+  const visible_21760 = Ref$create(({_hd: exports_std_21754, _tl: null}));
+  const module_units_21762 = Ref$create(null);
+  const mod_seen_21764 = Hashtbl$create(8);
+  function _t21766(decl) {
+    let _t21768;
+    const _t21767 = decl;
+    _t21769: {
+      if (_t21767._tag === 10) {
+        const name = _t21767._val[0];
+        const inner = _t21767._val[1];
+        const base_21770 = Codegen$sanitize_name(name);
+        let _t21773;
+        const _t21772 = _call(Hashtbl$get, [__dict_Hash_string, __dict_Eq_string, mod_seen_21764, base_21770]);
+        _t21774: {
+          if (_t21772._tag === 0) {
+            _t21773 = 0;
+            break _t21774;
           }
-          if (_t21771._tag === 1) {
-            const n = _t21771._val;
-            _t21772 = n;
-            break _t21773;
+          if (_t21772._tag === 1) {
+            const n = _t21772._val;
+            _t21773 = n;
+            break _t21774;
           }
           _match_fail("line 0");
         }
-        const n_21774 = _t21772;
-        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mod_seen_21763, base_21769, (n_21774 + 1)]);
-        let _t21776;
-        if ((n_21774 === 0)) {
-          _t21776 = base_21769;
+        const n_21775 = _t21773;
+        _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mod_seen_21764, base_21770, (n_21775 + 1)]);
+        let _t21777;
+        if ((n_21775 === 0)) {
+          _t21777 = base_21770;
         } else {
-          _t21776 = ((__dict_Show_string.show(base_21769) + "_") + __dict_Show_int.show(n_21774));
+          _t21777 = ((__dict_Show_string.show(base_21770) + "_") + __dict_Show_int.show(n_21775));
         }
-        const mangled_21777 = _t21776;
-        const init_name_21779 = ("mml_init_m_" + __dict_Show_string.show(mangled_21777));
-        const ctx_m_21781 = Codegen$create_ctx(target_triple, type_env);
-        (ctx_m_21781.module_externs = externs_21743, undefined);
-        (ctx_m_21781.unit_prefix = (("m_" + __dict_Show_string.show(mangled_21777)) + "_"), undefined);
-        List$iter(_call(Codegen$seed_scope, [25, ctx_m_21781]), List$rev(Ref$get(visible_21759)));
-        Codegen$push_scope(25, ctx_m_21781);
-        _call(Codegen$emit_unit_init, [__dict_Show_string, ctx_m_21781, init_name_21779, inner]);
-        const exp_21783 = Codegen$capture_exports(13, 25, 30, ctx_m_21781, init_name_21779);
-        const m_ll_21785 = Codegen$assemble_output(Codegen$build_import_table(List$rev(Ref$get(visible_21759))), exp_21783.ue_aliases, false, ctx_m_21781, "");
-        Ref$set(module_units_21761, ({_hd: [("mod_" + __dict_Show_string.show(mangled_21777)), m_ll_21785], _tl: Ref$get(module_units_21761)}));
-        Ref$set(visible_21759, ({_hd: exp_21783, _tl: Ref$get(visible_21759)}));
-        Codegen$seed_scope(25, ctx_21757, exp_21783);
-        const _t21786 = _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx_21757.ir, init_name_21779, null]);
-        const _t21784 = _t21786;
-        const _t21782 = _t21784;
-        const _t21780 = _t21782;
-        const _t21778 = _t21780;
-        const _t21775 = _t21778;
-        const _t21770 = _t21775;
-        _t21767 = _t21770;
-        break _t21768;
+        const mangled_21778 = _t21777;
+        const init_name_21780 = ("mml_init_m_" + __dict_Show_string.show(mangled_21778));
+        const ctx_m_21782 = Codegen$create_ctx(target_triple, type_env);
+        (ctx_m_21782.module_externs = externs_21744, undefined);
+        (ctx_m_21782.unit_prefix = (("m_" + __dict_Show_string.show(mangled_21778)) + "_"), undefined);
+        List$iter(_call(Codegen$seed_scope, [25, ctx_m_21782]), List$rev(Ref$get(visible_21760)));
+        Codegen$push_scope(25, ctx_m_21782);
+        _call(Codegen$emit_unit_init, [__dict_Show_string, ctx_m_21782, init_name_21780, inner]);
+        const exp_21784 = Codegen$capture_exports(13, 25, 30, ctx_m_21782, init_name_21780);
+        const m_ll_21786 = Codegen$assemble_output(Codegen$build_import_table(List$rev(Ref$get(visible_21760))), exp_21784.ue_aliases, false, ctx_m_21782, "");
+        Ref$set(module_units_21762, ({_hd: [("mod_" + __dict_Show_string.show(mangled_21778)), m_ll_21786], _tl: Ref$get(module_units_21762)}));
+        Ref$set(visible_21760, ({_hd: exp_21784, _tl: Ref$get(visible_21760)}));
+        Codegen$seed_scope(25, ctx_21758, exp_21784);
+        const _t21787 = _call(Ir_emit$emit_call_void, [__dict_Show_string, ({show: __show_value}), ({show: __show_value}), 0, ctx_21758.ir, init_name_21780, null]);
+        const _t21785 = _t21787;
+        const _t21783 = _t21785;
+        const _t21781 = _t21783;
+        const _t21779 = _t21781;
+        const _t21776 = _t21779;
+        const _t21771 = _t21776;
+        _t21768 = _t21771;
+        break _t21769;
       }
-      const d = _t21766;
-      _t21767 = Codegen$emit_decl(ctx_21757, d);
-      break _t21768;
+      const d = _t21767;
+      _t21768 = Codegen$emit_decl(ctx_21758, d);
+      break _t21769;
     }
-    return _t21767;
+    return _t21768;
   }
-  List$iter(_t21765, user_program);
-  const result_21787 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx_21757.ir, "i64", ctx_21757.result_ptr]);
-  _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, ctx_21757.ir, "i64", result_21787]);
-  Ir_emit$emit_define_end(0, ctx_21757.ir);
-  Codegen$emit_format_result(ctx_21757, ctx_21757.result_type);
-  const main_body_21789 = Ir_emit$contents(0, ctx_21757.ir);
-  const entry_ll_21791 = Codegen$assemble_output(Codegen$build_import_table(List$rev(Ref$get(visible_21759))), null, true, ctx_21757, main_body_21789);
-  const _t21792 = List$concat(({_hd: ["stdlib", stdlib_ll_21755], _tl: List$rev(Ref$get(module_units_21761))}), ({_hd: ["main", entry_ll_21791], _tl: null}));
-  const _t21790 = _t21792;
-  const _t21788 = _t21790;
-  const _t21764 = _t21788;
-  const _t21762 = _t21764;
-  const _t21760 = _t21762;
-  const _t21758 = _t21760;
-  const _t21756 = _t21758;
-  const _t21754 = _t21756;
-  const _t21752 = _t21754;
-  const _t21746 = _t21752;
-  const _t21744 = _t21746;
-  return _t21744;
+  List$iter(_t21766, user_program);
+  const result_21788 = _call(Ir_emit$emit_load, [__dict_Show_string, __dict_Show_string, ctx_21758.ir, "i64", ctx_21758.result_ptr]);
+  _call(Ir_emit$emit_ret, [__dict_Show_string, __dict_Show_string, 0, ctx_21758.ir, "i64", result_21788]);
+  Ir_emit$emit_define_end(0, ctx_21758.ir);
+  Codegen$emit_format_result(ctx_21758, ctx_21758.result_type);
+  const main_body_21790 = Ir_emit$contents(0, ctx_21758.ir);
+  const entry_ll_21792 = Codegen$assemble_output(Codegen$build_import_table(List$rev(Ref$get(visible_21760))), null, true, ctx_21758, main_body_21790);
+  const _t21793 = List$concat(({_hd: ["stdlib", stdlib_ll_21756], _tl: List$rev(Ref$get(module_units_21762))}), ({_hd: ["main", entry_ll_21792], _tl: null}));
+  const _t21791 = _t21793;
+  const _t21789 = _t21791;
+  const _t21765 = _t21789;
+  const _t21763 = _t21765;
+  const _t21761 = _t21763;
+  const _t21759 = _t21761;
+  const _t21757 = _t21759;
+  const _t21755 = _t21757;
+  const _t21753 = _t21755;
+  const _t21747 = _t21753;
+  const _t21745 = _t21747;
+  return _t21745;
 }
 if (typeof __cache_has === "undefined") { if (globalThis._mmlExterns && globalThis._mmlExterns["__cache_has"]) var __cache_has = globalThis._mmlExterns["__cache_has"]; else throw new Error("extern " + "__cache_has" + " not provided"); }
 if (typeof __cache_get === "undefined") { if (globalThis._mmlExterns && globalThis._mmlExterns["__cache_get"]) var __cache_get = globalThis._mmlExterns["__cache_get"]; else throw new Error("extern " + "__cache_get" + " not provided"); }
 if (typeof __cache_set === "undefined") { if (globalThis._mmlExterns && globalThis._mmlExterns["__cache_set"]) var __cache_set = globalThis._mmlExterns["__cache_set"]; else throw new Error("extern " + "__cache_set" + " not provided"); }
 function Driver$list_iter(f, xs) {
   while (true) {
-    let _t21794;
-    const _t21793 = xs;
-    _t21795: {
-      if (_t21793 === null) {
-        _t21794 = undefined;
-        break _t21795;
+    let _t21795;
+    const _t21794 = xs;
+    _t21796: {
+      if (_t21794 === null) {
+        _t21795 = undefined;
+        break _t21796;
       }
-      if (_t21793 !== null) {
-        const x = _t21793._hd;
-        const rest = _t21793._tl;
+      if (_t21794 !== null) {
+        const x = _t21794._hd;
+        const rest = _t21794._tl;
         f(x);
-        const _t21796 = f;
-        const _t21797 = rest;
-        f = _t21796;
-        xs = _t21797;
+        const _t21797 = f;
+        const _t21798 = rest;
+        f = _t21797;
+        xs = _t21798;
         continue;
-        _t21794 = undefined;
-        break _t21795;
+        _t21795 = undefined;
+        break _t21796;
       }
       _match_fail("line 0");
     }
-    return _t21794;
+    return _t21795;
   }
 }
 function Driver$list_iteri_aux(f, i, xs) {
   while (true) {
-    let _t21799;
-    const _t21798 = xs;
-    _t21800: {
-      if (_t21798 === null) {
-        _t21799 = undefined;
-        break _t21800;
+    let _t21800;
+    const _t21799 = xs;
+    _t21801: {
+      if (_t21799 === null) {
+        _t21800 = undefined;
+        break _t21801;
       }
-      if (_t21798 !== null) {
-        const x = _t21798._hd;
-        const rest = _t21798._tl;
+      if (_t21799 !== null) {
+        const x = _t21799._hd;
+        const rest = _t21799._tl;
         _call(f, [i, x]);
-        const _t21801 = f;
-        const _t21802 = (i + 1);
-        const _t21803 = rest;
-        f = _t21801;
-        i = _t21802;
-        xs = _t21803;
+        const _t21802 = f;
+        const _t21803 = (i + 1);
+        const _t21804 = rest;
+        f = _t21802;
+        i = _t21803;
+        xs = _t21804;
         continue;
-        _t21799 = undefined;
-        break _t21800;
+        _t21800 = undefined;
+        break _t21801;
       }
       _match_fail("line 0");
     }
-    return _t21799;
+    return _t21800;
   }
 }
 function Driver$list_iteri(f, xs) {
@@ -90831,232 +90837,232 @@ function Driver$register_native_ext(__dict_Show_0, idx, name, arity) {
 function Driver$register_native_dict(__dict_Show_0, idx, fields) {
   return (Driver$native_global_entries = ({_hd: _call(Serialize$serialize_native_dict, [__dict_Show_0, idx, fields]), _tl: Driver$native_global_entries}), undefined);
 }
-function _t21804_Driver$build_native_globals_json(_) {
+function _t21805_Driver$build_native_globals_json(_) {
   return _call(String$concat, [",", List$rev(Driver$native_global_entries)]);
 }
 function Driver$add_global(global_names, name) {
-  const idx_21805 = Dynarray$length(global_names);
+  const idx_21806 = Dynarray$length(global_names);
   Dynarray$push(global_names, name);
-  const _t21806 = idx_21805;
-  return _t21806;
+  const _t21807 = idx_21806;
+  return _t21807;
 }
 function Driver$register_module_fn(__dict_Show_0, ctx, global_names, mod_name, fn_name, ty, arity) {
-  const qualified_21807 = ((mod_name + ".") + fn_name);
-  const idx_21809 = Driver$add_global(global_names, qualified_21807);
-  _call(Driver$register_native_ext, [__dict_Show_0, idx_21809, qualified_21807, arity]);
-  const max_gen_21811 = Typechecker$max_tgen_in_ty(ty);
-  let _t21813;
-  if ((max_gen_21811 >= 0)) {
-    _t21813 = ({body: ty, constraints: null, equant: 0, pvquant: 0, quant: (max_gen_21811 + 1), record_evidences: null, rquant: 0});
+  const qualified_21808 = ((mod_name + ".") + fn_name);
+  const idx_21810 = Driver$add_global(global_names, qualified_21808);
+  _call(Driver$register_native_ext, [__dict_Show_0, idx_21810, qualified_21808, arity]);
+  const max_gen_21812 = Typechecker$max_tgen_in_ty(ty);
+  let _t21814;
+  if ((max_gen_21812 >= 0)) {
+    _t21814 = ({body: ty, constraints: null, equant: 0, pvquant: 0, quant: (max_gen_21812 + 1), record_evidences: null, rquant: 0});
   } else {
-    _t21813 = Types$mono(ty);
+    _t21814 = Types$mono(ty);
   }
-  const scheme_21814 = _t21813;
-  (Driver$module_extern_decls = ({_hd: ({_tag: 8, _name: "TDExtern", _val: [qualified_21807, scheme_21814]}), _tl: Driver$module_extern_decls}), undefined);
-  const vars_21816 = ({_hd: [qualified_21807, scheme_21814], _tl: ctx.vars});
-  const __rec_upd_21818 = ctx;
-  const _t21819 = ({constraint_tvars: __rec_upd_21818.constraint_tvars, current_eff: __rec_upd_21818.current_eff, current_module: __rec_upd_21818.current_module, inside_handler: __rec_upd_21818.inside_handler, loc: __rec_upd_21818.loc, loop_info: __rec_upd_21818.loop_info, mutable_vars: __rec_upd_21818.mutable_vars, return_type: __rec_upd_21818.return_type, return_used: __rec_upd_21818.return_used, type_env: __rec_upd_21818.type_env, vars: vars_21816});
-  const _t21817 = [[fn_name, scheme_21814], _t21819];
-  const _t21815 = _t21817;
-  const _t21812 = _t21815;
-  const _t21810 = _t21812;
-  const _t21808 = _t21810;
-  return _t21808;
+  const scheme_21815 = _t21814;
+  (Driver$module_extern_decls = ({_hd: ({_tag: 8, _name: "TDExtern", _val: [qualified_21808, scheme_21815]}), _tl: Driver$module_extern_decls}), undefined);
+  const vars_21817 = ({_hd: [qualified_21808, scheme_21815], _tl: ctx.vars});
+  const __rec_upd_21819 = ctx;
+  const _t21820 = ({constraint_tvars: __rec_upd_21819.constraint_tvars, current_eff: __rec_upd_21819.current_eff, current_module: __rec_upd_21819.current_module, inside_handler: __rec_upd_21819.inside_handler, loc: __rec_upd_21819.loc, loop_info: __rec_upd_21819.loop_info, mutable_vars: __rec_upd_21819.mutable_vars, return_type: __rec_upd_21819.return_type, return_used: __rec_upd_21819.return_used, type_env: __rec_upd_21819.type_env, vars: vars_21817});
+  const _t21818 = [[fn_name, scheme_21815], _t21820];
+  const _t21816 = _t21818;
+  const _t21813 = _t21816;
+  const _t21811 = _t21813;
+  const _t21809 = _t21811;
+  return _t21809;
 }
 function Driver$register_class_in_ctx(ctx, name, tyvars, methods) {
-  const num_params_21820 = List$length(tyvars);
-  function _t21822(vars, __p559) {
-    let _t21824;
-    const _t21823 = __p559;
-    _t21825: {
-      const mname = _t21823[0];
-      const mty = _t21823[1];
-      const max_gen_21826 = Typechecker$max_tgen_in_ty(mty);
-      let _t21828;
-      if (((max_gen_21826 + 1) > num_params_21820)) {
-        _t21828 = (max_gen_21826 + 1);
+  const num_params_21821 = List$length(tyvars);
+  function _t21823(vars, __p559) {
+    let _t21825;
+    const _t21824 = __p559;
+    _t21826: {
+      const mname = _t21824[0];
+      const mty = _t21824[1];
+      const max_gen_21827 = Typechecker$max_tgen_in_ty(mty);
+      let _t21829;
+      if (((max_gen_21827 + 1) > num_params_21821)) {
+        _t21829 = (max_gen_21827 + 1);
       } else {
-        _t21828 = num_params_21820;
+        _t21829 = num_params_21821;
       }
-      const quant_21829 = _t21828;
-      const _t21830 = ({_hd: [mname, ({body: mty, constraints: null, equant: 0, pvquant: 0, quant: quant_21829, record_evidences: null, rquant: 0})], _tl: vars});
-      const _t21827 = _t21830;
-      _t21824 = _t21827;
-      break _t21825;
+      const quant_21830 = _t21829;
+      const _t21831 = ({_hd: [mname, ({body: mty, constraints: null, equant: 0, pvquant: 0, quant: quant_21830, record_evidences: null, rquant: 0})], _tl: vars});
+      const _t21828 = _t21831;
+      _t21825 = _t21828;
+      break _t21826;
     }
-    return _t21824;
+    return _t21825;
   }
-  const new_vars_21831 = List$fold(_t21822, ctx.vars, methods);
-  const __rec_upd_21833 = ctx.type_env;
-  const _t21834 = ({classes: ({_hd: ({class_fundeps: null, class_methods: methods, class_name: name, class_params: tyvars}), _tl: ctx.type_env.classes}), constructors: __rec_upd_21833.constructors, effects: __rec_upd_21833.effects, hidden_ctor_types: __rec_upd_21833.hidden_ctor_types, hidden_types: __rec_upd_21833.hidden_types, instances: __rec_upd_21833.instances, modules: __rec_upd_21833.modules, mutable_fields: __rec_upd_21833.mutable_fields, newtypes: __rec_upd_21833.newtypes, records: __rec_upd_21833.records, type_aliases: __rec_upd_21833.type_aliases, type_synonyms: __rec_upd_21833.type_synonyms, variants: __rec_upd_21833.variants});
-  const type_env_21835 = _t21834;
-  const __rec_upd_21837 = ctx;
-  const _t21838 = ({constraint_tvars: __rec_upd_21837.constraint_tvars, current_eff: __rec_upd_21837.current_eff, current_module: __rec_upd_21837.current_module, inside_handler: __rec_upd_21837.inside_handler, loc: __rec_upd_21837.loc, loop_info: __rec_upd_21837.loop_info, mutable_vars: __rec_upd_21837.mutable_vars, return_type: __rec_upd_21837.return_type, return_used: __rec_upd_21837.return_used, type_env: type_env_21835, vars: new_vars_21831});
-  const _t21836 = _t21838;
-  const _t21832 = _t21836;
-  const _t21821 = _t21832;
-  return _t21821;
+  const new_vars_21832 = List$fold(_t21823, ctx.vars, methods);
+  const __rec_upd_21834 = ctx.type_env;
+  const _t21835 = ({classes: ({_hd: ({class_fundeps: null, class_methods: methods, class_name: name, class_params: tyvars}), _tl: ctx.type_env.classes}), constructors: __rec_upd_21834.constructors, effects: __rec_upd_21834.effects, hidden_ctor_types: __rec_upd_21834.hidden_ctor_types, hidden_types: __rec_upd_21834.hidden_types, instances: __rec_upd_21834.instances, modules: __rec_upd_21834.modules, mutable_fields: __rec_upd_21834.mutable_fields, newtypes: __rec_upd_21834.newtypes, records: __rec_upd_21834.records, type_aliases: __rec_upd_21834.type_aliases, type_synonyms: __rec_upd_21834.type_synonyms, variants: __rec_upd_21834.variants});
+  const type_env_21836 = _t21835;
+  const __rec_upd_21838 = ctx;
+  const _t21839 = ({constraint_tvars: __rec_upd_21838.constraint_tvars, current_eff: __rec_upd_21838.current_eff, current_module: __rec_upd_21838.current_module, inside_handler: __rec_upd_21838.inside_handler, loc: __rec_upd_21838.loc, loop_info: __rec_upd_21838.loop_info, mutable_vars: __rec_upd_21838.mutable_vars, return_type: __rec_upd_21838.return_type, return_used: __rec_upd_21838.return_used, type_env: type_env_21836, vars: new_vars_21832});
+  const _t21837 = _t21839;
+  const _t21833 = _t21837;
+  const _t21822 = _t21833;
+  return _t21822;
 }
 function Driver$register_native_instance(__dict_Show_0, ctx, global_names, class_name, tys, methods) {
-  const dname_21839 = _call(Types$dict_name, [__dict_Show_string, class_name, tys]);
-  const idx_21841 = Driver$add_global(global_names, dname_21839);
-  function _t21843(__p560) {
-    let _t21845;
-    const _t21844 = __p560;
-    _t21846: {
-      const mname = _t21844[0];
-      const ext_name = _t21844[1];
-      const arity = _t21844[2];
-      _t21845 = [mname, ext_name, arity];
-      break _t21846;
+  const dname_21840 = _call(Types$dict_name, [__dict_Show_string, class_name, tys]);
+  const idx_21842 = Driver$add_global(global_names, dname_21840);
+  function _t21844(__p560) {
+    let _t21846;
+    const _t21845 = __p560;
+    _t21847: {
+      const mname = _t21845[0];
+      const ext_name = _t21845[1];
+      const arity = _t21845[2];
+      _t21846 = [mname, ext_name, arity];
+      break _t21847;
     }
-    return _t21845;
+    return _t21846;
   }
-  const dict_fields_21847 = List$map(_t21843, methods);
-  _call(Driver$register_native_dict, [__dict_Show_0, idx_21841, dict_fields_21847]);
-  function _t21849(__p561, __p562) {
-    let _t21851;
-    const _t21850 = __p561;
-    _t21852: {
-      const a = _t21850[0];
-      let _t21854;
-      const _t21853 = __p562;
-      _t21855: {
-        const b = _t21853[0];
-        _t21854 = _call(String$compare, [a, b]);
-        break _t21855;
+  const dict_fields_21848 = List$map(_t21844, methods);
+  _call(Driver$register_native_dict, [__dict_Show_0, idx_21842, dict_fields_21848]);
+  function _t21850(__p561, __p562) {
+    let _t21852;
+    const _t21851 = __p561;
+    _t21853: {
+      const a = _t21851[0];
+      let _t21855;
+      const _t21854 = __p562;
+      _t21856: {
+        const b = _t21854[0];
+        _t21855 = _call(String$compare, [a, b]);
+        break _t21856;
       }
-      _t21851 = _t21854;
-      break _t21852;
+      _t21852 = _t21855;
+      break _t21853;
     }
-    return _t21851;
+    return _t21852;
   }
-  const sorted_21856 = List$sort(_t21849, methods);
-  function _t21858(__p563) {
-    let _t21860;
-    const _t21859 = __p563;
-    _t21861: {
-      const mname = _t21859[0];
-      const ext_name = _t21859[1];
-      const arity = _t21859[2];
-      const midx_21862 = Driver$add_global(global_names, ((dname_21839 + "$") + mname));
-      const _t21863 = _call(Driver$register_native_ext, [__dict_Show_0, midx_21862, ext_name, arity]);
-      _t21860 = _t21863;
-      break _t21861;
+  const sorted_21857 = List$sort(_t21850, methods);
+  function _t21859(__p563) {
+    let _t21861;
+    const _t21860 = __p563;
+    _t21862: {
+      const mname = _t21860[0];
+      const ext_name = _t21860[1];
+      const arity = _t21860[2];
+      const midx_21863 = Driver$add_global(global_names, ((dname_21840 + "$") + mname));
+      const _t21864 = _call(Driver$register_native_ext, [__dict_Show_0, midx_21863, ext_name, arity]);
+      _t21861 = _t21864;
+      break _t21862;
     }
-    return _t21860;
+    return _t21861;
   }
-  List$iter(_t21858, sorted_21856);
-  const __rec_upd_21864 = ctx.type_env;
-  const _t21865 = ({classes: __rec_upd_21864.classes, constructors: __rec_upd_21864.constructors, effects: __rec_upd_21864.effects, hidden_ctor_types: __rec_upd_21864.hidden_ctor_types, hidden_types: __rec_upd_21864.hidden_types, instances: ({_hd: ({inst_class: class_name, inst_constraints: null, inst_dict_name: dname_21839, inst_tys: tys}), _tl: ctx.type_env.instances}), modules: __rec_upd_21864.modules, mutable_fields: __rec_upd_21864.mutable_fields, newtypes: __rec_upd_21864.newtypes, records: __rec_upd_21864.records, type_aliases: __rec_upd_21864.type_aliases, type_synonyms: __rec_upd_21864.type_synonyms, variants: __rec_upd_21864.variants});
-  const type_env_21866 = _t21865;
-  const __rec_upd_21868 = ctx;
-  const _t21869 = ({constraint_tvars: __rec_upd_21868.constraint_tvars, current_eff: __rec_upd_21868.current_eff, current_module: __rec_upd_21868.current_module, inside_handler: __rec_upd_21868.inside_handler, loc: __rec_upd_21868.loc, loop_info: __rec_upd_21868.loop_info, mutable_vars: __rec_upd_21868.mutable_vars, return_type: __rec_upd_21868.return_type, return_used: __rec_upd_21868.return_used, type_env: type_env_21866, vars: __rec_upd_21868.vars});
-  const _t21867 = _t21869;
-  const _t21857 = _t21867;
-  const _t21848 = _t21857;
-  const _t21842 = _t21848;
-  const _t21840 = _t21842;
-  return _t21840;
+  List$iter(_t21859, sorted_21857);
+  const __rec_upd_21865 = ctx.type_env;
+  const _t21866 = ({classes: __rec_upd_21865.classes, constructors: __rec_upd_21865.constructors, effects: __rec_upd_21865.effects, hidden_ctor_types: __rec_upd_21865.hidden_ctor_types, hidden_types: __rec_upd_21865.hidden_types, instances: ({_hd: ({inst_class: class_name, inst_constraints: null, inst_dict_name: dname_21840, inst_tys: tys}), _tl: ctx.type_env.instances}), modules: __rec_upd_21865.modules, mutable_fields: __rec_upd_21865.mutable_fields, newtypes: __rec_upd_21865.newtypes, records: __rec_upd_21865.records, type_aliases: __rec_upd_21865.type_aliases, type_synonyms: __rec_upd_21865.type_synonyms, variants: __rec_upd_21865.variants});
+  const type_env_21867 = _t21866;
+  const __rec_upd_21869 = ctx;
+  const _t21870 = ({constraint_tvars: __rec_upd_21869.constraint_tvars, current_eff: __rec_upd_21869.current_eff, current_module: __rec_upd_21869.current_module, inside_handler: __rec_upd_21869.inside_handler, loc: __rec_upd_21869.loc, loop_info: __rec_upd_21869.loop_info, mutable_vars: __rec_upd_21869.mutable_vars, return_type: __rec_upd_21869.return_type, return_used: __rec_upd_21869.return_used, type_env: type_env_21867, vars: __rec_upd_21869.vars});
+  const _t21868 = _t21870;
+  const _t21858 = _t21868;
+  const _t21849 = _t21858;
+  const _t21843 = _t21849;
+  const _t21841 = _t21843;
+  return _t21841;
 }
 let Driver$js_capture_mode = false;
 let Driver$captured_typed_setups = null;
 function Driver$arity_of_type(ty) {
-  let _t21871;
-  const _t21870 = ty;
-  _t21872: {
-    if (_t21870._tag === 7) {
-      const ret = _t21870._val[2];
-      _t21871 = (1 + Driver$arity_of_type(ret));
-      break _t21872;
+  let _t21872;
+  const _t21871 = ty;
+  _t21873: {
+    if (_t21871._tag === 7) {
+      const ret = _t21871._val[2];
+      _t21872 = (1 + Driver$arity_of_type(ret));
+      break _t21873;
     }
-    _t21871 = 0;
-    break _t21872;
+    _t21872 = 0;
+    break _t21873;
   }
-  return _t21871;
+  return _t21872;
 }
 function Driver$find_global_index(__dict_Eq_0, global_names, name) {
-  const len_21873 = Dynarray$length(global_names);
+  const len_21874 = Dynarray$length(global_names);
   function find(i) {
     while (true) {
-      let _t21875;
-      if ((i >= len_21873)) {
-        _t21875 = (-1);
+      let _t21876;
+      if ((i >= len_21874)) {
+        _t21876 = (-1);
       } else {
-        let _t21876;
+        let _t21877;
         if (_call(__dict_Eq_0.$eq, [Dynarray$get(global_names, i), name])) {
-          _t21876 = i;
+          _t21877 = i;
         } else {
-          const _t21877 = (i + 1);
-          i = _t21877;
+          const _t21878 = (i + 1);
+          i = _t21878;
           continue;
-          _t21876 = undefined;
+          _t21877 = undefined;
         }
-        _t21875 = _t21876;
+        _t21876 = _t21877;
       }
-      return _t21875;
+      return _t21876;
     }
   }
-  const _t21878 = find(0);
-  const _t21874 = _t21878;
-  return _t21874;
+  const _t21879 = find(0);
+  const _t21875 = _t21879;
+  return _t21875;
 }
 function Driver$register_externs_from_program(typed_program, global_names) {
-  function _t21879(decl) {
-    let _t21881;
-    const _t21880 = decl;
-    _t21882: {
-      if (_t21880._tag === 8) {
-        const name = _t21880._val[0];
-        const scheme = _t21880._val[1];
-        const idx_21883 = _call(Driver$find_global_index, [__dict_Eq_string, global_names, name]);
-        let _t21885;
-        if ((idx_21883 >= 0)) {
-          const arity_21886 = Driver$arity_of_type(scheme.body);
-          const _t21887 = _call(Driver$register_native_ext, [__dict_Show_int, idx_21883, name, arity_21886]);
-          _t21885 = _t21887;
+  function _t21880(decl) {
+    let _t21882;
+    const _t21881 = decl;
+    _t21883: {
+      if (_t21881._tag === 8) {
+        const name = _t21881._val[0];
+        const scheme = _t21881._val[1];
+        const idx_21884 = _call(Driver$find_global_index, [__dict_Eq_string, global_names, name]);
+        let _t21886;
+        if ((idx_21884 >= 0)) {
+          const arity_21887 = Driver$arity_of_type(scheme.body);
+          const _t21888 = _call(Driver$register_native_ext, [__dict_Show_int, idx_21884, name, arity_21887]);
+          _t21886 = _t21888;
         } else {
-          _t21885 = undefined;
+          _t21886 = undefined;
         }
-        const _t21884 = _t21885;
-        _t21881 = _t21884;
-        break _t21882;
+        const _t21885 = _t21886;
+        _t21882 = _t21885;
+        break _t21883;
       }
-      _t21881 = undefined;
-      break _t21882;
+      _t21882 = undefined;
+      break _t21883;
     }
-    return _t21881;
+    return _t21882;
   }
-  return List$iter(_t21879, typed_program);
+  return List$iter(_t21880, typed_program);
 }
 function Driver$compile_setup(ctx, global_names, mutable_globals, source) {
-  const tokens_21888 = Lexer$tokenize(source);
-  const program_21890 = Parser$parse_program(tokens_21888);
-  let _t21893;
-  const _t21892 = Typechecker$check_program_in_ctx(ctx, program_21890);
-  _t21894: {
-    const ctx2 = _t21892[0];
-    const typed_program = _t21892[1];
-    const typed_program2_21895 = Typechecker$transform_constraints(ctx2, typed_program);
-    const typed_program2_21897 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_21895);
-    let _t21899;
+  const tokens_21889 = Lexer$tokenize(source);
+  const program_21891 = Parser$parse_program(tokens_21889);
+  let _t21894;
+  const _t21893 = Typechecker$check_program_in_ctx(ctx, program_21891);
+  _t21895: {
+    const ctx2 = _t21893[0];
+    const typed_program = _t21893[1];
+    const typed_program2_21896 = Typechecker$transform_constraints(ctx2, typed_program);
+    const typed_program2_21898 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_21896);
+    let _t21900;
     if (Driver$js_capture_mode) {
-      (Driver$captured_typed_setups = List$concat(Driver$captured_typed_setups, ({_hd: [ctx2.type_env, typed_program2_21897], _tl: null})), undefined);
-      _t21899 = [ctx2, ({arity: 0, code: Array$of_list(null), constants: Array$of_list(null), line_table: Array$of_list(null), name: "", num_locals: 0}), typed_program2_21897];
+      (Driver$captured_typed_setups = List$concat(Driver$captured_typed_setups, ({_hd: [ctx2.type_env, typed_program2_21898], _tl: null})), undefined);
+      _t21900 = [ctx2, ({arity: 0, code: Array$of_list(null), constants: Array$of_list(null), line_table: Array$of_list(null), name: "", num_locals: 0}), typed_program2_21898];
     } else {
-      const compiled_21900 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_21897);
-      Driver$register_externs_from_program(typed_program2_21897, global_names);
-      const _t21901 = [ctx2, compiled_21900.main, typed_program2_21897];
-      _t21899 = _t21901;
+      const compiled_21901 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_21898);
+      Driver$register_externs_from_program(typed_program2_21898, global_names);
+      const _t21902 = [ctx2, compiled_21901.main, typed_program2_21898];
+      _t21900 = _t21902;
     }
-    const _t21898 = _t21899;
-    const _t21896 = _t21898;
-    _t21893 = _t21896;
-    break _t21894;
+    const _t21899 = _t21900;
+    const _t21897 = _t21899;
+    _t21894 = _t21897;
+    break _t21895;
   }
-  const _t21891 = _t21893;
-  const _t21889 = _t21891;
-  return _t21889;
+  const _t21892 = _t21894;
+  const _t21890 = _t21892;
+  return _t21890;
 }
 function Driver$arr(a, b) {
   return ({_tag: 7, _name: "TArrow", _val: [a, ({_tag: 1, _name: "EffEmpty"}), b]});
@@ -91075,391 +91081,391 @@ function Driver$arr2_io(a, b, c) {
   return Driver$arr(a, Driver$arr_io(b, c));
 }
 function Driver$mml_root(_) {
-  function _t21902(dir) {
+  function _t21903(dir) {
     return IO$file_exists(Path$join(dir, "stdlib/builtins.mml"));
   }
-  const has_21903 = _t21902;
-  let _t21906;
-  const _t21905 = Sys$getenv("MML_ROOT");
-  _t21907: {
-    if (_t21905._tag === 0) {
-      let _t21908;
-      if (has_21903("")) {
-        _t21908 = "";
+  const has_21904 = _t21903;
+  let _t21907;
+  const _t21906 = Sys$getenv("MML_ROOT");
+  _t21908: {
+    if (_t21906._tag === 0) {
+      let _t21909;
+      if (has_21904("")) {
+        _t21909 = "";
       } else {
-        let _t21910;
-        const _t21909 = Sys$args(undefined);
-        _t21911: {
-          if (_t21909 === null) {
-            _t21910 = "";
-            break _t21911;
+        let _t21911;
+        const _t21910 = Sys$args(undefined);
+        _t21912: {
+          if (_t21910 === null) {
+            _t21911 = "";
+            break _t21912;
           }
-          if (_t21909 !== null) {
-            const a = _t21909._hd;
-            _t21910 = a;
-            break _t21911;
+          if (_t21910 !== null) {
+            const a = _t21910._hd;
+            _t21911 = a;
+            break _t21912;
           }
           _match_fail("line 0");
         }
-        const exe_21912 = _t21910;
-        let _t21914;
-        if (_call(String$contains, ["/", exe_21912])) {
-          const d_21915 = Path$dirname(exe_21912);
-          const candidates_21917 = ({_hd: d_21915, _tl: ({_hd: Path$join(d_21915, ".."), _tl: ({_hd: Path$join(d_21915, "../share/mml"), _tl: ({_hd: Path$join(d_21915, "../lib/mml"), _tl: null})})})});
-          function _t21919(c) {
-            return has_21903(c);
+        const exe_21913 = _t21911;
+        let _t21915;
+        if (_call(String$contains, ["/", exe_21913])) {
+          const d_21916 = Path$dirname(exe_21913);
+          const candidates_21918 = ({_hd: d_21916, _tl: ({_hd: Path$join(d_21916, ".."), _tl: ({_hd: Path$join(d_21916, "../share/mml"), _tl: ({_hd: Path$join(d_21916, "../lib/mml"), _tl: null})})})});
+          function _t21920(c) {
+            return has_21904(c);
           }
-          let _t21921;
-          const _t21920 = List$find(_t21919, candidates_21917);
-          _t21922: {
-            if (_t21920._tag === 0) {
-              _t21921 = "";
-              break _t21922;
+          let _t21922;
+          const _t21921 = List$find(_t21920, candidates_21918);
+          _t21923: {
+            if (_t21921._tag === 0) {
+              _t21922 = "";
+              break _t21923;
             }
-            if (_t21920._tag === 1) {
-              const c = _t21920._val;
-              _t21921 = c;
-              break _t21922;
+            if (_t21921._tag === 1) {
+              const c = _t21921._val;
+              _t21922 = c;
+              break _t21923;
             }
             _match_fail("line 0");
           }
-          const _t21918 = _t21921;
-          const _t21916 = _t21918;
-          _t21914 = _t21916;
+          const _t21919 = _t21922;
+          const _t21917 = _t21919;
+          _t21915 = _t21917;
         } else {
-          _t21914 = "";
+          _t21915 = "";
         }
-        const _t21913 = _t21914;
-        _t21908 = _t21913;
+        const _t21914 = _t21915;
+        _t21909 = _t21914;
       }
-      _t21906 = _t21908;
-      break _t21907;
+      _t21907 = _t21909;
+      break _t21908;
     }
-    if (_t21905._tag === 1) {
-      const r = _t21905._val;
-      _t21906 = r;
-      break _t21907;
+    if (_t21906._tag === 1) {
+      const r = _t21906._val;
+      _t21907 = r;
+      break _t21908;
     }
     _match_fail("line 0");
   }
-  const _t21904 = _t21906;
-  return _t21904;
+  const _t21905 = _t21907;
+  return _t21905;
 }
 function Driver$stdlib_file(name) {
   return Path$join(Driver$mml_root(undefined), ("stdlib/" + (name + ".mml")));
 }
 function Driver$setup_builtins(_) {
-  const global_names_21923 = Dynarray$create(256, "");
-  const mutable_globals_21925 = Hashtbl$create(8);
-  const _t21926 = [Typechecker$empty_ctx, global_names_21923, mutable_globals_21925];
-  const _t21924 = _t21926;
-  return _t21924;
+  const global_names_21924 = Dynarray$create(256, "");
+  const mutable_globals_21926 = Hashtbl$create(8);
+  const _t21927 = [Typechecker$empty_ctx, global_names_21924, mutable_globals_21926];
+  const _t21925 = _t21927;
+  return _t21925;
 }
 function Driver$setup_classes(ctx, global_names, mutable_globals) {
-  let ctx_21927 = ctx;
-  let setup_protos_21929 = null;
-  function _t21931(name) {
-    let _t21933;
-    const _t21932 = Driver$compile_setup(ctx_21927, global_names, mutable_globals, IO$read_file(Driver$stdlib_file(name)));
-    _t21934: {
-      const ctx2 = _t21932[0];
-      const proto = _t21932[1];
-      (ctx_21927 = ctx2, undefined);
-      _t21933 = (setup_protos_21929 = ({_hd: proto, _tl: setup_protos_21929}), undefined);
-      break _t21934;
+  let ctx_21928 = ctx;
+  let setup_protos_21930 = null;
+  function _t21932(name) {
+    let _t21934;
+    const _t21933 = Driver$compile_setup(ctx_21928, global_names, mutable_globals, IO$read_file(Driver$stdlib_file(name)));
+    _t21935: {
+      const ctx2 = _t21933[0];
+      const proto = _t21933[1];
+      (ctx_21928 = ctx2, undefined);
+      _t21934 = (setup_protos_21930 = ({_hd: proto, _tl: setup_protos_21930}), undefined);
+      break _t21935;
     }
-    return _t21933;
+    return _t21934;
   }
-  const load_21935 = _t21931;
-  let _t21938;
-  const _t21937 = Driver$compile_setup(ctx_21927, global_names, mutable_globals, IO$read_file(Driver$stdlib_file("builtins")));
-  _t21939: {
-    const ctx2 = _t21937[0];
-    const builtins_proto = _t21937[1];
-    const builtins_program = _t21937[2];
-    (ctx_21927 = ctx2, undefined);
-    (setup_protos_21929 = ({_hd: builtins_proto, _tl: setup_protos_21929}), undefined);
-    function _t21940(decl) {
-      let _t21942;
-      const _t21941 = decl;
-      _t21943: {
-        if (_t21941._tag === 8) {
-          const name = _t21941._val[0];
-          const scheme = _t21941._val[1];
-          _t21942 = ({_tag: 1, _name: "Some", _val: [name, scheme]});
-          break _t21943;
+  const load_21936 = _t21932;
+  let _t21939;
+  const _t21938 = Driver$compile_setup(ctx_21928, global_names, mutable_globals, IO$read_file(Driver$stdlib_file("builtins")));
+  _t21940: {
+    const ctx2 = _t21938[0];
+    const builtins_proto = _t21938[1];
+    const builtins_program = _t21938[2];
+    (ctx_21928 = ctx2, undefined);
+    (setup_protos_21930 = ({_hd: builtins_proto, _tl: setup_protos_21930}), undefined);
+    function _t21941(decl) {
+      let _t21943;
+      const _t21942 = decl;
+      _t21944: {
+        if (_t21942._tag === 8) {
+          const name = _t21942._val[0];
+          const scheme = _t21942._val[1];
+          _t21943 = ({_tag: 1, _name: "Some", _val: [name, scheme]});
+          break _t21944;
         }
-        _t21942 = ({_tag: 0, _name: "None"});
-        break _t21943;
+        _t21943 = ({_tag: 0, _name: "None"});
+        break _t21944;
       }
-      return _t21942;
+      return _t21943;
     }
-    const stdlib_pub_vars_21944 = List$filter_map(_t21940, builtins_program);
-    function _t21946(__p564) {
-      let _t21948;
-      const _t21947 = __p564;
-      _t21949: {
-        const name = _t21947[0];
-        const scheme = _t21947[1];
-        const stdlib_name_21950 = ("Stdlib." + name);
-        const sidx_21952 = Driver$add_global(global_names, stdlib_name_21950);
-        _call(Driver$register_native_ext, [__dict_Show_int, sidx_21952, name, Driver$arity_of_type(scheme.body)]);
-        const __rec_upd_21954 = ctx_21927;
-        const _t21955 = ({constraint_tvars: __rec_upd_21954.constraint_tvars, current_eff: __rec_upd_21954.current_eff, current_module: __rec_upd_21954.current_module, inside_handler: __rec_upd_21954.inside_handler, loc: __rec_upd_21954.loc, loop_info: __rec_upd_21954.loop_info, mutable_vars: __rec_upd_21954.mutable_vars, return_type: __rec_upd_21954.return_type, return_used: __rec_upd_21954.return_used, type_env: __rec_upd_21954.type_env, vars: ({_hd: [stdlib_name_21950, scheme], _tl: ctx_21927.vars})});
-        const _t21953 = (ctx_21927 = _t21955, undefined);
-        const _t21951 = _t21953;
-        _t21948 = _t21951;
-        break _t21949;
+    const stdlib_pub_vars_21945 = List$filter_map(_t21941, builtins_program);
+    function _t21947(__p564) {
+      let _t21949;
+      const _t21948 = __p564;
+      _t21950: {
+        const name = _t21948[0];
+        const scheme = _t21948[1];
+        const stdlib_name_21951 = ("Stdlib." + name);
+        const sidx_21953 = Driver$add_global(global_names, stdlib_name_21951);
+        _call(Driver$register_native_ext, [__dict_Show_int, sidx_21953, name, Driver$arity_of_type(scheme.body)]);
+        const __rec_upd_21955 = ctx_21928;
+        const _t21956 = ({constraint_tvars: __rec_upd_21955.constraint_tvars, current_eff: __rec_upd_21955.current_eff, current_module: __rec_upd_21955.current_module, inside_handler: __rec_upd_21955.inside_handler, loc: __rec_upd_21955.loc, loop_info: __rec_upd_21955.loop_info, mutable_vars: __rec_upd_21955.mutable_vars, return_type: __rec_upd_21955.return_type, return_used: __rec_upd_21955.return_used, type_env: __rec_upd_21955.type_env, vars: ({_hd: [stdlib_name_21951, scheme], _tl: ctx_21928.vars})});
+        const _t21954 = (ctx_21928 = _t21956, undefined);
+        const _t21952 = _t21954;
+        _t21949 = _t21952;
+        break _t21950;
       }
-      return _t21948;
+      return _t21949;
     }
-    Driver$list_iter(_t21946, stdlib_pub_vars_21944);
-    load_21935("classes");
-    load_21935("option_type");
-    load_21935("iter");
-    load_21935("map_class");
-    load_21935("show");
-    function _t21956(__p565) {
-      let _t21958;
-      const _t21957 = __p565;
-      _t21959: {
-        const name = _t21957[0];
-        _t21958 = ((name === "None") || (name === "Some"));
-        break _t21959;
+    Driver$list_iter(_t21947, stdlib_pub_vars_21945);
+    load_21936("classes");
+    load_21936("option_type");
+    load_21936("iter");
+    load_21936("map_class");
+    load_21936("show");
+    function _t21957(__p565) {
+      let _t21959;
+      const _t21958 = __p565;
+      _t21960: {
+        const name = _t21958[0];
+        _t21959 = ((name === "None") || (name === "Some"));
+        break _t21960;
       }
-      return _t21958;
+      return _t21959;
     }
-    const stdlib_constructors_21960 = List$filter(_t21956, ctx_21927.type_env.constructors);
-    const __rec_upd_21962 = ctx_21927;
-    const __rec_upd_21964 = ctx_21927.type_env;
-    const _t21965 = ({classes: __rec_upd_21964.classes, constructors: __rec_upd_21964.constructors, effects: __rec_upd_21964.effects, hidden_ctor_types: __rec_upd_21964.hidden_ctor_types, hidden_types: __rec_upd_21964.hidden_types, instances: __rec_upd_21964.instances, modules: ({_hd: ["Stdlib", ({mod_instances: null, mod_name: "Stdlib", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: stdlib_constructors_21960, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: stdlib_pub_vars_21944, mod_submodules: null})], _tl: ctx_21927.type_env.modules}), mutable_fields: __rec_upd_21964.mutable_fields, newtypes: __rec_upd_21964.newtypes, records: __rec_upd_21964.records, type_aliases: __rec_upd_21964.type_aliases, type_synonyms: __rec_upd_21964.type_synonyms, variants: __rec_upd_21964.variants});
-    const _t21963 = ({constraint_tvars: __rec_upd_21962.constraint_tvars, current_eff: __rec_upd_21962.current_eff, current_module: __rec_upd_21962.current_module, inside_handler: __rec_upd_21962.inside_handler, loc: __rec_upd_21962.loc, loop_info: __rec_upd_21962.loop_info, mutable_vars: __rec_upd_21962.mutable_vars, return_type: __rec_upd_21962.return_type, return_used: __rec_upd_21962.return_used, type_env: _t21965, vars: __rec_upd_21962.vars});
-    (ctx_21927 = _t21963, undefined);
-    const _t21961 = [ctx_21927, List$rev(setup_protos_21929)];
-    const _t21945 = _t21961;
-    _t21938 = _t21945;
-    break _t21939;
+    const stdlib_constructors_21961 = List$filter(_t21957, ctx_21928.type_env.constructors);
+    const __rec_upd_21963 = ctx_21928;
+    const __rec_upd_21965 = ctx_21928.type_env;
+    const _t21966 = ({classes: __rec_upd_21965.classes, constructors: __rec_upd_21965.constructors, effects: __rec_upd_21965.effects, hidden_ctor_types: __rec_upd_21965.hidden_ctor_types, hidden_types: __rec_upd_21965.hidden_types, instances: __rec_upd_21965.instances, modules: ({_hd: ["Stdlib", ({mod_instances: null, mod_name: "Stdlib", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: stdlib_constructors_21961, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: stdlib_pub_vars_21945, mod_submodules: null})], _tl: ctx_21928.type_env.modules}), mutable_fields: __rec_upd_21965.mutable_fields, newtypes: __rec_upd_21965.newtypes, records: __rec_upd_21965.records, type_aliases: __rec_upd_21965.type_aliases, type_synonyms: __rec_upd_21965.type_synonyms, variants: __rec_upd_21965.variants});
+    const _t21964 = ({constraint_tvars: __rec_upd_21963.constraint_tvars, current_eff: __rec_upd_21963.current_eff, current_module: __rec_upd_21963.current_module, inside_handler: __rec_upd_21963.inside_handler, loc: __rec_upd_21963.loc, loop_info: __rec_upd_21963.loop_info, mutable_vars: __rec_upd_21963.mutable_vars, return_type: __rec_upd_21963.return_type, return_used: __rec_upd_21963.return_used, type_env: _t21966, vars: __rec_upd_21963.vars});
+    (ctx_21928 = _t21964, undefined);
+    const _t21962 = [ctx_21928, List$rev(setup_protos_21930)];
+    const _t21946 = _t21962;
+    _t21939 = _t21946;
+    break _t21940;
   }
-  const _t21936 = _t21938;
-  const _t21930 = _t21936;
-  const _t21928 = _t21930;
-  return _t21928;
+  const _t21937 = _t21939;
+  const _t21931 = _t21937;
+  const _t21929 = _t21931;
+  return _t21929;
 }
 function Driver$setup_modules(ctx, global_names, mutable_globals) {
-  let pub_vars_21966 = null;
-  let ctx_21968 = ctx;
-  let setup_protos_21970 = null;
-  function _t21972(__dict_Show_0, mod_name, fn_name, ty, arity) {
-    let _t21974;
-    const _t21973 = _call(Driver$register_module_fn, [__dict_Show_0, ctx_21968, global_names, mod_name, fn_name, ty, arity]);
-    _t21975: {
-      const pv = _t21973[0];
-      const ctx2 = _t21973[1];
-      (pub_vars_21966 = ({_hd: pv, _tl: pub_vars_21966}), undefined);
-      _t21974 = (ctx_21968 = ctx2, undefined);
-      break _t21975;
+  let pub_vars_21967 = null;
+  let ctx_21969 = ctx;
+  let setup_protos_21971 = null;
+  function _t21973(__dict_Show_0, mod_name, fn_name, ty, arity) {
+    let _t21975;
+    const _t21974 = _call(Driver$register_module_fn, [__dict_Show_0, ctx_21969, global_names, mod_name, fn_name, ty, arity]);
+    _t21976: {
+      const pv = _t21974[0];
+      const ctx2 = _t21974[1];
+      (pub_vars_21967 = ({_hd: pv, _tl: pub_vars_21967}), undefined);
+      _t21975 = (ctx_21969 = ctx2, undefined);
+      break _t21976;
     }
-    return _t21974;
+    return _t21975;
   }
-  const register_fn_21976 = _t21972;
-  function _t21978(name) {
-    let _t21980;
-    const _t21979 = Driver$compile_setup(ctx_21968, global_names, mutable_globals, IO$read_file(Driver$stdlib_file(name)));
-    _t21981: {
-      const ctx2 = _t21979[0];
-      const proto = _t21979[1];
-      (ctx_21968 = ctx2, undefined);
-      _t21980 = (setup_protos_21970 = ({_hd: proto, _tl: setup_protos_21970}), undefined);
-      break _t21981;
+  const register_fn_21977 = _t21973;
+  function _t21979(name) {
+    let _t21981;
+    const _t21980 = Driver$compile_setup(ctx_21969, global_names, mutable_globals, IO$read_file(Driver$stdlib_file(name)));
+    _t21982: {
+      const ctx2 = _t21980[0];
+      const proto = _t21980[1];
+      (ctx_21969 = ctx2, undefined);
+      _t21981 = (setup_protos_21971 = ({_hd: proto, _tl: setup_protos_21971}), undefined);
+      break _t21982;
     }
-    return _t21980;
+    return _t21981;
   }
-  const load_21982 = _t21978;
-  function _t21984(source) {
-    let _t21986;
-    const _t21985 = Driver$compile_setup(ctx_21968, global_names, mutable_globals, source);
-    _t21987: {
-      const ctx2 = _t21985[0];
-      const proto = _t21985[1];
-      (ctx_21968 = ctx2, undefined);
-      _t21986 = (setup_protos_21970 = ({_hd: proto, _tl: setup_protos_21970}), undefined);
-      break _t21987;
+  const load_21983 = _t21979;
+  function _t21985(source) {
+    let _t21987;
+    const _t21986 = Driver$compile_setup(ctx_21969, global_names, mutable_globals, source);
+    _t21988: {
+      const ctx2 = _t21986[0];
+      const proto = _t21986[1];
+      (ctx_21969 = ctx2, undefined);
+      _t21987 = (setup_protos_21971 = ({_hd: proto, _tl: setup_protos_21971}), undefined);
+      break _t21988;
     }
-    return _t21986;
+    return _t21987;
   }
-  const load_source_21988 = _t21984;
-  (pub_vars_21966 = null, undefined);
-  _call(register_fn_21976, [__dict_Show_int, "String", "length", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "sub", Driver$arr3(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 3, _name: "TString"})), 3]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "split", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "trim", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "starts_with", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "contains", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "replace", Driver$arr3(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 3]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "to_int", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "to_float", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 1, _name: "TFloat"}), _tl: null})]})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "uppercase", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "lowercase", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "get", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "to_bytes", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "of_bytes", Driver$arr(({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "to_byte_array", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "of_byte_array", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "to_runes", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "of_runes", Driver$arr(({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "get_rune", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 5, _name: "TRune"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "of_byte", Driver$arr(({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "rune_length", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "make", Driver$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "index_opt", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "rindex_opt", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "concat", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})}), ({_tag: 3, _name: "TString"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "String", "compare", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 2]);
-  const string_info_21990 = ({mod_instances: null, mod_name: "String", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21966, mod_submodules: null});
-  const __rec_upd_21992 = ctx_21968;
-  const __rec_upd_21994 = ctx_21968.type_env;
-  const _t21995 = ({classes: __rec_upd_21994.classes, constructors: __rec_upd_21994.constructors, effects: __rec_upd_21994.effects, hidden_ctor_types: __rec_upd_21994.hidden_ctor_types, hidden_types: __rec_upd_21994.hidden_types, instances: __rec_upd_21994.instances, modules: ({_hd: ["String", string_info_21990], _tl: ctx_21968.type_env.modules}), mutable_fields: __rec_upd_21994.mutable_fields, newtypes: __rec_upd_21994.newtypes, records: __rec_upd_21994.records, type_aliases: __rec_upd_21994.type_aliases, type_synonyms: __rec_upd_21994.type_synonyms, variants: __rec_upd_21994.variants});
-  const _t21993 = ({constraint_tvars: __rec_upd_21992.constraint_tvars, current_eff: __rec_upd_21992.current_eff, current_module: __rec_upd_21992.current_module, inside_handler: __rec_upd_21992.inside_handler, loc: __rec_upd_21992.loc, loop_info: __rec_upd_21992.loop_info, mutable_vars: __rec_upd_21992.mutable_vars, return_type: __rec_upd_21992.return_type, return_used: __rec_upd_21992.return_used, type_env: _t21995, vars: __rec_upd_21992.vars});
-  (ctx_21968 = _t21993, undefined);
-  load_source_21988("module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end");
-  load_source_21988("module String = pub let map f s = let n = String.length s in let rec go i = if i >= n do [] else (f (String.get s i)) :: (go (i + 1)) in String.of_bytes (go 0) end");
-  load_21982("list");
-  (pub_vars_21966 = null, undefined);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "make", Driver$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "get", Driver$arr2(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "set", Driver$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 6, _name: "TUnit"})), 3]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "length", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "to_list", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "of_list", Driver$arr(({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "copy", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Array", "sub", Driver$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 3]);
-  const array_info_21996 = ({mod_instances: null, mod_name: "Array", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21966, mod_submodules: null});
-  const __rec_upd_21998 = ctx_21968;
-  const __rec_upd_22000 = ctx_21968.type_env;
-  const _t22001 = ({classes: __rec_upd_22000.classes, constructors: __rec_upd_22000.constructors, effects: __rec_upd_22000.effects, hidden_ctor_types: __rec_upd_22000.hidden_ctor_types, hidden_types: __rec_upd_22000.hidden_types, instances: __rec_upd_22000.instances, modules: ({_hd: ["Array", array_info_21996], _tl: ctx_21968.type_env.modules}), mutable_fields: __rec_upd_22000.mutable_fields, newtypes: __rec_upd_22000.newtypes, records: __rec_upd_22000.records, type_aliases: __rec_upd_22000.type_aliases, type_synonyms: __rec_upd_22000.type_synonyms, variants: __rec_upd_22000.variants});
-  const _t21999 = ({constraint_tvars: __rec_upd_21998.constraint_tvars, current_eff: __rec_upd_21998.current_eff, current_module: __rec_upd_21998.current_module, inside_handler: __rec_upd_21998.inside_handler, loc: __rec_upd_21998.loc, loop_info: __rec_upd_21998.loop_info, mutable_vars: __rec_upd_21998.mutable_vars, return_type: __rec_upd_21998.return_type, return_used: __rec_upd_21998.return_used, type_env: _t22001, vars: __rec_upd_21998.vars});
-  (ctx_21968 = _t21999, undefined);
-  load_21982("array_extra");
-  (pub_vars_21966 = null, undefined);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "read_file", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "write_file", Driver$arr2_io(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "append_file", Driver$arr2_io(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "read_line", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 3, _name: "TString"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "file_exists", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "write", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "write_err", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "flush", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "IO", "read_bytes", Driver$arr_io(({_tag: 0, _name: "TInt"}), ({_tag: 3, _name: "TString"})), 1]);
-  const io_info_22002 = ({mod_instances: null, mod_name: "IO", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21966, mod_submodules: null});
-  const __rec_upd_22004 = ctx_21968;
-  const __rec_upd_22006 = ctx_21968.type_env;
-  const _t22007 = ({classes: __rec_upd_22006.classes, constructors: __rec_upd_22006.constructors, effects: __rec_upd_22006.effects, hidden_ctor_types: __rec_upd_22006.hidden_ctor_types, hidden_types: __rec_upd_22006.hidden_types, instances: __rec_upd_22006.instances, modules: ({_hd: ["IO", io_info_22002], _tl: ctx_21968.type_env.modules}), mutable_fields: __rec_upd_22006.mutable_fields, newtypes: __rec_upd_22006.newtypes, records: __rec_upd_22006.records, type_aliases: __rec_upd_22006.type_aliases, type_synonyms: __rec_upd_22006.type_synonyms, variants: __rec_upd_22006.variants});
-  const _t22005 = ({constraint_tvars: __rec_upd_22004.constraint_tvars, current_eff: __rec_upd_22004.current_eff, current_module: __rec_upd_22004.current_module, inside_handler: __rec_upd_22004.inside_handler, loc: __rec_upd_22004.loc, loop_info: __rec_upd_22004.loop_info, mutable_vars: __rec_upd_22004.mutable_vars, return_type: __rec_upd_22004.return_type, return_used: __rec_upd_22004.return_used, type_env: _t22007, vars: __rec_upd_22004.vars});
-  (ctx_21968 = _t22005, undefined);
-  (pub_vars_21966 = null, undefined);
-  _call(register_fn_21976, [__dict_Show_int, "Sys", "args", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Sys", "getenv", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 3, _name: "TString"}), _tl: null})]})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Sys", "exit", Driver$arr_io(({_tag: 0, _name: "TInt"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Sys", "time", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 1, _name: "TFloat"})), 1]);
-  const sys_info_22008 = ({mod_instances: null, mod_name: "Sys", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21966, mod_submodules: null});
-  const __rec_upd_22010 = ctx_21968;
-  const __rec_upd_22012 = ctx_21968.type_env;
-  const _t22013 = ({classes: __rec_upd_22012.classes, constructors: __rec_upd_22012.constructors, effects: __rec_upd_22012.effects, hidden_ctor_types: __rec_upd_22012.hidden_ctor_types, hidden_types: __rec_upd_22012.hidden_types, instances: __rec_upd_22012.instances, modules: ({_hd: ["Sys", sys_info_22008], _tl: ctx_21968.type_env.modules}), mutable_fields: __rec_upd_22012.mutable_fields, newtypes: __rec_upd_22012.newtypes, records: __rec_upd_22012.records, type_aliases: __rec_upd_22012.type_aliases, type_synonyms: __rec_upd_22012.type_synonyms, variants: __rec_upd_22012.variants});
-  const _t22011 = ({constraint_tvars: __rec_upd_22010.constraint_tvars, current_eff: __rec_upd_22010.current_eff, current_module: __rec_upd_22010.current_module, inside_handler: __rec_upd_22010.inside_handler, loc: __rec_upd_22010.loc, loop_info: __rec_upd_22010.loop_info, mutable_vars: __rec_upd_22010.mutable_vars, return_type: __rec_upd_22010.return_type, return_used: __rec_upd_22010.return_used, type_env: _t22013, vars: __rec_upd_22010.vars});
-  (ctx_21968 = _t22011, undefined);
-  load_21982("math");
-  load_21982("result");
-  load_21982("byte");
-  load_21982("rune");
-  load_21982("map");
-  load_21982("set");
-  load_21982("enum");
-  load_21982("seq");
-  load_21982("option");
-  load_21982("buffer");
-  load_21982("fmt");
-  load_21982("hash");
-  load_21982("hashtbl");
-  load_21982("ref");
-  load_21982("dynarray");
-  load_21982("compat");
-  load_21982("fs");
-  load_21982("path");
-  load_21982("process");
-  load_21982("digest");
-  (pub_vars_21966 = null, undefined);
-  _call(register_fn_21976, [__dict_Show_int, "Runtime", "eval", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  _call(register_fn_21976, [__dict_Show_int, "Runtime", "eval_file", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
-  const runtime_info_22014 = ({mod_instances: null, mod_name: "Runtime", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21966, mod_submodules: null});
-  const __rec_upd_22016 = ctx_21968;
-  const __rec_upd_22018 = ctx_21968.type_env;
-  const _t22019 = ({classes: __rec_upd_22018.classes, constructors: __rec_upd_22018.constructors, effects: __rec_upd_22018.effects, hidden_ctor_types: __rec_upd_22018.hidden_ctor_types, hidden_types: __rec_upd_22018.hidden_types, instances: __rec_upd_22018.instances, modules: ({_hd: ["Runtime", runtime_info_22014], _tl: ctx_21968.type_env.modules}), mutable_fields: __rec_upd_22018.mutable_fields, newtypes: __rec_upd_22018.newtypes, records: __rec_upd_22018.records, type_aliases: __rec_upd_22018.type_aliases, type_synonyms: __rec_upd_22018.type_synonyms, variants: __rec_upd_22018.variants});
-  const _t22017 = ({constraint_tvars: __rec_upd_22016.constraint_tvars, current_eff: __rec_upd_22016.current_eff, current_module: __rec_upd_22016.current_module, inside_handler: __rec_upd_22016.inside_handler, loc: __rec_upd_22016.loc, loop_info: __rec_upd_22016.loop_info, mutable_vars: __rec_upd_22016.mutable_vars, return_type: __rec_upd_22016.return_type, return_used: __rec_upd_22016.return_used, type_env: _t22019, vars: __rec_upd_22016.vars});
-  (ctx_21968 = _t22017, undefined);
-  const _t22015 = [ctx_21968, List$rev(setup_protos_21970)];
-  const _t22009 = _t22015;
-  const _t22003 = _t22009;
-  const _t21997 = _t22003;
-  const _t21991 = _t21997;
-  const _t21989 = _t21991;
-  const _t21983 = _t21989;
-  const _t21977 = _t21983;
-  const _t21971 = _t21977;
-  const _t21969 = _t21971;
-  const _t21967 = _t21969;
-  return _t21967;
+  const load_source_21989 = _t21985;
+  (pub_vars_21967 = null, undefined);
+  _call(register_fn_21977, [__dict_Show_int, "String", "length", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "sub", Driver$arr3(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 3, _name: "TString"})), 3]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "split", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "trim", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "starts_with", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "contains", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "replace", Driver$arr3(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 3]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "to_int", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "to_float", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 1, _name: "TFloat"}), _tl: null})]})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "uppercase", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "lowercase", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "get", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "to_bytes", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "of_bytes", Driver$arr(({_tag: 10, _name: "TList", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "to_byte_array", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "of_byte_array", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 4, _name: "TByte"})}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "to_runes", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "of_runes", Driver$arr(({_tag: 10, _name: "TList", _val: ({_tag: 5, _name: "TRune"})}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "get_rune", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"}), ({_tag: 5, _name: "TRune"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "of_byte", Driver$arr(({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "rune_length", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "make", Driver$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 4, _name: "TByte"}), ({_tag: 3, _name: "TString"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "index_opt", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "rindex_opt", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 4, _name: "TByte"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 0, _name: "TInt"}), _tl: null})]})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "concat", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})}), ({_tag: 3, _name: "TString"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "String", "compare", Driver$arr2(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 0, _name: "TInt"})), 2]);
+  const string_info_21991 = ({mod_instances: null, mod_name: "String", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21967, mod_submodules: null});
+  const __rec_upd_21993 = ctx_21969;
+  const __rec_upd_21995 = ctx_21969.type_env;
+  const _t21996 = ({classes: __rec_upd_21995.classes, constructors: __rec_upd_21995.constructors, effects: __rec_upd_21995.effects, hidden_ctor_types: __rec_upd_21995.hidden_ctor_types, hidden_types: __rec_upd_21995.hidden_types, instances: __rec_upd_21995.instances, modules: ({_hd: ["String", string_info_21991], _tl: ctx_21969.type_env.modules}), mutable_fields: __rec_upd_21995.mutable_fields, newtypes: __rec_upd_21995.newtypes, records: __rec_upd_21995.records, type_aliases: __rec_upd_21995.type_aliases, type_synonyms: __rec_upd_21995.type_synonyms, variants: __rec_upd_21995.variants});
+  const _t21994 = ({constraint_tvars: __rec_upd_21993.constraint_tvars, current_eff: __rec_upd_21993.current_eff, current_module: __rec_upd_21993.current_module, inside_handler: __rec_upd_21993.inside_handler, loc: __rec_upd_21993.loc, loop_info: __rec_upd_21993.loop_info, mutable_vars: __rec_upd_21993.mutable_vars, return_type: __rec_upd_21993.return_type, return_used: __rec_upd_21993.return_used, type_env: _t21996, vars: __rec_upd_21993.vars});
+  (ctx_21969 = _t21994, undefined);
+  load_source_21989("module String = pub let iter f s = let n = String.length s in let rec go i = if i >= n do () else (f (String.get s i); go (i + 1)) in go 0 end");
+  load_source_21989("module String = pub let map f s = let n = String.length s in let rec go i = if i >= n do [] else (f (String.get s i)) :: (go (i + 1)) in String.of_bytes (go 0) end");
+  load_21983("list");
+  (pub_vars_21967 = null, undefined);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "make", Driver$arr2(({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "get", Driver$arr2(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "set", Driver$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 16, _name: "TGen", _val: 0}), ({_tag: 6, _name: "TUnit"})), 3]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "length", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "to_list", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "of_list", Driver$arr(({_tag: 10, _name: "TList", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "copy", Driver$arr(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Array", "sub", Driver$arr3(({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})}), ({_tag: 0, _name: "TInt"}), ({_tag: 0, _name: "TInt"}), ({_tag: 13, _name: "TArray", _val: ({_tag: 16, _name: "TGen", _val: 0})})), 3]);
+  const array_info_21997 = ({mod_instances: null, mod_name: "Array", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21967, mod_submodules: null});
+  const __rec_upd_21999 = ctx_21969;
+  const __rec_upd_22001 = ctx_21969.type_env;
+  const _t22002 = ({classes: __rec_upd_22001.classes, constructors: __rec_upd_22001.constructors, effects: __rec_upd_22001.effects, hidden_ctor_types: __rec_upd_22001.hidden_ctor_types, hidden_types: __rec_upd_22001.hidden_types, instances: __rec_upd_22001.instances, modules: ({_hd: ["Array", array_info_21997], _tl: ctx_21969.type_env.modules}), mutable_fields: __rec_upd_22001.mutable_fields, newtypes: __rec_upd_22001.newtypes, records: __rec_upd_22001.records, type_aliases: __rec_upd_22001.type_aliases, type_synonyms: __rec_upd_22001.type_synonyms, variants: __rec_upd_22001.variants});
+  const _t22000 = ({constraint_tvars: __rec_upd_21999.constraint_tvars, current_eff: __rec_upd_21999.current_eff, current_module: __rec_upd_21999.current_module, inside_handler: __rec_upd_21999.inside_handler, loc: __rec_upd_21999.loc, loop_info: __rec_upd_21999.loop_info, mutable_vars: __rec_upd_21999.mutable_vars, return_type: __rec_upd_21999.return_type, return_used: __rec_upd_21999.return_used, type_env: _t22002, vars: __rec_upd_21999.vars});
+  (ctx_21969 = _t22000, undefined);
+  load_21983("array_extra");
+  (pub_vars_21967 = null, undefined);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "read_file", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "write_file", Driver$arr2_io(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "append_file", Driver$arr2_io(({_tag: 3, _name: "TString"}), ({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 2]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "read_line", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 3, _name: "TString"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "file_exists", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 2, _name: "TBool"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "write", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "write_err", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "flush", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "IO", "read_bytes", Driver$arr_io(({_tag: 0, _name: "TInt"}), ({_tag: 3, _name: "TString"})), 1]);
+  const io_info_22003 = ({mod_instances: null, mod_name: "IO", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21967, mod_submodules: null});
+  const __rec_upd_22005 = ctx_21969;
+  const __rec_upd_22007 = ctx_21969.type_env;
+  const _t22008 = ({classes: __rec_upd_22007.classes, constructors: __rec_upd_22007.constructors, effects: __rec_upd_22007.effects, hidden_ctor_types: __rec_upd_22007.hidden_ctor_types, hidden_types: __rec_upd_22007.hidden_types, instances: __rec_upd_22007.instances, modules: ({_hd: ["IO", io_info_22003], _tl: ctx_21969.type_env.modules}), mutable_fields: __rec_upd_22007.mutable_fields, newtypes: __rec_upd_22007.newtypes, records: __rec_upd_22007.records, type_aliases: __rec_upd_22007.type_aliases, type_synonyms: __rec_upd_22007.type_synonyms, variants: __rec_upd_22007.variants});
+  const _t22006 = ({constraint_tvars: __rec_upd_22005.constraint_tvars, current_eff: __rec_upd_22005.current_eff, current_module: __rec_upd_22005.current_module, inside_handler: __rec_upd_22005.inside_handler, loc: __rec_upd_22005.loc, loop_info: __rec_upd_22005.loop_info, mutable_vars: __rec_upd_22005.mutable_vars, return_type: __rec_upd_22005.return_type, return_used: __rec_upd_22005.return_used, type_env: _t22008, vars: __rec_upd_22005.vars});
+  (ctx_21969 = _t22006, undefined);
+  (pub_vars_21967 = null, undefined);
+  _call(register_fn_21977, [__dict_Show_int, "Sys", "args", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 10, _name: "TList", _val: ({_tag: 3, _name: "TString"})})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Sys", "getenv", Driver$arr_io(({_tag: 3, _name: "TString"}), ({_tag: 12, _name: "TVariant", _val: ["option", ({_hd: ({_tag: 3, _name: "TString"}), _tl: null})]})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Sys", "exit", Driver$arr_io(({_tag: 0, _name: "TInt"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Sys", "time", Driver$arr_io(({_tag: 6, _name: "TUnit"}), ({_tag: 1, _name: "TFloat"})), 1]);
+  const sys_info_22009 = ({mod_instances: null, mod_name: "Sys", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21967, mod_submodules: null});
+  const __rec_upd_22011 = ctx_21969;
+  const __rec_upd_22013 = ctx_21969.type_env;
+  const _t22014 = ({classes: __rec_upd_22013.classes, constructors: __rec_upd_22013.constructors, effects: __rec_upd_22013.effects, hidden_ctor_types: __rec_upd_22013.hidden_ctor_types, hidden_types: __rec_upd_22013.hidden_types, instances: __rec_upd_22013.instances, modules: ({_hd: ["Sys", sys_info_22009], _tl: ctx_21969.type_env.modules}), mutable_fields: __rec_upd_22013.mutable_fields, newtypes: __rec_upd_22013.newtypes, records: __rec_upd_22013.records, type_aliases: __rec_upd_22013.type_aliases, type_synonyms: __rec_upd_22013.type_synonyms, variants: __rec_upd_22013.variants});
+  const _t22012 = ({constraint_tvars: __rec_upd_22011.constraint_tvars, current_eff: __rec_upd_22011.current_eff, current_module: __rec_upd_22011.current_module, inside_handler: __rec_upd_22011.inside_handler, loc: __rec_upd_22011.loc, loop_info: __rec_upd_22011.loop_info, mutable_vars: __rec_upd_22011.mutable_vars, return_type: __rec_upd_22011.return_type, return_used: __rec_upd_22011.return_used, type_env: _t22014, vars: __rec_upd_22011.vars});
+  (ctx_21969 = _t22012, undefined);
+  load_21983("math");
+  load_21983("result");
+  load_21983("byte");
+  load_21983("rune");
+  load_21983("map");
+  load_21983("set");
+  load_21983("enum");
+  load_21983("seq");
+  load_21983("option");
+  load_21983("buffer");
+  load_21983("fmt");
+  load_21983("hash");
+  load_21983("hashtbl");
+  load_21983("ref");
+  load_21983("dynarray");
+  load_21983("compat");
+  load_21983("fs");
+  load_21983("path");
+  load_21983("process");
+  load_21983("digest");
+  (pub_vars_21967 = null, undefined);
+  _call(register_fn_21977, [__dict_Show_int, "Runtime", "eval", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  _call(register_fn_21977, [__dict_Show_int, "Runtime", "eval_file", Driver$arr(({_tag: 3, _name: "TString"}), ({_tag: 6, _name: "TUnit"})), 1]);
+  const runtime_info_22015 = ({mod_instances: null, mod_name: "Runtime", mod_newtypes: null, mod_opaque_types: null, mod_pub_classes: null, mod_pub_constructors: null, mod_pub_mutable_vars: null, mod_pub_types: null, mod_pub_vars: pub_vars_21967, mod_submodules: null});
+  const __rec_upd_22017 = ctx_21969;
+  const __rec_upd_22019 = ctx_21969.type_env;
+  const _t22020 = ({classes: __rec_upd_22019.classes, constructors: __rec_upd_22019.constructors, effects: __rec_upd_22019.effects, hidden_ctor_types: __rec_upd_22019.hidden_ctor_types, hidden_types: __rec_upd_22019.hidden_types, instances: __rec_upd_22019.instances, modules: ({_hd: ["Runtime", runtime_info_22015], _tl: ctx_21969.type_env.modules}), mutable_fields: __rec_upd_22019.mutable_fields, newtypes: __rec_upd_22019.newtypes, records: __rec_upd_22019.records, type_aliases: __rec_upd_22019.type_aliases, type_synonyms: __rec_upd_22019.type_synonyms, variants: __rec_upd_22019.variants});
+  const _t22018 = ({constraint_tvars: __rec_upd_22017.constraint_tvars, current_eff: __rec_upd_22017.current_eff, current_module: __rec_upd_22017.current_module, inside_handler: __rec_upd_22017.inside_handler, loc: __rec_upd_22017.loc, loop_info: __rec_upd_22017.loop_info, mutable_vars: __rec_upd_22017.mutable_vars, return_type: __rec_upd_22017.return_type, return_used: __rec_upd_22017.return_used, type_env: _t22020, vars: __rec_upd_22017.vars});
+  (ctx_21969 = _t22018, undefined);
+  const _t22016 = [ctx_21969, List$rev(setup_protos_21971)];
+  const _t22010 = _t22016;
+  const _t22004 = _t22010;
+  const _t21998 = _t22004;
+  const _t21992 = _t21998;
+  const _t21990 = _t21992;
+  const _t21984 = _t21990;
+  const _t21978 = _t21984;
+  const _t21972 = _t21978;
+  const _t21970 = _t21972;
+  const _t21968 = _t21970;
+  return _t21968;
 }
 function Driver$make_analysis_ctx(_) {
-  let _t22021;
-  const _t22020 = Driver$setup_builtins(undefined);
-  _t22022: {
-    const ctx = _t22020[0];
-    const global_names = _t22020[1];
-    const mutable_globals = _t22020[2];
-    let _t22024;
-    const _t22023 = Driver$setup_classes(ctx, global_names, mutable_globals);
-    _t22025: {
-      const ctx = _t22023[0];
-      let _t22027;
-      const _t22026 = Driver$setup_modules(ctx, global_names, mutable_globals);
-      _t22028: {
-        const ctx = _t22026[0];
-        _t22027 = ctx;
-        break _t22028;
+  let _t22022;
+  const _t22021 = Driver$setup_builtins(undefined);
+  _t22023: {
+    const ctx = _t22021[0];
+    const global_names = _t22021[1];
+    const mutable_globals = _t22021[2];
+    let _t22025;
+    const _t22024 = Driver$setup_classes(ctx, global_names, mutable_globals);
+    _t22026: {
+      const ctx = _t22024[0];
+      let _t22028;
+      const _t22027 = Driver$setup_modules(ctx, global_names, mutable_globals);
+      _t22029: {
+        const ctx = _t22027[0];
+        _t22028 = ctx;
+        break _t22029;
       }
-      _t22024 = _t22027;
-      break _t22025;
+      _t22025 = _t22028;
+      break _t22026;
     }
-    _t22021 = _t22024;
-    break _t22022;
+    _t22022 = _t22025;
+    break _t22023;
   }
-  return _t22021;
+  return _t22022;
 }
 function Driver$load_modules_into(base, sources) {
-  const ctx_22029 = Ref$create(base);
-  function _t22031(src) {
-    const _t22032 = (function() {
-      const _t22033 = _h;
-      _h = Object.assign({}, _t22033, {
+  const ctx_22030 = Ref$create(base);
+  function _t22032(src) {
+    const _t22033 = (function() {
+      const _t22034 = _h;
+      _h = Object.assign({}, _t22034, {
         "lex_error": function(_a, __k_try) { throw {_e: "lex_error", _v: _a}; },
         "parse_error": function(_a, __k_try) { throw {_e: "parse_error", _v: _a}; },
         "type_error": function(_a, __k_try) { throw {_e: "type_error", _v: _a}; },
         "unify_error": function(_m, __k_try) { throw {_e: "unify_error", _v: _m}; },
       });
       try {
-        const toks_22034 = Lexer$tokenize(src);
-        const program_22036 = Parser$parse_program(toks_22034);
-        let _t22039;
-        const _t22038 = Typechecker$check_program_in_ctx(Ref$get(ctx_22029), program_22036);
-        _t22040: {
-          const ctx2 = _t22038[0];
-          const _typed = _t22038[1];
-          _t22039 = Ref$set(ctx_22029, ctx2);
-          break _t22040;
+        const toks_22035 = Lexer$tokenize(src);
+        const program_22037 = Parser$parse_program(toks_22035);
+        let _t22040;
+        const _t22039 = Typechecker$check_program_in_ctx(Ref$get(ctx_22030), program_22037);
+        _t22041: {
+          const ctx2 = _t22039[0];
+          const _typed = _t22039[1];
+          _t22040 = Ref$set(ctx_22030, ctx2);
+          break _t22041;
         }
-        const _t22037 = _t22039;
-        const _t22035 = _t22037;
-        const __22041 = _t22035;
+        const _t22038 = _t22040;
+        const _t22036 = _t22038;
+        const __22042 = _t22036;
         return undefined;
       } catch (_exc) {
         if (_exc && _exc._e === "lex_error") {
@@ -91475,19 +91481,19 @@ function Driver$load_modules_into(base, sources) {
           const _m = _exc._v;
           return undefined;
         } else { throw _exc; }
-      } finally { _h = _t22033; }
+      } finally { _h = _t22034; }
     })();
-    _t22032;
+    _t22033;
     return undefined;
   }
-  Driver$list_iter(_t22031, sources);
-  const _t22030 = Ref$get(ctx_22029);
-  return _t22030;
+  Driver$list_iter(_t22032, sources);
+  const _t22031 = Ref$get(ctx_22030);
+  return _t22031;
 }
 function Driver$run_batch(manifest_file) {
-  const _t22042 = (function() {
-    const _t22043 = _h;
-    _h = Object.assign({}, _t22043, {
+  const _t22043 = (function() {
+    const _t22044 = _h;
+    _h = Object.assign({}, _t22044, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -91495,50 +91501,50 @@ function Driver$run_batch(manifest_file) {
       "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
     });
     try {
-      const manifest_22044 = IO$read_file(manifest_file);
-      function _t22046(s) {
+      const manifest_22045 = IO$read_file(manifest_file);
+      function _t22047(s) {
         return (s !== "");
       }
-      const files_22047 = List$filter(_t22046, _call(String$split, ["\n", manifest_22044]));
-      let _t22050;
-      const _t22049 = Driver$setup_builtins(undefined);
-      _t22051: {
-        const ctx = _t22049[0];
-        const global_names = _t22049[1];
-        const mutable_globals = _t22049[2];
-        let _t22053;
-        const _t22052 = Driver$setup_classes(ctx, global_names, mutable_globals);
-        _t22054: {
-          const ctx = _t22052[0];
-          const class_protos = _t22052[1];
-          let _t22056;
-          const _t22055 = Driver$setup_modules(ctx, global_names, mutable_globals);
-          _t22057: {
-            const ctx = _t22055[0];
-            const module_protos = _t22055[1];
-            const setup_protos_22058 = List$concat(class_protos, module_protos);
-            const base_gn_len_22060 = Dynarray$length(global_names);
-            const base_native_22062 = Driver$native_global_entries;
-            const base_mutable_22064 = Hashtbl$to_list(mutable_globals);
-            function _t22066(filename) {
-              (global_names.count = base_gn_len_22060, undefined);
-              (Driver$native_global_entries = base_native_22062, undefined);
+      const files_22048 = List$filter(_t22047, _call(String$split, ["\n", manifest_22045]));
+      let _t22051;
+      const _t22050 = Driver$setup_builtins(undefined);
+      _t22052: {
+        const ctx = _t22050[0];
+        const global_names = _t22050[1];
+        const mutable_globals = _t22050[2];
+        let _t22054;
+        const _t22053 = Driver$setup_classes(ctx, global_names, mutable_globals);
+        _t22055: {
+          const ctx = _t22053[0];
+          const class_protos = _t22053[1];
+          let _t22057;
+          const _t22056 = Driver$setup_modules(ctx, global_names, mutable_globals);
+          _t22058: {
+            const ctx = _t22056[0];
+            const module_protos = _t22056[1];
+            const setup_protos_22059 = List$concat(class_protos, module_protos);
+            const base_gn_len_22061 = Dynarray$length(global_names);
+            const base_native_22063 = Driver$native_global_entries;
+            const base_mutable_22065 = Hashtbl$to_list(mutable_globals);
+            function _t22067(filename) {
+              (global_names.count = base_gn_len_22061, undefined);
+              (Driver$native_global_entries = base_native_22063, undefined);
               Hashtbl$clear(mutable_globals);
-              function _t22067(__p566) {
-                let _t22069;
-                const _t22068 = __p566;
-                _t22070: {
-                  const k = _t22068[0];
-                  const v = _t22068[1];
-                  _t22069 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
-                  break _t22070;
+              function _t22068(__p566) {
+                let _t22070;
+                const _t22069 = __p566;
+                _t22071: {
+                  const k = _t22069[0];
+                  const v = _t22069[1];
+                  _t22070 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
+                  break _t22071;
                 }
-                return _t22069;
+                return _t22070;
               }
-              Driver$list_iter(_t22067, base_mutable_22064);
-              const _t22071 = (function() {
-                const _t22072 = _h;
-                _h = Object.assign({}, _t22072, {
+              Driver$list_iter(_t22068, base_mutable_22065);
+              const _t22072 = (function() {
+                const _t22073 = _h;
+                _h = Object.assign({}, _t22073, {
                   "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                   "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                   "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -91546,71 +91552,71 @@ function Driver$run_batch(manifest_file) {
                   "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                 });
                 try {
-                  const source_22073 = IO$read_file(filename);
-                  const tokens_22075 = Lexer$tokenize(source_22073);
-                  const program_22077 = Parser$parse_program(tokens_22075);
-                  let _t22080;
-                  const _t22079 = Typechecker$check_program_in_ctx(ctx, program_22077);
-                  _t22081: {
-                    const ctx2 = _t22079[0];
-                    const typed_program = _t22079[1];
-                    const typed_program2_22082 = Typechecker$transform_constraints(ctx2, typed_program);
-                    const typed_program2_22084 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22082);
-                    const compiled_22086 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22084);
-                    Driver$register_externs_from_program(typed_program2_22084, global_names);
-                    const ng_json_22088 = _t21804_Driver$build_native_globals_json(undefined);
-                    const json_22090 = Serialize$serialize_bundle(global_names, ng_json_22088, setup_protos_22058, compiled_22086.main);
-                    print(json_22090);
-                    const _t22091 = print("===BATCH-SEP===");
-                    const _t22089 = _t22091;
-                    const _t22087 = _t22089;
-                    const _t22085 = _t22087;
-                    const _t22083 = _t22085;
-                    _t22080 = _t22083;
-                    break _t22081;
+                  const source_22074 = IO$read_file(filename);
+                  const tokens_22076 = Lexer$tokenize(source_22074);
+                  const program_22078 = Parser$parse_program(tokens_22076);
+                  let _t22081;
+                  const _t22080 = Typechecker$check_program_in_ctx(ctx, program_22078);
+                  _t22082: {
+                    const ctx2 = _t22080[0];
+                    const typed_program = _t22080[1];
+                    const typed_program2_22083 = Typechecker$transform_constraints(ctx2, typed_program);
+                    const typed_program2_22085 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22083);
+                    const compiled_22087 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22085);
+                    Driver$register_externs_from_program(typed_program2_22085, global_names);
+                    const ng_json_22089 = _t21805_Driver$build_native_globals_json(undefined);
+                    const json_22091 = Serialize$serialize_bundle(global_names, ng_json_22089, setup_protos_22059, compiled_22087.main);
+                    print(json_22091);
+                    const _t22092 = print("===BATCH-SEP===");
+                    const _t22090 = _t22092;
+                    const _t22088 = _t22090;
+                    const _t22086 = _t22088;
+                    const _t22084 = _t22086;
+                    _t22081 = _t22084;
+                    break _t22082;
                   }
-                  const _t22078 = _t22080;
-                  const _t22076 = _t22078;
-                  const _t22074 = _t22076;
-                  const x_22092 = _t22074;
-                  return x_22092;
+                  const _t22079 = _t22081;
+                  const _t22077 = _t22079;
+                  const _t22075 = _t22077;
+                  const x_22093 = _t22075;
+                  return x_22093;
                 } catch (_exc) {
                   if (_exc && _exc._e === "lex_error") {
                     const arg = _exc._v;
-                    let _t22094;
-                    const _t22093 = arg;
-                    _t22095: {
-                      const msg = _t22093[0];
-                      const _loc = _t22093[1];
+                    let _t22095;
+                    const _t22094 = arg;
+                    _t22096: {
+                      const msg = _t22094[0];
+                      const _loc = _t22094[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22094 = print("===BATCH-SEP===");
-                      break _t22095;
+                      _t22095 = print("===BATCH-SEP===");
+                      break _t22096;
                     }
-                    return _t22094;
+                    return _t22095;
                   } else if (_exc && _exc._e === "parse_error") {
                     const arg = _exc._v;
-                    let _t22097;
-                    const _t22096 = arg;
-                    _t22098: {
-                      const msg = _t22096[0];
-                      const _loc = _t22096[1];
+                    let _t22098;
+                    const _t22097 = arg;
+                    _t22099: {
+                      const msg = _t22097[0];
+                      const _loc = _t22097[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22097 = print("===BATCH-SEP===");
-                      break _t22098;
+                      _t22098 = print("===BATCH-SEP===");
+                      break _t22099;
                     }
-                    return _t22097;
+                    return _t22098;
                   } else if (_exc && _exc._e === "type_error") {
                     const arg = _exc._v;
-                    let _t22100;
-                    const _t22099 = arg;
-                    _t22101: {
-                      const msg = _t22099[0];
-                      const _loc = _t22099[1];
+                    let _t22101;
+                    const _t22100 = arg;
+                    _t22102: {
+                      const msg = _t22100[0];
+                      const _loc = _t22100[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22100 = print("===BATCH-SEP===");
-                      break _t22101;
+                      _t22101 = print("===BATCH-SEP===");
+                      break _t22102;
                     }
-                    return _t22100;
+                    return _t22101;
                   } else if (_exc && _exc._e === "compile_error") {
                     const msg = _exc._v;
                     print(("COMPILE-ERROR:" + msg));
@@ -91620,61 +91626,61 @@ function Driver$run_batch(manifest_file) {
                     print(("COMPILE-ERROR:" + msg));
                     return print("===BATCH-SEP===");
                   } else { throw _exc; }
-                } finally { _h = _t22072; }
+                } finally { _h = _t22073; }
               })();
-              return _t22071;
+              return _t22072;
             }
-            const _t22065 = Driver$list_iter(_t22066, files_22047);
-            const _t22063 = _t22065;
-            const _t22061 = _t22063;
-            const _t22059 = _t22061;
-            _t22056 = _t22059;
-            break _t22057;
+            const _t22066 = Driver$list_iter(_t22067, files_22048);
+            const _t22064 = _t22066;
+            const _t22062 = _t22064;
+            const _t22060 = _t22062;
+            _t22057 = _t22060;
+            break _t22058;
           }
-          _t22053 = _t22056;
-          break _t22054;
+          _t22054 = _t22057;
+          break _t22055;
         }
-        _t22050 = _t22053;
-        break _t22051;
+        _t22051 = _t22054;
+        break _t22052;
       }
-      const _t22048 = _t22050;
-      const _t22045 = _t22048;
-      const x_22102 = _t22045;
-      return x_22102;
+      const _t22049 = _t22051;
+      const _t22046 = _t22049;
+      const x_22103 = _t22046;
+      return x_22103;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22104;
-        const _t22103 = arg;
-        _t22105: {
-          const msg = _t22103[0];
-          const _loc = _t22103[1];
-          _t22104 = failwith(msg);
-          break _t22105;
+        let _t22105;
+        const _t22104 = arg;
+        _t22106: {
+          const msg = _t22104[0];
+          const _loc = _t22104[1];
+          _t22105 = failwith(msg);
+          break _t22106;
         }
-        return _t22104;
+        return _t22105;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22107;
-        const _t22106 = arg;
-        _t22108: {
-          const msg = _t22106[0];
-          const _loc = _t22106[1];
-          _t22107 = failwith(msg);
-          break _t22108;
+        let _t22108;
+        const _t22107 = arg;
+        _t22109: {
+          const msg = _t22107[0];
+          const _loc = _t22107[1];
+          _t22108 = failwith(msg);
+          break _t22109;
         }
-        return _t22107;
+        return _t22108;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22110;
-        const _t22109 = arg;
-        _t22111: {
-          const msg = _t22109[0];
-          const _loc = _t22109[1];
-          _t22110 = failwith(msg);
-          break _t22111;
+        let _t22111;
+        const _t22110 = arg;
+        _t22112: {
+          const msg = _t22110[0];
+          const _loc = _t22110[1];
+          _t22111 = failwith(msg);
+          break _t22112;
         }
-        return _t22110;
+        return _t22111;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -91682,14 +91688,14 @@ function Driver$run_batch(manifest_file) {
         const msg = _exc._v;
         return failwith(msg);
       } else { throw _exc; }
-    } finally { _h = _t22043; }
+    } finally { _h = _t22044; }
   })();
-  return _t22042;
+  return _t22043;
 }
 function Driver$run_emit_js(args) {
-  const _t22112 = (function() {
-    const _t22113 = _h;
-    _h = Object.assign({}, _t22113, {
+  const _t22113 = (function() {
+    const _t22114 = _h;
+    _h = Object.assign({}, _t22114, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -91700,131 +91706,131 @@ function Driver$run_emit_js(args) {
     try {
       (Driver$js_capture_mode = true, undefined);
       (Driver$captured_typed_setups = null, undefined);
-      let _t22114;
+      let _t22115;
       if (__cache_has("emit_js")) {
-        let _t22116;
-        const _t22115 = __cache_get("emit_js");
-        _t22117: {
-          const c = _t22115[0];
-          const gn = _t22115[1];
-          const mg = _t22115[2];
-          const cts = _t22115[3];
+        let _t22117;
+        const _t22116 = __cache_get("emit_js");
+        _t22118: {
+          const c = _t22116[0];
+          const gn = _t22116[1];
+          const mg = _t22116[2];
+          const cts = _t22116[3];
           (Driver$captured_typed_setups = cts, undefined);
-          _t22116 = [c, gn, mg];
-          break _t22117;
+          _t22117 = [c, gn, mg];
+          break _t22118;
         }
-        _t22114 = _t22116;
+        _t22115 = _t22117;
       } else {
-        let _t22119;
-        const _t22118 = Driver$setup_builtins(undefined);
-        _t22120: {
-          const ctx = _t22118[0];
-          const global_names = _t22118[1];
-          const mutable_globals = _t22118[2];
-          let _t22122;
-          const _t22121 = Driver$setup_classes(ctx, global_names, mutable_globals);
-          _t22123: {
-            const ctx = _t22121[0];
-            const _class_protos = _t22121[1];
-            let _t22125;
-            const _t22124 = Driver$setup_modules(ctx, global_names, mutable_globals);
-            _t22126: {
-              const ctx = _t22124[0];
-              const _module_protos = _t22124[1];
+        let _t22120;
+        const _t22119 = Driver$setup_builtins(undefined);
+        _t22121: {
+          const ctx = _t22119[0];
+          const global_names = _t22119[1];
+          const mutable_globals = _t22119[2];
+          let _t22123;
+          const _t22122 = Driver$setup_classes(ctx, global_names, mutable_globals);
+          _t22124: {
+            const ctx = _t22122[0];
+            const _class_protos = _t22122[1];
+            let _t22126;
+            const _t22125 = Driver$setup_modules(ctx, global_names, mutable_globals);
+            _t22127: {
+              const ctx = _t22125[0];
+              const _module_protos = _t22125[1];
               _call(__cache_set, ["emit_js", [ctx, global_names, mutable_globals, Driver$captured_typed_setups]]);
-              _t22125 = [ctx, global_names, mutable_globals];
-              break _t22126;
+              _t22126 = [ctx, global_names, mutable_globals];
+              break _t22127;
             }
-            _t22122 = _t22125;
-            break _t22123;
+            _t22123 = _t22126;
+            break _t22124;
           }
-          _t22119 = _t22122;
-          break _t22120;
+          _t22120 = _t22123;
+          break _t22121;
         }
-        _t22114 = _t22119;
+        _t22115 = _t22120;
       }
-      let _t22128;
-      const _t22127 = _t22114;
-      _t22129: {
-        const ctx = _t22127[0];
-        const global_names = _t22127[1];
-        const mutable_globals = _t22127[2];
-        let _t22131;
-        const _t22130 = args;
-        _t22132: {
-          if (_t22130 !== null) {
-            if (_t22130._tl !== null) {
-              const file = _t22130._tl._hd;
-              _t22131 = file;
-              break _t22132;
+      let _t22129;
+      const _t22128 = _t22115;
+      _t22130: {
+        const ctx = _t22128[0];
+        const global_names = _t22128[1];
+        const mutable_globals = _t22128[2];
+        let _t22132;
+        const _t22131 = args;
+        _t22133: {
+          if (_t22131 !== null) {
+            if (_t22131._tl !== null) {
+              const file = _t22131._tl._hd;
+              _t22132 = file;
+              break _t22133;
             }
-            _t22131 = failwith("Usage: compiler --emit-js <source-file>");
-            break _t22132;
+            _t22132 = failwith("Usage: compiler --emit-js <source-file>");
+            break _t22133;
           }
-          _t22131 = failwith("Usage: compiler --emit-js <source-file>");
-          break _t22132;
+          _t22132 = failwith("Usage: compiler --emit-js <source-file>");
+          break _t22133;
         }
-        const filename_22133 = _t22131;
-        const source_22135 = IO$read_file(filename_22133);
-        const tokens_22137 = Lexer$tokenize(source_22135);
-        const program_22139 = Parser$parse_program(tokens_22137);
-        let _t22142;
-        const _t22141 = Typechecker$check_program_in_ctx(ctx, program_22139);
-        _t22143: {
-          const ctx2 = _t22141[0];
-          const typed_program = _t22141[1];
-          const typed_program2_22144 = Typechecker$transform_constraints(ctx2, typed_program);
-          const typed_program2_22146 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22144);
-          const js_22148 = Js_codegen$compile_program_with_stdlib(ctx2.type_env, Driver$captured_typed_setups, typed_program2_22146);
-          const _t22149 = print(js_22148);
-          const _t22147 = _t22149;
-          const _t22145 = _t22147;
-          _t22142 = _t22145;
-          break _t22143;
+        const filename_22134 = _t22132;
+        const source_22136 = IO$read_file(filename_22134);
+        const tokens_22138 = Lexer$tokenize(source_22136);
+        const program_22140 = Parser$parse_program(tokens_22138);
+        let _t22143;
+        const _t22142 = Typechecker$check_program_in_ctx(ctx, program_22140);
+        _t22144: {
+          const ctx2 = _t22142[0];
+          const typed_program = _t22142[1];
+          const typed_program2_22145 = Typechecker$transform_constraints(ctx2, typed_program);
+          const typed_program2_22147 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22145);
+          const js_22149 = Js_codegen$compile_program_with_stdlib(ctx2.type_env, Driver$captured_typed_setups, typed_program2_22147);
+          const _t22150 = print(js_22149);
+          const _t22148 = _t22150;
+          const _t22146 = _t22148;
+          _t22143 = _t22146;
+          break _t22144;
         }
-        const _t22140 = _t22142;
-        const _t22138 = _t22140;
-        const _t22136 = _t22138;
-        const _t22134 = _t22136;
-        _t22128 = _t22134;
-        break _t22129;
+        const _t22141 = _t22143;
+        const _t22139 = _t22141;
+        const _t22137 = _t22139;
+        const _t22135 = _t22137;
+        _t22129 = _t22135;
+        break _t22130;
       }
-      const x_22150 = _t22128;
-      return x_22150;
+      const x_22151 = _t22129;
+      return x_22151;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22152;
-        const _t22151 = arg;
-        _t22153: {
-          const msg = _t22151[0];
-          const _loc = _t22151[1];
-          _t22152 = failwith(msg);
-          break _t22153;
+        let _t22153;
+        const _t22152 = arg;
+        _t22154: {
+          const msg = _t22152[0];
+          const _loc = _t22152[1];
+          _t22153 = failwith(msg);
+          break _t22154;
         }
-        return _t22152;
+        return _t22153;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22155;
-        const _t22154 = arg;
-        _t22156: {
-          const msg = _t22154[0];
-          const _loc = _t22154[1];
-          _t22155 = failwith(msg);
-          break _t22156;
+        let _t22156;
+        const _t22155 = arg;
+        _t22157: {
+          const msg = _t22155[0];
+          const _loc = _t22155[1];
+          _t22156 = failwith(msg);
+          break _t22157;
         }
-        return _t22155;
+        return _t22156;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22158;
-        const _t22157 = arg;
-        _t22159: {
-          const msg = _t22157[0];
-          const _loc = _t22157[1];
-          _t22158 = failwith(msg);
-          break _t22159;
+        let _t22159;
+        const _t22158 = arg;
+        _t22160: {
+          const msg = _t22158[0];
+          const _loc = _t22158[1];
+          _t22159 = failwith(msg);
+          break _t22160;
         }
-        return _t22158;
+        return _t22159;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -91835,14 +91841,14 @@ function Driver$run_emit_js(args) {
         const msg = _exc._v;
         return failwith(("JS codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22113; }
+    } finally { _h = _t22114; }
   })();
-  return _t22112;
+  return _t22113;
 }
 function Driver$run_emit_ir(args) {
-  const _t22160 = (function() {
-    const _t22161 = _h;
-    _h = Object.assign({}, _t22161, {
+  const _t22161 = (function() {
+    const _t22162 = _h;
+    _h = Object.assign({}, _t22162, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -91853,141 +91859,141 @@ function Driver$run_emit_ir(args) {
     try {
       (Driver$js_capture_mode = true, undefined);
       (Driver$captured_typed_setups = null, undefined);
-      let _t22162;
+      let _t22163;
       if (__cache_has("emit_js")) {
-        let _t22164;
-        const _t22163 = __cache_get("emit_js");
-        _t22165: {
-          const c = _t22163[0];
-          const gn = _t22163[1];
-          const mg = _t22163[2];
-          const cts = _t22163[3];
+        let _t22165;
+        const _t22164 = __cache_get("emit_js");
+        _t22166: {
+          const c = _t22164[0];
+          const gn = _t22164[1];
+          const mg = _t22164[2];
+          const cts = _t22164[3];
           (Driver$captured_typed_setups = cts, undefined);
-          _t22164 = [c, gn, mg];
-          break _t22165;
+          _t22165 = [c, gn, mg];
+          break _t22166;
         }
-        _t22162 = _t22164;
+        _t22163 = _t22165;
       } else {
-        let _t22167;
-        const _t22166 = Driver$setup_builtins(undefined);
-        _t22168: {
-          const ctx = _t22166[0];
-          const global_names = _t22166[1];
-          const mutable_globals = _t22166[2];
-          let _t22170;
-          const _t22169 = Driver$setup_classes(ctx, global_names, mutable_globals);
-          _t22171: {
-            const ctx = _t22169[0];
-            const _class_protos = _t22169[1];
-            let _t22173;
-            const _t22172 = Driver$setup_modules(ctx, global_names, mutable_globals);
-            _t22174: {
-              const ctx = _t22172[0];
-              const _module_protos = _t22172[1];
+        let _t22168;
+        const _t22167 = Driver$setup_builtins(undefined);
+        _t22169: {
+          const ctx = _t22167[0];
+          const global_names = _t22167[1];
+          const mutable_globals = _t22167[2];
+          let _t22171;
+          const _t22170 = Driver$setup_classes(ctx, global_names, mutable_globals);
+          _t22172: {
+            const ctx = _t22170[0];
+            const _class_protos = _t22170[1];
+            let _t22174;
+            const _t22173 = Driver$setup_modules(ctx, global_names, mutable_globals);
+            _t22175: {
+              const ctx = _t22173[0];
+              const _module_protos = _t22173[1];
               _call(__cache_set, ["emit_js", [ctx, global_names, mutable_globals, Driver$captured_typed_setups]]);
-              _t22173 = [ctx, global_names, mutable_globals];
-              break _t22174;
+              _t22174 = [ctx, global_names, mutable_globals];
+              break _t22175;
             }
-            _t22170 = _t22173;
-            break _t22171;
+            _t22171 = _t22174;
+            break _t22172;
           }
-          _t22167 = _t22170;
-          break _t22168;
+          _t22168 = _t22171;
+          break _t22169;
         }
-        _t22162 = _t22167;
+        _t22163 = _t22168;
       }
-      let _t22176;
-      const _t22175 = _t22162;
-      _t22177: {
-        const ctx = _t22175[0];
-        const global_names = _t22175[1];
-        const mutable_globals = _t22175[2];
-        let _t22179;
-        const _t22178 = args;
-        _t22180: {
-          if (_t22178 !== null) {
-            if (_t22178._tl !== null) {
-              const file = _t22178._tl._hd;
-              _t22179 = file;
-              break _t22180;
+      let _t22177;
+      const _t22176 = _t22163;
+      _t22178: {
+        const ctx = _t22176[0];
+        const global_names = _t22176[1];
+        const mutable_globals = _t22176[2];
+        let _t22180;
+        const _t22179 = args;
+        _t22181: {
+          if (_t22179 !== null) {
+            if (_t22179._tl !== null) {
+              const file = _t22179._tl._hd;
+              _t22180 = file;
+              break _t22181;
             }
-            _t22179 = failwith("Usage: compiler --emit-ir <source-file>");
-            break _t22180;
+            _t22180 = failwith("Usage: compiler --emit-ir <source-file>");
+            break _t22181;
           }
-          _t22179 = failwith("Usage: compiler --emit-ir <source-file>");
-          break _t22180;
+          _t22180 = failwith("Usage: compiler --emit-ir <source-file>");
+          break _t22181;
         }
-        const filename_22181 = _t22179;
-        const source_22183 = IO$read_file(filename_22181);
-        const tokens_22185 = Lexer$tokenize(source_22183);
-        const program_22187 = Parser$parse_program(tokens_22185);
-        let _t22190;
-        const _t22189 = Typechecker$check_program_in_ctx(ctx, program_22187);
-        _t22191: {
-          const ctx2 = _t22189[0];
-          const typed_program = _t22189[1];
-          const typed_program2_22192 = Typechecker$transform_constraints(ctx2, typed_program);
-          function _t22194(p) {
-            let _t22196;
-            const _t22195 = p;
-            _t22197: {
-              const prog = _t22195[1];
-              _t22196 = prog;
-              break _t22197;
+        const filename_22182 = _t22180;
+        const source_22184 = IO$read_file(filename_22182);
+        const tokens_22186 = Lexer$tokenize(source_22184);
+        const program_22188 = Parser$parse_program(tokens_22186);
+        let _t22191;
+        const _t22190 = Typechecker$check_program_in_ctx(ctx, program_22188);
+        _t22192: {
+          const ctx2 = _t22190[0];
+          const typed_program = _t22190[1];
+          const typed_program2_22193 = Typechecker$transform_constraints(ctx2, typed_program);
+          function _t22195(p) {
+            let _t22197;
+            const _t22196 = p;
+            _t22198: {
+              const prog = _t22196[1];
+              _t22197 = prog;
+              break _t22198;
             }
-            return _t22196;
+            return _t22197;
           }
-          const stdlib_programs_22198 = List$map(_t22194, Driver$captured_typed_setups);
-          const typed_program2_22200 = Pipeline$lower(true, stdlib_programs_22198, ctx2.type_env, typed_program2_22192);
-          const _t22201 = print(Ir_serialize$serialize_program(typed_program2_22200));
-          const _t22199 = _t22201;
-          const _t22193 = _t22199;
-          _t22190 = _t22193;
-          break _t22191;
+          const stdlib_programs_22199 = List$map(_t22195, Driver$captured_typed_setups);
+          const typed_program2_22201 = Pipeline$lower(true, stdlib_programs_22199, ctx2.type_env, typed_program2_22193);
+          const _t22202 = print(Ir_serialize$serialize_program(typed_program2_22201));
+          const _t22200 = _t22202;
+          const _t22194 = _t22200;
+          _t22191 = _t22194;
+          break _t22192;
         }
-        const _t22188 = _t22190;
-        const _t22186 = _t22188;
-        const _t22184 = _t22186;
-        const _t22182 = _t22184;
-        _t22176 = _t22182;
-        break _t22177;
+        const _t22189 = _t22191;
+        const _t22187 = _t22189;
+        const _t22185 = _t22187;
+        const _t22183 = _t22185;
+        _t22177 = _t22183;
+        break _t22178;
       }
-      const x_22202 = _t22176;
-      return x_22202;
+      const x_22203 = _t22177;
+      return x_22203;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22204;
-        const _t22203 = arg;
-        _t22205: {
-          const msg = _t22203[0];
-          const _loc = _t22203[1];
-          _t22204 = failwith(msg);
-          break _t22205;
+        let _t22205;
+        const _t22204 = arg;
+        _t22206: {
+          const msg = _t22204[0];
+          const _loc = _t22204[1];
+          _t22205 = failwith(msg);
+          break _t22206;
         }
-        return _t22204;
+        return _t22205;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22207;
-        const _t22206 = arg;
-        _t22208: {
-          const msg = _t22206[0];
-          const _loc = _t22206[1];
-          _t22207 = failwith(msg);
-          break _t22208;
+        let _t22208;
+        const _t22207 = arg;
+        _t22209: {
+          const msg = _t22207[0];
+          const _loc = _t22207[1];
+          _t22208 = failwith(msg);
+          break _t22209;
         }
-        return _t22207;
+        return _t22208;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22210;
-        const _t22209 = arg;
-        _t22211: {
-          const msg = _t22209[0];
-          const _loc = _t22209[1];
-          _t22210 = failwith(msg);
-          break _t22211;
+        let _t22211;
+        const _t22210 = arg;
+        _t22212: {
+          const msg = _t22210[0];
+          const _loc = _t22210[1];
+          _t22211 = failwith(msg);
+          break _t22212;
         }
-        return _t22210;
+        return _t22211;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -91998,248 +92004,248 @@ function Driver$run_emit_ir(args) {
         const msg = _exc._v;
         return failwith(("IR serialize error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22161; }
+    } finally { _h = _t22162; }
   })();
-  return _t22160;
+  return _t22161;
 }
 function Driver$detect_target_triple(_) {
-  function _t22212(cmd, cmd_args) {
-    let _t22214;
-    const _t22213 = _call(Process$run, [cmd, cmd_args]);
-    _t22215: {
-      const out = _t22213[1];
-      _t22214 = String$trim(out);
-      break _t22215;
+  function _t22213(cmd, cmd_args) {
+    let _t22215;
+    const _t22214 = _call(Process$run, [cmd, cmd_args]);
+    _t22216: {
+      const out = _t22214[1];
+      _t22215 = String$trim(out);
+      break _t22216;
     }
-    return _t22214;
+    return _t22215;
   }
-  const run_trim_22216 = _t22212;
-  let _t22219;
-  const _t22218 = run_trim_22216("uname", ({_hd: "-m", _tl: null}));
-  _t22220: {
-    if (_t22218 === "") {
-      _t22219 = "x86_64";
-      break _t22220;
+  const run_trim_22217 = _t22213;
+  let _t22220;
+  const _t22219 = run_trim_22217("uname", ({_hd: "-m", _tl: null}));
+  _t22221: {
+    if (_t22219 === "") {
+      _t22220 = "x86_64";
+      break _t22221;
     }
-    const s = _t22218;
-    _t22219 = s;
-    break _t22220;
+    const s = _t22219;
+    _t22220 = s;
+    break _t22221;
   }
-  const arch_22221 = _t22219;
-  let _t22224;
-  const _t22223 = run_trim_22216("uname", ({_hd: "-s", _tl: null}));
-  _t22225: {
-    if (_t22223 === "") {
-      _t22224 = "Linux";
-      break _t22225;
+  const arch_22222 = _t22220;
+  let _t22225;
+  const _t22224 = run_trim_22217("uname", ({_hd: "-s", _tl: null}));
+  _t22226: {
+    if (_t22224 === "") {
+      _t22225 = "Linux";
+      break _t22226;
     }
-    const s = _t22223;
-    _t22224 = s;
-    break _t22225;
+    const s = _t22224;
+    _t22225 = s;
+    break _t22226;
   }
-  const os_22226 = _t22224;
-  let _t22228;
-  if ((os_22226 === "Darwin")) {
-    let _t22230;
-    const _t22229 = run_trim_22216("sw_vers", ({_hd: "-productVersion", _tl: null}));
-    _t22231: {
-      if (_t22229 === "") {
-        _t22230 = "11.0";
-        break _t22231;
+  const os_22227 = _t22225;
+  let _t22229;
+  if ((os_22227 === "Darwin")) {
+    let _t22231;
+    const _t22230 = run_trim_22217("sw_vers", ({_hd: "-productVersion", _tl: null}));
+    _t22232: {
+      if (_t22230 === "") {
+        _t22231 = "11.0";
+        break _t22232;
       }
-      const s = _t22229;
-      _t22230 = s;
-      break _t22231;
+      const s = _t22230;
+      _t22231 = s;
+      break _t22232;
     }
-    const ver_22232 = _t22230;
-    let _t22235;
-    const _t22234 = _call(String$split, [".", ver_22232]);
-    _t22236: {
-      if (_t22234 === null) {
-        _t22235 = "11";
-        break _t22236;
+    const ver_22233 = _t22231;
+    let _t22236;
+    const _t22235 = _call(String$split, [".", ver_22233]);
+    _t22237: {
+      if (_t22235 === null) {
+        _t22236 = "11";
+        break _t22237;
       }
-      if (_t22234 !== null) {
-        const v = _t22234._hd;
-        _t22235 = v;
-        break _t22236;
+      if (_t22235 !== null) {
+        const v = _t22235._hd;
+        _t22236 = v;
+        break _t22237;
       }
       _match_fail("line 0");
     }
-    const major_22237 = _t22235;
-    let _t22239;
-    if ((arch_22221 === "arm64")) {
-      _t22239 = "arm64";
-    } else {
-      _t22239 = "x86_64";
-    }
-    const _t22238 = (((_t22239 + "-apple-macosx") + major_22237) + ".0.0");
-    const _t22233 = _t22238;
-    _t22228 = _t22233;
-  } else {
+    const major_22238 = _t22236;
     let _t22240;
-    if ((arch_22221 === "aarch64")) {
-      _t22240 = "aarch64-unknown-linux-gnu";
+    if ((arch_22222 === "arm64")) {
+      _t22240 = "arm64";
     } else {
-      _t22240 = "x86_64-unknown-linux-gnu";
+      _t22240 = "x86_64";
     }
-    _t22228 = _t22240;
+    const _t22239 = (((_t22240 + "-apple-macosx") + major_22238) + ".0.0");
+    const _t22234 = _t22239;
+    _t22229 = _t22234;
+  } else {
+    let _t22241;
+    if ((arch_22222 === "aarch64")) {
+      _t22241 = "aarch64-unknown-linux-gnu";
+    } else {
+      _t22241 = "x86_64-unknown-linux-gnu";
+    }
+    _t22229 = _t22241;
   }
-  const _t22227 = _t22228;
-  const _t22222 = _t22227;
-  const _t22217 = _t22222;
-  return _t22217;
+  const _t22228 = _t22229;
+  const _t22223 = _t22228;
+  const _t22218 = _t22223;
+  return _t22218;
 }
 function Driver$build_llvm(filename) {
   (Driver$js_capture_mode = true, undefined);
   (Driver$captured_typed_setups = null, undefined);
-  let _t22241;
+  let _t22242;
   if (__cache_has("emit_js")) {
-    let _t22243;
-    const _t22242 = __cache_get("emit_js");
-    _t22244: {
-      const c = _t22242[0];
-      const gn = _t22242[1];
-      const mg = _t22242[2];
-      const cts = _t22242[3];
+    let _t22244;
+    const _t22243 = __cache_get("emit_js");
+    _t22245: {
+      const c = _t22243[0];
+      const gn = _t22243[1];
+      const mg = _t22243[2];
+      const cts = _t22243[3];
       (Driver$captured_typed_setups = cts, undefined);
-      _t22243 = [c, gn, mg];
-      break _t22244;
+      _t22244 = [c, gn, mg];
+      break _t22245;
     }
-    _t22241 = _t22243;
+    _t22242 = _t22244;
   } else {
-    let _t22246;
-    const _t22245 = Driver$setup_builtins(undefined);
-    _t22247: {
-      const ctx = _t22245[0];
-      const global_names = _t22245[1];
-      const mutable_globals = _t22245[2];
-      let _t22249;
-      const _t22248 = Driver$setup_classes(ctx, global_names, mutable_globals);
-      _t22250: {
-        const ctx = _t22248[0];
-        const _class_protos = _t22248[1];
-        let _t22252;
-        const _t22251 = Driver$setup_modules(ctx, global_names, mutable_globals);
-        _t22253: {
-          const ctx = _t22251[0];
-          const _module_protos = _t22251[1];
+    let _t22247;
+    const _t22246 = Driver$setup_builtins(undefined);
+    _t22248: {
+      const ctx = _t22246[0];
+      const global_names = _t22246[1];
+      const mutable_globals = _t22246[2];
+      let _t22250;
+      const _t22249 = Driver$setup_classes(ctx, global_names, mutable_globals);
+      _t22251: {
+        const ctx = _t22249[0];
+        const _class_protos = _t22249[1];
+        let _t22253;
+        const _t22252 = Driver$setup_modules(ctx, global_names, mutable_globals);
+        _t22254: {
+          const ctx = _t22252[0];
+          const _module_protos = _t22252[1];
           _call(__cache_set, ["emit_js", [ctx, global_names, mutable_globals, Driver$captured_typed_setups]]);
-          _t22252 = [ctx, global_names, mutable_globals];
-          break _t22253;
+          _t22253 = [ctx, global_names, mutable_globals];
+          break _t22254;
         }
-        _t22249 = _t22252;
-        break _t22250;
+        _t22250 = _t22253;
+        break _t22251;
       }
-      _t22246 = _t22249;
-      break _t22247;
+      _t22247 = _t22250;
+      break _t22248;
     }
-    _t22241 = _t22246;
+    _t22242 = _t22247;
   }
-  let _t22255;
-  const _t22254 = _t22241;
-  _t22256: {
-    const ctx = _t22254[0];
-    const _global_names = _t22254[1];
-    const _mutable_globals = _t22254[2];
-    const source_22257 = IO$read_file(filename);
-    const tokens_22259 = Lexer$tokenize(source_22257);
-    const program_22261 = Parser$parse_program(tokens_22259);
-    let _t22264;
-    const _t22263 = Typechecker$check_program_in_ctx(ctx, program_22261);
-    _t22265: {
-      const ctx2 = _t22263[0];
-      const typed_program = _t22263[1];
-      const typed_program2_22266 = Typechecker$transform_constraints(ctx2, typed_program);
-      function _t22268(p) {
-        let _t22270;
-        const _t22269 = p;
-        _t22271: {
-          const prog = _t22269[1];
-          _t22270 = prog;
-          break _t22271;
+  let _t22256;
+  const _t22255 = _t22242;
+  _t22257: {
+    const ctx = _t22255[0];
+    const _global_names = _t22255[1];
+    const _mutable_globals = _t22255[2];
+    const source_22258 = IO$read_file(filename);
+    const tokens_22260 = Lexer$tokenize(source_22258);
+    const program_22262 = Parser$parse_program(tokens_22260);
+    let _t22265;
+    const _t22264 = Typechecker$check_program_in_ctx(ctx, program_22262);
+    _t22266: {
+      const ctx2 = _t22264[0];
+      const typed_program = _t22264[1];
+      const typed_program2_22267 = Typechecker$transform_constraints(ctx2, typed_program);
+      function _t22269(p) {
+        let _t22271;
+        const _t22270 = p;
+        _t22272: {
+          const prog = _t22270[1];
+          _t22271 = prog;
+          break _t22272;
         }
-        return _t22270;
+        return _t22271;
       }
-      const stdlib_raw_22272 = List$map(_t22268, Driver$captured_typed_setups);
-      const typed_program2_22274 = Pipeline$lower(true, stdlib_raw_22272, ctx2.type_env, typed_program2_22266);
-      function _t22276(p) {
-        let _t22278;
-        const _t22277 = p;
-        _t22279: {
-          const te = _t22277[0];
-          const prog = _t22277[1];
-          _t22278 = [te, Pipeline$lower(true, null, te, prog)];
-          break _t22279;
+      const stdlib_raw_22273 = List$map(_t22269, Driver$captured_typed_setups);
+      const typed_program2_22275 = Pipeline$lower(true, stdlib_raw_22273, ctx2.type_env, typed_program2_22267);
+      function _t22277(p) {
+        let _t22279;
+        const _t22278 = p;
+        _t22280: {
+          const te = _t22278[0];
+          const prog = _t22278[1];
+          _t22279 = [te, Pipeline$lower(true, null, te, prog)];
+          break _t22280;
         }
-        return _t22278;
+        return _t22279;
       }
-      const stdlib_programs_22280 = List$map(_t22276, Driver$captured_typed_setups);
-      const extern_unit_22282 = [ctx2.type_env, Pipeline$lower(true, null, ctx2.type_env, Driver$module_extern_decls)];
-      const stdlib_programs_22284 = List$concat(stdlib_programs_22280, ({_hd: extern_unit_22282, _tl: null}));
-      const triple_22286 = Driver$detect_target_triple(undefined);
-      const _t22287 = Codegen$compile_program_with_stdlib(triple_22286, ctx2.type_env, stdlib_programs_22284, typed_program2_22274);
-      const _t22285 = _t22287;
-      const _t22283 = _t22285;
-      const _t22281 = _t22283;
-      const _t22275 = _t22281;
-      const _t22273 = _t22275;
-      const _t22267 = _t22273;
-      _t22264 = _t22267;
-      break _t22265;
+      const stdlib_programs_22281 = List$map(_t22277, Driver$captured_typed_setups);
+      const extern_unit_22283 = [ctx2.type_env, Pipeline$lower(true, null, ctx2.type_env, Driver$module_extern_decls)];
+      const stdlib_programs_22285 = List$concat(stdlib_programs_22281, ({_hd: extern_unit_22283, _tl: null}));
+      const triple_22287 = Driver$detect_target_triple(undefined);
+      const _t22288 = Codegen$compile_program_with_stdlib(triple_22287, ctx2.type_env, stdlib_programs_22285, typed_program2_22275);
+      const _t22286 = _t22288;
+      const _t22284 = _t22286;
+      const _t22282 = _t22284;
+      const _t22276 = _t22282;
+      const _t22274 = _t22276;
+      const _t22268 = _t22274;
+      _t22265 = _t22268;
+      break _t22266;
     }
-    const _t22262 = _t22264;
-    const _t22260 = _t22262;
-    const _t22258 = _t22260;
-    _t22255 = _t22258;
-    break _t22256;
+    const _t22263 = _t22265;
+    const _t22261 = _t22263;
+    const _t22259 = _t22261;
+    _t22256 = _t22259;
+    break _t22257;
   }
-  return _t22255;
+  return _t22256;
 }
 function Driver$find_runtime_file(name) {
-  const p_22288 = Path$join(Driver$mml_root(undefined), ("native_rt/" + name));
-  let _t22290;
-  if (IO$file_exists(p_22288)) {
-    _t22290 = p_22288;
+  const p_22289 = Path$join(Driver$mml_root(undefined), ("native_rt/" + name));
+  let _t22291;
+  if (IO$file_exists(p_22289)) {
+    _t22291 = p_22289;
   } else {
-    _t22290 = failwith((("cannot find " + p_22288) + " (set MML_ROOT or run from the project root)"));
+    _t22291 = failwith((("cannot find " + p_22289) + " (set MML_ROOT or run from the project root)"));
   }
-  const _t22289 = _t22290;
-  return _t22289;
+  const _t22290 = _t22291;
+  return _t22290;
 }
 function Driver$detect_context_asm(_) {
-  let _t22292;
-  const _t22291 = _call(Process$run, ["uname", ({_hd: "-m", _tl: null})]);
-  _t22293: {
-    const arch_raw = _t22291[1];
-    const arch_22294 = String$trim(arch_raw);
-    let _t22296;
-    if (((arch_22294 === "arm64") || (arch_22294 === "aarch64"))) {
-      _t22296 = Driver$find_runtime_file("context_arm64.S");
+  let _t22293;
+  const _t22292 = _call(Process$run, ["uname", ({_hd: "-m", _tl: null})]);
+  _t22294: {
+    const arch_raw = _t22292[1];
+    const arch_22295 = String$trim(arch_raw);
+    let _t22297;
+    if (((arch_22295 === "arm64") || (arch_22295 === "aarch64"))) {
+      _t22297 = Driver$find_runtime_file("context_arm64.S");
     } else {
-      _t22296 = Driver$find_runtime_file("context_x86_64.S");
+      _t22297 = Driver$find_runtime_file("context_x86_64.S");
     }
-    const _t22295 = _t22296;
-    _t22292 = _t22295;
-    break _t22293;
+    const _t22296 = _t22297;
+    _t22293 = _t22296;
+    break _t22294;
   }
-  return _t22292;
+  return _t22293;
 }
 function Driver$find_mps_dir(_) {
-  const d_22297 = Path$join(Driver$mml_root(undefined), "third_party/mps/code");
-  let _t22299;
-  if (IO$file_exists(Path$join(d_22297, "mps.c"))) {
-    _t22299 = d_22297;
+  const d_22298 = Path$join(Driver$mml_root(undefined), "third_party/mps/code");
+  let _t22300;
+  if (IO$file_exists(Path$join(d_22298, "mps.c"))) {
+    _t22300 = d_22298;
   } else {
-    _t22299 = failwith("cannot find third_party/mps/code (set MML_ROOT or run from the project root)");
+    _t22300 = failwith("cannot find third_party/mps/code (set MML_ROOT or run from the project root)");
   }
-  const _t22298 = _t22299;
-  return _t22298;
+  const _t22299 = _t22300;
+  return _t22299;
 }
 function Driver$run_emit_llvm(args) {
-  const _t22300 = (function() {
-    const _t22301 = _h;
-    _h = Object.assign({}, _t22301, {
+  const _t22301 = (function() {
+    const _t22302 = _h;
+    _h = Object.assign({}, _t22302, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92248,59 +92254,59 @@ function Driver$run_emit_llvm(args) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      let _t22303;
-      const _t22302 = args;
-      _t22304: {
-        if (_t22302 !== null) {
-          if (_t22302._tl !== null) {
-            const file = _t22302._tl._hd;
-            _t22303 = file;
-            break _t22304;
+      let _t22304;
+      const _t22303 = args;
+      _t22305: {
+        if (_t22303 !== null) {
+          if (_t22303._tl !== null) {
+            const file = _t22303._tl._hd;
+            _t22304 = file;
+            break _t22305;
           }
-          _t22303 = failwith("Usage: compiler --emit-llvm <source-file>");
-          break _t22304;
+          _t22304 = failwith("Usage: compiler --emit-llvm <source-file>");
+          break _t22305;
         }
-        _t22303 = failwith("Usage: compiler --emit-llvm <source-file>");
-        break _t22304;
+        _t22304 = failwith("Usage: compiler --emit-llvm <source-file>");
+        break _t22305;
       }
-      const filename_22305 = _t22303;
-      const _t22306 = print(Driver$build_llvm(filename_22305));
-      const x_22307 = _t22306;
-      return x_22307;
+      const filename_22306 = _t22304;
+      const _t22307 = print(Driver$build_llvm(filename_22306));
+      const x_22308 = _t22307;
+      return x_22308;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22309;
-        const _t22308 = arg;
-        _t22310: {
-          const msg = _t22308[0];
-          const _loc = _t22308[1];
-          _t22309 = failwith(msg);
-          break _t22310;
+        let _t22310;
+        const _t22309 = arg;
+        _t22311: {
+          const msg = _t22309[0];
+          const _loc = _t22309[1];
+          _t22310 = failwith(msg);
+          break _t22311;
         }
-        return _t22309;
+        return _t22310;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22312;
-        const _t22311 = arg;
-        _t22313: {
-          const msg = _t22311[0];
-          const _loc = _t22311[1];
-          _t22312 = failwith(msg);
-          break _t22313;
+        let _t22313;
+        const _t22312 = arg;
+        _t22314: {
+          const msg = _t22312[0];
+          const _loc = _t22312[1];
+          _t22313 = failwith(msg);
+          break _t22314;
         }
-        return _t22312;
+        return _t22313;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22315;
-        const _t22314 = arg;
-        _t22316: {
-          const msg = _t22314[0];
-          const _loc = _t22314[1];
-          _t22315 = failwith(msg);
-          break _t22316;
+        let _t22316;
+        const _t22315 = arg;
+        _t22317: {
+          const msg = _t22315[0];
+          const _loc = _t22315[1];
+          _t22316 = failwith(msg);
+          break _t22317;
         }
-        return _t22315;
+        return _t22316;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -92311,279 +92317,279 @@ function Driver$run_emit_llvm(args) {
         const msg = _exc._v;
         return failwith(("native codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22301; }
+    } finally { _h = _t22302; }
   })();
-  return _t22300;
+  return _t22301;
 }
 function Driver$extra_link_args(_) {
-  let _t22318;
-  const _t22317 = Sys$getenv("MML_LDFLAGS");
-  _t22319: {
-    if (_t22317._tag === 0) {
-      _t22318 = null;
-      break _t22319;
+  let _t22319;
+  const _t22318 = Sys$getenv("MML_LDFLAGS");
+  _t22320: {
+    if (_t22318._tag === 0) {
+      _t22319 = null;
+      break _t22320;
     }
-    if (_t22317._tag === 1) {
-      const s = _t22317._val;
-      function _t22320(a) {
+    if (_t22318._tag === 1) {
+      const s = _t22318._val;
+      function _t22321(a) {
         return (a !== "");
       }
-      _t22318 = List$filter(_t22320, _call(String$split, [" ", s]));
-      break _t22319;
+      _t22319 = List$filter(_t22321, _call(String$split, [" ", s]));
+      break _t22320;
     }
     _match_fail("line 0");
   }
-  return _t22318;
+  return _t22319;
 }
 const Driver$clang_version_cache = Ref$create(({_tag: 0, _name: "None"}));
 function Driver$clang_version(_) {
-  let _t22322;
-  const _t22321 = Ref$get(Driver$clang_version_cache);
-  _t22323: {
-    if (_t22321._tag === 0) {
-      let _t22325;
-      const _t22324 = _call(Process$run, ["clang", ({_hd: "--version", _tl: null})]);
-      _t22326: {
-        const _code = _t22324[0];
-        const out = _t22324[1];
-        const _err = _t22324[2];
-        let _t22328;
-        const _t22327 = _call(String$split, ["\n", out]);
-        _t22329: {
-          if (_t22327 === null) {
-            _t22328 = "unknown";
-            break _t22329;
+  let _t22323;
+  const _t22322 = Ref$get(Driver$clang_version_cache);
+  _t22324: {
+    if (_t22322._tag === 0) {
+      let _t22326;
+      const _t22325 = _call(Process$run, ["clang", ({_hd: "--version", _tl: null})]);
+      _t22327: {
+        const _code = _t22325[0];
+        const out = _t22325[1];
+        const _err = _t22325[2];
+        let _t22329;
+        const _t22328 = _call(String$split, ["\n", out]);
+        _t22330: {
+          if (_t22328 === null) {
+            _t22329 = "unknown";
+            break _t22330;
           }
-          if (_t22327 !== null) {
-            const x = _t22327._hd;
-            _t22328 = x;
-            break _t22329;
+          if (_t22328 !== null) {
+            const x = _t22328._hd;
+            _t22329 = x;
+            break _t22330;
           }
           _match_fail("line 0");
         }
-        const v_22330 = _t22328;
-        Ref$set(Driver$clang_version_cache, ({_tag: 1, _name: "Some", _val: v_22330}));
-        const _t22331 = v_22330;
-        _t22325 = _t22331;
-        break _t22326;
+        const v_22331 = _t22329;
+        Ref$set(Driver$clang_version_cache, ({_tag: 1, _name: "Some", _val: v_22331}));
+        const _t22332 = v_22331;
+        _t22326 = _t22332;
+        break _t22327;
       }
-      _t22322 = _t22325;
-      break _t22323;
+      _t22323 = _t22326;
+      break _t22324;
     }
-    if (_t22321._tag === 1) {
-      const v = _t22321._val;
-      _t22322 = v;
-      break _t22323;
+    if (_t22322._tag === 1) {
+      const v = _t22322._val;
+      _t22323 = v;
+      break _t22324;
     }
     _match_fail("line 0");
   }
-  return _t22322;
+  return _t22323;
 }
 function Driver$obj_mkdir_p(dir) {
-  let _t22332;
+  let _t22333;
   if (((dir !== "") && ((dir !== "/") && ((dir !== ".") && (!IO$file_exists(dir)))))) {
     Driver$obj_mkdir_p(Path$dirname(dir));
-    _t22332 = Fs$make_dir(dir);
+    _t22333 = Fs$make_dir(dir);
   } else {
-    _t22332 = undefined;
+    _t22333 = undefined;
   }
-  return _t22332;
+  return _t22333;
 }
 function Driver$obj_cache_dir(_) {
-  let _t22334;
-  const _t22333 = Sys$getenv("MML_CACHE");
-  _t22335: {
-    if (_t22333._tag === 0) {
-      let _t22337;
-      const _t22336 = Sys$getenv("HOME");
-      _t22338: {
-        if (_t22336._tag === 0) {
-          let _t22340;
-          const _t22339 = Sys$getenv("TMPDIR");
-          _t22341: {
-            if (_t22339._tag === 0) {
-              _t22340 = "/tmp";
-              break _t22341;
+  let _t22335;
+  const _t22334 = Sys$getenv("MML_CACHE");
+  _t22336: {
+    if (_t22334._tag === 0) {
+      let _t22338;
+      const _t22337 = Sys$getenv("HOME");
+      _t22339: {
+        if (_t22337._tag === 0) {
+          let _t22341;
+          const _t22340 = Sys$getenv("TMPDIR");
+          _t22342: {
+            if (_t22340._tag === 0) {
+              _t22341 = "/tmp";
+              break _t22342;
             }
-            if (_t22339._tag === 1) {
-              const t = _t22339._val;
-              _t22340 = t;
-              break _t22341;
+            if (_t22340._tag === 1) {
+              const t = _t22340._val;
+              _t22341 = t;
+              break _t22342;
             }
             _match_fail("line 0");
           }
-          _t22337 = Path$join(_t22340, "mml-cache");
-          break _t22338;
+          _t22338 = Path$join(_t22341, "mml-cache");
+          break _t22339;
         }
-        if (_t22336._tag === 1) {
-          const h = _t22336._val;
-          _t22337 = Path$join(Path$join(h, ".mml"), "cache");
-          break _t22338;
+        if (_t22337._tag === 1) {
+          const h = _t22337._val;
+          _t22338 = Path$join(Path$join(h, ".mml"), "cache");
+          break _t22339;
         }
         _match_fail("line 0");
       }
-      _t22334 = _t22337;
-      break _t22335;
+      _t22335 = _t22338;
+      break _t22336;
     }
-    if (_t22333._tag === 1) {
-      const d = _t22333._val;
-      _t22334 = d;
-      break _t22335;
+    if (_t22334._tag === 1) {
+      const d = _t22334._val;
+      _t22335 = d;
+      break _t22336;
     }
     _match_fail("line 0");
   }
-  const root_22342 = _t22334;
-  const d_22344 = Path$join(root_22342, "obj");
-  Driver$obj_mkdir_p(d_22344);
-  const _t22345 = d_22344;
-  const _t22343 = _t22345;
-  return _t22343;
+  const root_22343 = _t22335;
+  const d_22345 = Path$join(root_22343, "obj");
+  Driver$obj_mkdir_p(d_22345);
+  const _t22346 = d_22345;
+  const _t22344 = _t22346;
+  return _t22344;
 }
 function Driver$framed(s) {
   return (string_of_int(String$length(s)) + (":" + s));
 }
 const Driver$obj_tmp_counter = Ref$create(0);
 function Driver$clang_compile_obj(flags, src, objpath) {
-  const args_22346 = List$concat(flags, ({_hd: "-c", _tl: ({_hd: src, _tl: ({_hd: "-o", _tl: ({_hd: objpath, _tl: null})})})}));
-  let _t22349;
-  const _t22348 = _call(Process$run, ["clang", args_22346]);
-  _t22350: {
-    const code = _t22348[0];
-    const _out = _t22348[1];
-    const cerr = _t22348[2];
-    let _t22351;
+  const args_22347 = List$concat(flags, ({_hd: "-c", _tl: ({_hd: src, _tl: ({_hd: "-o", _tl: ({_hd: objpath, _tl: null})})})}));
+  let _t22350;
+  const _t22349 = _call(Process$run, ["clang", args_22347]);
+  _t22351: {
+    const code = _t22349[0];
+    const _out = _t22349[1];
+    const cerr = _t22349[2];
+    let _t22352;
     if ((code !== 0)) {
       IO$write_err(((("clang failed (exit " + string_of_int(code)) + "): ") + (cerr + "\n")));
-      _t22351 = false;
+      _t22352 = false;
     } else {
-      _t22351 = true;
+      _t22352 = true;
     }
-    _t22349 = _t22351;
-    break _t22350;
+    _t22350 = _t22352;
+    break _t22351;
   }
-  const _t22347 = _t22349;
-  return _t22347;
+  const _t22348 = _t22350;
+  return _t22348;
 }
 function Driver$ensure_object(key_extra, content, compile_to) {
-  const key_22352 = Digest$md5((Driver$framed(Driver$clang_version(undefined)) + (Driver$framed(key_extra) + content)));
-  const obj_22354 = Path$join(Driver$obj_cache_dir(undefined), (key_22352 + ".o"));
-  let _t22356;
-  if (IO$file_exists(obj_22354)) {
-    _t22356 = ({_tag: 1, _name: "Some", _val: obj_22354});
+  const key_22353 = Digest$md5((Driver$framed(Driver$clang_version(undefined)) + (Driver$framed(key_extra) + content)));
+  const obj_22355 = Path$join(Driver$obj_cache_dir(undefined), (key_22353 + ".o"));
+  let _t22357;
+  if (IO$file_exists(obj_22355)) {
+    _t22357 = ({_tag: 1, _name: "Some", _val: obj_22355});
   } else {
     Ref$set(Driver$obj_tmp_counter, (Ref$get(Driver$obj_tmp_counter) + 1));
-    const tmp_22357 = (obj_22354 + (".tmp." + (string_of_int(Ref$get(Driver$obj_tmp_counter)) + ("." + string_of_float(Sys$time(undefined))))));
-    let _t22359;
-    if (compile_to(tmp_22357)) {
-      _call(Fs$rename, [tmp_22357, obj_22354]);
-      _t22359 = ({_tag: 1, _name: "Some", _val: obj_22354});
+    const tmp_22358 = (obj_22355 + (".tmp." + (string_of_int(Ref$get(Driver$obj_tmp_counter)) + ("." + string_of_float(Sys$time(undefined))))));
+    let _t22360;
+    if (compile_to(tmp_22358)) {
+      _call(Fs$rename, [tmp_22358, obj_22355]);
+      _t22360 = ({_tag: 1, _name: "Some", _val: obj_22355});
     } else {
-      _t22359 = ({_tag: 0, _name: "None"});
+      _t22360 = ({_tag: 0, _name: "None"});
     }
-    const _t22358 = _t22359;
-    _t22356 = _t22358;
+    const _t22359 = _t22360;
+    _t22357 = _t22359;
   }
-  const _t22355 = _t22356;
-  const _t22353 = _t22355;
-  return _t22353;
+  const _t22356 = _t22357;
+  const _t22354 = _t22356;
+  return _t22354;
 }
 function Driver$compile_and_link(ll, out_path) {
-  const ll_path_22360 = (out_path + ".ll");
-  _call(IO$write_file, [ll_path_22360, ll]);
-  const runtime_c_22362 = Driver$find_runtime_file("runtime.c");
-  const mml_gc_c_22364 = Driver$find_runtime_file("mml_gc.c");
-  const context_asm_22366 = Driver$detect_context_asm(undefined);
-  const mps_dir_22368 = Driver$find_mps_dir(undefined);
-  const mps_c_22370 = (mps_dir_22368 + "/mps.c");
-  const inc_22372 = ("-I" + mps_dir_22368);
-  const o2_22374 = ({_hd: "-O2", _tl: ({_hd: inc_22372, _tl: null})});
-  function _t22376(o) {
-    return Driver$clang_compile_obj(o2_22374, mps_c_22370, o);
+  const ll_path_22361 = (out_path + ".ll");
+  _call(IO$write_file, [ll_path_22361, ll]);
+  const runtime_c_22363 = Driver$find_runtime_file("runtime.c");
+  const mml_gc_c_22365 = Driver$find_runtime_file("mml_gc.c");
+  const context_asm_22367 = Driver$detect_context_asm(undefined);
+  const mps_dir_22369 = Driver$find_mps_dir(undefined);
+  const mps_c_22371 = (mps_dir_22369 + "/mps.c");
+  const inc_22373 = ("-I" + mps_dir_22369);
+  const o2_22375 = ({_hd: "-O2", _tl: ({_hd: inc_22373, _tl: null})});
+  function _t22377(o) {
+    return Driver$clang_compile_obj(o2_22375, mps_c_22371, o);
   }
-  const mps_o_22377 = Driver$ensure_object("mps-O2", IO$read_file(mps_c_22370), _t22376);
-  function _t22379(o) {
-    return Driver$clang_compile_obj(o2_22374, runtime_c_22362, o);
+  const mps_o_22378 = Driver$ensure_object("mps-O2", IO$read_file(mps_c_22371), _t22377);
+  function _t22380(o) {
+    return Driver$clang_compile_obj(o2_22375, runtime_c_22363, o);
   }
-  const rt_o_22380 = Driver$ensure_object(("rt-O2" + inc_22372), (Driver$framed(IO$read_file(runtime_c_22362)) + inc_22372), _t22379);
-  function _t22382(o) {
-    return Driver$clang_compile_obj(o2_22374, mml_gc_c_22364, o);
+  const rt_o_22381 = Driver$ensure_object(("rt-O2" + inc_22373), (Driver$framed(IO$read_file(runtime_c_22363)) + inc_22373), _t22380);
+  function _t22383(o) {
+    return Driver$clang_compile_obj(o2_22375, mml_gc_c_22365, o);
   }
-  const gc_o_22383 = Driver$ensure_object(("gc-O2" + inc_22372), (Driver$framed(IO$read_file(mml_gc_c_22364)) + inc_22372), _t22382);
-  function _t22385(o) {
-    return Driver$clang_compile_obj(null, context_asm_22366, o);
+  const gc_o_22384 = Driver$ensure_object(("gc-O2" + inc_22373), (Driver$framed(IO$read_file(mml_gc_c_22365)) + inc_22373), _t22383);
+  function _t22386(o) {
+    return Driver$clang_compile_obj(null, context_asm_22367, o);
   }
-  const asm_o_22386 = Driver$ensure_object("asm", IO$read_file(context_asm_22366), _t22385);
-  function _t22388(o) {
-    return Driver$clang_compile_obj(o2_22374, ll_path_22360, o);
+  const asm_o_22387 = Driver$ensure_object("asm", IO$read_file(context_asm_22367), _t22386);
+  function _t22389(o) {
+    return Driver$clang_compile_obj(o2_22375, ll_path_22361, o);
   }
-  const prog_o_22389 = Driver$ensure_object("ll-O2", ll, _t22388);
-  let _t22392;
-  const _t22391 = [mps_o_22377, rt_o_22380, gc_o_22383, asm_o_22386, prog_o_22389];
-  _t22393: {
-    if (_t22391[0]._tag === 1) {
-      if (_t22391[1]._tag === 1) {
-        if (_t22391[2]._tag === 1) {
-          if (_t22391[3]._tag === 1) {
-            if (_t22391[4]._tag === 1) {
-              const m = _t22391[0]._val;
-              const r = _t22391[1]._val;
-              const g = _t22391[2]._val;
-              const a = _t22391[3]._val;
-              const p = _t22391[4]._val;
-              const link_args_22394 = List$concat(({_hd: "-O2", _tl: ({_hd: "-o", _tl: ({_hd: out_path, _tl: ({_hd: p, _tl: ({_hd: r, _tl: ({_hd: a, _tl: ({_hd: g, _tl: ({_hd: m, _tl: null})})})})})})})}), Driver$extra_link_args(undefined));
-              let _t22397;
-              const _t22396 = _call(Process$run, ["clang", link_args_22394]);
-              _t22398: {
-                const code = _t22396[0];
-                const _out = _t22396[1];
-                const cerr = _t22396[2];
-                let _t22399;
+  const prog_o_22390 = Driver$ensure_object("ll-O2", ll, _t22389);
+  let _t22393;
+  const _t22392 = [mps_o_22378, rt_o_22381, gc_o_22384, asm_o_22387, prog_o_22390];
+  _t22394: {
+    if (_t22392[0]._tag === 1) {
+      if (_t22392[1]._tag === 1) {
+        if (_t22392[2]._tag === 1) {
+          if (_t22392[3]._tag === 1) {
+            if (_t22392[4]._tag === 1) {
+              const m = _t22392[0]._val;
+              const r = _t22392[1]._val;
+              const g = _t22392[2]._val;
+              const a = _t22392[3]._val;
+              const p = _t22392[4]._val;
+              const link_args_22395 = List$concat(({_hd: "-O2", _tl: ({_hd: "-o", _tl: ({_hd: out_path, _tl: ({_hd: p, _tl: ({_hd: r, _tl: ({_hd: a, _tl: ({_hd: g, _tl: ({_hd: m, _tl: null})})})})})})})}), Driver$extra_link_args(undefined));
+              let _t22398;
+              const _t22397 = _call(Process$run, ["clang", link_args_22395]);
+              _t22399: {
+                const code = _t22397[0];
+                const _out = _t22397[1];
+                const cerr = _t22397[2];
+                let _t22400;
                 if ((code !== 0)) {
-                  _t22399 = ({_tag: 1, _name: "Some", _val: ("clang link failed (exit " + (string_of_int(code) + ("): " + cerr)))});
+                  _t22400 = ({_tag: 1, _name: "Some", _val: ("clang link failed (exit " + (string_of_int(code) + ("): " + cerr)))});
                 } else {
-                  _t22399 = ({_tag: 0, _name: "None"});
+                  _t22400 = ({_tag: 0, _name: "None"});
                 }
-                _t22397 = _t22399;
-                break _t22398;
+                _t22398 = _t22400;
+                break _t22399;
               }
-              const _t22395 = _t22397;
-              _t22392 = _t22395;
-              break _t22393;
+              const _t22396 = _t22398;
+              _t22393 = _t22396;
+              break _t22394;
             }
-            _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
-            break _t22393;
+            _t22393 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+            break _t22394;
           }
-          _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
-          break _t22393;
+          _t22393 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+          break _t22394;
         }
-        _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
-        break _t22393;
+        _t22393 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+        break _t22394;
       }
-      _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
-      break _t22393;
+      _t22393 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+      break _t22394;
     }
-    _t22392 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
-    break _t22393;
+    _t22393 = ({_tag: 1, _name: "Some", _val: "native object compilation failed"});
+    break _t22394;
   }
-  const _t22390 = _t22392;
-  const _t22387 = _t22390;
-  const _t22384 = _t22387;
-  const _t22381 = _t22384;
-  const _t22378 = _t22381;
-  const _t22375 = _t22378;
-  const _t22373 = _t22375;
-  const _t22371 = _t22373;
-  const _t22369 = _t22371;
-  const _t22367 = _t22369;
-  const _t22365 = _t22367;
-  const _t22363 = _t22365;
-  const _t22361 = _t22363;
-  return _t22361;
+  const _t22391 = _t22393;
+  const _t22388 = _t22391;
+  const _t22385 = _t22388;
+  const _t22382 = _t22385;
+  const _t22379 = _t22382;
+  const _t22376 = _t22379;
+  const _t22374 = _t22376;
+  const _t22372 = _t22374;
+  const _t22370 = _t22372;
+  const _t22368 = _t22370;
+  const _t22366 = _t22368;
+  const _t22364 = _t22366;
+  const _t22362 = _t22364;
+  return _t22362;
 }
 function Driver$run_emit_native(filename, out_path) {
-  const _t22400 = (function() {
-    const _t22401 = _h;
-    _h = Object.assign({}, _t22401, {
+  const _t22401 = (function() {
+    const _t22402 = _h;
+    _h = Object.assign({}, _t22402, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92592,58 +92598,58 @@ function Driver$run_emit_native(filename, out_path) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      const ll_22402 = Driver$build_llvm(filename);
-      let _t22405;
-      const _t22404 = Driver$compile_and_link(ll_22402, out_path);
-      _t22406: {
-        if (_t22404._tag === 0) {
-          _t22405 = print(((("compiled " + filename) + " -> ") + out_path));
-          break _t22406;
+      const ll_22403 = Driver$build_llvm(filename);
+      let _t22406;
+      const _t22405 = Driver$compile_and_link(ll_22403, out_path);
+      _t22407: {
+        if (_t22405._tag === 0) {
+          _t22406 = print(((("compiled " + filename) + " -> ") + out_path));
+          break _t22407;
         }
-        if (_t22404._tag === 1) {
-          const e = _t22404._val;
-          _t22405 = failwith(e);
-          break _t22406;
+        if (_t22405._tag === 1) {
+          const e = _t22405._val;
+          _t22406 = failwith(e);
+          break _t22407;
         }
         _match_fail("line 0");
       }
-      const _t22403 = _t22405;
-      const x_22407 = _t22403;
-      return x_22407;
+      const _t22404 = _t22406;
+      const x_22408 = _t22404;
+      return x_22408;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22409;
-        const _t22408 = arg;
-        _t22410: {
-          const msg = _t22408[0];
-          const _loc = _t22408[1];
-          _t22409 = failwith(msg);
-          break _t22410;
+        let _t22410;
+        const _t22409 = arg;
+        _t22411: {
+          const msg = _t22409[0];
+          const _loc = _t22409[1];
+          _t22410 = failwith(msg);
+          break _t22411;
         }
-        return _t22409;
+        return _t22410;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22412;
-        const _t22411 = arg;
-        _t22413: {
-          const msg = _t22411[0];
-          const _loc = _t22411[1];
-          _t22412 = failwith(msg);
-          break _t22413;
+        let _t22413;
+        const _t22412 = arg;
+        _t22414: {
+          const msg = _t22412[0];
+          const _loc = _t22412[1];
+          _t22413 = failwith(msg);
+          break _t22414;
         }
-        return _t22412;
+        return _t22413;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22415;
-        const _t22414 = arg;
-        _t22416: {
-          const msg = _t22414[0];
-          const _loc = _t22414[1];
-          _t22415 = failwith(msg);
-          break _t22416;
+        let _t22416;
+        const _t22415 = arg;
+        _t22417: {
+          const msg = _t22415[0];
+          const _loc = _t22415[1];
+          _t22416 = failwith(msg);
+          break _t22417;
         }
-        return _t22415;
+        return _t22416;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -92654,14 +92660,14 @@ function Driver$run_emit_native(filename, out_path) {
         const msg = _exc._v;
         return failwith(("native codegen error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22401; }
+    } finally { _h = _t22402; }
   })();
-  return _t22400;
+  return _t22401;
 }
 function Driver$build_native_quiet(filename, out_path) {
-  const _t22417 = (function() {
-    const _t22418 = _h;
-    _h = Object.assign({}, _t22418, {
+  const _t22418 = (function() {
+    const _t22419 = _h;
+    _h = Object.assign({}, _t22419, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92670,62 +92676,62 @@ function Driver$build_native_quiet(filename, out_path) {
       "codegen_error": function(msg, __k_try) { throw {_e: "codegen_error", _v: msg}; },
     });
     try {
-      const ll_22419 = Driver$build_llvm(filename);
-      let _t22422;
-      const _t22421 = Driver$compile_and_link(ll_22419, out_path);
-      _t22423: {
-        if (_t22421._tag === 0) {
-          _t22422 = true;
-          break _t22423;
+      const ll_22420 = Driver$build_llvm(filename);
+      let _t22423;
+      const _t22422 = Driver$compile_and_link(ll_22420, out_path);
+      _t22424: {
+        if (_t22422._tag === 0) {
+          _t22423 = true;
+          break _t22424;
         }
-        if (_t22421._tag === 1) {
-          const e = _t22421._val;
+        if (_t22422._tag === 1) {
+          const e = _t22422._val;
           IO$write_err((e + "\n"));
-          _t22422 = false;
-          break _t22423;
+          _t22423 = false;
+          break _t22424;
         }
         _match_fail("line 0");
       }
-      const _t22420 = _t22422;
-      const x_22424 = _t22420;
-      return x_22424;
+      const _t22421 = _t22423;
+      const x_22425 = _t22421;
+      return x_22425;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22426;
-        const _t22425 = arg;
-        _t22427: {
-          const msg = _t22425[0];
-          const _loc = _t22425[1];
+        let _t22427;
+        const _t22426 = arg;
+        _t22428: {
+          const msg = _t22426[0];
+          const _loc = _t22426[1];
           IO$write_err((msg + "\n"));
-          _t22426 = false;
-          break _t22427;
+          _t22427 = false;
+          break _t22428;
         }
-        return _t22426;
+        return _t22427;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22429;
-        const _t22428 = arg;
-        _t22430: {
-          const msg = _t22428[0];
-          const _loc = _t22428[1];
+        let _t22430;
+        const _t22429 = arg;
+        _t22431: {
+          const msg = _t22429[0];
+          const _loc = _t22429[1];
           IO$write_err((msg + "\n"));
-          _t22429 = false;
-          break _t22430;
+          _t22430 = false;
+          break _t22431;
         }
-        return _t22429;
+        return _t22430;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22432;
-        const _t22431 = arg;
-        _t22433: {
-          const msg = _t22431[0];
-          const _loc = _t22431[1];
+        let _t22433;
+        const _t22432 = arg;
+        _t22434: {
+          const msg = _t22432[0];
+          const _loc = _t22432[1];
           IO$write_err((msg + "\n"));
-          _t22432 = false;
-          break _t22433;
+          _t22433 = false;
+          break _t22434;
         }
-        return _t22432;
+        return _t22433;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         IO$write_err((msg + "\n"));
@@ -92739,14 +92745,14 @@ function Driver$build_native_quiet(filename, out_path) {
         IO$write_err((("native codegen error: " + msg) + "\n"));
         return false;
       } else { throw _exc; }
-    } finally { _h = _t22418; }
+    } finally { _h = _t22419; }
   })();
-  return _t22417;
+  return _t22418;
 }
 function Driver$run_batch_emit_ir(manifest_file) {
-  const _t22434 = (function() {
-    const _t22435 = _h;
-    _h = Object.assign({}, _t22435, {
+  const _t22435 = (function() {
+    const _t22436 = _h;
+    _h = Object.assign({}, _t22436, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92757,42 +92763,42 @@ function Driver$run_batch_emit_ir(manifest_file) {
     try {
       (Driver$js_capture_mode = true, undefined);
       (Driver$captured_typed_setups = null, undefined);
-      let _t22437;
-      const _t22436 = Driver$setup_builtins(undefined);
-      _t22438: {
-        const ctx = _t22436[0];
-        const global_names = _t22436[1];
-        const mutable_globals = _t22436[2];
-        let _t22440;
-        const _t22439 = Driver$setup_classes(ctx, global_names, mutable_globals);
-        _t22441: {
-          const ctx = _t22439[0];
-          const _class_protos = _t22439[1];
-          let _t22443;
-          const _t22442 = Driver$setup_modules(ctx, global_names, mutable_globals);
-          _t22444: {
-            const ctx = _t22442[0];
-            const _module_protos = _t22442[1];
-            function _t22445(p) {
-              let _t22447;
-              const _t22446 = p;
-              _t22448: {
-                const prog = _t22446[1];
-                _t22447 = prog;
-                break _t22448;
+      let _t22438;
+      const _t22437 = Driver$setup_builtins(undefined);
+      _t22439: {
+        const ctx = _t22437[0];
+        const global_names = _t22437[1];
+        const mutable_globals = _t22437[2];
+        let _t22441;
+        const _t22440 = Driver$setup_classes(ctx, global_names, mutable_globals);
+        _t22442: {
+          const ctx = _t22440[0];
+          const _class_protos = _t22440[1];
+          let _t22444;
+          const _t22443 = Driver$setup_modules(ctx, global_names, mutable_globals);
+          _t22445: {
+            const ctx = _t22443[0];
+            const _module_protos = _t22443[1];
+            function _t22446(p) {
+              let _t22448;
+              const _t22447 = p;
+              _t22449: {
+                const prog = _t22447[1];
+                _t22448 = prog;
+                break _t22449;
               }
-              return _t22447;
+              return _t22448;
             }
-            const stdlib_programs_22449 = List$map(_t22445, Driver$captured_typed_setups);
-            const manifest_22451 = IO$read_file(manifest_file);
-            function _t22453(s) {
+            const stdlib_programs_22450 = List$map(_t22446, Driver$captured_typed_setups);
+            const manifest_22452 = IO$read_file(manifest_file);
+            function _t22454(s) {
               return (s !== "");
             }
-            const files_22454 = List$filter(_t22453, _call(String$split, ["\n", manifest_22451]));
-            function _t22456(filename) {
-              const _t22457 = (function() {
-                const _t22458 = _h;
-                _h = Object.assign({}, _t22458, {
+            const files_22455 = List$filter(_t22454, _call(String$split, ["\n", manifest_22452]));
+            function _t22457(filename) {
+              const _t22458 = (function() {
+                const _t22459 = _h;
+                _h = Object.assign({}, _t22459, {
                   "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                   "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                   "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92800,64 +92806,64 @@ function Driver$run_batch_emit_ir(manifest_file) {
                   "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                 });
                 try {
-                  const source_22459 = IO$read_file(filename);
-                  const tokens_22461 = Lexer$tokenize(source_22459);
-                  const program_22463 = Parser$parse_program(tokens_22461);
-                  let _t22466;
-                  const _t22465 = Typechecker$check_program_in_ctx(ctx, program_22463);
-                  _t22467: {
-                    const ctx2 = _t22465[0];
-                    const typed_program = _t22465[1];
-                    const typed_program2_22468 = Typechecker$transform_constraints(ctx2, typed_program);
-                    const typed_program2_22470 = Pipeline$lower(true, stdlib_programs_22449, ctx2.type_env, typed_program2_22468);
-                    print(Ir_serialize$serialize_program(typed_program2_22470));
-                    const _t22471 = print("===BATCH-SEP===");
-                    const _t22469 = _t22471;
-                    _t22466 = _t22469;
-                    break _t22467;
+                  const source_22460 = IO$read_file(filename);
+                  const tokens_22462 = Lexer$tokenize(source_22460);
+                  const program_22464 = Parser$parse_program(tokens_22462);
+                  let _t22467;
+                  const _t22466 = Typechecker$check_program_in_ctx(ctx, program_22464);
+                  _t22468: {
+                    const ctx2 = _t22466[0];
+                    const typed_program = _t22466[1];
+                    const typed_program2_22469 = Typechecker$transform_constraints(ctx2, typed_program);
+                    const typed_program2_22471 = Pipeline$lower(true, stdlib_programs_22450, ctx2.type_env, typed_program2_22469);
+                    print(Ir_serialize$serialize_program(typed_program2_22471));
+                    const _t22472 = print("===BATCH-SEP===");
+                    const _t22470 = _t22472;
+                    _t22467 = _t22470;
+                    break _t22468;
                   }
-                  const _t22464 = _t22466;
-                  const _t22462 = _t22464;
-                  const _t22460 = _t22462;
-                  const x_22472 = _t22460;
-                  return x_22472;
+                  const _t22465 = _t22467;
+                  const _t22463 = _t22465;
+                  const _t22461 = _t22463;
+                  const x_22473 = _t22461;
+                  return x_22473;
                 } catch (_exc) {
                   if (_exc && _exc._e === "lex_error") {
                     const arg = _exc._v;
-                    let _t22474;
-                    const _t22473 = arg;
-                    _t22475: {
-                      const msg = _t22473[0];
-                      const _loc = _t22473[1];
+                    let _t22475;
+                    const _t22474 = arg;
+                    _t22476: {
+                      const msg = _t22474[0];
+                      const _loc = _t22474[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22474 = print("===BATCH-SEP===");
-                      break _t22475;
+                      _t22475 = print("===BATCH-SEP===");
+                      break _t22476;
                     }
-                    return _t22474;
+                    return _t22475;
                   } else if (_exc && _exc._e === "parse_error") {
                     const arg = _exc._v;
-                    let _t22477;
-                    const _t22476 = arg;
-                    _t22478: {
-                      const msg = _t22476[0];
-                      const _loc = _t22476[1];
+                    let _t22478;
+                    const _t22477 = arg;
+                    _t22479: {
+                      const msg = _t22477[0];
+                      const _loc = _t22477[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22477 = print("===BATCH-SEP===");
-                      break _t22478;
+                      _t22478 = print("===BATCH-SEP===");
+                      break _t22479;
                     }
-                    return _t22477;
+                    return _t22478;
                   } else if (_exc && _exc._e === "type_error") {
                     const arg = _exc._v;
-                    let _t22480;
-                    const _t22479 = arg;
-                    _t22481: {
-                      const msg = _t22479[0];
-                      const _loc = _t22479[1];
+                    let _t22481;
+                    const _t22480 = arg;
+                    _t22482: {
+                      const msg = _t22480[0];
+                      const _loc = _t22480[1];
                       print(("COMPILE-ERROR:" + msg));
-                      _t22480 = print("===BATCH-SEP===");
-                      break _t22481;
+                      _t22481 = print("===BATCH-SEP===");
+                      break _t22482;
                     }
-                    return _t22480;
+                    return _t22481;
                   } else if (_exc && _exc._e === "compile_error") {
                     const msg = _exc._v;
                     print(("COMPILE-ERROR:" + msg));
@@ -92867,58 +92873,58 @@ function Driver$run_batch_emit_ir(manifest_file) {
                     print(("COMPILE-ERROR:" + msg));
                     return print("===BATCH-SEP===");
                   } else { throw _exc; }
-                } finally { _h = _t22458; }
+                } finally { _h = _t22459; }
               })();
-              return _t22457;
+              return _t22458;
             }
-            const _t22455 = Driver$list_iter(_t22456, files_22454);
-            const _t22452 = _t22455;
-            const _t22450 = _t22452;
-            _t22443 = _t22450;
-            break _t22444;
+            const _t22456 = Driver$list_iter(_t22457, files_22455);
+            const _t22453 = _t22456;
+            const _t22451 = _t22453;
+            _t22444 = _t22451;
+            break _t22445;
           }
-          _t22440 = _t22443;
-          break _t22441;
+          _t22441 = _t22444;
+          break _t22442;
         }
-        _t22437 = _t22440;
-        break _t22438;
+        _t22438 = _t22441;
+        break _t22439;
       }
-      const x_22482 = _t22437;
-      return x_22482;
+      const x_22483 = _t22438;
+      return x_22483;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22484;
-        const _t22483 = arg;
-        _t22485: {
-          const msg = _t22483[0];
-          const _loc = _t22483[1];
-          _t22484 = failwith(msg);
-          break _t22485;
+        let _t22485;
+        const _t22484 = arg;
+        _t22486: {
+          const msg = _t22484[0];
+          const _loc = _t22484[1];
+          _t22485 = failwith(msg);
+          break _t22486;
         }
-        return _t22484;
+        return _t22485;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22487;
-        const _t22486 = arg;
-        _t22488: {
-          const msg = _t22486[0];
-          const _loc = _t22486[1];
-          _t22487 = failwith(msg);
-          break _t22488;
+        let _t22488;
+        const _t22487 = arg;
+        _t22489: {
+          const msg = _t22487[0];
+          const _loc = _t22487[1];
+          _t22488 = failwith(msg);
+          break _t22489;
         }
-        return _t22487;
+        return _t22488;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22490;
-        const _t22489 = arg;
-        _t22491: {
-          const msg = _t22489[0];
-          const _loc = _t22489[1];
-          _t22490 = failwith(msg);
-          break _t22491;
+        let _t22491;
+        const _t22490 = arg;
+        _t22492: {
+          const msg = _t22490[0];
+          const _loc = _t22490[1];
+          _t22491 = failwith(msg);
+          break _t22492;
         }
-        return _t22490;
+        return _t22491;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         return failwith(msg);
@@ -92929,14 +92935,14 @@ function Driver$run_batch_emit_ir(manifest_file) {
         const msg = _exc._v;
         return failwith(("IR serialize error: " + msg));
       } else { throw _exc; }
-    } finally { _h = _t22435; }
+    } finally { _h = _t22436; }
   })();
-  return _t22434;
+  return _t22435;
 }
 function Driver$check_file(filename) {
-  const _t22492 = (function() {
-    const _t22493 = _h;
-    _h = Object.assign({}, _t22493, {
+  const _t22493 = (function() {
+    const _t22494 = _h;
+    _h = Object.assign({}, _t22494, {
       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -92946,112 +92952,112 @@ function Driver$check_file(filename) {
     try {
       (Driver$js_capture_mode = true, undefined);
       (Driver$captured_typed_setups = null, undefined);
-      let _t22494;
+      let _t22495;
       if (__cache_has("emit_js")) {
-        let _t22496;
-        const _t22495 = __cache_get("emit_js");
-        _t22497: {
-          const c = _t22495[0];
-          const gn = _t22495[1];
-          const mg = _t22495[2];
-          const cts = _t22495[3];
+        let _t22497;
+        const _t22496 = __cache_get("emit_js");
+        _t22498: {
+          const c = _t22496[0];
+          const gn = _t22496[1];
+          const mg = _t22496[2];
+          const cts = _t22496[3];
           (Driver$captured_typed_setups = cts, undefined);
-          _t22496 = [c, gn, mg];
-          break _t22497;
+          _t22497 = [c, gn, mg];
+          break _t22498;
         }
-        _t22494 = _t22496;
+        _t22495 = _t22497;
       } else {
-        let _t22499;
-        const _t22498 = Driver$setup_builtins(undefined);
-        _t22500: {
-          const ctx = _t22498[0];
-          const global_names = _t22498[1];
-          const mutable_globals = _t22498[2];
-          let _t22502;
-          const _t22501 = Driver$setup_classes(ctx, global_names, mutable_globals);
-          _t22503: {
-            const ctx = _t22501[0];
-            const _class_protos = _t22501[1];
-            let _t22505;
-            const _t22504 = Driver$setup_modules(ctx, global_names, mutable_globals);
-            _t22506: {
-              const ctx = _t22504[0];
-              const _module_protos = _t22504[1];
+        let _t22500;
+        const _t22499 = Driver$setup_builtins(undefined);
+        _t22501: {
+          const ctx = _t22499[0];
+          const global_names = _t22499[1];
+          const mutable_globals = _t22499[2];
+          let _t22503;
+          const _t22502 = Driver$setup_classes(ctx, global_names, mutable_globals);
+          _t22504: {
+            const ctx = _t22502[0];
+            const _class_protos = _t22502[1];
+            let _t22506;
+            const _t22505 = Driver$setup_modules(ctx, global_names, mutable_globals);
+            _t22507: {
+              const ctx = _t22505[0];
+              const _module_protos = _t22505[1];
               _call(__cache_set, ["emit_js", [ctx, global_names, mutable_globals, Driver$captured_typed_setups]]);
-              _t22505 = [ctx, global_names, mutable_globals];
-              break _t22506;
+              _t22506 = [ctx, global_names, mutable_globals];
+              break _t22507;
             }
-            _t22502 = _t22505;
-            break _t22503;
+            _t22503 = _t22506;
+            break _t22504;
           }
-          _t22499 = _t22502;
-          break _t22500;
+          _t22500 = _t22503;
+          break _t22501;
         }
-        _t22494 = _t22499;
+        _t22495 = _t22500;
       }
-      let _t22508;
-      const _t22507 = _t22494;
-      _t22509: {
-        const ctx = _t22507[0];
-        const _gn = _t22507[1];
-        const _mg = _t22507[2];
-        const source_22510 = IO$read_file(filename);
-        const tokens_22512 = Lexer$tokenize(source_22510);
-        const program_22514 = Parser$parse_program(tokens_22512);
-        let _t22517;
-        const _t22516 = Typechecker$check_program_in_ctx(ctx, program_22514);
-        _t22518: {
-          const ctx2 = _t22516[0];
-          const typed_program = _t22516[1];
+      let _t22509;
+      const _t22508 = _t22495;
+      _t22510: {
+        const ctx = _t22508[0];
+        const _gn = _t22508[1];
+        const _mg = _t22508[2];
+        const source_22511 = IO$read_file(filename);
+        const tokens_22513 = Lexer$tokenize(source_22511);
+        const program_22515 = Parser$parse_program(tokens_22513);
+        let _t22518;
+        const _t22517 = Typechecker$check_program_in_ctx(ctx, program_22515);
+        _t22519: {
+          const ctx2 = _t22517[0];
+          const typed_program = _t22517[1];
           Typechecker$transform_constraints(ctx2, typed_program);
-          _t22517 = true;
-          break _t22518;
+          _t22518 = true;
+          break _t22519;
         }
-        const _t22515 = _t22517;
-        const _t22513 = _t22515;
-        const _t22511 = _t22513;
-        _t22508 = _t22511;
-        break _t22509;
+        const _t22516 = _t22518;
+        const _t22514 = _t22516;
+        const _t22512 = _t22514;
+        _t22509 = _t22512;
+        break _t22510;
       }
-      const x_22519 = _t22508;
-      return x_22519;
+      const x_22520 = _t22509;
+      return x_22520;
     } catch (_exc) {
       if (_exc && _exc._e === "lex_error") {
         const arg = _exc._v;
-        let _t22521;
-        const _t22520 = arg;
-        _t22522: {
-          const msg = _t22520[0];
-          const _loc = _t22520[1];
+        let _t22522;
+        const _t22521 = arg;
+        _t22523: {
+          const msg = _t22521[0];
+          const _loc = _t22521[1];
           IO$write_err((((filename + ": ") + msg) + "\n"));
-          _t22521 = false;
-          break _t22522;
+          _t22522 = false;
+          break _t22523;
         }
-        return _t22521;
+        return _t22522;
       } else if (_exc && _exc._e === "parse_error") {
         const arg = _exc._v;
-        let _t22524;
-        const _t22523 = arg;
-        _t22525: {
-          const msg = _t22523[0];
-          const _loc = _t22523[1];
+        let _t22525;
+        const _t22524 = arg;
+        _t22526: {
+          const msg = _t22524[0];
+          const _loc = _t22524[1];
           IO$write_err((((filename + ": ") + msg) + "\n"));
-          _t22524 = false;
-          break _t22525;
+          _t22525 = false;
+          break _t22526;
         }
-        return _t22524;
+        return _t22525;
       } else if (_exc && _exc._e === "type_error") {
         const arg = _exc._v;
-        let _t22527;
-        const _t22526 = arg;
-        _t22528: {
-          const msg = _t22526[0];
-          const _loc = _t22526[1];
+        let _t22528;
+        const _t22527 = arg;
+        _t22529: {
+          const msg = _t22527[0];
+          const _loc = _t22527[1];
           IO$write_err((((filename + ": ") + msg) + "\n"));
-          _t22527 = false;
-          break _t22528;
+          _t22528 = false;
+          break _t22529;
         }
-        return _t22527;
+        return _t22528;
       } else if (_exc && _exc._e === "compile_error") {
         const msg = _exc._v;
         IO$write_err((((filename + ": ") + msg) + "\n"));
@@ -93061,175 +93067,175 @@ function Driver$check_file(filename) {
         IO$write_err((((filename + ": ") + msg) + "\n"));
         return false;
       } else { throw _exc; }
-    } finally { _h = _t22493; }
+    } finally { _h = _t22494; }
   })();
-  return _t22492;
+  return _t22493;
 }
 function Driver$run_cli(args) {
-  let _t22530;
-  const _t22529 = args;
-  _t22531: {
-    if (_t22529 !== null) {
-      if (_t22529._tl !== null) {
-        if (_t22529._tl._hd === "--batch") {
-          if (_t22529._tl._tl !== null) {
-            const f = _t22529._tl._tl._hd;
-            _t22530 = ({_tag: 1, _name: "Some", _val: f});
-            break _t22531;
+  let _t22531;
+  const _t22530 = args;
+  _t22532: {
+    if (_t22530 !== null) {
+      if (_t22530._tl !== null) {
+        if (_t22530._tl._hd === "--batch") {
+          if (_t22530._tl._tl !== null) {
+            const f = _t22530._tl._tl._hd;
+            _t22531 = ({_tag: 1, _name: "Some", _val: f});
+            break _t22532;
           }
-          _t22530 = ({_tag: 0, _name: "None"});
-          break _t22531;
+          _t22531 = ({_tag: 0, _name: "None"});
+          break _t22532;
         }
-        _t22530 = ({_tag: 0, _name: "None"});
-        break _t22531;
+        _t22531 = ({_tag: 0, _name: "None"});
+        break _t22532;
       }
-      _t22530 = ({_tag: 0, _name: "None"});
-      break _t22531;
+      _t22531 = ({_tag: 0, _name: "None"});
+      break _t22532;
     }
-    _t22530 = ({_tag: 0, _name: "None"});
-    break _t22531;
+    _t22531 = ({_tag: 0, _name: "None"});
+    break _t22532;
   }
-  const batch_file_22532 = _t22530;
-  let _t22535;
-  const _t22534 = args;
-  _t22536: {
-    if (_t22534 !== null) {
-      if (_t22534._tl !== null) {
-        if (_t22534._tl._hd === "--batch-emit-ir") {
-          if (_t22534._tl._tl !== null) {
-            const f = _t22534._tl._tl._hd;
-            _t22535 = ({_tag: 1, _name: "Some", _val: f});
-            break _t22536;
+  const batch_file_22533 = _t22531;
+  let _t22536;
+  const _t22535 = args;
+  _t22537: {
+    if (_t22535 !== null) {
+      if (_t22535._tl !== null) {
+        if (_t22535._tl._hd === "--batch-emit-ir") {
+          if (_t22535._tl._tl !== null) {
+            const f = _t22535._tl._tl._hd;
+            _t22536 = ({_tag: 1, _name: "Some", _val: f});
+            break _t22537;
           }
-          _t22535 = ({_tag: 0, _name: "None"});
-          break _t22536;
+          _t22536 = ({_tag: 0, _name: "None"});
+          break _t22537;
         }
-        _t22535 = ({_tag: 0, _name: "None"});
-        break _t22536;
+        _t22536 = ({_tag: 0, _name: "None"});
+        break _t22537;
       }
-      _t22535 = ({_tag: 0, _name: "None"});
-      break _t22536;
+      _t22536 = ({_tag: 0, _name: "None"});
+      break _t22537;
     }
-    _t22535 = ({_tag: 0, _name: "None"});
-    break _t22536;
+    _t22536 = ({_tag: 0, _name: "None"});
+    break _t22537;
   }
-  const batch_ir_file_22537 = _t22535;
-  function _t22539(a) {
+  const batch_ir_file_22538 = _t22536;
+  function _t22540(a) {
     return (a === "--emit-js");
   }
-  const emit_js_22540 = List$exists(_t22539, args);
-  function _t22542(a) {
+  const emit_js_22541 = List$exists(_t22540, args);
+  function _t22543(a) {
     return (a === "--emit-ir");
   }
-  const emit_ir_22543 = List$exists(_t22542, args);
-  function _t22545(a) {
+  const emit_ir_22544 = List$exists(_t22543, args);
+  function _t22546(a) {
     return (a === "--emit-llvm");
   }
-  const emit_llvm_22546 = List$exists(_t22545, args);
-  function _t22548(a) {
+  const emit_llvm_22547 = List$exists(_t22546, args);
+  function _t22549(a) {
     return (a === "--emit-native");
   }
-  const emit_native_22549 = List$exists(_t22548, args);
-  function _t22551(a) {
+  const emit_native_22550 = List$exists(_t22549, args);
+  function _t22552(a) {
     return (a === "--no-optimize");
   }
-  const no_optimize_22552 = List$exists(_t22551, args);
-  let _t22554;
-  if (no_optimize_22552) {
-    _t22554 = Ref$set(Compiler$optimize_enabled, false);
+  const no_optimize_22553 = List$exists(_t22552, args);
+  let _t22555;
+  if (no_optimize_22553) {
+    _t22555 = Ref$set(Compiler$optimize_enabled, false);
   } else {
-    _t22554 = undefined;
+    _t22555 = undefined;
   }
-  _t22554;
-  function _t22555(a) {
+  _t22555;
+  function _t22556(a) {
     return (((((a !== "--no-optimize") && (a !== "--emit-js")) && (a !== "--emit-ir")) && (a !== "--emit-llvm")) && (a !== "--emit-native"));
   }
-  const args_22556 = List$filter(_t22555, args);
-  let _t22559;
-  const _t22558 = batch_ir_file_22537;
-  _t22560: {
-    if (_t22558._tag === 0) {
-      let _t22562;
-      const _t22561 = batch_file_22532;
-      _t22563: {
-        if (_t22561._tag === 0) {
-          let _t22564;
-          if (emit_ir_22543) {
-            _t22564 = Driver$run_emit_ir(args_22556);
+  const args_22557 = List$filter(_t22556, args);
+  let _t22560;
+  const _t22559 = batch_ir_file_22538;
+  _t22561: {
+    if (_t22559._tag === 0) {
+      let _t22563;
+      const _t22562 = batch_file_22533;
+      _t22564: {
+        if (_t22562._tag === 0) {
+          let _t22565;
+          if (emit_ir_22544) {
+            _t22565 = Driver$run_emit_ir(args_22557);
           } else {
-            let _t22565;
-            if (emit_llvm_22546) {
-              _t22565 = Driver$run_emit_llvm(args_22556);
+            let _t22566;
+            if (emit_llvm_22547) {
+              _t22566 = Driver$run_emit_llvm(args_22557);
             } else {
-              let _t22566;
-              if (emit_native_22549) {
+              let _t22567;
+              if (emit_native_22550) {
                 function find_out(xs) {
                   while (true) {
-                    let _t22568;
-                    const _t22567 = xs;
-                    _t22569: {
-                      if (_t22567 === null) {
-                        _t22568 = "a.out";
-                        break _t22569;
+                    let _t22569;
+                    const _t22568 = xs;
+                    _t22570: {
+                      if (_t22568 === null) {
+                        _t22569 = "a.out";
+                        break _t22570;
                       }
-                      if (_t22567 !== null) {
-                        if (_t22567._hd === "-o") {
-                          if (_t22567._tl !== null) {
-                            const o = _t22567._tl._hd;
-                            _t22568 = o;
-                            break _t22569;
+                      if (_t22568 !== null) {
+                        if (_t22568._hd === "-o") {
+                          if (_t22568._tl !== null) {
+                            const o = _t22568._tl._hd;
+                            _t22569 = o;
+                            break _t22570;
                           }
-                          const rest = _t22567._tl;
-                          const _t22570 = rest;
-                          xs = _t22570;
+                          const rest = _t22568._tl;
+                          const _t22571 = rest;
+                          xs = _t22571;
                           continue;
-                          _t22568 = undefined;
-                          break _t22569;
+                          _t22569 = undefined;
+                          break _t22570;
                         }
-                        const rest = _t22567._tl;
-                        const _t22571 = rest;
-                        xs = _t22571;
+                        const rest = _t22568._tl;
+                        const _t22572 = rest;
+                        xs = _t22572;
                         continue;
-                        _t22568 = undefined;
-                        break _t22569;
+                        _t22569 = undefined;
+                        break _t22570;
                       }
                       _match_fail("line 0");
                     }
-                    return _t22568;
+                    return _t22569;
                   }
                 }
-                const out_path_22573 = find_out(args_22556);
-                function _t22575(a) {
-                  return ((a !== "-o") && (a !== out_path_22573));
+                const out_path_22574 = find_out(args_22557);
+                function _t22576(a) {
+                  return ((a !== "-o") && (a !== out_path_22574));
                 }
-                let _t22577;
-                const _t22576 = List$filter(_t22575, args_22556);
-                _t22578: {
-                  if (_t22576 !== null) {
-                    if (_t22576._tl !== null) {
-                      const f = _t22576._tl._hd;
-                      _t22577 = f;
-                      break _t22578;
+                let _t22578;
+                const _t22577 = List$filter(_t22576, args_22557);
+                _t22579: {
+                  if (_t22577 !== null) {
+                    if (_t22577._tl !== null) {
+                      const f = _t22577._tl._hd;
+                      _t22578 = f;
+                      break _t22579;
                     }
-                    _t22577 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
-                    break _t22578;
+                    _t22578 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
+                    break _t22579;
                   }
-                  _t22577 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
-                  break _t22578;
+                  _t22578 = failwith("Usage: compiler --emit-native <source-file> -o <output>");
+                  break _t22579;
                 }
-                const filename_22579 = _t22577;
-                const _t22580 = Driver$run_emit_native(filename_22579, out_path_22573);
-                const _t22574 = _t22580;
-                const _t22572 = _t22574;
-                _t22566 = _t22572;
+                const filename_22580 = _t22578;
+                const _t22581 = Driver$run_emit_native(filename_22580, out_path_22574);
+                const _t22575 = _t22581;
+                const _t22573 = _t22575;
+                _t22567 = _t22573;
               } else {
-                let _t22581;
-                if (emit_js_22540) {
-                  _t22581 = Driver$run_emit_js(args_22556);
+                let _t22582;
+                if (emit_js_22541) {
+                  _t22582 = Driver$run_emit_js(args_22557);
                 } else {
-                  const _t22582 = (function() {
-                    const _t22583 = _h;
-                    _h = Object.assign({}, _t22583, {
+                  const _t22583 = (function() {
+                    const _t22584 = _h;
+                    _h = Object.assign({}, _t22584, {
                       "lex_error": function(arg, __k_try) { throw {_e: "lex_error", _v: arg}; },
                       "parse_error": function(arg, __k_try) { throw {_e: "parse_error", _v: arg}; },
                       "type_error": function(arg, __k_try) { throw {_e: "type_error", _v: arg}; },
@@ -93237,162 +93243,162 @@ function Driver$run_cli(args) {
                       "unify_error": function(msg, __k_try) { throw {_e: "unify_error", _v: msg}; },
                     });
                     try {
-                      let _t22585;
-                      const _t22584 = args_22556;
-                      _t22586: {
-                        if (_t22584 !== null) {
-                          if (_t22584._tl !== null) {
-                            if (_t22584._tl._hd === "--emit-json") {
-                              if (_t22584._tl._tl !== null) {
-                                const file = _t22584._tl._tl._hd;
-                                _t22585 = file;
-                                break _t22586;
+                      let _t22586;
+                      const _t22585 = args_22557;
+                      _t22587: {
+                        if (_t22585 !== null) {
+                          if (_t22585._tl !== null) {
+                            if (_t22585._tl._hd === "--emit-json") {
+                              if (_t22585._tl._tl !== null) {
+                                const file = _t22585._tl._tl._hd;
+                                _t22586 = file;
+                                break _t22587;
                               }
-                              const file = _t22584._tl._hd;
-                              _t22585 = file;
-                              break _t22586;
+                              const file = _t22585._tl._hd;
+                              _t22586 = file;
+                              break _t22587;
                             }
-                            const file = _t22584._tl._hd;
-                            _t22585 = file;
-                            break _t22586;
+                            const file = _t22585._tl._hd;
+                            _t22586 = file;
+                            break _t22587;
                           }
-                          _t22585 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-                          break _t22586;
+                          _t22586 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+                          break _t22587;
                         }
-                        _t22585 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
-                        break _t22586;
+                        _t22586 = failwith("Usage: compiler [--emit-json | --emit-js | --batch <manifest>] <source-file>");
+                        break _t22587;
                       }
-                      const filename_22587 = _t22585;
-                      const source_22589 = IO$read_file(filename_22587);
-                      let _t22591;
+                      const filename_22588 = _t22586;
+                      const source_22590 = IO$read_file(filename_22588);
+                      let _t22592;
                       if (__cache_has("emit_json")) {
-                        _t22591 = __cache_get("emit_json");
+                        _t22592 = __cache_get("emit_json");
                       } else {
-                        let _t22593;
-                        const _t22592 = Driver$setup_builtins(undefined);
-                        _t22594: {
-                          const ctx = _t22592[0];
-                          const global_names = _t22592[1];
-                          const mutable_globals = _t22592[2];
-                          let _t22596;
-                          const _t22595 = Driver$setup_classes(ctx, global_names, mutable_globals);
-                          _t22597: {
-                            const ctx = _t22595[0];
-                            const class_protos = _t22595[1];
-                            let _t22599;
-                            const _t22598 = Driver$setup_modules(ctx, global_names, mutable_globals);
-                            _t22600: {
-                              const ctx = _t22598[0];
-                              const module_protos = _t22598[1];
-                              const setup_protos_22601 = List$concat(class_protos, module_protos);
-                              const base_gn_len_22603 = Dynarray$length(global_names);
-                              const base_native_22605 = Driver$native_global_entries;
-                              const base_mutable_22607 = Hashtbl$to_list(mutable_globals);
-                              _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_22601, base_gn_len_22603, base_native_22605, base_mutable_22607]]);
-                              const _t22608 = [ctx, global_names, mutable_globals, setup_protos_22601, base_gn_len_22603, base_native_22605, base_mutable_22607];
-                              const _t22606 = _t22608;
-                              const _t22604 = _t22606;
-                              const _t22602 = _t22604;
-                              _t22599 = _t22602;
-                              break _t22600;
+                        let _t22594;
+                        const _t22593 = Driver$setup_builtins(undefined);
+                        _t22595: {
+                          const ctx = _t22593[0];
+                          const global_names = _t22593[1];
+                          const mutable_globals = _t22593[2];
+                          let _t22597;
+                          const _t22596 = Driver$setup_classes(ctx, global_names, mutable_globals);
+                          _t22598: {
+                            const ctx = _t22596[0];
+                            const class_protos = _t22596[1];
+                            let _t22600;
+                            const _t22599 = Driver$setup_modules(ctx, global_names, mutable_globals);
+                            _t22601: {
+                              const ctx = _t22599[0];
+                              const module_protos = _t22599[1];
+                              const setup_protos_22602 = List$concat(class_protos, module_protos);
+                              const base_gn_len_22604 = Dynarray$length(global_names);
+                              const base_native_22606 = Driver$native_global_entries;
+                              const base_mutable_22608 = Hashtbl$to_list(mutable_globals);
+                              _call(__cache_set, ["emit_json", [ctx, global_names, mutable_globals, setup_protos_22602, base_gn_len_22604, base_native_22606, base_mutable_22608]]);
+                              const _t22609 = [ctx, global_names, mutable_globals, setup_protos_22602, base_gn_len_22604, base_native_22606, base_mutable_22608];
+                              const _t22607 = _t22609;
+                              const _t22605 = _t22607;
+                              const _t22603 = _t22605;
+                              _t22600 = _t22603;
+                              break _t22601;
                             }
-                            _t22596 = _t22599;
-                            break _t22597;
+                            _t22597 = _t22600;
+                            break _t22598;
                           }
-                          _t22593 = _t22596;
-                          break _t22594;
+                          _t22594 = _t22597;
+                          break _t22595;
                         }
-                        _t22591 = _t22593;
+                        _t22592 = _t22594;
                       }
-                      let _t22610;
-                      const _t22609 = _t22591;
-                      _t22611: {
-                        const ctx = _t22609[0];
-                        const global_names = _t22609[1];
-                        const mutable_globals = _t22609[2];
-                        const setup_protos = _t22609[3];
-                        const base_gn_len = _t22609[4];
-                        const base_native = _t22609[5];
-                        const base_mutable = _t22609[6];
+                      let _t22611;
+                      const _t22610 = _t22592;
+                      _t22612: {
+                        const ctx = _t22610[0];
+                        const global_names = _t22610[1];
+                        const mutable_globals = _t22610[2];
+                        const setup_protos = _t22610[3];
+                        const base_gn_len = _t22610[4];
+                        const base_native = _t22610[5];
+                        const base_mutable = _t22610[6];
                         (global_names.count = base_gn_len, undefined);
                         (Driver$native_global_entries = base_native, undefined);
                         Hashtbl$clear(mutable_globals);
-                        function _t22612(__p567) {
-                          let _t22614;
-                          const _t22613 = __p567;
-                          _t22615: {
-                            const k = _t22613[0];
-                            const v = _t22613[1];
-                            _t22614 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
-                            break _t22615;
+                        function _t22613(__p567) {
+                          let _t22615;
+                          const _t22614 = __p567;
+                          _t22616: {
+                            const k = _t22614[0];
+                            const v = _t22614[1];
+                            _t22615 = _call(Hashtbl$set, [__dict_Hash_string, __dict_Eq_string, mutable_globals, k, v]);
+                            break _t22616;
                           }
-                          return _t22614;
+                          return _t22615;
                         }
-                        Driver$list_iter(_t22612, base_mutable);
-                        const tokens_22616 = Lexer$tokenize(source_22589);
-                        const program_22618 = Parser$parse_program(tokens_22616);
-                        let _t22621;
-                        const _t22620 = Typechecker$check_program_in_ctx(ctx, program_22618);
-                        _t22622: {
-                          const ctx2 = _t22620[0];
-                          const typed_program = _t22620[1];
-                          const typed_program2_22623 = Typechecker$transform_constraints(ctx2, typed_program);
-                          const typed_program2_22625 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22623);
-                          const compiled_22627 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22625);
-                          Driver$register_externs_from_program(typed_program2_22625, global_names);
-                          const ng_json_22629 = _t21804_Driver$build_native_globals_json(undefined);
-                          const json_22631 = Serialize$serialize_bundle(global_names, ng_json_22629, setup_protos, compiled_22627.main);
-                          const _t22632 = print(json_22631);
-                          const _t22630 = _t22632;
-                          const _t22628 = _t22630;
-                          const _t22626 = _t22628;
-                          const _t22624 = _t22626;
-                          _t22621 = _t22624;
-                          break _t22622;
+                        Driver$list_iter(_t22613, base_mutable);
+                        const tokens_22617 = Lexer$tokenize(source_22590);
+                        const program_22619 = Parser$parse_program(tokens_22617);
+                        let _t22622;
+                        const _t22621 = Typechecker$check_program_in_ctx(ctx, program_22619);
+                        _t22623: {
+                          const ctx2 = _t22621[0];
+                          const typed_program = _t22621[1];
+                          const typed_program2_22624 = Typechecker$transform_constraints(ctx2, typed_program);
+                          const typed_program2_22626 = Pipeline$lower(true, null, ctx2.type_env, typed_program2_22624);
+                          const compiled_22628 = Compiler$compile_program_with_globals(ctx2.type_env, global_names, mutable_globals, typed_program2_22626);
+                          Driver$register_externs_from_program(typed_program2_22626, global_names);
+                          const ng_json_22630 = _t21805_Driver$build_native_globals_json(undefined);
+                          const json_22632 = Serialize$serialize_bundle(global_names, ng_json_22630, setup_protos, compiled_22628.main);
+                          const _t22633 = print(json_22632);
+                          const _t22631 = _t22633;
+                          const _t22629 = _t22631;
+                          const _t22627 = _t22629;
+                          const _t22625 = _t22627;
+                          _t22622 = _t22625;
+                          break _t22623;
                         }
-                        const _t22619 = _t22621;
-                        const _t22617 = _t22619;
-                        _t22610 = _t22617;
-                        break _t22611;
+                        const _t22620 = _t22622;
+                        const _t22618 = _t22620;
+                        _t22611 = _t22618;
+                        break _t22612;
                       }
-                      const _t22590 = _t22610;
-                      const _t22588 = _t22590;
-                      const x_22633 = _t22588;
-                      return x_22633;
+                      const _t22591 = _t22611;
+                      const _t22589 = _t22591;
+                      const x_22634 = _t22589;
+                      return x_22634;
                     } catch (_exc) {
                       if (_exc && _exc._e === "lex_error") {
                         const arg = _exc._v;
-                        let _t22635;
-                        const _t22634 = arg;
-                        _t22636: {
-                          const msg = _t22634[0];
-                          const _loc = _t22634[1];
-                          _t22635 = failwith(msg);
-                          break _t22636;
+                        let _t22636;
+                        const _t22635 = arg;
+                        _t22637: {
+                          const msg = _t22635[0];
+                          const _loc = _t22635[1];
+                          _t22636 = failwith(msg);
+                          break _t22637;
                         }
-                        return _t22635;
+                        return _t22636;
                       } else if (_exc && _exc._e === "parse_error") {
                         const arg = _exc._v;
-                        let _t22638;
-                        const _t22637 = arg;
-                        _t22639: {
-                          const msg = _t22637[0];
-                          const _loc = _t22637[1];
-                          _t22638 = failwith(msg);
-                          break _t22639;
+                        let _t22639;
+                        const _t22638 = arg;
+                        _t22640: {
+                          const msg = _t22638[0];
+                          const _loc = _t22638[1];
+                          _t22639 = failwith(msg);
+                          break _t22640;
                         }
-                        return _t22638;
+                        return _t22639;
                       } else if (_exc && _exc._e === "type_error") {
                         const arg = _exc._v;
-                        let _t22641;
-                        const _t22640 = arg;
-                        _t22642: {
-                          const msg = _t22640[0];
-                          const _loc = _t22640[1];
-                          _t22641 = failwith(msg);
-                          break _t22642;
+                        let _t22642;
+                        const _t22641 = arg;
+                        _t22643: {
+                          const msg = _t22641[0];
+                          const _loc = _t22641[1];
+                          _t22642 = failwith(msg);
+                          break _t22643;
                         }
-                        return _t22641;
+                        return _t22642;
                       } else if (_exc && _exc._e === "compile_error") {
                         const msg = _exc._v;
                         return failwith(msg);
@@ -93400,45 +93406,45 @@ function Driver$run_cli(args) {
                         const msg = _exc._v;
                         return failwith(msg);
                       } else { throw _exc; }
-                    } finally { _h = _t22583; }
+                    } finally { _h = _t22584; }
                   })();
-                  _t22581 = _t22582;
+                  _t22582 = _t22583;
                 }
-                _t22566 = _t22581;
+                _t22567 = _t22582;
               }
-              _t22565 = _t22566;
+              _t22566 = _t22567;
             }
-            _t22564 = _t22565;
+            _t22565 = _t22566;
           }
-          _t22562 = _t22564;
-          break _t22563;
+          _t22563 = _t22565;
+          break _t22564;
         }
-        if (_t22561._tag === 1) {
-          const f = _t22561._val;
-          _t22562 = Driver$run_batch(f);
-          break _t22563;
+        if (_t22562._tag === 1) {
+          const f = _t22562._val;
+          _t22563 = Driver$run_batch(f);
+          break _t22564;
         }
         _match_fail("line 0");
       }
-      _t22559 = _t22562;
-      break _t22560;
+      _t22560 = _t22563;
+      break _t22561;
     }
-    if (_t22558._tag === 1) {
-      const f = _t22558._val;
-      _t22559 = Driver$run_batch_emit_ir(f);
-      break _t22560;
+    if (_t22559._tag === 1) {
+      const f = _t22559._val;
+      _t22560 = Driver$run_batch_emit_ir(f);
+      break _t22561;
     }
     _match_fail("line 0");
   }
-  const _t22557 = _t22559;
-  const _t22553 = _t22557;
-  const _t22550 = _t22553;
-  const _t22547 = _t22550;
-  const _t22544 = _t22547;
-  const _t22541 = _t22544;
-  const _t22538 = _t22541;
-  const _t22533 = _t22538;
-  return _t22533;
+  const _t22558 = _t22560;
+  const _t22554 = _t22558;
+  const _t22551 = _t22554;
+  const _t22548 = _t22551;
+  const _t22545 = _t22548;
+  const _t22542 = _t22545;
+  const _t22539 = _t22542;
+  const _t22534 = _t22539;
+  return _t22534;
 }
 const Main$__destruct = Driver$run_cli(Sys$args(undefined));
 var _mml_exports = {"_result": _last_val, "_call": _call, "_pp": _pp};

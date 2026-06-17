@@ -3980,10 +3980,14 @@ else
     let bound = Hashtbl.create 16 in
     let is_known_global name =
       match ctx with
-      | Some c -> (Hashtbl.has c.module_externs name) || (match lookup_var c name with
+      -- A module-qualified syscall (module_externs) or a typed-FFI extern
+      -- (ffi_externs, e.g. `Sdl.text_texture`) resolves globally to a runtime/C
+      -- symbol at the call site, so referencing one inside a function body is NOT
+      -- a free-variable capture — same as a top-level function or global.
+      | Some c -> (Hashtbl.has c.module_externs name) || ((Hashtbl.has c.ffi_externs name) || (match lookup_var c name with
       | Some (((Func _ | FuncLocal _) | Global _) | MutGlobal _) -> true
       | _ -> false
-      )
+      ))
       | None -> false
      in
     let shadows_value_local name =
